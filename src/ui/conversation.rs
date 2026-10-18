@@ -3962,7 +3962,70 @@ fn bubble(
             }
         },
     );
+    if view.palette.bubbles == theme::BubbleStyle::Nothing && !view.selecting {
+        let selected_id = egui::Id::new(("autumn-spires-timestamp", &view.chat.id));
+        if response.as_ref().is_some_and(egui::Response::clicked) {
+            ui.ctx().data_mut(|data| {
+                if data.get_temp::<String>(selected_id) == Some(message.id.clone()) {
+                    data.remove::<String>(selected_id);
+                } else {
+                    data.insert_temp(selected_id, message.id.clone());
+                }
+            });
+        }
+        let visible = ui
+            .ctx()
+            .data(|data| data.get_temp::<String>(selected_id))
+            .as_deref()
+            == Some(message.id.as_str());
+        if visible {
+            reference_timestamp(ui, view, message);
+        }
+    }
     response
+}
+
+/// The Autumn Spires timestamp sits just below a bubble and appears on click.
+fn reference_timestamp(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
+    let own = message.from_me;
+    ui.add_space(4.0);
+    let height = 14.0;
+    let width = ui.available_width();
+    let layout = if own {
+        Layout::right_to_left(Align::Center)
+    } else {
+        Layout::left_to_right(Align::Center)
+    };
+    ui.allocate_ui_with_layout(vec2(width, height), layout, |ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let time = crate::util::clock(message.timestamp);
+        let indicator = match message.status {
+            Delivery::Pending if own => Some(("•••", view.palette.secondary, 12.0)),
+            Delivery::Failed if own => Some(("✗", view.palette.danger, 12.0)),
+            _ => None,
+        };
+        if own {
+            if let Some((label, color, size)) = indicator {
+                widgets::rich_text(ui, label, theme::semibold(size), color);
+            }
+            widgets::rich_text(
+                ui,
+                &time,
+                theme::regular(10.0),
+                view.palette.secondary.gamma_multiply(0.82),
+            );
+        } else {
+            widgets::rich_text(
+                ui,
+                &time,
+                theme::regular(10.0),
+                view.palette.secondary.gamma_multiply(0.82),
+            );
+            if let Some((label, color, size)) = indicator {
+                widgets::rich_text(ui, label, theme::semibold(size), color);
+            }
+        }
+    });
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -4502,7 +4565,7 @@ fn bubble_frame(
             // An album's footer is its last member's, marks included.
             let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
             let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
-            let reserve = footer_width(ui, last, starred, pinned);
+            let reserve = message_footer_width(ui, last, starred, pinned, &palette);
             let settled = album
                 .map(|_| CARD_WIDTH.min(cap))
                 .or_else(|| settled_width(ui, view, message, cap));
@@ -4821,7 +4884,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
-    let reserve = footer_width(ui, message, starred, pinned);
+    let reserve = message_footer_width(ui, message, starred, pinned, &palette);
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
     } else {
@@ -5098,6 +5161,32 @@ fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -
     time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 } + marks
 }
 
+/// The reference style leaves the clock and delivery state outside the bubble;
+/// only edited and pinned/starred marks still reserve room inside it.
+fn message_footer_width(
+    ui: &egui::Ui,
+    message: &Message,
+    starred: bool,
+    pinned: bool,
+    palette: &Palette,
+) -> f32 {
+    if palette.bubbles != theme::BubbleStyle::Nothing {
+        return footer_width(ui, message, starred, pinned);
+    }
+    let edited = if message.edited {
+        ui.painter()
+            .layout_no_wrap("edited".to_owned(), theme::regular(11.0), palette.dim)
+            .size()
+            .x
+            + 4.0
+    } else {
+        0.0
+    };
+    edited
+        + if starred { FOOTER_MARK_SLOT } else { 0.0 }
+        + if pinned { FOOTER_MARK_SLOT } else { 0.0 }
+}
+
 /// Whether the message's time and ticks sit over its picture rather than
 /// on a line of their own: a picture without a caption, as in WhatsApp.
 fn time_over_picture(message: &Message) -> bool {
@@ -5324,6 +5413,10 @@ fn footer(
     actions: &mut Vec<Action>,
 ) {
     let palette = &view.palette;
+    if palette.bubbles == theme::BubbleStyle::Nothing {
+        reference_footer_marks(ui, message, slot, starred, pinned, palette);
+        return;
+    }
     let font = theme::regular(11.0);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
@@ -5418,6 +5511,72 @@ fn footer(
             egui::WidgetInfo::labeled(egui::WidgetType::Label, true, NOT_SENT_HINT)
         });
         response.on_hover_text(NOT_SENT_HINT);
+    }
+    if starred {
+        x -= FOOTER_MARK_SLOT;
+        theme::paint_icon(
+            ui,
+            Icon::StarFill,
+            Rect::from_center_size(
+                pos2(x + FOOTER_MARK / 2.0, rect.center().y),
+                Vec2::splat(FOOTER_MARK),
+            ),
+            FOOTER_MARK,
+            FOOTER_STAR,
+        );
+    }
+}
+
+fn reference_footer_marks(
+    ui: &mut egui::Ui,
+    message: &Message,
+    slot: Option<Rect>,
+    starred: bool,
+    pinned: bool,
+    palette: &Palette,
+) {
+    let width = message_footer_width(ui, message, starred, pinned, palette);
+    if width <= 0.0 {
+        return;
+    }
+    let rect = match slot {
+        Some(slot) => slot,
+        None => {
+            let row_width = ui.min_rect().width().max(width);
+            let (rect, _) = ui.allocate_exact_size(vec2(row_width, 15.0), Sense::hover());
+            rect
+        }
+    };
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            footer_id(&message.chat, &message.id),
+            Rect::from_min_max(pos2(rect.right() - width, rect.top()), rect.max),
+        );
+    });
+    let mut x = rect.right();
+    if pinned {
+        x -= FOOTER_MARK_SLOT;
+        theme::paint_icon(
+            ui,
+            Icon::Pin,
+            Rect::from_center_size(
+                pos2(x + FOOTER_MARK / 2.0, rect.center().y),
+                Vec2::splat(FOOTER_MARK),
+            ),
+            FOOTER_MARK,
+            palette.secondary,
+        );
+    }
+    if message.edited {
+        let galley =
+            ui.painter()
+                .layout_no_wrap("edited".to_owned(), theme::regular(11.0), palette.dim);
+        x -= galley.size().x + 4.0;
+        ui.painter().galley(
+            pos2(x, rect.center().y - galley.size().y / 2.0),
+            galley,
+            palette.dim,
+        );
     }
     if starred {
         x -= FOOTER_MARK_SLOT;
