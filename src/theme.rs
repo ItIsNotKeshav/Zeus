@@ -712,6 +712,12 @@ pub fn bold(size: f32) -> egui::FontId {
     fastframe_fonts::Weight::Bold.font_id(size)
 }
 
+/// Nudge variable faces toward a lighter cut without changing the UI's
+/// weight hierarchy or the system-font option.
+fn lighter_variable_weight(weight: fastframe_fonts::Weight) -> f32 {
+    (weight.value() - 30.0).max(300.0)
+}
+
 /// The face for counting timers (recording, playback positions): Inter at
 /// `weight`, whose figures are all one width, so a timer does not shift as
 /// it counts. San Francisco and Segoe UI draw proportional figures.
@@ -892,7 +898,8 @@ fn add_geist(fonts: &mut egui::FontDefinitions) {
     for weight in Weight::ALL {
         let name = format!("zapfast-geist-{}", weight.name());
         let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/Geist.ttf"));
-        data.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", weight.value())]);
+        data.tweak.coords =
+            egui::epaint::text::VariationCoords::new([(b"wght", lighter_variable_weight(weight))]);
         fonts
             .font_data
             .insert(name.clone(), std::sync::Arc::new(data));
@@ -909,7 +916,7 @@ fn add_google_sans_flex(fonts: &mut egui::FontDefinitions) {
         let mut data =
             egui::FontData::from_static(include_bytes!("../assets/fonts/GoogleSansFlex.ttf"));
         data.tweak.coords = egui::epaint::text::VariationCoords::new([
-            (b"wght", weight.value()),
+            (b"wght", lighter_variable_weight(weight)),
             (b"opsz", 14.0),
             (b"wdth", 100.0),
         ]);
@@ -929,7 +936,8 @@ fn add_tabular(fonts: &mut egui::FontDefinitions) {
     for weight in Weight::ALL {
         let name = format!("zapfast-tabular-{}", weight.name());
         let mut data = egui::FontData::from_static(fastframe_fonts::INTER);
-        data.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", weight.value())]);
+        data.tweak.coords =
+            egui::epaint::text::VariationCoords::new([(b"wght", lighter_variable_weight(weight))]);
         fonts
             .font_data
             .insert(name.clone(), std::sync::Arc::new(data));
