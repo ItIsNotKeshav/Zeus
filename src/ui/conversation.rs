@@ -2770,6 +2770,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
+                    let last_outgoing = conversation.messages.iter().rposition(|message| {
+                        message.from_me && !matches!(message.content, Content::Revoked)
+                    });
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
                         // WhatsApp marks every item in a media album with the
@@ -2917,6 +2920,17 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         let first_in_run =
                             new_day || previous.is_none_or(|previous| !same_run(previous, message));
                         let last_in_run = last_of_run(&conversation.messages, index);
+                        let last_outgoing_row = last_outgoing.is_some_and(|last| {
+                            last == message_index
+                                || album.is_some_and(|members| {
+                                    members.iter().any(|member| {
+                                        conversation
+                                            .messages
+                                            .get(last)
+                                            .is_some_and(|latest| latest.id == member.id)
+                                    })
+                                })
+                        });
                         // Messages curls its tail under a run's last bubble.
                         // The sender's picture: beside the first message of a
                         // run in WhatsApp's style, beside the last in Messages.
@@ -2963,6 +2977,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                             tailed,
                                             first_in_run,
                                             last_in_run,
+                                            last_outgoing: last_outgoing_row,
                                         },
                                         &mut actions,
                                     )
@@ -2982,6 +2997,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     tailed,
                                     first_in_run,
                                     last_in_run,
+                                    last_outgoing: last_outgoing_row,
                                 },
                                 &mut actions,
                             )
@@ -3806,6 +3822,7 @@ struct RunPlace {
     tailed: bool,
     first_in_run: bool,
     last_in_run: bool,
+    last_outgoing: bool,
 }
 
 /// Draws a message row and returns its bubble response for scrolling.
@@ -3823,6 +3840,7 @@ fn bubble(
         tailed,
         first_in_run,
         last_in_run,
+        last_outgoing,
     } = place;
     let own = message.from_me;
     // Greys that read on the panel can vanish on the bubble; use its own.
@@ -3963,29 +3981,39 @@ fn bubble(
         },
     );
     if view.palette.bubbles == theme::BubbleStyle::Nothing && !view.selecting {
-        let selected_id = egui::Id::new(("autumn-spires-timestamp", &view.chat.id));
-        if response.as_ref().is_some_and(egui::Response::clicked) {
-            ui.ctx().data_mut(|data| {
-                if data.get_temp::<String>(selected_id) == Some(message.id.clone()) {
-                    data.remove::<String>(selected_id);
-                } else {
-                    data.insert_temp(selected_id, message.id.clone());
-                }
-            });
+        if last_outgoing
+            && message.from_me
+            && matches!(
+                shown_delivery(view, album.and_then(|members| members.last()).unwrap_or(message)),
+                Delivery::Sent | Delivery::Delivered | Delivery::Read | Delivery::Played
+            )
+        {
+            let receipt = album.and_then(|members| members.last()).unwrap_or(message);
+            reference_seen(ui, view, receipt);
         }
-        let visible = ui
+        let bubble_rect = ui
             .ctx()
-            .data(|data| data.get_temp::<String>(selected_id))
-            .as_deref()
-            == Some(message.id.as_str());
-        if visible {
+            .data(|data| data.get_temp::<Rect>(id.with("rect")))
+            .or_else(|| response.as_ref().map(|response| response.rect));
+        let metadata_hovered = bubble_rect.is_some_and(|rect| {
+            let (left, right) = if message.from_me {
+                (rect.right() - 72.0, rect.right())
+            } else {
+                (rect.left(), rect.left() + 72.0)
+            };
+            let target =
+                Rect::from_min_max(pos2(left, rect.bottom()), pos2(right, rect.bottom() + 21.0));
+            ui.interact(target, id.with("metadata-hover"), Sense::hover())
+                .hovered()
+        });
+        if response.as_ref().is_some_and(egui::Response::hovered) || metadata_hovered {
             reference_timestamp(ui, view, message);
         }
     }
     response
 }
 
-/// The Autumn Spires timestamp sits just below a bubble and appears on click.
+/// The Autumn Spires timestamp sits just below a bubble and appears on hover.
 fn reference_timestamp(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
     let own = message.from_me;
     ui.add_space(4.0);
@@ -4026,6 +4054,21 @@ fn reference_timestamp(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
             }
         }
     });
+}
+
+/// Keep the latest outgoing delivery state below its bubble, like a chat receipt.
+fn reference_seen(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
+    let width = ui.available_width();
+    let height = 16.0;
+    ui.add_space(2.0);
+    ui.allocate_ui_with_layout(
+        vec2(width, height),
+        Layout::right_to_left(Align::Center),
+        |ui| {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+            widgets::ticks(ui, &view.palette, rect, shown_delivery(view, message));
+        },
+    );
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -6406,6 +6449,9 @@ fn content(
 ) -> Option<Rect> {
     let palette = view.palette;
     let own = message.from_me;
+    // Nothing-style metadata lives below/on hover, so the text galley must
+    // not reserve the usual inline timestamp gap on its final row.
+    let footer_reserve = (palette.bubbles != theme::BubbleStyle::Nothing).then_some(reserve);
     // Add non-text messages to cross-message transcript copies.
     let has_body = match &message.content {
         Content::Text { .. } => true,
@@ -6428,7 +6474,16 @@ fn content(
         Content::Interactive { text, card } => {
             let Some(card) = card else {
                 let span = message.quoted.is_some().then_some(width);
-                return rich_body(ui, view, message, text, width, Some(reserve), span, actions);
+                return rich_body(
+                    ui,
+                    view,
+                    message,
+                    text,
+                    width,
+                    footer_reserve,
+                    span,
+                    actions,
+                );
             };
             if !card.carousel.is_empty() {
                 carousel(ui, view, message, card, width, actions);
@@ -6452,7 +6507,7 @@ fn content(
                 message,
                 body,
                 width,
-                Some(reserve),
+                footer_reserve,
                 Some(width),
                 actions,
             )
@@ -6462,7 +6517,16 @@ fn content(
                 preview_card(ui, view, message, preview, width, actions);
             }
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
-            rich_body(ui, view, message, text, width, Some(reserve), span, actions)
+            rich_body(
+                ui,
+                view,
+                message,
+                text,
+                width,
+                footer_reserve,
+                span,
+                actions,
+            )
         }
         Content::Image {
             caption,
@@ -6494,7 +6558,7 @@ fn content(
                     message,
                     caption,
                     wrap,
-                    Some(reserve),
+                    footer_reserve,
                     Some(wrap),
                     actions,
                 )
@@ -6528,7 +6592,7 @@ fn content(
                     message,
                     caption,
                     wrap,
-                    Some(reserve),
+                    footer_reserve,
                     Some(wrap),
                     actions,
                 )
@@ -6574,7 +6638,7 @@ fn content(
                     message,
                     caption,
                     width,
-                    Some(reserve),
+                    footer_reserve,
                     Some(width),
                     actions,
                 )
