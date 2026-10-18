@@ -2749,7 +2749,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                 .inner_margin(Margin::symmetric(side, 10))
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing.y = 3.0;
+                    ui.spacing_mut().item_spacing.y =
+                        if palette.bubbles == theme::BubbleStyle::Nothing {
+                            2.0
+                        } else {
+                            3.0
+                        };
                     if under > 0.0 {
                         ui.add_space(under);
                     }
@@ -2911,13 +2916,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         // phone draws it: a little apart, with a tail.
                         let first_in_run =
                             new_day || previous.is_none_or(|previous| !same_run(previous, message));
+                        let last_in_run = last_of_run(&conversation.messages, index);
                         // Messages curls its tail under a run's last bubble.
                         // The sender's picture: beside the first message of a
                         // run in WhatsApp's style, beside the last in Messages.
                         let show_avatar = if palette.bubbles == theme::BubbleStyle::Messages {
-                            shows_sender_pictures(chat)
-                                && !message.from_me
-                                && last_of_run(&conversation.messages, index)
+                            shows_sender_pictures(chat) && !message.from_me && last_in_run
                         } else {
                             show_sender
                         };
@@ -2927,7 +2931,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                             first_in_run
                         };
                         if first_in_run && !new_day && previous.is_some() {
-                            ui.add_space(RUN_GAP);
+                            ui.add_space(if palette.bubbles == theme::BubbleStyle::Nothing {
+                                12.0
+                            } else {
+                                RUN_GAP
+                            });
                         }
                         let flash = jump
                             .as_ref()
@@ -2953,6 +2961,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                             show_sender,
                                             show_avatar,
                                             tailed,
+                                            first_in_run,
+                                            last_in_run,
                                         },
                                         &mut actions,
                                     )
@@ -2970,6 +2980,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     show_sender,
                                     show_avatar,
                                     tailed,
+                                    first_in_run,
+                                    last_in_run,
                                 },
                                 &mut actions,
                             )
@@ -3792,6 +3804,8 @@ struct RunPlace {
     show_sender: bool,
     show_avatar: bool,
     tailed: bool,
+    first_in_run: bool,
+    last_in_run: bool,
 }
 
 /// Draws a message row and returns its bubble response for scrolling.
@@ -3807,6 +3821,8 @@ fn bubble(
         show_sender,
         show_avatar,
         tailed,
+        first_in_run,
+        last_in_run,
     } = place;
     let own = message.from_me;
     // Greys that read on the panel can vanish on the bubble; use its own.
@@ -3820,6 +3836,8 @@ fn bubble(
         0.95
     } else if view.palette.bubbles == theme::BubbleStyle::Messages {
         MESSAGES_WIDTH_SHARE
+    } else if view.palette.bubbles == theme::BubbleStyle::Nothing {
+        0.70
     } else {
         WHATSAPP_WIDTH_SHARE
     };
@@ -3867,6 +3885,8 @@ fn bubble(
                             album,
                             show_sender,
                             tailed,
+                            first_in_run,
+                            last_in_run,
                             max_width,
                             actions,
                         ));
@@ -3919,6 +3939,8 @@ fn bubble(
                     album,
                     show_sender,
                     tailed,
+                    first_in_run,
+                    last_in_run,
                     max_width,
                     actions,
                 ));
@@ -4377,6 +4399,8 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         Margin::ZERO
     } else if palette.bubbles == theme::BubbleStyle::Messages {
         MESSAGES_BUBBLE_MARGIN
+    } else if palette.bubbles == theme::BubbleStyle::Nothing {
+        Margin::symmetric(14, 10)
     } else {
         Margin {
             left: 10,
@@ -4396,6 +4420,8 @@ fn bubble_frame(
     album: Option<&[Message]>,
     show_sender: bool,
     tailed: bool,
+    first_in_run: bool,
+    last_in_run: bool,
     max_width: f32,
     actions: &mut Vec<Action>,
 ) -> egui::Response {
@@ -4458,10 +4484,14 @@ fn bubble_frame(
             // Cards share the bubble's settled width: at least CARD_WIDTH and
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
-            let inset = if palette.bubbles == theme::BubbleStyle::Messages
-                && !bare_picture(&palette, message)
+            let inset = if !bare_picture(&palette, message)
+                && palette.bubbles == theme::BubbleStyle::Messages
             {
                 MESSAGES_BUBBLE_MARGIN.sum().x
+            } else if !bare_picture(&palette, message)
+                && palette.bubbles == theme::BubbleStyle::Nothing
+            {
+                28.0
             } else {
                 20.0
             };
@@ -4526,15 +4556,25 @@ fn bubble_frame(
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
         ui.painter().set(
             backdrop,
-            widgets::bubble_shape(
-                &palette,
-                inner.response.rect,
-                fill,
-                tail,
-                ui.ctx().pixels_per_point(),
-                // The transcript's viewport: own balloons shade down it.
-                ui.clip_rect().y_range(),
-            ),
+            if palette.bubbles == theme::BubbleStyle::Nothing {
+                widgets::grouped_bubble_shape(
+                    inner.response.rect,
+                    fill,
+                    own,
+                    first_in_run,
+                    last_in_run,
+                )
+            } else {
+                widgets::bubble_shape(
+                    &palette,
+                    inner.response.rect,
+                    fill,
+                    tail,
+                    ui.ctx().pixels_per_point(),
+                    // The transcript's viewport: own balloons shade down it.
+                    ui.clip_rect().y_range(),
+                )
+            },
         );
     }
     ui.ctx()

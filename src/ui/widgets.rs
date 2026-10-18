@@ -1232,6 +1232,35 @@ pub fn bubble_shape(
     egui::Shape::Vec(shapes)
 }
 
+/// Translucent grouped balloons used by the Nothing palettes. The two corners
+/// that face the next balloon tighten so each sender's run reads as a stack.
+pub fn grouped_bubble_shape(
+    rect: Rect,
+    fill: Color32,
+    own: bool,
+    first: bool,
+    last: bool,
+) -> egui::Shape {
+    let full = 18;
+    let join = 4;
+    let corners = if own {
+        egui::CornerRadius {
+            nw: full,
+            ne: if !first { join } else { full },
+            sw: full,
+            se: if !last { join } else { full },
+        }
+    } else {
+        egui::CornerRadius {
+            nw: if !first { join } else { full },
+            ne: full,
+            sw: if !last { join } else { full },
+            se: full,
+        }
+    };
+    egui::Shape::rect_filled(rect, corners, fill)
+}
+
 /// The text size Messages lays its balloons out for on the Mac: ChatKit's
 /// `CKUIBehaviorMac.balloonTextFont` is the 13 pt system font.
 pub const MESSAGES_TEXT_SIZE: f32 = 13.0;

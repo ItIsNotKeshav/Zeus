@@ -102,7 +102,7 @@ pub enum BubbleStyle {
     /// As macOS Messages draws them: rounder, flat, with a curled tail under
     /// the last message of a run.
     Messages,
-    /// Translucent monochrome surfaces while retaining WhatsApp bubbles.
+    /// Translucent grouped bubbles with a restrained blue outgoing tint.
     Nothing,
 }
 
@@ -220,8 +220,8 @@ impl Palette {
         p.on_accent = Color32::from_rgb(0x12, 0x12, 0x12);
         p.overlay = Color32::from_rgb(0x1a, 0x1a, 0x1a);
         p.chat = Color32::from_rgb(0x0d, 0x0d, 0x0d);
-        p.bubble_in = Color32::from_rgb(0x25, 0x25, 0x25);
-        p.bubble_out = Color32::from_rgb(0x4a, 0x4a, 0x4a);
+        p.bubble_in = Color32::from_rgba_unmultiplied(255, 255, 255, 20);
+        p.bubble_out = Color32::from_rgba_unmultiplied(100, 181, 246, 38);
         p.link = Color32::from_rgb(0xd6, 0xd6, 0xd6);
         p.read = Color32::from_rgb(0xd6, 0xd6, 0xd6);
         p.bubbles = BubbleStyle::Nothing;
@@ -245,8 +245,8 @@ impl Palette {
         p.on_accent = Color32::WHITE;
         p.overlay = Color32::WHITE;
         p.chat = Color32::from_rgb(0xf7, 0xf7, 0xf7);
-        p.bubble_in = Color32::WHITE;
-        p.bubble_out = Color32::from_rgb(0xe2, 0xe2, 0xe2);
+        p.bubble_in = Color32::from_rgba_unmultiplied(0, 0, 0, 20);
+        p.bubble_out = Color32::from_rgba_unmultiplied(0, 105, 190, 28);
         p.link = Color32::from_rgb(0x35, 0x35, 0x35);
         p.read = Color32::from_rgb(0x35, 0x35, 0x35);
         p.bubbles = BubbleStyle::Nothing;
