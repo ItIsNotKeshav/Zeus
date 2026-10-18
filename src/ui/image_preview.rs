@@ -18,6 +18,9 @@ use super::conversation::thumbnail_uri;
 
 /// Height of the header across the top.
 const HEADER: f32 = 56.0;
+/// Keep a useful title beside the custom window controls before moving the
+/// viewer toolbar below them on narrow windows.
+const HEADER_MIN_CONTENT: f32 = 160.0;
 /// Height of the album strip along the bottom.
 const STRIP: f32 = 78.0;
 const THUMB: f32 = 56.0;
@@ -84,10 +87,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             // The header drags the window, and its actions stay clear of the
             // caption buttons ZapFast draws over the window's corners.
             super::caption_drag(ui, header_rect);
-            let room = super::caption_room(ui.ctx(), header_rect, 0.0);
+            let room = super::caption_room(ui.ctx(), header_rect, HEADER_MIN_CONTENT);
             let inset = header_rect.shrink2(vec2(14.0, 0.0));
             let inset = Rect::from_min_max(
-                inset.min + vec2(room.left, 0.0),
+                inset.min + vec2(room.left, room.top),
                 inset.max - vec2(room.right, 0.0),
             );
             let mut head = ui.new_child(UiBuilder::new().max_rect(inset));
@@ -231,243 +234,247 @@ fn header(
             } => Some(motion.clone()),
             _ => None,
         });
-    ui.horizontal(|ui| {
-        // The actions are laid out from the right edge first, and the title
-        // takes what is left of the row, truncated: a long chat name used to
-        // run under the icons.
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::icon_button(
-                ui,
-                Icon::X,
-                18.0,
-                palette.secondary,
-                palette.text,
-                crate::i18n::gettext(app.locale, "Close preview (Esc)").as_ref(),
-            )
-            .clicked()
-            {
-                actions.push(Action::CloseImagePreview);
-            }
-            if let Some(path) = preview.path() {
+    // The row fills the header and centers its controls vertically alongside
+    // the window caption buttons. Right-to-left places actions at the right;
+    // the title takes the remaining width on the left.
+    ui.allocate_ui_with_layout(
+        ui.available_size(),
+        Layout::left_to_right(Align::Center),
+        |ui| {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if theme::icon_button(
                     ui,
-                    Icon::ExternalLink,
+                    Icon::X,
                     18.0,
                     palette.secondary,
                     palette.text,
-                    crate::i18n::gettext(app.locale, "Open in another app").as_ref(),
+                    crate::i18n::gettext(app.locale, "Close preview (Esc)").as_ref(),
                 )
                 .clicked()
                 {
-                    actions.push(Action::OpenFile(path.to_owned()));
+                    actions.push(Action::CloseImagePreview);
                 }
-                let copy_hint = format!(
-                    "{} ({})",
-                    crate::i18n::gettext(app.locale, "Copy image"),
-                    super::keys::label("Ctrl+C"),
-                );
-                // A clip is played, never decoded as an image, so copying it
-                // could only fail: the action is left out here, and the
-                // shortcut is gated on the same rule in `keys`.
-                if !clip
-                    && theme::icon_button(
+                if let Some(path) = preview.path() {
+                    if theme::icon_button(
                         ui,
-                        Icon::Copy,
+                        Icon::ExternalLink,
                         18.0,
                         palette.secondary,
                         palette.text,
-                        &copy_hint,
+                        crate::i18n::gettext(app.locale, "Open in another app").as_ref(),
                     )
                     .clicked()
-                {
-                    actions.push(Action::CopyImage(path.to_owned()));
-                }
-            }
-            if let Some(motion) = &motion {
-                motion_button(app, ui, preview, motion, chat, &message, actions);
-            }
-            // Zoom is for a picture: a clip fills the stage at its own shape,
-            // so the controls are left out while one is on screen.
-            if !clip {
-                ui.add_space(8.0);
-                // Right to left: zoom in, the current scale, zoom out.
-                if theme::icon_button(
-                    ui,
-                    Icon::Plus,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    crate::i18n::gettext(app.locale, "Zoom in").as_ref(),
-                )
-                .clicked()
-                {
-                    actions.push(Action::ZoomImageIn);
-                }
-                // One control shows the scale and switches between fitting the
-                // window and the original size.
-                let (label, hint, action) = if preview.is_fit() {
-                    (
-                        crate::i18n::gettext(app.locale, "Fit").into_owned(),
-                        crate::i18n::gettext(app.locale, "Show at original size"),
-                        Action::ImageActualSize,
-                    )
-                } else {
-                    (
-                        format!("{:.0}%", preview.zoom() * 100.0),
-                        crate::i18n::gettext(app.locale, "Fit to the window (0)"),
-                        Action::FitImage,
-                    )
-                };
-                if theme::soft_button(ui, &palette, None, &label, false)
-                    .on_hover_text(hint)
-                    .clicked()
-                {
-                    actions.push(action);
-                }
-                if theme::icon_button(
-                    ui,
-                    Icon::Minus,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    crate::i18n::gettext(app.locale, "Zoom out").as_ref(),
-                )
-                .clicked()
-                {
-                    actions.push(Action::ZoomImageOut);
-                }
-            }
-            // What the message itself can do, when the viewer knows which one
-            // it is. A picture opened on its own has nothing to act on.
-            if has_message {
-                ui.add_space(8.0);
-                if theme::icon_button(
-                    ui,
-                    Icon::Reply,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    crate::i18n::gettext(app.locale, "Reply").as_ref(),
-                )
-                .clicked()
-                {
-                    actions.push(Action::CloseImagePreview);
-                    actions.push(Action::Reply(message.clone()));
-                }
-                if theme::icon_button(
-                    ui,
-                    Icon::Smile,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    crate::i18n::gettext(app.locale, "React").as_ref(),
-                )
-                .clicked()
-                {
-                    // The viewer draws after the picker, so it has to go first:
-                    // otherwise the picker opens behind it and cannot be used.
-                    actions.push(Action::CloseImagePreview);
-                    actions.push(Action::OpenReactionPicker {
-                        chat: chat.to_owned(),
-                        message: message.clone(),
-                        beside_menu: false,
-                    });
-                }
-                if theme::icon_button(
-                    ui,
-                    Icon::Forward,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    crate::i18n::gettext(app.locale, "Forward").as_ref(),
-                )
-                .clicked()
-                {
-                    actions.push(Action::CloseImagePreview);
-                    actions.push(Action::ShowDialog(Dialog::Forward {
-                        chat: chat.to_owned(),
-                        messages: vec![message.clone()],
-                    }));
-                }
-                match saved {
-                    // Already on the computer: hand it to the save dialog, the
-                    // way the message menu does.
-                    Some(path) => {
-                        let name = path
-                            .file_name()
-                            .and_then(|name| name.to_str())
-                            .unwrap_or("attachment")
-                            .to_owned();
-                        if theme::icon_button(
+                    {
+                        actions.push(Action::OpenFile(path.to_owned()));
+                    }
+                    let copy_hint = format!(
+                        "{} ({})",
+                        crate::i18n::gettext(app.locale, "Copy image"),
+                        super::keys::label("Ctrl+C"),
+                    );
+                    // A clip is played, never decoded as an image, so copying it
+                    // could only fail: the action is left out here, and the
+                    // shortcut is gated on the same rule in `keys`.
+                    if !clip
+                        && theme::icon_button(
                             ui,
-                            Icon::Download,
+                            Icon::Copy,
                             18.0,
                             palette.secondary,
                             palette.text,
-                            crate::i18n::gettext(app.locale, "Save as…").as_ref(),
+                            &copy_hint,
                         )
                         .clicked()
-                        {
-                            actions.push(Action::CloseImagePreview);
-                            actions.push(Action::SaveAttachmentAs { path, name });
-                        }
+                    {
+                        actions.push(Action::CopyImage(path.to_owned()));
                     }
-                    // Not here yet: fetch it, and return to the chat with it.
-                    None => {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Download,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "Download").as_ref(),
+                }
+                if let Some(motion) = &motion {
+                    motion_button(app, ui, preview, motion, chat, &message, actions);
+                }
+                // Zoom is for a picture: a clip fills the stage at its own shape,
+                // so the controls are left out while one is on screen.
+                if !clip {
+                    ui.add_space(8.0);
+                    // Right to left: zoom in, the current scale, zoom out.
+                    if theme::icon_button(
+                        ui,
+                        Icon::Plus,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        crate::i18n::gettext(app.locale, "Zoom in").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::ZoomImageIn);
+                    }
+                    // One control shows the scale and switches between fitting the
+                    // window and the original size.
+                    let (label, hint, action) = if preview.is_fit() {
+                        (
+                            crate::i18n::gettext(app.locale, "Fit").into_owned(),
+                            crate::i18n::gettext(app.locale, "Show at original size"),
+                            Action::ImageActualSize,
                         )
+                    } else {
+                        (
+                            format!("{:.0}%", preview.zoom() * 100.0),
+                            crate::i18n::gettext(app.locale, "Fit to the window (0)"),
+                            Action::FitImage,
+                        )
+                    };
+                    if theme::soft_button(ui, &palette, None, &label, false)
+                        .on_hover_text(hint)
                         .clicked()
-                        {
-                            actions.push(Action::CloseImagePreview);
-                            actions.push(Action::Download {
-                                // Asked for in the viewer.
-                                manual: true,
-                                card: None,
-                                chat: chat.to_owned(),
-                                message: message.clone(),
-                            });
-                        }
+                    {
+                        actions.push(action);
+                    }
+                    if theme::icon_button(
+                        ui,
+                        Icon::Minus,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        crate::i18n::gettext(app.locale, "Zoom out").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::ZoomImageOut);
                     }
                 }
-                if theme::icon_button(
-                    ui,
-                    Icon::MessageCircle,
-                    18.0,
-                    palette.secondary,
-                    palette.text,
-                    crate::i18n::gettext(app.locale, "Show in the chat").as_ref(),
-                )
-                .clicked()
-                {
-                    // Closing leaves the chat where it was, so the message the
-                    // viewer was showing is brought into view. `ScrollTo` also
-                    // pages older archive history toward it when it is not in
-                    // the transcript yet, which is the usual case after
-                    // stepping back through the album.
-                    actions.push(Action::CloseImagePreview);
-                    actions.push(Action::ScrollTo(message.clone()));
+                // What the message itself can do, when the viewer knows which one
+                // it is. A picture opened on its own has nothing to act on.
+                if has_message {
+                    ui.add_space(8.0);
+                    if theme::icon_button(
+                        ui,
+                        Icon::Reply,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        crate::i18n::gettext(app.locale, "Reply").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::CloseImagePreview);
+                        actions.push(Action::Reply(message.clone()));
+                    }
+                    if theme::icon_button(
+                        ui,
+                        Icon::Smile,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        crate::i18n::gettext(app.locale, "React").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        // The viewer draws after the picker, so it has to go first:
+                        // otherwise the picker opens behind it and cannot be used.
+                        actions.push(Action::CloseImagePreview);
+                        actions.push(Action::OpenReactionPicker {
+                            chat: chat.to_owned(),
+                            message: message.clone(),
+                            beside_menu: false,
+                        });
+                    }
+                    if theme::icon_button(
+                        ui,
+                        Icon::Forward,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        crate::i18n::gettext(app.locale, "Forward").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::CloseImagePreview);
+                        actions.push(Action::ShowDialog(Dialog::Forward {
+                            chat: chat.to_owned(),
+                            messages: vec![message.clone()],
+                        }));
+                    }
+                    match saved {
+                        // Already on the computer: hand it to the save dialog, the
+                        // way the message menu does.
+                        Some(path) => {
+                            let name = path
+                                .file_name()
+                                .and_then(|name| name.to_str())
+                                .unwrap_or("attachment")
+                                .to_owned();
+                            if theme::icon_button(
+                                ui,
+                                Icon::Download,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "Save as…").as_ref(),
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::CloseImagePreview);
+                                actions.push(Action::SaveAttachmentAs { path, name });
+                            }
+                        }
+                        // Not here yet: fetch it, and return to the chat with it.
+                        None => {
+                            if theme::icon_button(
+                                ui,
+                                Icon::Download,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "Download").as_ref(),
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::CloseImagePreview);
+                                actions.push(Action::Download {
+                                    // Asked for in the viewer.
+                                    manual: true,
+                                    card: None,
+                                    chat: chat.to_owned(),
+                                    message: message.clone(),
+                                });
+                            }
+                        }
+                    }
+                    if theme::icon_button(
+                        ui,
+                        Icon::MessageCircle,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        crate::i18n::gettext(app.locale, "Show in the chat").as_ref(),
+                    )
+                    .clicked()
+                    {
+                        // Closing leaves the chat where it was, so the message the
+                        // viewer was showing is brought into view. `ScrollTo` also
+                        // pages older archive history toward it when it is not in
+                        // the transcript yet, which is the usual case after
+                        // stepping back through the album.
+                        actions.push(Action::CloseImagePreview);
+                        actions.push(Action::ScrollTo(message.clone()));
+                    }
+                    ui.add_space(8.0);
                 }
-                ui.add_space(8.0);
-            }
-            // Last, so it takes what the actions left, scrolling if it needs
-            // more rather than drawn under them.
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                crate::ui::widgets::scrolling_text(
-                    ui,
-                    &title,
-                    theme::semibold(14.0),
-                    palette.text,
-                    palette.overlay,
-                );
+                // Last, so it takes what the actions left, scrolling if it needs
+                // more rather than drawn under them.
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    crate::ui::widgets::scrolling_text(
+                        ui,
+                        &title,
+                        theme::semibold(14.0),
+                        palette.text,
+                        palette.overlay,
+                    );
+                });
             });
-        });
-    });
+        },
+    );
 }
 
 /// Plays a motion photo's clip over the photo, or goes back to the photo

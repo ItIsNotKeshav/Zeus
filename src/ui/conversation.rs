@@ -3229,7 +3229,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                         pin_notice(ui, &palette, view.locale, view.names_or, notice);
                     }
                     if !typing.is_empty() {
-                        typing_bubble(ui, &view, &typing);
+                        typing_indicator(ui, &view, &typing);
                     }
                     ui.add_space(4.0);
                     // An explicit jump (Ctrl+End, or the return-to-bottom
@@ -3558,59 +3558,65 @@ fn top_of_history(
     });
 }
 
-/// Typing indicator with stacked avatars and animated dots.
-fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]) {
+/// A padded avatar-and-dots row, without a message bubble or typing label.
+fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, String)]) {
     let palette = view.palette;
+    // Keep the indicator comfortably separated from the last message and
+    // composer. Its height stays fixed while the dots animate, so motion
+    // never shifts the transcript layout.
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
-        if shows_sender_pictures(view.chat) {
-            let count = typers.len().min(3);
-            let step = SENDER_AVATAR * 0.6;
-            let width = SENDER_AVATAR + step * (count.saturating_sub(1)) as f32;
-            let (rect, _) = ui.allocate_exact_size(vec2(width, SENDER_AVATAR), Sense::hover());
-            if ui.is_rect_visible(rect) {
-                for (index, (id, name)) in typers.iter().take(count).enumerate() {
-                    let avatar = Rect::from_min_size(
-                        rect.min + vec2(step * index as f32, 0.0),
-                        Vec2::splat(SENDER_AVATAR),
-                    );
-                    if index > 0 {
-                        // Outline overlapping avatars with the chat background.
-                        ui.painter().circle_filled(
-                            avatar.center(),
-                            SENDER_AVATAR / 2.0 + 1.5,
-                            palette.chat,
-                        );
+        let show_avatars = shows_sender_pictures(view.chat);
+        let count = if show_avatars { typers.len().min(3) } else { 0 };
+        let step = SENDER_AVATAR * 0.6;
+        let avatars_width = if count > 0 {
+            SENDER_AVATAR + step * (count - 1) as f32
+        } else {
+            0.0
+        };
+        let avatar_gap = if show_avatars { 10.0 } else { 0.0 };
+        let row_height = 40.0;
+        ui.allocate_ui_with_layout(
+            vec2(avatars_width + avatar_gap + 30.0, row_height),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                if show_avatars {
+                    let (rect, _) =
+                        ui.allocate_exact_size(vec2(avatars_width, row_height), Sense::hover());
+                    if ui.is_rect_visible(rect) {
+                        for (index, (id, name)) in typers.iter().take(count).enumerate() {
+                            let avatar = Rect::from_min_size(
+                                pos2(
+                                    rect.left() + step * index as f32,
+                                    rect.center().y - SENDER_AVATAR / 2.0,
+                                ),
+                                Vec2::splat(SENDER_AVATAR),
+                            );
+                            if index > 0 {
+                                // Outline overlapping avatars with the chat background.
+                                ui.painter().circle_filled(
+                                    avatar.center(),
+                                    SENDER_AVATAR / 2.0 + 1.5,
+                                    palette.chat,
+                                );
+                            }
+                            widgets::paint_avatar(
+                                ui,
+                                &palette,
+                                avatar,
+                                name.trim_start_matches('~'),
+                                id,
+                                view.avatars.get(id).and_then(|picture| picture.as_deref()),
+                            );
+                        }
                     }
-                    widgets::paint_avatar(
-                        ui,
-                        &palette,
-                        avatar,
-                        name.trim_start_matches('~'),
-                        id,
-                        view.avatars.get(id).and_then(|picture| picture.as_deref()),
-                    );
                 }
-            }
-            ui.add_space(2.0);
-        }
-        let backdrop = ui.painter().add(egui::Shape::Noop);
-        let rect = Frame::new()
-            .inner_margin(Margin::symmetric(12, 9))
-            .show(ui, |ui| typing_dots(ui, &palette))
-            .response
-            .rect;
-        ui.painter().set(
-            backdrop,
-            widgets::bubble_shape(
-                &palette,
-                rect,
-                palette.bubble_in,
-                Some(widgets::Side::Left),
-                ui.ctx().pixels_per_point(),
-                ui.clip_rect().y_range(),
-            ),
+                ui.add_space(avatar_gap);
+                typing_dots(ui, &palette);
+            },
         );
     });
+    ui.add_space(8.0);
 }
 
 fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
@@ -3630,8 +3636,8 @@ fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
     crate::motion::request_frame(ui.ctx());
     let time = ui.input(|input| input.time);
     for index in 0..3 {
-        let wave = ((time * std::f64::consts::TAU / 1.2) - f64::from(index) * 0.9).sin() as f32;
-        let rise = wave.max(0.0);
+        let phase = (time * std::f64::consts::TAU / 1.05 - f64::from(index) * 0.9).sin() as f32;
+        let rise = 0.5 + 0.5 * phase;
         let center = pos2(
             rect.left() + radius + (radius * 2.0 + gap) * index as f32,
             rect.bottom() - radius - rise * lift,
@@ -3981,60 +3987,78 @@ fn bubble(
         },
     );
     if view.palette.bubbles == theme::BubbleStyle::Nothing && !view.selecting {
-        if last_outgoing
-            && message.from_me
-            && matches!(
-                shown_delivery(view, album.and_then(|members| members.last()).unwrap_or(message)),
-                Delivery::Sent | Delivery::Delivered | Delivery::Read | Delivery::Played
-            )
-        {
-            let receipt = album.and_then(|members| members.last()).unwrap_or(message);
-            reference_seen(ui, view, receipt);
-        }
         let bubble_rect = ui
             .ctx()
             .data(|data| data.get_temp::<Rect>(id.with("rect")))
             .or_else(|| response.as_ref().map(|response| response.rect));
-        let metadata_hovered = bubble_rect.is_some_and(|rect| {
-            let (left, right) = if message.from_me {
-                (rect.right() - 72.0, rect.right())
-            } else {
-                (rect.left(), rect.left() + 72.0)
-            };
-            let target =
-                Rect::from_min_max(pos2(left, rect.bottom()), pos2(right, rect.bottom() + 21.0));
-            ui.interact(target, id.with("metadata-hover"), Sense::hover())
-                .hovered()
+        let clicked_inside = bubble_rect.is_some_and(|rect| {
+            ui.input(|input| {
+                input.pointer.button_clicked(egui::PointerButton::Primary)
+                    && input
+                        .pointer
+                        .interact_pos()
+                        .is_some_and(|position| rect.contains(position))
+            })
         });
-        if response.as_ref().is_some_and(egui::Response::hovered) || metadata_hovered {
-            reference_timestamp(ui, view, message);
+        let metadata_id = id.with("metadata-visible");
+        let default_visible = last_outgoing && message.from_me;
+        let mut visible = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(metadata_id))
+            .unwrap_or(default_visible);
+        if clicked_inside || response.as_ref().is_some_and(egui::Response::clicked) {
+            visible = !visible;
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(metadata_id, visible));
+        }
+        if visible {
+            let display_message = album.and_then(|members| members.last()).unwrap_or(message);
+            if reference_timestamp(ui, view, display_message, id.with("metadata-row")).clicked() {
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(metadata_id, false));
+            }
         }
     }
     response
 }
 
-/// The Autumn Spires timestamp sits just below a bubble and appears on hover.
-fn reference_timestamp(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
+/// The message time and delivery state sit just below a bubble when selected.
+fn reference_timestamp(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    id: egui::Id,
+) -> egui::Response {
     let own = message.from_me;
     ui.add_space(4.0);
-    let height = 14.0;
+    let height = 16.0;
     let width = ui.available_width();
     let layout = if own {
         Layout::right_to_left(Align::Center)
     } else {
         Layout::left_to_right(Align::Center)
     };
-    ui.allocate_ui_with_layout(vec2(width, height), layout, |ui| {
+    let row = ui.allocate_ui_with_layout(vec2(width, height), layout, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let time = crate::util::clock(message.timestamp);
-        let indicator = match message.status {
-            Delivery::Pending if own => Some(("•••", view.palette.secondary, 12.0)),
-            Delivery::Failed if own => Some(("✗", view.palette.danger, 12.0)),
-            _ => None,
-        };
         if own {
-            if let Some((label, color, size)) = indicator {
-                widgets::rich_text(ui, label, theme::semibold(size), color);
+            match message.status {
+                Delivery::Pending => {
+                    widgets::rich_text(ui, "•••", theme::semibold(12.0), view.palette.secondary);
+                }
+                Delivery::Failed => {
+                    widgets::rich_text(ui, "✗", theme::semibold(12.0), view.palette.danger);
+                }
+                status => {
+                    let ticks = shown_delivery(view, message);
+                    if matches!(
+                        status,
+                        Delivery::Sent | Delivery::Delivered | Delivery::Read | Delivery::Played
+                    ) {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                        widgets::ticks(ui, &view.palette, rect, ticks);
+                    }
+                }
             }
             widgets::rich_text(
                 ui,
@@ -4049,26 +4073,9 @@ fn reference_timestamp(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
                 theme::regular(10.0),
                 view.palette.secondary.gamma_multiply(0.82),
             );
-            if let Some((label, color, size)) = indicator {
-                widgets::rich_text(ui, label, theme::semibold(size), color);
-            }
         }
     });
-}
-
-/// Keep the latest outgoing delivery state below its bubble, like a chat receipt.
-fn reference_seen(ui: &mut egui::Ui, view: &View<'_>, message: &Message) {
-    let width = ui.available_width();
-    let height = 16.0;
-    ui.add_space(2.0);
-    ui.allocate_ui_with_layout(
-        vec2(width, height),
-        Layout::right_to_left(Align::Center),
-        |ui| {
-            let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-            widgets::ticks(ui, &view.palette, rect, shown_delivery(view, message));
-        },
-    );
+    ui.interact(row.response.rect, id, Sense::click())
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -4506,7 +4513,13 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
     } else if palette.bubbles == theme::BubbleStyle::Messages {
         MESSAGES_BUBBLE_MARGIN
     } else if palette.bubbles == theme::BubbleStyle::Nothing {
-        Margin::symmetric(14, 10)
+        if compact_picture_message(message) {
+            Margin::symmetric(6, 6)
+        } else if compact_attachment_message(message) {
+            Margin::symmetric(16, 12)
+        } else {
+            Margin::symmetric(14, 10)
+        }
     } else {
         Margin {
             left: 10,
@@ -5279,9 +5292,28 @@ fn bare_picture(palette: &Palette, message: &Message) -> bool {
 fn picture_radius(palette: &Palette, message: &Message) -> f32 {
     if bare_picture(palette, message) {
         f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
+    } else if palette.bubbles == theme::BubbleStyle::Nothing && compact_picture_message(message) {
+        12.0
     } else {
         6.0
     }
+}
+
+/// A photo without accompanying text can use a tighter frame than a text
+/// balloon; quotes and forwarded labels keep the room they need.
+fn compact_picture_message(message: &Message) -> bool {
+    matches!(message.content, Content::Image { caption: None, .. })
+        && message.quoted.is_none()
+        && !message.forwarded
+}
+
+/// File cards have their own inset surface inside the message balloon.
+fn compact_attachment_message(message: &Message) -> bool {
+    matches!(message.content, Content::Document { .. })
+        || matches!(
+            &message.content,
+            Content::Video { media, .. } if message.thumbnail.is_none() && media.path.is_none()
+        )
 }
 
 /// Space between a picture's edges and the time drawn over it: the scrim
@@ -9316,13 +9348,18 @@ fn attachment(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
+    let (card_x, card_y, radius) = if palette.bubbles == theme::BubbleStyle::Nothing {
+        (12, 10, 12)
+    } else {
+        (10, 8, 8)
+    };
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
-        .corner_radius(CornerRadius::same(8))
-        .inner_margin(Margin::symmetric(10, 8))
+        .corner_radius(CornerRadius::same(radius))
+        .inner_margin(Margin::symmetric(card_x, card_y))
         .show(ui, |ui| {
             // Include margins in the settled row width.
-            let card = (width - 20.0).max(0.0);
+            let card = (width - f32::from(card_x) * 2.0).max(0.0);
             ui.set_width(card);
 
             let disc = |ui: &mut egui::Ui| {
