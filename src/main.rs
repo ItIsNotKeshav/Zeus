@@ -330,7 +330,15 @@ fn run() -> eframe::Result<()> {
         log::error!("could not move the linked account into its folder: {error}");
         return Err(eframe::Error::AppCreation(error.into()));
     }
+    #[cfg(feature = "demo")]
+    let mut settings = settings::Settings::load(&dirs.settings_file());
+    #[cfg(not(feature = "demo"))]
     let settings = settings::Settings::load(&dirs.settings_file());
+    #[cfg(feature = "demo")]
+    if demo && cli.demo_titlebar {
+        settings.custom_titlebar = true;
+        settings.auto_hide_titlebar = true;
+    }
     // The drawn title bar (Windows and Linux): GNOME's button layout and
     // icons, read once, and the choice every window is made with.
     fastframe_titlebar::init();
@@ -432,7 +440,12 @@ fn run() -> eframe::Result<()> {
             // later.
             let transparent =
                 zapfast::backdrop::transparent_window(lease.peek(|app: &app::App| {
-                    app.settings.theme == zapfast::settings::ThemeChoice::Messages
+                    matches!(
+                        app.settings.theme,
+                        zapfast::settings::ThemeChoice::Messages
+                            | zapfast::settings::ThemeChoice::NothingDark
+                            | zapfast::settings::ThemeChoice::NothingLight
+                    )
                 }));
             let geometry = if demo_persistence.is_some() {
                 fastframe_shell::window::Geometry::default()

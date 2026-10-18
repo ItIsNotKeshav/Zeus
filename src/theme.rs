@@ -102,6 +102,8 @@ pub enum BubbleStyle {
     /// As macOS Messages draws them: rounder, flat, with a curled tail under
     /// the last message of a run.
     Messages,
+    /// Translucent monochrome surfaces while retaining WhatsApp bubbles.
+    Nothing,
 }
 
 impl Palette {
@@ -201,6 +203,56 @@ impl Palette {
         }
     }
 
+    /// Nothing OS inspired near-black monochrome palette with restrained glass.
+    pub fn nothing_dark() -> Self {
+        let mut p = Self::dark();
+        p.window = Color32::from_rgb(0x08, 0x08, 0x08);
+        p.panel = Color32::from_rgb(0x13, 0x13, 0x13);
+        p.surface = Color32::from_rgb(0x22, 0x22, 0x22);
+        p.surface_hover = Color32::from_rgb(0x30, 0x30, 0x30);
+        p.surface_active = Color32::from_rgb(0x3b, 0x3b, 0x3b);
+        p.outline = Color32::from_rgb(0x35, 0x35, 0x35);
+        p.text = Color32::from_rgb(0xf5, 0xf5, 0xf5);
+        p.secondary = Color32::from_rgb(0xb8, 0xb8, 0xb8);
+        p.dim = Color32::from_rgb(0x9b, 0x9b, 0x9b);
+        p.accent = Color32::from_rgb(0xf4, 0xf4, 0xf4);
+        p.accent_hover = Color32::WHITE;
+        p.on_accent = Color32::from_rgb(0x12, 0x12, 0x12);
+        p.overlay = Color32::from_rgb(0x1a, 0x1a, 0x1a);
+        p.chat = Color32::from_rgb(0x0d, 0x0d, 0x0d);
+        p.bubble_in = Color32::from_rgb(0x25, 0x25, 0x25);
+        p.bubble_out = Color32::from_rgb(0x4a, 0x4a, 0x4a);
+        p.link = Color32::from_rgb(0xd6, 0xd6, 0xd6);
+        p.read = Color32::from_rgb(0xd6, 0xd6, 0xd6);
+        p.bubbles = BubbleStyle::Nothing;
+        p
+    }
+
+    /// Nothing OS inspired paper-white palette with translucent panels.
+    pub fn nothing_light() -> Self {
+        let mut p = Self::light();
+        p.window = Color32::from_rgb(0xf7, 0xf7, 0xf7);
+        p.panel = Color32::from_rgb(0xff, 0xff, 0xff);
+        p.surface = Color32::from_rgb(0xef, 0xef, 0xef);
+        p.surface_hover = Color32::from_rgb(0xe4, 0xe4, 0xe4);
+        p.surface_active = Color32::from_rgb(0xd8, 0xd8, 0xd8);
+        p.outline = Color32::from_rgb(0xd9, 0xd9, 0xd9);
+        p.text = Color32::from_rgb(0x14, 0x14, 0x14);
+        p.secondary = Color32::from_rgb(0x5e, 0x5e, 0x5e);
+        p.dim = Color32::from_rgb(0x6b, 0x6b, 0x6b);
+        p.accent = Color32::from_rgb(0x1a, 0x1a, 0x1a);
+        p.accent_hover = Color32::from_rgb(0x36, 0x36, 0x36);
+        p.on_accent = Color32::WHITE;
+        p.overlay = Color32::WHITE;
+        p.chat = Color32::from_rgb(0xf7, 0xf7, 0xf7);
+        p.bubble_in = Color32::WHITE;
+        p.bubble_out = Color32::from_rgb(0xe2, 0xe2, 0xe2);
+        p.link = Color32::from_rgb(0x35, 0x35, 0x35);
+        p.read = Color32::from_rgb(0x35, 0x35, 0x35);
+        p.bubbles = BubbleStyle::Nothing;
+        p
+    }
+
     pub fn light() -> Self {
         Self {
             dark: false,
@@ -254,13 +306,15 @@ impl Palette {
     /// pills and tints, on every platform. Whether the desktop also shows
     /// through the window is [`crate::backdrop::active`].
     pub fn vibrant(&self) -> bool {
-        self.bubbles == BubbleStyle::Messages
+        matches!(self.bubbles, BubbleStyle::Messages | BubbleStyle::Nothing)
     }
 
     /// The chat list's background. Over a window's material it only darkens
     /// it a little; without one, it is the panel's own colour.
     pub fn sidebar(&self) -> Color32 {
-        if self.vibrant() && crate::backdrop::active() {
+        if self.bubbles == BubbleStyle::Nothing && crate::backdrop::active() {
+            translucent(self.panel, if self.dark { 210 } else { 230 })
+        } else if self.vibrant() && crate::backdrop::active() {
             self.panel.gamma_multiply(SIDEBAR_TINT)
         } else {
             self.panel
@@ -291,12 +345,19 @@ impl Palette {
     /// The conversation's background on a vibrant theme: mostly `color`,
     /// with a little of the material behind the window showing through.
     pub fn vibrant_chat(&self, color: Color32) -> Color32 {
-        color.gamma_multiply(CHAT_TINT)
+        if self.bubbles == BubbleStyle::Nothing {
+            translucent(color, if self.dark { 218 } else { 232 })
+        } else {
+            color.gamma_multiply(CHAT_TINT)
+        }
     }
 
     /// The veil of a vibrant header over the frosted messages under it, a
     /// light one: its name and buttons sit on pills of their own.
     pub fn vibrant_header(&self, color: Color32) -> Color32 {
+        if self.bubbles == BubbleStyle::Nothing {
+            return translucent(color, if self.dark { 184 } else { 210 });
+        }
         // A light veil over dark content reads as fog where a dark one
         // reads as shade, so the light palette's is thinner.
         color.gamma_multiply(if self.dark {
@@ -309,6 +370,9 @@ impl Palette {
     /// A glass pill under a vibrant header's name or buttons: much more of
     /// `color` than the veil, so text on it reads over any picture.
     pub fn vibrant_pill(&self, color: Color32) -> Color32 {
+        if self.bubbles == BubbleStyle::Nothing {
+            return translucent(color, if self.dark { 224 } else { 238 });
+        }
         // White glass reads as an opaque box well before dark glass does.
         color.gamma_multiply(if self.dark {
             PILL_TINT
@@ -598,6 +662,11 @@ fn denser(color: Color32, factor: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
+fn translucent(color: Color32, alpha: u8) -> Color32 {
+    let [r, g, b, _] = color.to_srgba_unmultiplied();
+    Color32::from_rgba_unmultiplied(r, g, b, alpha)
+}
+
 /// Converts HSL to color bytes for non-egui drawing.
 pub fn hsl_rgb(hue: f32, saturation: f32, lightness: f32) -> [u8; 3] {
     let color = hsl(hue, saturation, lightness);
@@ -766,13 +835,18 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
 
 /// Whether the interface is drawn in the bundled Inter instead of the
 /// platform's font (Settings, Appearance, Font).
-static INTER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static FONT_CHOICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
 
 /// Chooses the interface's typeface and installs it. Call it before
 /// [`install`] with the saved choice, and again when the choice changes.
 pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
-    let inter = font == crate::settings::FontChoice::Inter;
-    if INTER.swap(inter, std::sync::atomic::Ordering::AcqRel) != inter {
+    let choice = match font {
+        crate::settings::FontChoice::System => 0,
+        crate::settings::FontChoice::Inter => 1,
+        crate::settings::FontChoice::GoogleSansFlex => 2,
+        crate::settings::FontChoice::Geist => 3,
+    };
+    if FONT_CHOICE.swap(choice, std::sync::atomic::Ordering::AcqRel) != choice {
         install_fonts(ctx);
     }
 }
@@ -780,13 +854,13 @@ pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
 /// Whether Inter is the chosen typeface.
 #[cfg(test)]
 pub fn inter_chosen() -> bool {
-    INTER.load(std::sync::atomic::Ordering::Acquire)
+    FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 1
 }
 
 /// The typeface the interface is asked to draw with: the setting's, and
 /// always Inter in tests, so layouts do not depend on the machine.
 fn primary_font() -> fastframe_fonts::Primary {
-    if cfg!(test) || INTER.load(std::sync::atomic::Ordering::Acquire) {
+    if cfg!(test) || FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 1 {
         fastframe_fonts::Primary::Inter
     } else {
         fastframe_fonts::Primary::System
@@ -802,9 +876,50 @@ fn install_fonts(ctx: &egui::Context) {
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
+    if !cfg!(test) && FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 2 {
+        add_google_sans_flex(&mut fonts);
+    }
+    if !cfg!(test) && FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 3 {
+        add_geist(&mut fonts);
+    }
     add_tabular(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+fn add_geist(fonts: &mut egui::FontDefinitions) {
+    use fastframe_fonts::Weight;
+    for weight in Weight::ALL {
+        let name = format!("zapfast-geist-{}", weight.name());
+        let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/Geist.ttf"));
+        data.tweak.coords = egui::epaint::text::VariationCoords::new([(b"wght", weight.value())]);
+        fonts
+            .font_data
+            .insert(name.clone(), std::sync::Arc::new(data));
+        let family = fonts.families.entry(weight.family()).or_default();
+        family.retain(|font| !font.starts_with("zapfast-geist-"));
+        family.insert(0, name);
+    }
+}
+
+fn add_google_sans_flex(fonts: &mut egui::FontDefinitions) {
+    use fastframe_fonts::Weight;
+    for weight in Weight::ALL {
+        let name = format!("zapfast-google-sans-flex-{}", weight.name());
+        let mut data =
+            egui::FontData::from_static(include_bytes!("../assets/fonts/GoogleSansFlex.ttf"));
+        data.tweak.coords = egui::epaint::text::VariationCoords::new([
+            (b"wght", weight.value()),
+            (b"opsz", 14.0),
+            (b"wdth", 100.0),
+        ]);
+        fonts
+            .font_data
+            .insert(name.clone(), std::sync::Arc::new(data));
+        let family = fonts.families.entry(weight.family()).or_default();
+        family.retain(|font| !font.starts_with("zapfast-google-sans-flex-"));
+        family.insert(0, name);
+    }
 }
 
 /// Registers Inter at each weight as the [`tabular`] families, each falling

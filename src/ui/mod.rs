@@ -756,6 +756,8 @@ fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
     } else {
         theme::caption_footprint(ui.ctx()).height
     };
+    let progress = titlebar_reveal_progress(ui.ctx(), app.settings.auto_hide_titlebar);
+    let inset = inset * progress;
     if inset == 0.0 {
         return;
     }
@@ -872,7 +874,12 @@ fn window_chrome(app: &App, ui: &mut egui::Ui) {
         restore: &restore,
         close: &close,
     };
-    fastframe_titlebar::controls(ui, &style, &labels);
+    let progress = titlebar_reveal_progress(ui.ctx(), app.settings.auto_hide_titlebar);
+    if app.settings.auto_hide_titlebar {
+        animated_titlebar_controls(ui.ctx(), &style, &labels, progress);
+    } else {
+        fastframe_titlebar::controls(ui, &style, &labels);
+    }
     // The buttons draw in egui's foreground layer, as the call screen, the
     // media viewer and dialogs do; a newer area there would cover them, and a
     // modal one would take their clicks. These are the crate's area names.
@@ -890,6 +897,145 @@ fn window_chrome(app: &App, ui: &mut egui::Ui) {
         ));
     }
     fastframe_titlebar::resize(ui);
+}
+
+/// Draws the window buttons in areas whose positions follow the reveal
+/// animation. Keeping the movement in the area layout also moves the hit
+/// targets with the buttons on both Windows and GNOME.
+fn animated_titlebar_controls(
+    ctx: &egui::Context,
+    style: &fastframe_titlebar::Style,
+    labels: &fastframe_titlebar::Labels<'_>,
+    progress: f32,
+) {
+    if !fastframe_titlebar::visible(ctx) {
+        return;
+    }
+    let linux = cfg!(target_os = "linux");
+    let screen = ctx.content_rect();
+    let button_size = if linux { 28.0 } else { 36.0 };
+    let gap = if linux { 8.0 } else { 0.0 };
+    let margin = if linux { 14.0 } else { 5.0 };
+    let top = if linux {
+        (theme::TOP_BAR_HEIGHT - button_size) / 2.0
+    } else {
+        (style.header_height - button_size) / 2.0 + 2.0
+    };
+    let travel = theme::TOP_BAR_HEIGHT * (1.0 - progress);
+
+    for (side, buttons) in [
+        ("left", &fastframe_titlebar::layout().left),
+        ("right", &fastframe_titlebar::layout().right),
+    ] {
+        if buttons.is_empty() {
+            continue;
+        }
+        let width =
+            buttons.len() as f32 * button_size + buttons.len().saturating_sub(1) as f32 * gap;
+        let x = if side == "right" {
+            screen.right() - margin - width
+        } else {
+            screen.left() + margin
+        };
+        egui::Area::new(egui::Id::new(format!("zapfast-auto-titlebar-{side}")))
+            .fixed_pos(egui::pos2(x, screen.top() + top - travel))
+            .constrain(false)
+            .movable(false)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                if linux {
+                    ui.spacing_mut().button_padding = vec2(6.0, 6.0);
+                }
+                ui.horizontal(|ui| {
+                    for &button in buttons {
+                        animated_titlebar_button(ui, button, style, labels, linux, button_size);
+                    }
+                });
+            });
+    }
+}
+
+fn animated_titlebar_button(
+    ui: &mut egui::Ui,
+    button: fastframe_titlebar::Button,
+    style: &fastframe_titlebar::Style,
+    labels: &fastframe_titlebar::Labels<'_>,
+    linux: bool,
+    size: f32,
+) {
+    let maximized = ui
+        .ctx()
+        .input(|input| input.viewport().maximized.unwrap_or(false));
+    let (icon, label, command) = match button {
+        fastframe_titlebar::Button::Minimize => (
+            Icon::Minus,
+            labels.minimize,
+            egui::ViewportCommand::Minimized(true),
+        ),
+        fastframe_titlebar::Button::Maximize if maximized => (
+            Icon::Copy,
+            labels.restore,
+            egui::ViewportCommand::Maximized(false),
+        ),
+        fastframe_titlebar::Button::Maximize => (
+            Icon::Maximize,
+            labels.maximize,
+            egui::ViewportCommand::Maximized(true),
+        ),
+        fastframe_titlebar::Button::Close => (Icon::X, labels.close, egui::ViewportCommand::Close),
+    };
+    let image = icon
+        .image(style.icon, if linux { 16.0 } else { 14.0 })
+        .fit_to_exact_size(vec2(
+            if linux { 16.0 } else { 14.0 },
+            if linux { 16.0 } else { 14.0 },
+        ))
+        .tint(style.icon)
+        .alt_text(label);
+    let mut control = egui::Button::image(image);
+    if linux {
+        control = control
+            .fill(style.button)
+            .corner_radius(egui::CornerRadius::same(14));
+    } else {
+        control = control.frame_when_inactive(false);
+    }
+    if ui
+        .add_sized(vec2(size, size), control)
+        .on_hover_text(label)
+        .clicked()
+    {
+        ui.ctx().send_viewport_cmd(command);
+    }
+}
+
+/// Slides the custom caption buttons down when the pointer reaches the top
+/// edge, and back up when it leaves the title-bar band.
+fn titlebar_reveal_progress(ctx: &egui::Context, auto_hide: bool) -> f32 {
+    if !auto_hide || !fastframe_titlebar::enabled() {
+        return 1.0;
+    }
+    let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
+    if fullscreen {
+        return 0.0;
+    }
+    let screen = ctx.content_rect();
+    let footprint = fastframe_titlebar::footprint(ctx, theme::TOP_BAR_HEIGHT);
+    let reveal = ctx.input(|input| {
+        input.pointer.hover_pos().is_some_and(|position| {
+            screen.contains(position)
+                && position.y <= screen.top() + theme::TOP_BAR_HEIGHT
+                && ((footprint.left > 0.0 && position.x <= screen.left() + footprint.left)
+                    || (footprint.right > 0.0 && position.x >= screen.right() - footprint.right))
+        })
+    });
+    ctx.animate_bool_with_time_and_easing(
+        egui::Id::new("auto-hide-titlebar"),
+        reveal,
+        ctx.global_style().animation_time,
+        egui::emath::easing::quadratic_out,
+    )
 }
 
 #[cfg(test)]

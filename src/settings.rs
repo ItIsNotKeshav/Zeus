@@ -36,13 +36,23 @@ pub enum ThemeChoice {
     /// macOS's greys, light or dark as the system is, with bubbles shaped as
     /// Messages draws them.
     Messages,
+    /// Nothing OS inspired monochrome themes with translucent surfaces.
+    NothingDark,
+    NothingLight,
 }
 
 impl ThemeChoice {
     /// The choices Settings offers, on every platform. Messages shows the
     /// desktop through its window where the platform can, and is opaque in
     /// its own colours elsewhere (see [`crate::backdrop`]).
-    pub const ALL: &[ThemeChoice] = &[Self::System, Self::Light, Self::Dark, Self::Messages];
+    pub const ALL: &[ThemeChoice] = &[
+        Self::System,
+        Self::Light,
+        Self::Dark,
+        Self::Messages,
+        Self::NothingDark,
+        Self::NothingLight,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -50,6 +60,8 @@ impl ThemeChoice {
             Self::Light => "Light",
             Self::System => "Follow system",
             Self::Messages => "Messages",
+            Self::NothingDark => "Nothing Dark",
+            Self::NothingLight => "Nothing Light",
         }
     }
 }
@@ -59,19 +71,25 @@ impl ThemeChoice {
 #[serde(rename_all = "lowercase")]
 pub enum FontChoice {
     /// The platform's own interface font.
-    #[default]
     System,
     /// The bundled Inter, the same on every machine.
     Inter,
+    /// Geist, the bundled typeface from Vercel.
+    Geist,
+    /// Bundled Google Sans Flex, used by the Nothing inspired appearance.
+    #[default]
+    GoogleSansFlex,
 }
 
 impl FontChoice {
-    pub const ALL: [FontChoice; 2] = [Self::System, Self::Inter];
+    pub const ALL: [FontChoice; 4] = [Self::System, Self::Inter, Self::Geist, Self::GoogleSansFlex];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::System => "System",
             Self::Inter => "Inter",
+            Self::Geist => "Geist",
+            Self::GoogleSansFlex => "Google Sans Flex",
         }
     }
 }
@@ -423,6 +441,10 @@ pub struct Settings {
     /// drivers a frameless window shows a black band at the top and its
     /// clicks land below where they are drawn (Spotifast #348, #554).
     pub custom_titlebar: bool,
+    /// Reveal the custom title-bar controls only while the pointer is near
+    /// the top edge of the window.
+    #[serde(default)]
+    pub auto_hide_titlebar: bool,
     /// Interface language. `None` follows the operating system's locale.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
@@ -554,8 +576,9 @@ impl Default for Settings {
             version: SETTINGS_VERSION,
             theme: ThemeChoice::Dark,
             messages_theme: false,
-            font: FontChoice::System,
+            font: FontChoice::GoogleSansFlex,
             custom_titlebar: false,
+            auto_hide_titlebar: false,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,

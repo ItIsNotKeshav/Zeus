@@ -1276,6 +1276,8 @@ impl App {
             .unwrap_or_else(|| match settings.theme {
                 ThemeChoice::Light => Palette::light(),
                 ThemeChoice::Messages => Palette::messages(),
+                ThemeChoice::NothingDark => Palette::nothing_dark(),
+                ThemeChoice::NothingLight => Palette::nothing_light(),
                 _ => Palette::dark(),
             });
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -5832,6 +5834,8 @@ impl App {
             || match self.settings.theme {
                 ThemeChoice::Dark => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
+                ThemeChoice::NothingDark => egui::ThemePreference::Dark,
+                ThemeChoice::NothingLight => egui::ThemePreference::Light,
                 // Messages follows the system's appearance, as Messages does.
                 ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
             },
@@ -5876,19 +5880,22 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        let palette = self.settings.cached_palette().unwrap_or_else(|| {
-            if self.settings.theme == ThemeChoice::Messages {
-                if dark {
-                    Palette::messages()
-                } else {
-                    Palette::messages_light()
+        let palette = self
+            .settings
+            .cached_palette()
+            .unwrap_or_else(|| match self.settings.theme {
+                ThemeChoice::NothingDark => Palette::nothing_dark(),
+                ThemeChoice::NothingLight => Palette::nothing_light(),
+                ThemeChoice::Messages => {
+                    if dark {
+                        Palette::messages()
+                    } else {
+                        Palette::messages_light()
+                    }
                 }
-            } else if dark {
-                Palette::dark()
-            } else {
-                Palette::light()
-            }
-        });
+                _ if dark => Palette::dark(),
+                _ => Palette::light(),
+            });
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
         }
@@ -16459,7 +16466,7 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        assert_eq!(app.settings.font, FontChoice::System);
+        assert_eq!(app.settings.font, FontChoice::GoogleSansFlex);
         app.apply(Action::SetFont(FontChoice::Inter), &ctx);
         assert_eq!(app.settings.font, FontChoice::Inter);
         assert!(crate::theme::inter_chosen());

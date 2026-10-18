@@ -357,7 +357,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Font"),
         translated(
             locale,
-            "System is your desktop's interface font. Inter looks the same on every computer.",
+            "Choose the desktop font, Inter, Geist, or Google Sans Flex.",
         ),
         font_picker,
     );
@@ -425,6 +425,16 @@ fn sections(app: &App) -> Vec<Section> {
             ),
             custom_titlebar_switch,
         );
+        if app.settings.custom_titlebar {
+            appearance.toggle(
+                translated(locale, "Auto-hide title bar"),
+                translated(
+                    locale,
+                    "Reveal the window buttons when the pointer reaches the top edge.",
+                ),
+                |settings| &mut settings.auto_hide_titlebar,
+            );
+        }
     }
 
     let mut chats = Section::new(translated(locale, "Chats"));
@@ -1157,10 +1167,12 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
     use crate::settings::FontChoice;
     let palette = app.palette;
     let selected = app.settings.font;
-    // "Inter" is a name; "System" is a word.
+    // Font family names stay in their own branding.
     let label = |choice: FontChoice| match choice {
         FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
         FontChoice::Inter => choice.label().to_owned(),
+        FontChoice::Geist => choice.label().to_owned(),
+        FontChoice::GoogleSansFlex => choice.label().to_owned(),
     };
     let response = egui::ComboBox::from_id_salt("interface_font")
         .selected_text(label(selected))

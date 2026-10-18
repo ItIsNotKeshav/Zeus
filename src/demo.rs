@@ -2980,6 +2980,16 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "light" => {
                 app.settings.theme = ThemeChoice::Light;
             }
+            "nothing" => {
+                app.settings.custom_theme = None;
+                app.settings.custom_theme_cache = None;
+                app.settings.theme = ThemeChoice::NothingDark;
+            }
+            "nothing-light" => {
+                app.settings.custom_theme = None;
+                app.settings.custom_theme_cache = None;
+                app.settings.theme = ThemeChoice::NothingLight;
+            }
             "messages" => {
                 app.settings.theme = ThemeChoice::Messages;
             }
