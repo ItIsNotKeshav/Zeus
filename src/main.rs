@@ -2,13 +2,13 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use zapfast::{app, backend, paths, settings, single_instance};
+use zeus::{app, backend, paths, settings, single_instance};
 
 use clap::Parser;
 
 /// A fast, native WhatsApp client.
 #[derive(Debug, Parser)]
-#[command(name = "zapfast", version, about)]
+#[command(name = "zeus", version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Control>,
@@ -48,7 +48,7 @@ struct Cli {
         requires = "demo_tour",
         value_name = "NAME",
         default_value = "launch",
-        value_parser = clap::builder::PossibleValuesParser::new(zapfast::demo::tour::Script::NAMES),
+        value_parser = clap::builder::PossibleValuesParser::new(zeus::demo::tour::Script::NAMES),
     )]
     demo_tour_script: String,
 
@@ -132,20 +132,20 @@ fn control(command: &Control, sent: single_instance::Sent) -> (i32, Option<Strin
         (_, Sent::Taken) | (Control::Quit, Sent::NotRunning) => (0, None),
         (Control::ReloadThemes, Sent::NotRunning) => (
             1,
-            Some("ZapFast is not running, so there are no themes to reload.".to_owned()),
+            Some("Zeus is not running, so there are no themes to reload.".to_owned()),
         ),
         (Control::ReloadThemes, Sent::Older) => (
             1,
-            Some("The running ZapFast is too old to reload themes from the command line.".to_owned()),
+            Some("The running Zeus is too old to reload themes from the command line.".to_owned()),
         ),
         (Control::Quit, Sent::Older) => (
             1,
             Some(
-                "The running ZapFast is too old to quit from the command line; use Quit in its tray menu."
+                "The running Zeus is too old to quit from the command line; use Quit in its tray menu."
                     .to_owned(),
             ),
         ),
-        (_, Sent::Failed(error)) => (1, Some(format!("Could not reach the running ZapFast: {error}"))),
+        (_, Sent::Failed(error)) => (1, Some(format!("Could not reach the running Zeus: {error}"))),
     }
 }
 
@@ -161,12 +161,12 @@ fn control(command: &Control, sent: single_instance::Sent) -> (i32, Option<Strin
 /// hiding real clipboard failures (`arboard=error`) or any other warning.
 fn default_log_filter(verbose: bool) -> &'static str {
     if verbose {
-        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
+        "info,zeus=debug,whatsapp_rust=debug,wacore=debug"
     } else {
         // env_logger treats '/' as a message-regex separator, so it cannot
         // select the literal target Client/AppState here. Enable Client INFO;
         // the protocol redactor reduces every such line to a fixed category.
-        "warn,zapfast=info,fastframe_fonts=info,Client=info,arboard=error"
+        "warn,zeus=info,fastframe_fonts=info,Client=info,arboard=error"
     }
 }
 
@@ -195,7 +195,7 @@ fn run() -> eframe::Result<()> {
     // First, before parsing the command line or touching any state: run the
     // update helper when asked (`--apply-update <job>`, then exit), and take
     // `--update-receipt` and `--update-error` off the command line.
-    let launch = fastframe_update::intercept(&zapfast::updates::CONFIG);
+    let launch = fastframe_update::intercept(&zeus::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
     let discovered = paths::AppDirs::discover();
     // A control command only talks to the running copy: whatever the answer,
@@ -216,18 +216,18 @@ fn run() -> eframe::Result<()> {
     // A number, a `wa.me` link, or the `whatsapp://` URI the desktop entry
     // passes. Read before the single-instance guard, because it changes the
     // verb: a running copy is asked to open the chat instead of to show.
-    let target = cli.target.as_deref().and_then(zapfast::target::parse);
+    let target = cli.target.as_deref().and_then(zeus::target::parse);
     // A group invite link names a group, not a number: it opens the invite
     // dialog instead of a chat.
     let invite = cli
         .target
         .as_deref()
-        .and_then(zapfast::safety::group_invite_code);
+        .and_then(zeus::safety::group_invite_code);
     if let Some(argument) = cli.target.as_deref()
         && target.is_none()
         && invite.is_none()
     {
-        eprintln!("ZapFast cannot read a phone number from {argument}");
+        eprintln!("Zeus cannot read a phone number from {argument}");
         std::process::exit(2);
     }
     let waker = backend::Waker::default();
@@ -251,12 +251,12 @@ fn run() -> eframe::Result<()> {
             single_instance::Outcome::Surfaced
                 if cli.start_hidden && target.is_none() && invite.is_none() =>
             {
-                eprintln!("ZapFast is already running");
+                eprintln!("Zeus is already running");
                 return Ok(());
             }
             single_instance::Outcome::Surfaced => {
                 eprintln!(
-                    "ZapFast or FastsApp is already running; asked it to {}",
+                    "Zeus or FastsApp is already running; asked it to {}",
                     if target.is_some() {
                         "open the chat"
                     } else if invite.is_some() {
@@ -269,13 +269,13 @@ fn run() -> eframe::Result<()> {
             }
             single_instance::Outcome::Outdated => {
                 eprintln!(
-                    "ZapFast is already running, but that copy is too old to open the link; \
+                    "Zeus is already running, but that copy is too old to open the link; \
                      asked it to show its window instead. Quit it and try again to open the link."
                 );
                 return Ok(());
             }
             single_instance::Outcome::Unanswered => {
-                eprintln!("ZapFast is already running but did not answer");
+                eprintln!("Zeus is already running but did not answer");
                 return Ok(());
             }
         }
@@ -304,7 +304,7 @@ fn run() -> eframe::Result<()> {
     // directories have been created and secured successfully.
     dirs.ensure()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
-    let logging = fastframe_log::Logging::new("zapfast", env!("CARGO_PKG_VERSION"))
+    let logging = fastframe_log::Logging::new(zeus::brand::ID, env!("CARGO_PKG_VERSION"))
         .filter(default_filter)
         .panic_log(dirs.panic_log())
         .redact(redact_protocol);
@@ -352,27 +352,27 @@ fn run() -> eframe::Result<()> {
     // The first launch owns the slot, so no verb reached a running copy and
     // the chat is opened here. The app drains its queue after the frame.
     if let Some(request) = &target {
-        app.actions.push(zapfast::model::Action::StartChat {
+        app.actions.push(zeus::model::Action::StartChat {
             name: request.display_name(),
             id: request.chat.clone(),
             dismiss_dialog: true,
         });
         if let Some(text) = &request.text {
-            app.actions.push(zapfast::model::Action::PrefillComposer {
+            app.actions.push(zeus::model::Action::PrefillComposer {
                 chat: request.chat.clone(),
                 text: text.clone(),
             });
         }
     }
     if let Some(code) = &invite {
-        app.actions.push(zapfast::model::Action::OpenUrl(format!(
+        app.actions.push(zeus::model::Action::OpenUrl(format!(
             "https://chat.whatsapp.com/{code}"
         )));
     }
     #[cfg(feature = "demo")]
     if demo {
-        zapfast::demo::populate(&mut app);
-        zapfast::demo::apply_flags(&mut app, cli.demo_page.as_deref());
+        zeus::demo::populate(&mut app);
+        zeus::demo::apply_flags(&mut app, cli.demo_page.as_deref());
         if cli.demo_tour {
             tour_script(&cli.demo_tour_script).prepare(&mut app);
         }
@@ -416,7 +416,7 @@ fn run() -> eframe::Result<()> {
             // with. Demo runs keep their fixed screenshot size.
             // Decided as each window is made: it cannot become transparent
             // later.
-            let transparent = zapfast::backdrop::transparent_window(
+            let transparent = zeus::backdrop::transparent_window(
                 lease.peek(|app: &app::App| app.settings.theme.vibrant()),
             );
             let geometry = if demo_persistence.is_some() {
@@ -428,20 +428,20 @@ fn run() -> eframe::Result<()> {
             let shot = shot.clone();
             #[cfg(feature = "demo")]
             let tour = cli.demo_tour.then(|| {
-                zapfast::demo::tour::Tour::scripted(
+                zeus::demo::tour::Tour::scripted(
                     tour_script(&cli.demo_tour_script),
                     cli.demo_tour_delay.map(std::time::Duration::from_millis),
                     cli.demo_tour_events.clone(),
                     cli.demo_tour_frames
                         .clone()
-                        .map(|dir| zapfast::demo::tour::Capture {
+                        .map(|dir| zeus::demo::tour::Capture {
                             dir,
                             fps: cli.demo_fps.unwrap_or(30),
                         }),
                 )
             });
             eframe::run_native(
-                "ZapFast",
+                "Zeus",
                 native_options(demo_persistence.clone(), geometry, transparent),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
@@ -450,10 +450,10 @@ fn run() -> eframe::Result<()> {
                     // tests call too: they must never start a browser.
                     #[cfg(all(unix, not(target_os = "macos")))]
                     cc.egui_ctx
-                        .add_plugin(zapfast::opener::DetachedLinks::default());
+                        .add_plugin(zeus::opener::DetachedLinks::default());
                     #[cfg(feature = "demo")]
                     if cli.demo_macos {
-                        zapfast::theme::preview_macos(&cc.egui_ctx);
+                        zeus::theme::preview_macos(&cc.egui_ctx);
                     }
                     Ok(Box::new(Shell {
                         app,
@@ -495,14 +495,14 @@ fn is_graphics_failure(error: &eframe::Error) -> bool {
 #[cfg(any(windows, test))]
 fn startup_failure_text(graphics: bool, details: &str, log: &std::path::Path) -> String {
     let summary = if graphics {
-        "ZapFast could not start because the graphics driver does not offer \
+        "Zeus could not start because the graphics driver does not offer \
          OpenGL 2.1 or newer, which ZapFast needs to draw its window.\n\n\
          Install the current driver from the maker of the graphics chip \
          (Intel, AMD or NVIDIA). The Microsoft Basic Display Adapter, some \
          virtual machines and some remote desktop sessions offer no usable \
          OpenGL."
     } else {
-        "ZapFast could not start."
+        "Zeus could not start."
     };
     format!(
         "{summary}\n\nDetails: {details}\n\nThe log may say more: {}",
@@ -525,7 +525,7 @@ fn startup_failure_dialog(error: &eframe::Error) {
         &paths::AppDirs::discover().log_file(),
     );
     let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
-    let (text, caption) = (wide(&text), wide("ZapFast"));
+    let (text, caption) = (wide(&text), wide("Zeus"));
     // SAFETY: both strings are NUL-terminated and outlive the call.
     unsafe {
         MessageBoxW(
@@ -543,7 +543,7 @@ fn redact_protocol(
     record: &log::Record<'_>,
     message: &str,
 ) -> Option<std::borrow::Cow<'static, str>> {
-    use zapfast::diagnostics::{is_protocol_target, protocol_summary};
+    use zeus::diagnostics::{is_protocol_target, protocol_summary};
     (is_protocol_target(record.target())
         || is_protocol_target(record.module_path().unwrap_or_default()))
     .then(|| protocol_summary(message))
@@ -569,8 +569,8 @@ fn demo_size_arg() -> Option<[f32; 2]> {
 
 /// The tour `--demo-tour-script` names; clap has already checked the name.
 #[cfg(feature = "demo")]
-fn tour_script(name: &str) -> zapfast::demo::tour::Script {
-    zapfast::demo::tour::Script::from_name(name).unwrap_or_default()
+fn tour_script(name: &str) -> zeus::demo::tour::Script {
+    zeus::demo::tour::Script::from_name(name).unwrap_or_default()
 }
 
 fn native_options(
@@ -581,11 +581,11 @@ fn native_options(
     let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
     let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
-        .with_title(if demo { "ZapFast Demo" } else { "ZapFast" })
+        .with_title(if demo { "Zeus Demo" } else { "Zeus" })
         .with_app_id(if demo {
             "zapfast-demo".to_owned()
         } else {
-            fastframe_desktop::desktop_entry("zapfast")
+            fastframe_desktop::desktop_entry(zeus::brand::ID)
         });
     // The remembered size and position, from the settings, over the default
     // size. Demo runs keep their fixed screenshot size.
@@ -631,13 +631,13 @@ struct Shell {
     transparent: bool,
     update_receipt: Option<fastframe_update::Receipt>,
     app: fastframe_shell::Held<app::App>,
-    /// This window's unread overlay on its taskbar button.
+    /// This window's unread count, drawn on its taskbar button.
     #[cfg(target_os = "windows")]
-    taskbar: zapfast::notify::Taskbar,
+    taskbar: TaskbarBadge,
     #[cfg(feature = "demo")]
     shot: Option<Shot>,
     #[cfg(feature = "demo")]
-    tour: Option<zapfast::demo::tour::Tour>,
+    tour: Option<zeus::demo::tour::Tour>,
     #[cfg(feature = "demo")]
     hover: Option<egui::Pos2>,
     #[cfg(feature = "demo")]
@@ -695,7 +695,7 @@ impl eframe::App for Shell {
     /// What shows where the interface paints nothing: the window colour, or
     /// nothing while the window has a material, so it shows.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if zapfast::backdrop::active() {
+        if zeus::backdrop::active() {
             [0.0; 4]
         } else {
             self.app.palette.window.to_normalized_gamma_f32()
@@ -742,6 +742,27 @@ impl eframe::App for Shell {
     }
 }
 
+/// The taskbar button's icon: the logo, with the unread count drawn on it
+/// as a badge, redrawn only when the count changes. It replaces the
+/// pixel-font overlay, which Windows draws far smaller.
+#[cfg(target_os = "windows")]
+#[derive(Default)]
+struct TaskbarBadge(Option<u32>);
+
+#[cfg(target_os = "windows")]
+impl TaskbarBadge {
+    fn show(&mut self, window: &winit::window::Window, count: u32) {
+        use winit::platform::windows::WindowExtWindows;
+        if self.0 == Some(count) {
+            return;
+        }
+        self.0 = Some(count);
+        const SIZE: u32 = 64;
+        let rgba = zeus::util::badged_icon_rgba(SIZE as usize, count);
+        window.set_taskbar_icon(winit::window::Icon::from_rgba(rgba, SIZE, SIZE).ok());
+    }
+}
+
 impl Shell {
     fn window_logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if !std::mem::replace(&mut self.window_recovery_checked, true) {
@@ -755,24 +776,18 @@ impl Shell {
         app.background_frame(ctx);
         app.window_logic(ctx);
         #[cfg(target_os = "windows")]
-        if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
-            && let Some(at) = self.taskbar.show(
-                window,
-                count,
-                &zapfast::notify::badge_description(count, app.locale),
-            )
-        {
-            ctx.request_repaint_after(at.saturating_duration_since(std::time::Instant::now()));
+        if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count()) {
+            self.taskbar.show(window, count);
         }
         // The chat header is 60 points and zooms; the linking screen keeps
         // AppKit's own 28-point strip.
         let title_bar = if app.is_linked() && !app.app_lock.is_locked() {
-            zapfast::theme::TOP_BAR_HEIGHT
+            zeus::theme::TOP_BAR_HEIGHT
         } else {
             28.0 / ctx.zoom_factor()
         };
         fastframe_titlebar::align_traffic_lights(frame, ctx, title_bar);
-        zapfast::backdrop::apply(frame, &app.palette, self.transparent);
+        zeus::backdrop::apply(frame, &app.palette, self.transparent);
         #[cfg(feature = "demo")]
         {
             // Keep requesting the configured screenshot size until it is applied.
@@ -792,7 +807,7 @@ impl Shell {
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
         if std::mem::take(&mut self.open_phone_menu) {
-            egui::Popup::open_id(ui.ctx(), zapfast::demo::phone_menu_popup_id());
+            egui::Popup::open_id(ui.ctx(), zeus::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
         let startups: Vec<_> = app
@@ -820,7 +835,7 @@ impl Shell {
             Some(tour) => tour.observe(app, ui.ctx()),
             // A demo without a tour still answers the interface's commands
             // itself, since there is no backend to answer them.
-            None => zapfast::demo::tour::respond(app),
+            None => zeus::demo::tour::respond(app),
         }
     }
 }
@@ -836,7 +851,7 @@ fn app_icon() -> egui::IconData {
     {
         const SIZE: usize = 128;
         egui::IconData {
-            rgba: zapfast::util::app_icon_rgba(SIZE),
+            rgba: zeus::util::app_icon_rgba(SIZE),
             width: SIZE as u32,
             height: SIZE as u32,
         }
@@ -857,7 +872,7 @@ mod target_cli_tests {
             "+20123456789",
         ] {
             let cli = Cli::try_parse_from(["zapfast", argument]).unwrap();
-            let request = zapfast::target::parse(cli.target.as_deref().unwrap()).unwrap();
+            let request = zeus::target::parse(cli.target.as_deref().unwrap()).unwrap();
             assert_eq!(request.chat, "20123456789@s.whatsapp.net", "{argument}");
             assert_eq!(request.text, None, "{argument}");
         }
@@ -872,13 +887,13 @@ mod target_cli_tests {
             "whatsapp://send?phone=20123456789&text=Hi%20there",
         ])
         .unwrap();
-        let request = zapfast::target::parse(cli.target.as_deref().unwrap()).unwrap();
+        let request = zeus::target::parse(cli.target.as_deref().unwrap()).unwrap();
         assert_eq!(request.text.as_deref(), Some("Hi there"));
         // What the second launch sends is what the running copy reads back.
         let verb = request.verb();
         assert!(verb.starts_with("open 20123456789@s.whatsapp.net\t"));
         assert_eq!(
-            zapfast::target::Request::from_verb(verb.strip_prefix("open ").unwrap()),
+            zeus::target::Request::from_verb(verb.strip_prefix("open ").unwrap()),
             Some(request)
         );
     }
@@ -979,7 +994,7 @@ mod tests {
         let cli = Cli::try_parse_from(["zapfast", "--demo-tour"]).unwrap();
         assert_eq!(
             tour_script(&cli.demo_tour_script),
-            zapfast::demo::tour::Script::Launch
+            zeus::demo::tour::Script::Launch
         );
         let cli = Cli::try_parse_from([
             "zapfast",
@@ -994,7 +1009,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             tour_script(&cli.demo_tour_script),
-            zapfast::demo::tour::Script::WhatsNew
+            zeus::demo::tour::Script::WhatsNew
         );
         assert_eq!(
             cli.demo_tour_frames.as_deref(),
@@ -1045,7 +1060,7 @@ mod startup_failure_tests {
             "The directory is not writable",
             std::path::Path::new("zapfast.log"),
         );
-        assert!(text.starts_with("ZapFast could not start."));
+        assert!(text.starts_with("Zeus could not start."));
         assert!(!text.contains("OpenGL"));
         assert!(text.contains("The directory is not writable"));
     }
@@ -1082,11 +1097,7 @@ mod log_filter_tests {
             log::Level::Error,
             "arboard::platform::linux"
         ));
-        assert!(matches(
-            filter,
-            log::Level::Warn,
-            "zapfast::backend::worker"
-        ));
+        assert!(matches(filter, log::Level::Warn, "zeus::backend::worker"));
     }
 
     /// Every log names the face chosen for each fallback script, without

@@ -396,7 +396,7 @@ impl<T: std::io::Read + std::io::Seek + Send + Sync> ReadSeek for T {}
 /// ("Type a message").
 pub fn locked_lines(locale: crate::i18n::Locale) -> (String, String) {
     (
-        "ZapFast".to_owned(),
+        "Zeus".to_owned(),
         // Translators: the body of a notification that hides who wrote and
         // what: a message has arrived.
         crate::i18n::pgettext(locale, "notification", "New message").into_owned(),
@@ -435,14 +435,14 @@ fn deliver(
     };
     let client = match CLIENT.get_or_init(|| {
         Client::new(
-            App::new("me.paolino.zapfast", "ZapFast")
-                .desktop_entry("zapfast")
-                .icon("zapfast")
-                // ZapFast's green, the theme's accent, behind the logo on
-                // Windows toasts, so Windows 11's dark theme leaves it as drawn.
+            App::new(crate::brand::APP_USER_MODEL_ID, crate::brand::NAME)
+                .desktop_entry(crate::brand::ID)
+                .icon(crate::brand::ID)
+                // The logo's violet behind it on Windows toasts, so Windows
+                // 11's dark theme leaves it as drawn.
                 .logo(
-                    include_bytes!("../packaging/macos/icon-1024.png"),
-                    [0x00, 0xa8, 0x84],
+                    include_bytes!("../packaging/icons/zeus-1024.png"),
+                    [0x5b, 0x5c, 0xf0],
                 ),
         )
     }) {
@@ -562,7 +562,10 @@ mod tests {
             .collect();
         assert_eq!(shortcuts.len(), 2);
         for shortcut in shortcuts {
-            assert!(shortcut.contains("AppUserModelID: \"me.paolino.zapfast\""));
+            assert!(shortcut.contains(&format!(
+                "AppUserModelID: \"{}\"",
+                crate::brand::APP_USER_MODEL_ID
+            )));
         }
     }
 
@@ -760,7 +763,7 @@ mod tests {
         let mut notifications = Notifications::default();
         notifications.show(
             "Ada Lovelace".into(),
-            "A test from ZapFast, with a picture".into(),
+            "A test from Zeus, with a picture".into(),
             picture,
             NotificationSound::System,
             NotificationTarget {

@@ -12,19 +12,19 @@
 #[cfg(target_os = "macos")]
 fn main() {
     use objc2_app_kit::NSApplication;
-    use zapfast::model::Page;
+    use zeus::model::Page;
 
     let mtm = objc2::MainThreadMarker::new().expect("a harness-less test runs on the main thread");
     let root = tempfile::tempdir().expect("a temporary directory");
-    let dirs = zapfast::paths::AppDirs::under(root.path());
-    let settings = zapfast::settings::Settings::default();
+    let dirs = zeus::paths::AppDirs::under(root.path());
+    let settings = zeus::settings::Settings::default();
     // The backend waits for the first drawn frame before it starts, so it
     // never links or opens an archive here.
-    let mut app = zapfast::app::App::new(
-        &zapfast::backend::Waker::default(),
+    let mut app = zeus::app::App::new(
+        &zeus::backend::Waker::default(),
         dirs,
         settings,
-        zapfast::app::AppOptions { tray: true },
+        zeus::app::AppOptions { tray: true },
     )
     .expect("a fresh app over an empty folder");
     let ctx = egui::Context::default();

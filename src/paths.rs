@@ -20,15 +20,16 @@ pub struct AppDirs {
 
 impl AppDirs {
     pub fn discover() -> Self {
-        match Self::of("zapfast") {
+        match Self::of(crate::brand::ID) {
             Some(dirs) => dirs,
             None => {
                 let fallback = std::env::current_dir().unwrap_or_default();
+                let id = crate::brand::ID;
                 Self {
-                    config: fallback.join("zapfast-config"),
-                    state: fallback.join("zapfast-state"),
-                    cache: fallback.join("zapfast-cache"),
-                    runtime: fallback.join("zapfast-run"),
+                    config: fallback.join(format!("{id}-config")),
+                    state: fallback.join(format!("{id}-state")),
+                    cache: fallback.join(format!("{id}-cache")),
+                    runtime: fallback.join(format!("{id}-run")),
                 }
             }
         }
@@ -49,29 +50,17 @@ impl AppDirs {
         })
     }
 
-    /// Adopts earlier names, newest first, without replacing existing data.
+    /// Copies the previous app's settings once, the first time this one
+    /// starts. Its linked session and archive stay where they are: two apps
+    /// cannot share one linked device, so this one links on its own.
     /// Call only after acquiring the instance guard, and never for demo runs.
     pub fn adopt_previous_names(&self) -> std::io::Result<()> {
-        for name in ["fastsapp", "fastwhatsapp"] {
-            if let Some(old) = Self::of(name) {
-                self.adopt(&old)?;
-            }
-            if let (Some(from), Some(to)) =
-                (eframe::storage_dir(name), eframe::storage_dir("zapfast"))
-            {
-                adopt_directory(&from, &to)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn adopt(&self, old: &Self) -> std::io::Result<()> {
-        for (from, to) in [
-            (&old.config, &self.config),
-            (&old.state, &self.state),
-            (&old.cache, &self.cache),
-        ] {
-            adopt_directory(from, to)?;
+        let Some(previous) = Self::of(crate::brand::PREVIOUS) else {
+            return Ok(());
+        };
+        if !self.settings_file().exists() && previous.settings_file().is_file() {
+            std::fs::create_dir_all(&self.config)?;
+            std::fs::copy(previous.settings_file(), self.settings_file())?;
         }
         Ok(())
     }
@@ -192,7 +181,7 @@ impl AppDirs {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::AlreadyExists,
                 format!(
-                    "{} holds a single-account setup, but {} already exists. Nothing was moved; move one of them away and start ZapFast again",
+                    "{} holds a single-account setup, but {} already exists. Nothing was moved; move one of them away and start Zeus again",
                     self.state.display(),
                     blocked[0].display()
                 ),
@@ -475,111 +464,6 @@ mod tests {
         assert!(dirs.ensure().is_err());
         assert!(!dirs.cache.exists());
         assert_eq!(std::fs::read(&dirs.state).unwrap(), b"existing file");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn rename_preserves_session_archive_settings_and_cached_files() {
-        for name in ["fastsapp", "fastwhatsapp"] {
-            let root = root(name);
-            let old = AppDirs::under(&root.join(name));
-            let new = AppDirs::under(&root.join("zapfast"));
-            old.ensure().unwrap();
-            for path in [
-                old.settings_file(),
-                old.session_db(),
-                old.state.join("session.db-wal"),
-                old.archive_db(),
-                old.state.join("archive.db-wal"),
-                old.saved_sticker_dir().join("pack/sticker.webp"),
-                old.media_cache_dir().join("photo.jpg"),
-            ] {
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(path, b"preserved").unwrap();
-            }
-            new.adopt(&old).unwrap();
-            new.adopt(&old).unwrap(); // A second launch is a no-op.
-            for path in [
-                new.settings_file(),
-                new.session_db(),
-                new.state.join("session.db-wal"),
-                new.archive_db(),
-                new.state.join("archive.db-wal"),
-                new.saved_sticker_dir().join("pack/sticker.webp"),
-                new.media_cache_dir().join("photo.jpg"),
-            ] {
-                assert_eq!(std::fs::read(path).unwrap(), b"preserved");
-            }
-            assert!(!old.config.exists());
-            assert!(!old.state.exists());
-            assert!(!old.cache.exists());
-            std::fs::remove_dir_all(root).unwrap();
-        }
-    }
-
-    #[test]
-    fn newest_data_wins_without_merging_archives() {
-        let root = root("precedence");
-        let new = AppDirs::under(&root.join("zapfast"));
-        let recent = AppDirs::under(&root.join("fastsapp"));
-        let oldest = AppDirs::under(&root.join("fastwhatsapp"));
-        recent.ensure().unwrap();
-        oldest.ensure().unwrap();
-        std::fs::create_dir_all(&new.config).unwrap();
-        std::fs::write(new.settings_file(), b"new settings").unwrap();
-        std::fs::write(recent.settings_file(), b"old settings").unwrap();
-        std::fs::write(recent.archive_db(), b"recent archive").unwrap();
-        std::fs::write(oldest.archive_db(), b"oldest archive").unwrap();
-        new.adopt(&recent).unwrap();
-        new.adopt(&oldest).unwrap();
-        assert_eq!(std::fs::read(new.settings_file()).unwrap(), b"new settings");
-        assert_eq!(
-            std::fs::read(recent.settings_file()).unwrap(),
-            b"old settings"
-        );
-        assert_eq!(std::fs::read(new.archive_db()).unwrap(), b"recent archive");
-        assert_eq!(
-            std::fs::read(oldest.archive_db()).unwrap(),
-            b"oldest archive"
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn shared_config_and_state_directory_moves_once() {
-        let root = root("shared");
-        let old = AppDirs {
-            config: root.join("old/data"),
-            state: root.join("old/data"),
-            cache: root.join("old/cache"),
-            runtime: root.join("old/run"),
-        };
-        let new = AppDirs {
-            config: root.join("new/data"),
-            state: root.join("new/data"),
-            cache: root.join("new/cache"),
-            runtime: root.join("new/run"),
-        };
-        old.ensure().unwrap();
-        std::fs::write(old.session_db(), b"session").unwrap();
-        new.adopt(&old).unwrap();
-        assert_eq!(std::fs::read(new.session_db()).unwrap(), b"session");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn failed_migration_leaves_source_available_for_retry() {
-        let root = root("failure");
-        let old = AppDirs::under(&root.join("old"));
-        let new = AppDirs::under(&root.join("blocked/new"));
-        old.ensure().unwrap();
-        std::fs::write(old.session_db(), b"session").unwrap();
-        std::fs::write(root.join("blocked"), b"not a directory").unwrap();
-        assert!(new.adopt(&old).is_err());
-        assert_eq!(std::fs::read(old.session_db()).unwrap(), b"session");
-        std::fs::remove_file(root.join("blocked")).unwrap();
-        new.adopt(&old).unwrap();
-        assert_eq!(std::fs::read(new.session_db()).unwrap(), b"session");
         std::fs::remove_dir_all(root).unwrap();
     }
 

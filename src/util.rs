@@ -682,9 +682,9 @@ pub fn hue(seed: &str) -> f32 {
 }
 
 /// Embedded SVG app logo used across platform surfaces.
-const MARK: &[u8] = include_bytes!("../packaging/icons/zapfast.svg");
+const MARK: &[u8] = include_bytes!("../packaging/icons/zeus.svg");
 /// The same mark without its rim and shading, which blur below this size.
-const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zapfast-small.svg");
+const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-small.svg");
 const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.
@@ -719,6 +719,62 @@ fn render_mark(mark: &[u8], size: usize) -> Option<Vec<u8>> {
     )
 }
 
+/// Rounded single-stroke digits on a 6 by 10 grid, for the unread badge:
+/// resvg renders no text without fonts, and these stay legible at 32 px.
+const DIGITS: [&str; 10] = [
+    "M3 0.6C5 0.6 5.5 2.9 5.5 5S5 9.4 3 9.4 0.5 7.1 0.5 5 1 0.6 3 0.6Z",
+    "M1.4 2.4L3.6 0.6V9.4",
+    "M0.8 2.5C1.2 1.2 2 0.6 3.1 0.6 4.5 0.6 5.3 1.5 5.3 2.8 5.3 4.4 3.9 5.5 0.6 9.4H5.6",
+    "M0.8 1.6C1.4 0.9 2.2 0.6 3 0.6 4.4 0.6 5.2 1.5 5.2 2.6 5.2 3.9 4.2 4.7 2.6 4.7 4.5 4.7 5.5 5.7 5.5 7 5.5 8.5 4.4 9.4 2.9 9.4 1.9 9.4 1 9 0.5 8.2",
+    "M4.3 9.4V0.6L0.5 6.8H5.7",
+    "M5.2 0.6H1.3L0.9 4.6C1.6 4 2.3 3.8 3 3.8 4.6 3.8 5.5 5 5.5 6.6 5.5 8.3 4.4 9.4 2.9 9.4 1.9 9.4 1.1 9 0.5 8.3",
+    "M4.8 0.9C4.3 0.7 3.8 0.6 3.3 0.6 1.5 0.6 0.5 2.4 0.5 5.6 0.5 8.2 1.5 9.4 3 9.4 4.5 9.4 5.5 8.3 5.5 6.8 5.5 5.2 4.5 4.2 3.1 4.2 2 4.2 1 4.8 0.6 5.8",
+    "M0.5 0.6H5.5L2.2 9.4",
+    "M3 4.7C1.6 4.7 0.8 3.9 0.8 2.6S1.7 0.6 3 0.6 5.2 1.3 5.2 2.6 4.4 4.7 3 4.7C1.4 4.7 0.5 5.6 0.5 7.1S1.5 9.4 3 9.4 5.5 8.6 5.5 7.1 4.6 4.7 3 4.7Z",
+    "M5.4 4.2C5 5.2 4 5.8 2.9 5.8 1.5 5.8 0.5 4.8 0.5 3.2S1.5 0.6 3 0.6 5.5 1.8 5.5 4.4C5.5 7.6 4.5 9.4 2.7 9.4 2.2 9.4 1.7 9.3 1.2 9.1",
+];
+const PLUS: &str = "M3 2.6V7.4M0.6 5H5.4";
+
+/// The logo with a red unread badge in its top-right corner, as straight
+/// RGBA, or the plain logo at zero. Counts past 99 read "99+".
+pub fn badged_icon_rgba(size: usize, count: u32) -> Vec<u8> {
+    if count == 0 {
+        return app_icon_rgba(size);
+    }
+    let label = if count > 99 {
+        "99+".to_owned()
+    } else {
+        count.to_string()
+    };
+    // In the logo's 128-unit box: glyphs 6 units wide, a unit apart, drawn
+    // 3.4 times over; the pill fits them and is never narrower than tall.
+    let scale = 3.4;
+    let glyphs = label.chars().count() as f32;
+    let text = (glyphs * 7.0 - 1.0) * scale;
+    let height = 64.0;
+    let width = (text + 26.0).max(height);
+    // Inset so its white ring stays inside the icon.
+    let left = 125.0 - width;
+    let mut paths = String::new();
+    for (index, character) in label.chars().enumerate() {
+        let d = character
+            .to_digit(10)
+            .map_or(PLUS, |digit| DIGITS[digit as usize]);
+        paths.push_str(&format!(
+            r#"<path d="{d}" transform="translate({} 0)"/>"#,
+            index as f32 * 7.0
+        ));
+    }
+    let badge = format!(
+        r##"<rect x="{left}" y="3" width="{width}" height="{height}" rx="{r}" fill="#ff3b30" stroke="#ffffff" stroke-width="5"/><g transform="translate({tx} {ty}) scale({scale})" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{paths}</g>"##,
+        r = height / 2.0,
+        tx = left + (width - text) / 2.0,
+        ty = 3.0 + (height - 10.0 * scale) / 2.0,
+    );
+    let svg = String::from_utf8_lossy(MARK).replace("</svg>", &format!("{badge}</svg>"));
+    render_mark(svg.as_bytes(), size).unwrap_or_else(|| app_icon_rgba(size))
+}
+
 fn plain_disc(size: usize) -> Vec<u8> {
     let mut rgba = vec![0u8; size * size * 4];
     let center = size as f32 / 2.0;
@@ -738,17 +794,17 @@ fn plain_disc(size: usize) -> Vec<u8> {
     rgba
 }
 
-/// Converts the logo to a monochrome macOS menu-bar template: the disc,
-/// with the bubble cut out of it.
+/// Converts the logo to a monochrome macOS menu-bar template: the square,
+/// with the Z cut out of it.
 pub fn tray_template_rgba(size: usize) -> Vec<u8> {
     // The flat mark at every size: a template has no room for shading.
     let mut rgba = render_mark(SMALL_MARK, size).unwrap_or_else(|| plain_disc(size));
-    // The disc's green against the ink's says how much of a pixel is disc.
-    const INK: f32 = 14.0;
-    const DISC: f32 = 168.0;
+    // The square's red against the white Z's says how much of a pixel is Z.
+    const SQUARE: f32 = 91.0;
+    const BOLT: f32 = 255.0;
     for pixel in rgba.as_chunks_mut::<4>().0 {
-        let disc = ((f32::from(pixel[1]) - INK) / (DISC - INK)).clamp(0.0, 1.0);
-        pixel[3] = (f32::from(pixel[3]) * disc).round() as u8;
+        let bolt = ((f32::from(pixel[0]) - SQUARE) / (BOLT - SQUARE)).clamp(0.0, 1.0);
+        pixel[3] = (f32::from(pixel[3]) * (1.0 - bolt)).round() as u8;
         pixel[0] = 0;
         pixel[1] = 0;
         pixel[2] = 0;
@@ -1141,15 +1197,14 @@ mod tests {
     /// The menu-bar template is the disc with the bubble cut out: solid in
     /// the bubble's middle, clear along its outline and outside the disc.
     #[test]
-    fn the_tray_template_cuts_the_bubble_out_of_the_disc() {
+    fn the_tray_template_cuts_the_z_out_of_the_square() {
         let size = 64;
         let template = tray_template_rgba(size);
         let alpha = |x: usize, y: usize| template[(y * size + x) * 4 + 3];
-        assert_eq!(alpha(0, 0), 0);
-        assert_eq!(alpha(32, 32), 255, "inside the bubble is disc");
-        assert_eq!(alpha(32, 4), 255, "so is the rim above it");
-        let outline = (0..32).map(|y| alpha(32, y)).min().unwrap();
-        assert!(outline < 40, "the outline is cut out: {outline}");
+        assert_eq!(alpha(0, 0), 0, "the rounded corner is clear");
+        assert_eq!(alpha(6, 32), 255, "beside the Z is square");
+        assert!(alpha(32, 14) < 40, "the Z's top bar is cut out");
+        assert!(alpha(32, 32) < 40, "and so is its bolt");
         assert!(
             template
                 .as_chunks::<4>()
@@ -1157,6 +1212,32 @@ mod tests {
                 .iter()
                 .all(|p| p[..3] == [0, 0, 0])
         );
+    }
+
+    #[test]
+    fn the_taskbar_icon_wears_a_red_badge_only_when_something_is_unread() {
+        let size = 64;
+        assert_eq!(super::badged_icon_rgba(size, 0), super::app_icon_rgba(size));
+        for count in [5, 42, 120] {
+            let rgba = super::badged_icon_rgba(size, count);
+            // The badge's middle, in the top-right corner, is the badge red.
+            let at = (8 * size + size - 10) * 4;
+            assert!(
+                rgba[at] > 200 && rgba[at + 1] < 120 && rgba[at + 2] < 120,
+                "{count}: {:?}",
+                &rgba[at..at + 4]
+            );
+            if std::env::var_os("ZEUS_BADGE_DUMP").is_some() {
+                let file = std::fs::File::create(format!("badge-{count}.png")).unwrap();
+                let mut encoder = png::Encoder::new(file, size as u32, size as u32);
+                encoder.set_color(png::ColorType::Rgba);
+                encoder
+                    .write_header()
+                    .unwrap()
+                    .write_image_data(&rgba)
+                    .unwrap();
+            }
+        }
     }
 
     /// Both marks render, the large one with its filters.

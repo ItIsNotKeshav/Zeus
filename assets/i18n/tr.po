@@ -1,8 +1,8 @@
-# Turkish translation of ZapFast.
-# Distributed under the same MIT license as ZapFast.
+# Turkish translation of Zeus.
+# Distributed under the same MIT license as Zeus.
 msgid ""
 msgstr ""
-"Project-Id-Version: ZapFast\n"
+"Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
 "POT-Creation-Date: 2026-10-15 12:26+0200\n"
@@ -312,8 +312,8 @@ msgid "You left this channel"
 msgstr "Bu kanaldan ayrıldınız"
 
 #: src/ui/conversation.rs:1358
-msgid "Channels are read-only in ZapFast"
-msgstr "ZapFast'te kanallar salt okunurdur"
+msgid "Channels are read-only in Zeus"
+msgstr "Zeus'te kanallar salt okunurdur"
 
 #: src/ui/conversation.rs:1387
 msgid "You left this group"
@@ -725,15 +725,15 @@ msgstr "Baştan başlansın mı?"
 
 #: src/ui/dialogs.rs:1259
 msgid ""
-"ZapFast keeps your unreadable archive as a separate file, creates a new one, "
+"Zeus keeps your unreadable archive as a separate file, creates a new one, "
 "and asks you to link again. Linking again brings back recent history from "
-"your phone. Afterwards, remove the old ZapFast entry under Linked devices on "
+"your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"ZapFast okunamayan arşivinizi ayrı bir dosya olarak saklar, yenisini "
+"Zeus okunamayan arşivinizi ayrı bir dosya olarak saklar, yenisini "
 "oluşturur ve sizden tekrar bağlamanızı ister. Tekrar bağlandığınızda son "
 "geçmiş telefonunuzdan geri gelir. Ardından telefonunuzda Bağlı cihazlar "
-"altındaki eski ZapFast kaydını kaldırın."
+"altındaki eski Zeus kaydını kaldırın."
 
 #: src/ui/dialogs.rs:1263
 msgid ""
@@ -975,9 +975,9 @@ msgstr "Özel başlık çubuğu"
 
 #: src/ui/settings.rs:424
 msgid ""
-"Draw ZapFast's own title bar and window buttons instead of the desktop's."
+"Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
-"Masaüstünün yerine ZapFast'in kendi başlık çubuğunu ve pencere düğmelerini "
+"Masaüstünün yerine Zeus'in kendi başlık çubuğunu ve pencere düğmelerini "
 "çiz."
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:272
@@ -1108,9 +1108,9 @@ msgstr "Yazıyor bilgisini göster"
 
 #: src/ui/settings.rs:600
 msgid ""
-"Could not load your account privacy. Trying again when ZapFast reconnects."
+"Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
-"Hesap gizliliğiniz yüklenemedi. ZapFast yeniden bağlandığında tekrar "
+"Hesap gizliliğiniz yüklenemedi. Zeus yeniden bağlandığında tekrar "
 "denenecek."
 
 #: src/ui/settings.rs:605
@@ -1150,9 +1150,9 @@ msgid "Check for updates"
 msgstr "Güncellemeleri denetle"
 
 #: src/ui/settings.rs:688
-msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgid "Asks GitHub once a day, sending only the Zeus version."
 msgstr ""
-"Günde bir kez yalnızca ZapFast sürümünü göndererek GitHub'ı kontrol eder."
+"Günde bir kez yalnızca Zeus sürümünü göndererek GitHub'ı kontrol eder."
 
 #: src/ui/settings.rs:693
 msgid "Download updates automatically"
@@ -1161,10 +1161,10 @@ msgstr "Güncellemeleri otomatik indir"
 #: src/ui/settings.rs:696
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
-"ZapFast themselves."
+"Zeus themselves."
 msgstr ""
 "Yeniden başlatma zamanını yine siz seçersiniz. Paket yöneticileri ve "
-"Flatpak, ZapFast'i kendileri günceller."
+"Flatpak, Zeus'i kendileri günceller."
 
 #: src/ui/settings.rs:709
 #, rust-format
@@ -1329,10 +1329,10 @@ msgstr "Kilitlenme süresi"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using ZapFast, also counted while it is in the tray. "
+"Time without using Zeus, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
-"ZapFast kullanılmadan geçen süre (sistem tepsisindeyken de sayılır). "
+"Zeus kullanılmadan geçen süre (sistem tepsisindeyken de sayılır). "
 "Ctrl+Shift+L anında kilitler."
 
 #: src/ui/settings.rs:979
@@ -1878,8 +1878,8 @@ msgid "Connecting"
 msgstr "Bağlanıyor"
 
 #: src/app.rs:4722
-msgid "Not sent: ZapFast is not connected to WhatsApp."
-msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
+msgid "Not sent: Zeus is not connected to WhatsApp."
+msgstr "Gönderilmedi: Zeus WhatsApp'a bağlı değil."
 
 #: src/app.rs:4726
 msgid ""
@@ -1904,8 +1904,8 @@ msgstr "Çıkartma paketi gönderiliyor…"
 
 #: src/app.rs:7759 src/ui/labels.rs:257
 #, rust-format
-msgid "You have {limit} labels, the most ZapFast keeps."
-msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
+msgid "You have {limit} labels, the most Zeus keeps."
+msgstr "Zeus'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2344,8 +2344,8 @@ msgid "Play motion photo"
 msgstr "Hareketli fotoğrafı oynat"
 
 #: src/ui/image_preview.rs:701
-msgid "This image could not be displayed in ZapFast."
-msgstr "Bu görüntü ZapFast'te gösterilemedi."
+msgid "This image could not be displayed in Zeus."
+msgstr "Bu görüntü Zeus'te gösterilemedi."
 
 #: src/ui/image_preview.rs:704
 msgid "Open externally"
@@ -2364,8 +2364,8 @@ msgid "Photo"
 msgstr "Fotoğraf"
 
 #: src/ui/lock.rs:17
-msgid "ZapFast is locked"
-msgstr "ZapFast kilitli"
+msgid "Zeus is locked"
+msgstr "Zeus kilitli"
 
 #: src/ui/lock.rs:23
 msgid "Unlinking this computer…"

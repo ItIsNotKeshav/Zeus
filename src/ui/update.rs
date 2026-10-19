@@ -21,7 +21,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .corner_radius(CornerRadius::same(theme::RADIUS + 4))
         .inner_margin(Margin::same(22))
         .shadow(palette.modal_shadow());
-    egui::Window::new("Update ZapFast")
+    egui::Window::new("Update Zeus")
         .id(egui::Id::new("zapfast-update"))
         .title_bar(false)
         .resizable(false)
@@ -32,7 +32,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.set_width(420.0_f32.min((ctx.content_rect().width() - 64.0).max(240.0)));
             ui.horizontal(|ui| {
-                theme::text(ui, "Update ZapFast", theme::bold(20.0), palette.text);
+                theme::text(ui, "Update Zeus", theme::bold(20.0), palette.text);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     close |= theme::icon_button(
                         ui,
@@ -96,7 +96,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     ui.add(
                         egui::Label::new(
                             RichText::new(
-                                "Finish any unsent messages or recordings before restarting. ZapFast will briefly disconnect, then reconnect automatically.",
+                                "Finish any unsent messages or recordings before restarting. Zeus will briefly disconnect, then reconnect automatically.",
                             )
                             .font(theme::regular(14.0))
                             .color(palette.secondary),

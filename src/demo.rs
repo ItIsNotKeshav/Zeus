@@ -5627,7 +5627,7 @@ mod tests {
             .filter_map(|(_, node)| node.label().or_else(|| node.value()))
             .collect();
         assert!(
-            labels.contains(&"Locked chats are read-only in ZapFast"),
+            labels.contains(&"Locked chats are read-only in Zeus"),
             "{labels:?}"
         );
         assert!(!labels.contains(&"admins"));
@@ -15892,7 +15892,7 @@ mod tests {
 
     impl egui::load::ImageLoader for CountingImages {
         fn id(&self) -> &str {
-            "zapfast::demo::tests::CountingImages"
+            "zeus::demo::tests::CountingImages"
         }
 
         fn load(

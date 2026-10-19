@@ -154,7 +154,7 @@ mod tests {
 
     impl egui::load::ImageLoader for ReadyLoader {
         fn id(&self) -> &str {
-            "zapfast::image_cache::tests::ReadyLoader"
+            "zeus::image_cache::tests::ReadyLoader"
         }
 
         fn load(

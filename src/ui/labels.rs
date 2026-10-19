@@ -254,7 +254,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if full {
         theme::paragraph(
             ui,
-            gettext(locale, "You have {limit} labels, the most ZapFast keeps.")
+            gettext(locale, "You have {limit} labels, the most Zeus keeps.")
                 .replace("{limit}", &crate::archive::LABEL_LIMIT.to_string()),
             theme::regular(12.5),
             palette.warning,

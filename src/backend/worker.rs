@@ -574,9 +574,9 @@ impl Downloadable for PhoneSticker {
 fn device_name() -> String {
     let host = crate::util::hostname();
     if host.is_empty() {
-        "ZapFast".to_owned()
+        "Zeus".to_owned()
     } else {
-        format!("ZapFast ({host})")
+        format!("Zeus ({host})")
     }
 }
 
@@ -3317,7 +3317,7 @@ impl Worker {
             }
             E::ClientOutdated(_) => {
                 self.set_status(LinkStatus::Failed(
-                    "WhatsApp rejected this version of ZapFast. Update the app".to_owned(),
+                    "WhatsApp rejected this version of Zeus. Update the app".to_owned(),
                 ));
             }
             E::Messages(batch) => {
@@ -3392,7 +3392,7 @@ impl Worker {
                         .set_ephemeral(&chat, *expiration, timestamp)
                         .unwrap_or(false);
                     log::debug!(
-                        target: "zapfast::disappearing",
+                        target: "zeus::disappearing",
                         "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
                     );
                     if accepted {
@@ -4057,7 +4057,7 @@ impl Worker {
                         .set_ephemeral(&chat, expiration, timestamp)
                         .unwrap_or(false);
                     log::debug!(
-                        target: "zapfast::disappearing",
+                        target: "zeus::disappearing",
                         "protocol timer update: duration={expiration}s timestamp={timestamp} fallback_timestamp={used_fallback} accepted={accepted}"
                     );
                     if accepted {
@@ -4065,7 +4065,7 @@ impl Worker {
                     }
                 } else {
                     log::debug!(
-                        target: "zapfast::disappearing",
+                        target: "zeus::disappearing",
                         "protocol timer update missing expiration"
                     );
                 }
@@ -5887,7 +5887,7 @@ impl Worker {
         if let Some(chat) = destination
             && !self.destination_writable(chat)
         {
-            let error = "This conversation is read-only in ZapFast".to_owned();
+            let error = "This conversation is read-only in Zeus".to_owned();
             if matches!(&command, Command::CreatePoll { .. }) {
                 self.emit(Event::PollCreated {
                     chat: chat.clone(),
@@ -6856,7 +6856,7 @@ impl Worker {
                 let Some(client) = self.client.clone() else {
                     self.emit(Event::InvitePreview {
                         code,
-                        result: Err("ZapFast is not connected to WhatsApp".to_owned()),
+                        result: Err("Zeus is not connected to WhatsApp".to_owned()),
                     });
                     return;
                 };
@@ -6885,7 +6885,7 @@ impl Worker {
                 let Some(client) = self.client.clone() else {
                     self.emit(Event::InviteJoined {
                         code,
-                        result: Err("ZapFast is not connected to WhatsApp".to_owned()),
+                        result: Err("Zeus is not connected to WhatsApp".to_owned()),
                     });
                     return;
                 };
@@ -7169,7 +7169,7 @@ impl Worker {
                         // The phone has cleared it; say so rather than leave
                         // the messages here looking as if nothing happened.
                         self.emit(Event::Error(
-                            "The phone cleared this chat, but ZapFast could not clear it here"
+                            "The phone cleared this chat, but Zeus could not clear it here"
                                 .to_owned(),
                         ));
                     }
@@ -8164,7 +8164,7 @@ impl Worker {
             self.emit_chat(&job.0);
             if !reported_read_only {
                 self.emit(Event::Error(
-                    "This conversation is read-only in ZapFast".to_owned(),
+                    "This conversation is read-only in Zeus".to_owned(),
                 ));
                 reported_read_only = true;
             }
@@ -9574,7 +9574,7 @@ impl Worker {
                 }
             }
             Err(_) => self.emit(Event::Error(
-                "WhatsApp accepted the deletion, but ZapFast could not remove its copy. Local cleanup is saved for restart or reconnect".to_owned(),
+                "WhatsApp accepted the deletion, but Zeus could not remove its copy. Local cleanup is saved for restart or reconnect".to_owned(),
             )),
         }
     }
@@ -14258,7 +14258,7 @@ mod tests {
         client
             .persistence_manager()
             .process_command(whatsapp_rust::store::commands::DeviceCommand::SetPushName(
-                "ZapFast".to_owned(),
+                "Zeus".to_owned(),
             ))
             .await;
         worker.client = Some(client);
@@ -16310,7 +16310,7 @@ mod receipt_tests {
         assert_eq!(id, "allowed");
         assert_eq!(job.0, PEER);
         let errors = std::iter::from_fn(|| events.try_recv().ok())
-            .filter(|event| matches!(event, Event::Error(reason) if reason == "This conversation is read-only in ZapFast"))
+            .filter(|event| matches!(event, Event::Error(reason) if reason == "This conversation is read-only in Zeus"))
             .count();
         assert_eq!(errors, 1, "skipped jobs report one error per advance");
         assert_eq!(

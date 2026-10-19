@@ -14,7 +14,7 @@ pub const PASSWORD_ID: &str = "app-lock-password";
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     keys(app, ui.ctx());
-    let tagline = gettext(app.locale, "ZapFast is locked");
+    let tagline = gettext(app.locale, "Zeus is locked");
     super::login::card(app, ui, "lock", &tagline, |app, ui| {
         match app.app_lock.forgetting {
             Forgetting::No => password(app, ui),

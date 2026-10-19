@@ -249,7 +249,7 @@ impl Worker {
             Some((row, reply))
         })();
         let Some((source, mut message)) = prepared else {
-            self.emit(Event::Error("This option is unavailable in ZapFast. Open the message in WhatsApp Web or on your phone.".into()));
+            self.emit(Event::Error("This option is unavailable in Zeus. Open the message in WhatsApp Web or on your phone.".into()));
             return;
         };
         let expiration = self.apply_ephemeral(&chat, &mut message);

@@ -1,8 +1,8 @@
-# Traditional Chinese translation of ZapFast.
-# Distributed under the same MIT license as ZapFast.
+# Traditional Chinese translation of Zeus.
+# Distributed under the same MIT license as Zeus.
 msgid ""
 msgstr ""
-"Project-Id-Version: ZapFast\n"
+"Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
 "POT-Creation-Date: 2026-10-15 12:26+0200\n"
@@ -312,8 +312,8 @@ msgid "You left this channel"
 msgstr "您已離開這個頻道"
 
 #: src/ui/conversation.rs:1358
-msgid "Channels are read-only in ZapFast"
-msgstr "在 ZapFast 中，頻道僅供閱讀"
+msgid "Channels are read-only in Zeus"
+msgstr "在 Zeus 中，頻道僅供閱讀"
 
 #: src/ui/conversation.rs:1387
 msgid "You left this group"
@@ -702,14 +702,14 @@ msgstr "要重新開始嗎？"
 
 #: src/ui/dialogs.rs:1259
 msgid ""
-"ZapFast keeps your unreadable archive as a separate file, creates a new one, "
+"Zeus keeps your unreadable archive as a separate file, creates a new one, "
 "and asks you to link again. Linking again brings back recent history from "
-"your phone. Afterwards, remove the old ZapFast entry under Linked devices on "
+"your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"ZapFast 會將無法讀取的存檔另存為獨立檔案、建立新的存檔，並請您重新連結。重新"
+"Zeus 會將無法讀取的存檔另存為獨立檔案、建立新的存檔，並請您重新連結。重新"
 "連結後，最近的記錄會從手機取回。之後，請在手機的「已連結的裝置」中移除舊的 "
-"ZapFast 項目。"
+"Zeus 項目。"
 
 #: src/ui/dialogs.rs:1263
 msgid ""
@@ -935,8 +935,8 @@ msgstr "自訂標題列"
 
 #: src/ui/settings.rs:424
 msgid ""
-"Draw ZapFast's own title bar and window buttons instead of the desktop's."
-msgstr "使用 ZapFast 自己的標題列和視窗按鈕，而不是桌面環境提供的。"
+"Draw Zeus's own title bar and window buttons instead of the desktop's."
+msgstr "使用 Zeus 自己的標題列和視窗按鈕，而不是桌面環境提供的。"
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:272
 msgid "Chats"
@@ -1060,8 +1060,8 @@ msgstr "顯示正在輸入"
 
 #: src/ui/settings.rs:600
 msgid ""
-"Could not load your account privacy. Trying again when ZapFast reconnects."
-msgstr "無法載入您的帳號隱私設定，將在 ZapFast 重新連線後再試一次。"
+"Could not load your account privacy. Trying again when Zeus reconnects."
+msgstr "無法載入您的帳號隱私設定，將在 Zeus 重新連線後再試一次。"
 
 #: src/ui/settings.rs:605
 msgid "Connect to WhatsApp to change your account privacy."
@@ -1100,8 +1100,8 @@ msgid "Check for updates"
 msgstr "檢查更新"
 
 #: src/ui/settings.rs:688
-msgid "Asks GitHub once a day, sending only the ZapFast version."
-msgstr "每天向 GitHub 詢問一次，只傳送 ZapFast 的版本資訊。"
+msgid "Asks GitHub once a day, sending only the Zeus version."
+msgstr "每天向 GitHub 詢問一次，只傳送 Zeus 的版本資訊。"
 
 #: src/ui/settings.rs:693
 msgid "Download updates automatically"
@@ -1110,9 +1110,9 @@ msgstr "自動下載更新"
 #: src/ui/settings.rs:696
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
-"ZapFast themselves."
+"Zeus themselves."
 msgstr ""
-"您仍可自行選擇重新啟動的時間。套件管理員與 Flatpak 會自行更新 ZapFast。"
+"您仍可自行選擇重新啟動的時間。套件管理員與 Flatpak 會自行更新 Zeus。"
 
 #: src/ui/settings.rs:709
 #, rust-format
@@ -1271,10 +1271,10 @@ msgstr "自動鎖定"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using ZapFast, also counted while it is in the tray. "
+"Time without using Zeus, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
-"未使用 ZapFast 經過的時間，在系統匣中也會計算。Ctrl+Shift+L 可立即鎖定。"
+"未使用 Zeus 經過的時間，在系統匣中也會計算。Ctrl+Shift+L 可立即鎖定。"
 
 #: src/ui/settings.rs:979
 msgid "Set an app lock password"
@@ -1808,8 +1808,8 @@ msgid "Connecting"
 msgstr "正在連線"
 
 #: src/app.rs:4722
-msgid "Not sent: ZapFast is not connected to WhatsApp."
-msgstr "未送出：ZapFast 尚未連線至 WhatsApp。"
+msgid "Not sent: Zeus is not connected to WhatsApp."
+msgstr "未送出：Zeus 尚未連線至 WhatsApp。"
 
 #: src/app.rs:4726
 msgid ""
@@ -1832,8 +1832,8 @@ msgstr "正在傳送貼圖集…"
 
 #: src/app.rs:7759 src/ui/labels.rs:257
 #, rust-format
-msgid "You have {limit} labels, the most ZapFast keeps."
-msgstr "您已有 {limit} 個標籤，已達 ZapFast 的上限。"
+msgid "You have {limit} labels, the most Zeus keeps."
+msgstr "您已有 {limit} 個標籤，已達 Zeus 的上限。"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2257,8 +2257,8 @@ msgid "Play motion photo"
 msgstr "播放動態照片"
 
 #: src/ui/image_preview.rs:701
-msgid "This image could not be displayed in ZapFast."
-msgstr "ZapFast 無法顯示這張圖片。"
+msgid "This image could not be displayed in Zeus."
+msgstr "Zeus 無法顯示這張圖片。"
 
 #: src/ui/image_preview.rs:704
 msgid "Open externally"
@@ -2277,8 +2277,8 @@ msgid "Photo"
 msgstr "相片"
 
 #: src/ui/lock.rs:17
-msgid "ZapFast is locked"
-msgstr "ZapFast 已鎖定"
+msgid "Zeus is locked"
+msgstr "Zeus 已鎖定"
 
 #: src/ui/lock.rs:23
 msgid "Unlinking this computer…"

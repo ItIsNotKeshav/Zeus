@@ -45,19 +45,19 @@ fn item(id: &str, text: &str, shortcut: Option<&str>) -> MenuItem {
 
 fn build_menu() -> tray_icon::menu::Result<Menu> {
     let menu = Menu::new();
-    let app = Submenu::new("ZapFast", true);
+    let app = Submenu::new("Zeus", true);
     app.append_items(&[
-        &item("about", "About ZapFast", None),
+        &item("about", "About Zeus", None),
         &Native::separator(),
         &item("settings", "Settings…", Some("Super+Comma")),
         &Native::separator(),
         &Native::services(None),
         &Native::separator(),
-        &Native::hide(Some("Hide ZapFast")),
+        &Native::hide(Some("Hide Zeus")),
         &Native::hide_others(None),
         &Native::show_all(None),
         &Native::separator(),
-        &item("quit", "Quit ZapFast", Some("Super+KeyQ")),
+        &item("quit", "Quit Zeus", Some("Super+KeyQ")),
     ])?;
     let file = Submenu::new("File", true);
     file.append_items(&[
@@ -94,12 +94,12 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
         &Native::minimize(None),
         &Native::maximize(Some("Zoom")),
         &Native::separator(),
-        &item("show-window", "Show ZapFast", None),
+        &item("show-window", "Show Zeus", None),
     ])?;
     let help = Submenu::new("Help", true);
     help.append_items(&[
         &item("shortcuts", "Keyboard Shortcuts", Some("Super+Slash")),
-        &item("help", "ZapFast Help", None),
+        &item("help", "Zeus Help", None),
     ])?;
     menu.append_items(&[&app, &file, &edit, &view, &window, &help])?;
     window.set_as_windows_menu_for_nsapp();

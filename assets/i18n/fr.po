@@ -1,14 +1,14 @@
-# French translation of the ZapFast navigation pilot.
-# Distributed under the same MIT license as ZapFast.
+# French translation of the Zeus navigation pilot.
+# Distributed under the same MIT license as Zeus.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: ZapFast\n"
+"Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
 "POT-Creation-Date: 2026-10-15 12:26+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
-"Last-Translator: ZapFast contributors\n"
+"Last-Translator: Zeus contributors\n"
 "Language-Team: French\n"
 "Language: fr\n"
 "MIME-Version: 1.0\n"
@@ -314,8 +314,8 @@ msgid "You left this channel"
 msgstr "Vous avez quitté cette chaîne"
 
 #: src/ui/conversation.rs:1358
-msgid "Channels are read-only in ZapFast"
-msgstr "Les chaînes sont en lecture seule dans ZapFast"
+msgid "Channels are read-only in Zeus"
+msgstr "Les chaînes sont en lecture seule dans Zeus"
 
 #: src/ui/conversation.rs:1387
 msgid "You left this group"
@@ -727,15 +727,15 @@ msgstr "Tout recommencer ?"
 
 #: src/ui/dialogs.rs:1259
 msgid ""
-"ZapFast keeps your unreadable archive as a separate file, creates a new one, "
+"Zeus keeps your unreadable archive as a separate file, creates a new one, "
 "and asks you to link again. Linking again brings back recent history from "
-"your phone. Afterwards, remove the old ZapFast entry under Linked devices on "
+"your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"ZapFast conserve votre archive illisible dans un fichier à part, en crée une "
+"Zeus conserve votre archive illisible dans un fichier à part, en crée une "
 "nouvelle et vous demande de vous reconnecter. La reconnexion récupère "
 "l’historique récent depuis votre téléphone. Ensuite, supprimez l’ancienne "
-"entrée ZapFast dans Appareils connectés sur votre téléphone."
+"entrée Zeus dans Appareils connectés sur votre téléphone."
 
 #: src/ui/dialogs.rs:1263
 msgid ""
@@ -982,9 +982,9 @@ msgstr "Barre de titre personnalisée"
 
 #: src/ui/settings.rs:424
 msgid ""
-"Draw ZapFast's own title bar and window buttons instead of the desktop's."
+"Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
-"Dessine la barre de titre et les boutons de fenêtre de ZapFast au lieu de "
+"Dessine la barre de titre et les boutons de fenêtre de Zeus au lieu de "
 "ceux du bureau."
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:272
@@ -1120,10 +1120,10 @@ msgstr "Montrer quand vous écrivez"
 
 #: src/ui/settings.rs:600
 msgid ""
-"Could not load your account privacy. Trying again when ZapFast reconnects."
+"Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
 "Impossible de charger la confidentialité de votre compte. Nouvel essai à la "
-"reconnexion de ZapFast."
+"reconnexion de Zeus."
 
 #: src/ui/settings.rs:605
 msgid "Connect to WhatsApp to change your account privacy."
@@ -1163,9 +1163,9 @@ msgid "Check for updates"
 msgstr "Rechercher les mises à jour"
 
 #: src/ui/settings.rs:688
-msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgid "Asks GitHub once a day, sending only the Zeus version."
 msgstr ""
-"Interroge GitHub une fois par jour, en n’envoyant que la version de ZapFast."
+"Interroge GitHub une fois par jour, en n’envoyant que la version de Zeus."
 
 #: src/ui/settings.rs:693
 msgid "Download updates automatically"
@@ -1174,10 +1174,10 @@ msgstr "Télécharger les mises à jour automatiquement"
 #: src/ui/settings.rs:696
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
-"ZapFast themselves."
+"Zeus themselves."
 msgstr ""
 "Vous choisissez quand redémarrer. Les gestionnaires de paquets et Flatpak "
-"mettent ZapFast à jour eux-mêmes."
+"mettent Zeus à jour eux-mêmes."
 
 #: src/ui/settings.rs:709
 #, rust-format
@@ -1341,10 +1341,10 @@ msgstr "Verrouiller après"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using ZapFast, also counted while it is in the tray. "
+"Time without using Zeus, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
-"Durée sans utiliser ZapFast, comptée aussi lorsqu’il est dans la zone de "
+"Durée sans utiliser Zeus, comptée aussi lorsqu’il est dans la zone de "
 "notification. Ctrl+Maj+L le verrouille immédiatement."
 
 #: src/ui/settings.rs:979
@@ -1892,8 +1892,8 @@ msgid "Connecting"
 msgstr "Connexion en cours"
 
 #: src/app.rs:4722
-msgid "Not sent: ZapFast is not connected to WhatsApp."
-msgstr "Non envoyé : ZapFast n’est pas connecté à WhatsApp."
+msgid "Not sent: Zeus is not connected to WhatsApp."
+msgstr "Non envoyé : Zeus n’est pas connecté à WhatsApp."
 
 #: src/app.rs:4726
 msgid ""
@@ -1918,8 +1918,8 @@ msgstr "Envoi du pack de stickers…"
 
 #: src/app.rs:7759 src/ui/labels.rs:257
 #, rust-format
-msgid "You have {limit} labels, the most ZapFast keeps."
-msgstr "Vous avez {limit} étiquettes, le maximum que ZapFast conserve."
+msgid "You have {limit} labels, the most Zeus keeps."
+msgstr "Vous avez {limit} étiquettes, le maximum que Zeus conserve."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2358,8 +2358,8 @@ msgid "Play motion photo"
 msgstr "Lire la photo animée"
 
 #: src/ui/image_preview.rs:701
-msgid "This image could not be displayed in ZapFast."
-msgstr "ZapFast n'a pas pu afficher cette image."
+msgid "This image could not be displayed in Zeus."
+msgstr "Zeus n'a pas pu afficher cette image."
 
 #: src/ui/image_preview.rs:704
 msgid "Open externally"
@@ -2378,8 +2378,8 @@ msgid "Photo"
 msgstr "Photo"
 
 #: src/ui/lock.rs:17
-msgid "ZapFast is locked"
-msgstr "ZapFast est verrouillé"
+msgid "Zeus is locked"
+msgstr "Zeus est verrouillé"
 
 #: src/ui/lock.rs:23
 msgid "Unlinking this computer…"

@@ -1,14 +1,14 @@
-# Indonesia translation of the ZapFast navigation pilot.
-# Distributed under the same MIT license as ZapFast.
+# Indonesia translation of the Zeus navigation pilot.
+# Distributed under the same MIT license as Zeus.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: ZapFast\n"
+"Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
 "POT-Creation-Date: 2026-10-15 12:26+0200\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
-"Last-Translator: ZapFast contributors\n"
+"Last-Translator: Zeus contributors\n"
 "Language-Team: Indonesian\n"
 "Language: id\n"
 "MIME-Version: 1.0\n"
@@ -313,8 +313,8 @@ msgid "You left this channel"
 msgstr "Kamu meninggalkan saluran ini"
 
 #: src/ui/conversation.rs:1358
-msgid "Channels are read-only in ZapFast"
-msgstr "Saluran bersifat read-only di ZapFast"
+msgid "Channels are read-only in Zeus"
+msgstr "Saluran bersifat read-only di Zeus"
 
 #: src/ui/conversation.rs:1387
 msgid "You left this group"
@@ -724,15 +724,15 @@ msgstr "Mulai dari awal?"
 
 #: src/ui/dialogs.rs:1259
 msgid ""
-"ZapFast keeps your unreadable archive as a separate file, creates a new one, "
+"Zeus keeps your unreadable archive as a separate file, creates a new one, "
 "and asks you to link again. Linking again brings back recent history from "
-"your phone. Afterwards, remove the old ZapFast entry under Linked devices on "
+"your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"ZapFast menyimpan arsip Anda yang tidak terbaca sebagai file terpisah, "
+"Zeus menyimpan arsip Anda yang tidak terbaca sebagai file terpisah, "
 "membuat arsip baru, dan meminta Anda menautkan lagi. Menautkan lagi akan "
 "mengembalikan riwayat terbaru dari telepon Anda. Setelah itu, hapus entri "
-"ZapFast lama di Perangkat tertaut pada telepon Anda."
+"Zeus lama di Perangkat tertaut pada telepon Anda."
 
 #: src/ui/dialogs.rs:1263
 msgid ""
@@ -976,9 +976,9 @@ msgstr "Bilah judul khusus"
 
 #: src/ui/settings.rs:424
 msgid ""
-"Draw ZapFast's own title bar and window buttons instead of the desktop's."
+"Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
-"Gambar bilah judul dan tombol jendela milik ZapFast sendiri, bukan milik "
+"Gambar bilah judul dan tombol jendela milik Zeus sendiri, bukan milik "
 "desktop."
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:272
@@ -1109,9 +1109,9 @@ msgstr "Tampilkan saat Anda sedang mengetik"
 
 #: src/ui/settings.rs:600
 msgid ""
-"Could not load your account privacy. Trying again when ZapFast reconnects."
+"Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
-"Tidak dapat memuat privasi akun Anda. Mencoba lagi saat ZapFast terhubung "
+"Tidak dapat memuat privasi akun Anda. Mencoba lagi saat Zeus terhubung "
 "kembali."
 
 #: src/ui/settings.rs:605
@@ -1151,8 +1151,8 @@ msgid "Check for updates"
 msgstr "Periksa pembaruan"
 
 #: src/ui/settings.rs:688
-msgid "Asks GitHub once a day, sending only the ZapFast version."
-msgstr "Memeriksa GitHub sekali sehari, hanya mengirimkan versi ZapFast."
+msgid "Asks GitHub once a day, sending only the Zeus version."
+msgstr "Memeriksa GitHub sekali sehari, hanya mengirimkan versi Zeus."
 
 #: src/ui/settings.rs:693
 msgid "Download updates automatically"
@@ -1161,10 +1161,10 @@ msgstr "Unduh pembaruan secara otomatis"
 #: src/ui/settings.rs:696
 msgid ""
 "You still choose when to restart. Package managers and Flatpak update "
-"ZapFast themselves."
+"Zeus themselves."
 msgstr ""
 "Anda tetap memilih kapan harus memulai ulang. Manajer paket dan Flatpak "
-"memperbarui ZapFast sendiri."
+"memperbarui Zeus sendiri."
 
 #: src/ui/settings.rs:709
 #, rust-format
@@ -1327,10 +1327,10 @@ msgstr "Kunci setelah"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using ZapFast, also counted while it is in the tray. "
+"Time without using Zeus, also counted while it is in the tray. "
 "Ctrl+Shift+L locks it at once."
 msgstr ""
-"Waktu tidak menggunakan ZapFast, juga dihitung saat berada di baki sistem. "
+"Waktu tidak menggunakan Zeus, juga dihitung saat berada di baki sistem. "
 "Tekan Ctrl+Shift+L untuk mengunci seketika."
 
 #: src/ui/settings.rs:979
@@ -1876,8 +1876,8 @@ msgid "Connecting"
 msgstr "Menghubungkan"
 
 #: src/app.rs:4722
-msgid "Not sent: ZapFast is not connected to WhatsApp."
-msgstr "Tidak terkirim: ZapFast tidak terhubung ke WhatsApp."
+msgid "Not sent: Zeus is not connected to WhatsApp."
+msgstr "Tidak terkirim: Zeus tidak terhubung ke WhatsApp."
 
 #: src/app.rs:4726
 msgid ""
@@ -1901,8 +1901,8 @@ msgstr "Mengirim paket stiker…"
 
 #: src/app.rs:7759 src/ui/labels.rs:257
 #, rust-format
-msgid "You have {limit} labels, the most ZapFast keeps."
-msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
+msgid "You have {limit} labels, the most Zeus keeps."
+msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan Zeus."
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2339,8 +2339,8 @@ msgid "Play motion photo"
 msgstr "Putar foto bergerak"
 
 #: src/ui/image_preview.rs:701
-msgid "This image could not be displayed in ZapFast."
-msgstr "Gambar ini tidak dapat ditampilkan di ZapFast."
+msgid "This image could not be displayed in Zeus."
+msgstr "Gambar ini tidak dapat ditampilkan di Zeus."
 
 #: src/ui/image_preview.rs:704
 msgid "Open externally"
@@ -2359,8 +2359,8 @@ msgid "Photo"
 msgstr "Foto"
 
 #: src/ui/lock.rs:17
-msgid "ZapFast is locked"
-msgstr "ZapFast terkunci"
+msgid "Zeus is locked"
+msgstr "Zeus terkunci"
 
 #: src/ui/lock.rs:23
 msgid "Unlinking this computer…"

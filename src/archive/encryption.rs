@@ -29,9 +29,9 @@ pub(super) fn key_for(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
     fs::create_dir_all(parent)?;
     let store = platform_store()?;
     let entry = store
-        .build("rocks.zapfast.ZapFast", &identity_for(parent)?, None)
+        .build("rocks.zapfast.Zeus", &identity_for(parent)?, None)
         .map_err(keyring_error)
-        .context("The OS keyring could not open ZapFast's archive key")?;
+        .context("The OS keyring could not open Zeus's archive key")?;
     key_from_entry(path, &entry)
 }
 
@@ -62,9 +62,9 @@ fn copy_archive_key_in(
         return Ok(());
     }
     let old_entry = store
-        .build("rocks.zapfast.ZapFast", &identity_for(old_parent)?, None)
+        .build("rocks.zapfast.Zeus", &identity_for(old_parent)?, None)
         .map_err(keyring_error)
-        .context("The OS keyring could not open ZapFast's archive key")?;
+        .context("The OS keyring could not open Zeus's archive key")?;
     let key = match old_entry.get_secret() {
         Ok(secret) => {
             ensure!(
@@ -83,13 +83,13 @@ fn copy_archive_key_in(
             return Ok(());
         }
         Err(error) => {
-            return Err(keyring_error(error)).context("Unlock your OS keyring and restart ZapFast");
+            return Err(keyring_error(error)).context("Unlock your OS keyring and restart Zeus");
         }
     };
     let new_entry = store
-        .build("rocks.zapfast.ZapFast", &identity_for(new_parent)?, None)
+        .build("rocks.zapfast.Zeus", &identity_for(new_parent)?, None)
         .map_err(keyring_error)
-        .context("The OS keyring could not open ZapFast's archive key")?;
+        .context("The OS keyring could not open Zeus's archive key")?;
     new_entry
         .set_secret(key.as_ref())
         .map_err(keyring_error)
@@ -112,7 +112,7 @@ fn copy_archive_key_in(
 /// such as a removed account's. Never call it while the archive exists.
 pub fn forget_archive_key(identity: &str) -> Result<()> {
     let entry = platform_store()?
-        .build("rocks.zapfast.ZapFast", identity, None)
+        .build("rocks.zapfast.Zeus", identity, None)
         .map_err(keyring_error)?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
@@ -147,7 +147,7 @@ fn platform_store() -> Result<std::sync::Arc<dyn CredentialStoreApi>> {
     let store = windows_native_keyring_store::Store::new();
     Ok(store
         .map_err(keyring_error)
-        .context("Unlock your OS keyring and restart ZapFast")?
+        .context("Unlock your OS keyring and restart Zeus")?
         as std::sync::Arc<dyn CredentialStoreApi>)
 }
 
@@ -176,9 +176,7 @@ fn key_from_entry(path: &Path, entry: &keyring_core::Entry) -> Result<Zeroizing<
             );
             create_key(entry)
         }
-        Err(error) => {
-            Err(keyring_error(error)).context("Unlock your OS keyring and restart ZapFast")
-        }
+        Err(error) => Err(keyring_error(error)).context("Unlock your OS keyring and restart Zeus"),
     }
 }
 

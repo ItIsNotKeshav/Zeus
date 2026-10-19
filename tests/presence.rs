@@ -5,7 +5,7 @@
 //! app that stays connected in the tray that showed the account online with
 //! the window closed, and WhatsApp holds back the phone's own notifications
 //! while any linked device is available. `Worker::start_bot` builds every
-//! bot through `zapfast::backend::host_owned_presence`; this test drives
+//! bot through `zeus::backend::host_owned_presence`; this test drives
 //! that same builder step against a real client and store.
 //!
 //! whatsapp-rust exposes no wire-level test hook (its capturing transports
@@ -29,7 +29,7 @@ async fn zapfast_bots_leave_presence_to_the_window() {
     let directory = tempfile::tempdir().unwrap();
     // Building a client is enough; never run or connect this bot.
     let bot =
-        zapfast::backend::host_owned_presence(Bot::builder().with_backend(store(&directory).await))
+        zeus::backend::host_owned_presence(Bot::builder().with_backend(store(&directory).await))
             .build()
             .await
             .expect("the bot builds");

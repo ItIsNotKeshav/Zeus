@@ -103,15 +103,19 @@ pub fn acquire(dir: &Path, waker: &crate::backend::Waker, verb: &str) -> Outcome
     // A copy from before the lock only knows `show` and `ping`. Anything else
     // asked of one surfaces its window rather than running a second ZapFast
     // beside it.
-    let legacy = legacy_verb(verb);
-    if legacy_instance_answers(legacy) {
-        return if legacy == verb {
-            Outcome::Surfaced
-        } else {
-            Outcome::Outdated
-        };
+    // The fixed port belongs to ZapFast: another app answering it is not a
+    // second copy of this one, and this one must leave it to ZapFast.
+    if crate::brand::ID == "zapfast" {
+        let legacy = legacy_verb(verb);
+        if legacy_instance_answers(legacy) {
+            return if legacy == verb {
+                Outcome::Surfaced
+            } else {
+                Outcome::Outdated
+            };
+        }
+        listen_legacy(Arc::clone(&commands), waker.clone());
     }
-    listen_legacy(Arc::clone(&commands), waker.clone());
     Outcome::Only(Guard {
         commands,
         _claim: claim,
@@ -182,7 +186,9 @@ pub enum Sent {
 /// Sends one request to the running copy, without becoming it when there is
 /// none: for a command-line action that only makes sense while ZapFast runs.
 pub fn send(dir: &Path, verb: &str) -> Sent {
-    sent(slot(dir).send(verb).map(drop), legacy_instance_answers_ping)
+    sent(slot(dir).send(verb).map(drop), || {
+        crate::brand::ID == "zapfast" && legacy_instance_answers_ping()
+    })
 }
 
 /// Reads the result of a request. A copy from before the lock is asked
@@ -274,7 +280,7 @@ fn legacy_request(mut stream: TcpStream, verb: &str) -> std::io::Result<()> {
     } else {
         Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "the port is held by something other than ZapFast",
+            "the port is held by something other than Zeus",
         ))
     }
 }

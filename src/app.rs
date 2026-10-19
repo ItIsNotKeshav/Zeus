@@ -786,7 +786,7 @@ pub struct App {
     /// its command line tool.
     #[cfg(test)]
     test_raised: bool,
-    /// Whether the tray menu offers "Lock ZapFast": whether an app lock
+    /// Whether the tray menu offers "Lock Zeus": whether an app lock
     /// password was set when it last changed.
     tray_lockable: bool,
     /// Whether the app is running without a window.
@@ -1078,21 +1078,21 @@ fn tray_action(event: fastframe_tray::Event, window_hidden: bool) -> Option<Acti
 /// to lock it while an app lock password is set, and to quit. The title and
 /// the menu never name a chat, so they are safe while locked.
 ///
-/// "Lock ZapFast" is always in the menu, hidden without a password;
+/// "Lock Zeus" is always in the menu, hidden without a password;
 /// `App::sync_tray` shows or hides it as the password is set or removed.
 fn tray_config(lockable: bool) -> fastframe_tray::Config {
     use fastframe_tray::MenuItem;
     fastframe_tray::Config {
-        id: "zapfast",
-        title: "ZapFast".into(),
+        id: crate::brand::ID,
+        title: "Zeus".into(),
         icon: crate::util::app_icon_rgba,
         template_icon: Some(crate::util::tray_template_rgba),
         // The tray icon is the app icon, so hosts that draw only named icons
         // may use the installed one.
         themed_icon: true,
         menu: vec![
-            MenuItem::action(TRAY_SHOW, "Show or hide ZapFast"),
-            MenuItem::action(TRAY_LOCK, "Lock ZapFast").visible(lockable),
+            MenuItem::action(TRAY_SHOW, "Show or hide Zeus"),
+            MenuItem::action(TRAY_LOCK, "Lock Zeus").visible(lockable),
             MenuItem::Separator,
             MenuItem::action(TRAY_QUIT, "Quit"),
         ],
@@ -1159,7 +1159,7 @@ impl App {
         app.pauses_media = true;
         app.call_tones = crate::call_tones::Tones::new(true);
         app.badge = Some(crate::notify::Badge::new(fastframe_desktop::desktop_entry(
-            "zapfast",
+            crate::brand::ID,
         )));
         app.custom_themes
             .enable_desktop_themes(crate::theme::DESKTOP_THEMES);
@@ -1930,7 +1930,7 @@ impl App {
         );
     }
 
-    /// Offers "Lock ZapFast" in the tray exactly while an app lock password
+    /// Offers "Lock Zeus" in the tray exactly while an app lock password
     /// is set, so setting or removing one changes the menu at once.
     fn sync_tray(&mut self) {
         let lockable = self.settings.app_lock_hash.is_some();
@@ -4008,7 +4008,7 @@ impl App {
             Event::UpdateAvailable { version, url } => {
                 let notice = crate::updates::Release { version, url };
                 if self.update.as_ref() != Some(&notice) {
-                    self.toast(format!("ZapFast {} is available", notice.version));
+                    self.toast(format!("Zeus {} is available", notice.version));
                 }
                 self.update = Some(notice);
             }
@@ -4751,10 +4751,9 @@ impl App {
             Unsent::Sticker | Unsent::Gif => {}
         }
         let message = match reason {
-            Refusal::Offline => crate::i18n::gettext(
-                self.locale,
-                "Not sent: ZapFast is not connected to WhatsApp.",
-            ),
+            Refusal::Offline => {
+                crate::i18n::gettext(self.locale, "Not sent: Zeus is not connected to WhatsApp.")
+            }
             Refusal::QuoteUnavailable => crate::i18n::gettext(
                 self.locale,
                 "Not sent: the message you’re replying to isn’t available on this computer. Cancel the reply to send without a quote.",
@@ -5679,7 +5678,8 @@ impl App {
         self.toasts.retain(|toast| {
             toast.kind == ToastKind::Error || toast.created.elapsed() < INFO_TOAST_LIFETIME
         });
-        if self.settings.check_for_updates
+        if crate::brand::UPDATES
+            && self.settings.check_for_updates
             && !self.backend.is_offline()
             && self
                 .last_update_check
@@ -6670,7 +6670,7 @@ impl App {
                 } else if let Some(url) = crate::safety::external_url(&url) {
                     ctx.open_url(egui::OpenUrl::new_tab(url));
                 } else {
-                    self.toast_error("This link type cannot be opened from ZapFast");
+                    self.toast_error("This link type cannot be opened from Zeus");
                 }
             }
             Action::CopyText(text) => {
@@ -7813,7 +7813,7 @@ impl App {
                     self.toast_error(
                         crate::i18n::gettext(
                             self.locale,
-                            "You have {limit} labels, the most ZapFast keeps.",
+                            "You have {limit} labels, the most Zeus keeps.",
                         )
                         .replace("{limit}", &crate::archive::LABEL_LIMIT.to_string()),
                     );
@@ -8568,7 +8568,7 @@ impl App {
                 self.start_with_system = crate::autostart::switch(state);
                 if outcome.changed && matches!(state, fastframe_autostart::State::NeedsApproval(_))
                 {
-                    self.toast("Allow ZapFast in System Settings, under Login Items.");
+                    self.toast("Allow Zeus in System Settings, under Login Items.");
                 }
             }
             Err(error) => {
@@ -14665,8 +14665,8 @@ mod tests {
             assert_eq!(
                 super::tray_config(lockable).menu,
                 [
-                    fastframe_tray::MenuItem::action(super::TRAY_SHOW, "Show or hide ZapFast"),
-                    fastframe_tray::MenuItem::action(super::TRAY_LOCK, "Lock ZapFast")
+                    fastframe_tray::MenuItem::action(super::TRAY_SHOW, "Show or hide Zeus"),
+                    fastframe_tray::MenuItem::action(super::TRAY_LOCK, "Lock Zeus")
                         .visible(lockable),
                     fastframe_tray::MenuItem::Separator,
                     fastframe_tray::MenuItem::action(super::TRAY_QUIT, "Quit"),
@@ -14675,7 +14675,7 @@ mod tests {
         }
     }
 
-    /// The tray offers "Lock ZapFast" as soon as a password is set and stops
+    /// The tray offers "Lock Zeus" as soon as a password is set and stops
     /// as soon as it is removed, not at the next start.
     #[test]
     fn the_tray_offers_the_lock_while_a_password_is_set() {
@@ -21333,7 +21333,7 @@ mod app_lock_tests {
         app.lock_app();
         app.maybe_notify(CHAT, &message);
         let shown = app.notifications.shown.last().unwrap();
-        assert_eq!(shown.title, "ZapFast");
+        assert_eq!(shown.title, "Zeus");
         assert_eq!(shown.body, "New message");
         assert_eq!(shown.picture, None);
         assert_eq!(
@@ -21350,7 +21350,7 @@ mod app_lock_tests {
         app.settings.notification_content = false;
         app.maybe_notify(CHAT, &message);
         let shown = app.notifications.shown.last().unwrap().clone();
-        assert_eq!(shown.title, "ZapFast");
+        assert_eq!(shown.title, "Zeus");
         assert_eq!(shown.body, "New message");
         assert_eq!(shown.picture, None);
         assert_eq!(shown.sound, app.settings.message_sound);

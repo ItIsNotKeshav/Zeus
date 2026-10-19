@@ -1,5 +1,5 @@
 [package]
-name = "zapfast"
+name = "zeus"
 version = "0.19.0"
 edition = "2024"
 rust-version = "1.98"
@@ -11,11 +11,11 @@ keywords = ["whatsapp", "chat", "egui", "messaging"]
 categories = ["gui"]
 
 [lib]
-name = "zapfast"
+name = "zeus"
 path = "src/lib.rs"
 
 [[bin]]
-name = "zapfast"
+name = "zeus"
 path = "src/main.rs"
 
 [dependencies]
@@ -273,6 +273,12 @@ nokhwa = { version = "0.10.11", default-features = false, features = ["input-msm
 # Pauses other apps' media through the system media transport controls while
 # recording or playing voice messages. The same version cpal already uses.
 windows = { version = "0.62", features = ["Media_Control", "Foundation_Collections", "Win32_Foundation", "Win32_Graphics_Dwm", "Win32_System_Com", "Win32_UI_Controls", "Win32_UI_WindowsAndMessaging"] }
+
+# Sets the taskbar button's icon, with the unread count drawn on it.
+# Already in the tree through eframe, the fork in [patch.crates-io].
+[target.'cfg(windows)'.dependencies.winit]
+version = "0.30"
+default-features = false
 
 # The icon and version information Windows shows for the executable.
 [target.'cfg(windows)'.build-dependencies]

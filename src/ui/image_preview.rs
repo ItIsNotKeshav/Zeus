@@ -694,7 +694,7 @@ fn still(
                 |ui| {
                     ui.label(crate::i18n::gettext(
                         app.locale,
-                        "This image could not be displayed in ZapFast.",
+                        "This image could not be displayed in Zeus.",
                     ));
                     if ui
                         .button(crate::i18n::gettext(app.locale, "Open externally"))
