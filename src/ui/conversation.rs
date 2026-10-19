@@ -92,10 +92,35 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 bar
             })
             .inner;
-        composer(app, ui, &chat);
-        let list = ui.available_rect_before_wrap().with_min_y(bar.top());
+        // The composer too floats on its own layer, over frosted messages
+        // that scroll on under it, as under the header.
+        let area = ui.available_rect_before_wrap();
+        let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-composer"));
+        let foot = ui
+            .scope_builder(egui::UiBuilder::new().layer_id(layer), |ui| {
+                let glass = ui.painter().add(egui::Shape::Noop);
+                composer(app, ui, &chat);
+                // Only the strip around the field: from a little above it
+                // to the bottom, as wide as the chat.
+                let pill = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<Rect>(composer_pill_id()))
+                    .unwrap_or(area);
+                let foot = Rect::from_x_y_ranges(
+                    area.x_range(),
+                    (pill.top() - 12.0).max(area.top())..=area.bottom(),
+                );
+                // Strongest at the bottom, easing off towards its top.
+                ui.painter().set(
+                    glass,
+                    super::glass::shape(foot, -foot.height() * HEADER_EASE),
+                );
+                foot
+            })
+            .inner;
+        let list = area.with_min_y(bar.top());
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-            messages(app, ui, &chat, bar.height());
+            messages(app, ui, &chat, bar.height(), foot.height());
         });
         // A vibrant window is flat, as Messages is: no shadows over the chat.
         return;
@@ -103,7 +128,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let header = header(app, ui, &chat);
     pin_banner(app, ui, &chat);
     composer(app, ui, &chat);
-    messages(app, ui, &chat, 0.0);
+    messages(app, ui, &chat, 0.0, 0.0);
     // Over the messages, which scroll under the header.
     widgets::paint_shadow_below(
         ui,
@@ -1820,10 +1845,12 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         Icon::Send
                     };
-                    if theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
-                        .tab_stop(Stop::Send)
-                        .clicked()
-                    {
+                    let send =
+                        theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
+                            .tab_stop(Stop::Send);
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(send_flight_id().with("button"), send.rect));
+                    if send.clicked() {
                         send_click = true;
                     }
                 });
@@ -1839,11 +1866,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let text = std::mem::take(&mut app.composer);
                 if app.pending.is_empty() {
                     if let Some(from) =
-                        ui.ctx().data(|data| data.get_temp::<Rect>(composer_text_id()))
+                        ui.ctx().data(|data| data.get_temp::<Rect>(send_flight_id().with("button")))
                     {
                         let flight = SendFlight {
                             chat: chat.id.clone(),
-                            from: from.min,
+                            from,
                             sent: ui.input(|input| input.time),
                             message: None,
                         };
@@ -2442,7 +2469,6 @@ fn glide_new_message<R>(
     output: &egui::scroll_area::ScrollAreaOutput<R>,
     layer: egui::LayerId,
     first_shape: egui::layers::ShapeIdx,
-    reduce_motion: bool,
 ) {
     let id = egui::Id::new(("message-glide", chat));
     let now = ui.input(|input| input.time);
@@ -2470,7 +2496,6 @@ fn glide_new_message<R>(
         && before.at_bottom
         && at_bottom
         && height > before.height
-        && !reduce_motion
     {
         glide.start = now;
         glide.distance = (height - before.height).min(output.inner_rect.height());
@@ -2501,7 +2526,7 @@ fn glide_new_message<R>(
 
 /// The conversation's messages. `under` is how much of the list's top lies
 /// beneath the header, which a vibrant window lays over it.
-fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
+fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32) {
     let palette = app.palette;
     // Taken up front: `names_or` below borrows the rest of `app` for the
     // whole function, so a pending scroll must come out before that.
@@ -3291,7 +3316,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                     if !typing.is_empty() {
                         typing_indicator(ui, &view, &typing);
                     }
-                    ui.add_space(4.0);
+                    // Room to scroll the last message clear of a composer
+                    // that floats over the list's end.
+                    ui.add_space(4.0 + over);
                     // An explicit jump (Ctrl+End, or the return-to-bottom
                     // button) wins over a message bubble's retained keyboard
                     // focus; other triggers still defer to it, so an
@@ -3364,15 +3391,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                 ui.ctx().request_repaint();
             }
         });
-    glide_new_message(
-        ui,
-        &chat.id,
-        newest,
-        &output,
-        layer,
-        first_shape,
-        reduce_motion,
-    );
+    glide_new_message(ui, &chat.id, newest, &output, layer, first_shape);
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
@@ -3527,7 +3546,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     // Show a return-to-bottom button while reading older messages.
     if !at_bottom {
         let rect = output.inner_rect;
-        let center = pos2(rect.right() - 34.0, rect.bottom() - 34.0);
+        let center = pos2(rect.right() - 34.0, rect.bottom() - over - 34.0);
         let button = Rect::from_center_size(center, Vec2::splat(40.0));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
@@ -3904,13 +3923,13 @@ fn send_flight_id() -> egui::Id {
     egui::Id::new("send-flight")
 }
 
-/// A sent text on its way from the composer to its bubble: `from` is where
-/// its first letter stood in the field, and `message` the row it became,
-/// with the time that row was first drawn.
+/// A sent text on its way from the send button to its bubble: `from` is the
+/// button, and `message` the row it became, with the time that row was
+/// first drawn.
 #[derive(Clone)]
 struct SendFlight {
     chat: String,
-    from: egui::Pos2,
+    from: Rect,
     sent: f64,
     message: Option<(String, f64)>,
 }
@@ -3923,8 +3942,8 @@ pub(crate) fn flying_to(ctx: &egui::Context) -> Option<String> {
         .map(|(id, _)| id)
 }
 
-/// How long a sent message takes to travel from the composer to its place.
-const FLIGHT_SECONDS: f64 = 0.35;
+/// How long a sent message takes to travel from the send button to its place.
+const FLIGHT_SECONDS: f64 = 0.28;
 /// How long a received message takes to settle in.
 const LANDING_SECONDS: f64 = 0.3;
 /// How old a message may be when first drawn and still be animated in: one
@@ -3948,9 +3967,10 @@ fn bubble(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    let fresh = !reduce_motion
-        && view.animate
-        && (crate::util::now() - message.timestamp).abs() <= ARRIVAL_FRESH;
+    // A third of a second, only on a send or a receipt: unlike the looping
+    // animations `motion` paces, these need no screen-reader exception (and
+    // on Windows any accessibility client, not only a reader, sets it).
+    let fresh = view.animate && (crate::util::now() - message.timestamp).abs() <= ARRIVAL_FRESH;
     if !fresh {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
     }
@@ -3991,9 +4011,14 @@ fn bubble(
         else {
             return response;
         };
-        let margin = bubble_margin(&view.palette, message, false);
-        let text = rect.min + vec2(f32::from(margin.left), f32::from(margin.top));
-        let shift = (from - text) * (1.0 - ease_out(t));
+        // It grows out of the button: its corner there, a quarter of its
+        // size, and both ease to its own place and size together.
+        let p = 1.0 - (1.0 - t).powi(4);
+        let corner = rect.right_bottom();
+        let at = from.center() + (corner - from.center()) * p;
+        let transform = egui::emath::TSTransform::from_translation(at.to_vec2())
+            * egui::emath::TSTransform::from_scaling(0.25 + 0.75 * p)
+            * egui::emath::TSTransform::from_translation(-corner.to_vec2());
         // Lifted onto a layer above the chat, so it can cross the composer
         // and the list's edge on its way, and the list's own glide leaves it be.
         let flying = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("send-flight"));
@@ -4012,18 +4037,32 @@ fn bubble(
             }
             let above = graphics.entry(flying);
             for mut shape in shapes {
-                shape.translate(shift);
+                shape.transform(transform);
                 above.add(clip, shape);
             }
+            // The button itself leaves its place and stretches into the
+            // bubble, fading as the message shows through.
+            let bubble = transform.mul_rect(rect);
+            let blob =
+                Rect::from_min_max(from.min.lerp(bubble.min, p), from.max.lerp(bubble.max, p));
+            let radius = egui::lerp(from.height() / 2.0..=18.0, p).min(blob.height() / 2.0);
+            let fade = (1.0 - t / 0.6).clamp(0.0, 1.0);
+            above.add(
+                clip,
+                egui::Shape::rect_filled(blob, radius, view.palette.accent.gamma_multiply(fade)),
+            );
         });
         ui.ctx().request_repaint();
         return response;
     }
-    // Received: the first time it is drawn starts its landing.
+    // Received: the first time it is drawn starts its landing, unless it was
+    // already there when the chat itself first appeared.
+    let shown = egui::Id::new(("chat-shown", &view.chat.id));
+    let shown = ui.ctx().data_mut(|data| *data.get_temp_mut_or(shown, now));
     let id = egui::Id::new(("landing", &view.chat.id, &message.id));
     let landed = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
     let t = ((now - landed) / LANDING_SECONDS) as f32;
-    if t >= 1.0 {
+    if t >= 1.0 || landed <= shown {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
     }
     let p = ease_out(t);

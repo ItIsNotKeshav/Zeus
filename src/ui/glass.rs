@@ -24,7 +24,7 @@ const PASSES: usize = 1;
 const SATURATION: f32 = 1.3;
 
 /// A paint callback that frosts `rect`, the bottom `fade` points easing from
-/// blurred to sharp.
+/// blurred to sharp (the top ones, for a negative `fade`).
 pub fn shape(rect: egui::Rect, fade: f32) -> egui::Shape {
     egui::Shape::Callback(egui::PaintCallback {
         rect,
@@ -105,7 +105,9 @@ void main() {
     float luma = dot(blur.rgb, vec3(0.2126, 0.7152, 0.0722));
     // Colours are premultiplied, so they stay within their alpha.
     blur.rgb = clamp(mix(vec3(luma), blur.rgb, u_saturation), 0.0, blur.a);
-    float frost = u_fade > 0.0 ? smoothstep(0.0, u_fade, v_uv.y) : 1.0;
+    // A negative fade eases towards the top instead, for a bar at the bottom.
+    float edge = u_fade < 0.0 ? 1.0 - v_uv.y : v_uv.y;
+    float frost = u_fade != 0.0 ? smoothstep(0.0, abs(u_fade), edge) : 1.0;
     o_color = mix(texture(u_sharp, v_uv), blur, frost);
 }
 ";

@@ -9,7 +9,43 @@ use crate::qr::Qr;
 use crate::theme::{self, Icon};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    card(app, ui, "login", "A native WhatsApp client.", body);
+    if matches!(app.link, LinkStatus::Starting | LinkStatus::Connecting) {
+        splash(app, ui, "Connecting…");
+    } else {
+        card(app, ui, "login", "A native WhatsApp client.", body);
+    }
+}
+
+/// While ZapFast connects or waits for its chats there is nothing to do:
+/// only the mark, and a small spinner with one quiet line under it.
+fn splash(app: &App, ui: &mut egui::Ui, label: &str) {
+    let palette = app.palette;
+    egui::CentralPanel::default()
+        .frame(Frame::new().fill(palette.window))
+        .show(ui, |ui| {
+            let size = 56.0;
+            let line = 16.0;
+            let block = Vec2::new(ui.available_width(), size + 20.0 + line);
+            let top = (ui.available_height() - block.y).max(0.0) / 2.0;
+            ui.add_space(top);
+            ui.vertical_centered(|ui| {
+                let (logo, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
+                theme::mark(ui, logo.center(), size);
+                ui.add_space(20.0);
+                ui.horizontal(|ui| {
+                    let width = 12.0
+                        + 6.0
+                        + ui.painter()
+                            .layout_no_wrap(label.to_owned(), theme::regular(12.5), palette.dim)
+                            .size()
+                            .x;
+                    ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    theme::spinner(ui, 12.0, palette.secondary);
+                    theme::text(ui, label, theme::regular(12.5), palette.dim);
+                });
+            });
+        });
 }
 
 /// The centred card of the linking and lock screens: the logo, the name,

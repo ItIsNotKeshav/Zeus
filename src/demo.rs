@@ -2218,6 +2218,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.actions
                     .push(crate::model::Action::OpenChat(app.chats[0].id.clone()));
             }
+            "connecting" => {
+                unlink(app);
+                app.link = LinkStatus::Starting;
+            }
             "keyring" => {
                 unlink(app);
                 app.link = LinkStatus::Failed("The archive is encrypted but its OS keyring key is missing. Restore the original keyring; the archive has not been changed".into());
