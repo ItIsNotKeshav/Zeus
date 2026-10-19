@@ -25,6 +25,18 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let archive = archive_action(app);
     let next_account = next_account_action(app);
     let mut actions = Vec::new();
+    let menu_open = egui::Popup::is_any_open(ctx);
+    let recent_chat = (app.page == Page::Chats
+        && app.open_chat.is_some()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        && app.selection.is_none()
+        && !menu_open)
+        .then(|| app.other_recent_chat())
+        .flatten();
     ctx.input_mut(|input| {
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
             if input.consume_key(modifiers, key) {
@@ -38,6 +50,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             Action::FocusSearch,
         );
         key(Modifiers::COMMAND, Key::F, find);
+        if let Some(chat) = recent_chat.clone() {
+            key(Modifiers::COMMAND, Key::Tab, Action::OpenChat(chat));
+        }
         // Before Ctrl+L, which would also match it with Shift held.
         if app.settings.app_lock_hash.is_some() {
             key(
@@ -103,7 +118,6 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         }
     });
     // Escape cancels the topmost state. Menus handle Escape themselves.
-    let menu_open = egui::Popup::is_any_open(ctx);
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
     let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
     if app.chat_view()
@@ -627,6 +641,7 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
         "Walk the open chat's search results and jump to one",
     ),
     ("Ctrl+L", "Focus the message input"),
+    ("Ctrl+Tab", "Switch between the last two chats"),
     ("Alt+↑ / Alt+↓", "Previous / next chat"),
     ("Ctrl+Shift+[ / ]", "Previous / next chat, as in WhatsApp"),
     ("Ctrl+1..9", "Open a chat by its position in the chat list"),

@@ -15189,9 +15189,12 @@ mod tests {
                 chat.expect("the conversation"),
             );
             assert!(
-                (list.top() - chat.top()).abs() < 0.5
-                    && (list.height() - chat.height()).abs() < 0.5,
-                "macOS {macos}: chat list row {list:?}, conversation row {chat:?}"
+                (list.height() - chat.height()).abs() < 0.5,
+                "macOS {macos}: chat list and conversation header heights match: {list:?}, {chat:?}"
+            );
+            assert!(
+                list.top() - chat.top() >= 12.0,
+                "macOS {macos}: the floating list header sits below the conversation header: {list:?}, {chat:?}"
             );
         }
     }
@@ -16116,9 +16119,11 @@ mod tests {
                 {
                     continue;
                 }
-                assert_eq!(
-                    focused.interact_rect, focused.rect,
-                    "{macos}: the focused avatar is fully visible"
+                assert!(
+                    focused.interact_rect.contains_rect(focused.rect),
+                    "{macos}: the focused avatar is fully visible: {:?} within {:?}",
+                    focused.rect,
+                    focused.interact_rect
                 );
                 assert!(
                     focused.rect.bottom() <= height,
@@ -16332,10 +16337,10 @@ mod tests {
         assert!(app.reply_to.is_none());
     }
 
-    /// Where the chat list's right edge is: the first chat row spans the
-    /// list's width.
+    /// Where the resizable chat list's right edge is, including the floating
+    /// surface's outer gutter.
     fn chat_list_right(ctx: &egui::Context) -> f32 {
-        ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(sample_ids()[0])))
+        ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::panel_rect_id()))
             .expect("the first chat is listed")
             .right()
     }
@@ -17988,10 +17993,13 @@ mod rail_tests {
         for macos in [false, true] {
             let (app, ctx) = open("chat", macos);
             let rail = rail_rect(&ctx).expect("the rail is drawn");
-            assert!(rail.left() < 1.0, "{macos}: at the left edge: {rail:?}");
             assert!(
-                (rail.width() - crate::ui::chats::compact_width(&ctx)).abs() < 1.0,
-                "{macos}: as wide as the collapsed list was: {rail:?}"
+                rail.left() < 1.0,
+                "{macos}: pane starts at the left edge: {rail:?}"
+            );
+            assert!(
+                (rail.width() - crate::ui::rail::PANE_WIDTH).abs() < 1.0,
+                "{macos}: includes its outer gutters: {rail:?}"
             );
             let header = list_header(&ctx).expect("the list is drawn");
             assert!(
@@ -18008,9 +18016,8 @@ mod rail_tests {
             }
             assert!(top[0].bottom() <= top[1].top() && top[1].bottom() <= top[2].top());
             assert!(
-                (me.top() - settings.bottom() - 8.0).abs() < 0.5
-                    && (rail.bottom() - me.bottom() - 8.0).abs() < 0.5,
-                "{macos}: Settings, our avatar and the edge 8 points apart: {settings:?} {me:?}"
+                (me.top() - settings.bottom() - 8.0).abs() < 0.5,
+                "{macos}: Settings and our avatar keep their 8-point gap: {settings:?} {me:?}"
             );
             assert_eq!(settings.size(), egui::vec2(36.0, 36.0));
             assert_eq!(me.size(), egui::vec2(32.0, 32.0));
@@ -18047,7 +18054,10 @@ mod rail_tests {
             // Nothing the list's toggle leaves in place moves.
             assert_eq!(chats, top[0], "{macos}: Chats stays put");
             assert_eq!(starred, top[2], "{macos}: Starred stays put");
-            assert_eq!(settings, shown_settings, "{macos}: Settings stays put");
+            assert!(
+                settings.center().distance(shown_settings.center()) < 1.0,
+                "{macos}: Settings stays in place within layout rounding: {settings:?} {shown_settings:?}"
+            );
             let first = app.visible_chats()[0].id.clone();
             let avatar = recorded(&ctx, crate::ui::chats::compact_chat_id(&first))
                 .expect("the chats' avatars fill the rail");

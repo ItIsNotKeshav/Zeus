@@ -635,6 +635,9 @@ pub struct App {
     /// Places visited in this window, for the mouse's back and forward
     /// buttons. Cleared when the account on screen changes.
     nav_history: History,
+    /// The two most recently opened chats in the account on screen, newest
+    /// first. Ctrl+Tab toggles between them.
+    recent_chats: Vec<ChatId>,
     /// Chat filter in the forwarding destination dialog.
     pub forward_search: String,
     /// Recipients chosen in the forwarding dialog, all chats of the account
@@ -1412,6 +1415,7 @@ impl App {
             page: Page::Chats,
             dialog: None,
             nav_history: History::default(),
+            recent_chats: Vec::new(),
             forward_search: String::new(),
             forward_recipients: Vec::new(),
             forward_reviewing: false,
@@ -1648,6 +1652,7 @@ impl App {
 
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
+        self.recent_chats.clear();
         self.forward_recipients.clear();
         self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
@@ -2236,12 +2241,28 @@ impl App {
         self.chats.iter_mut().find(|chat| chat.id == id)
     }
 
+    /// The other chat in the two most recently visited chats, if it is still
+    /// present and accessible in this account.
+    pub(crate) fn other_recent_chat(&self) -> Option<ChatId> {
+        let current = self.open_chat.as_deref()?;
+        self.recent_chats
+            .iter()
+            .find(|id| {
+                id.as_str() != current
+                    && self
+                        .chat(id)
+                        .is_some_and(|chat| !chat.locked || self.locked_folder_open())
+            })
+            .cloned()
+    }
+
     /// Drops every trace of a chat that no longer exists. Unlike hiding a
     /// locked chat this discards the draft, because there is nothing left to
     /// send it to, and it clears `last_chat` so a restart does not reopen it.
     fn forget_chat(&mut self, id: &str) {
         self.leave_chat(id);
         self.chats.retain(|chat| chat.id != id);
+        self.recent_chats.retain(|recent| recent != id);
         self.conversations.remove(id);
         // The recorded places belong to the account on screen, and chat ids
         // repeat across accounts.
@@ -5172,6 +5193,14 @@ impl App {
         }
         self.reset_notification_throttle(&id);
         if self.open_chat.as_deref() != Some(id.as_str()) {
+            let previous = self.open_chat.clone();
+            self.recent_chats
+                .retain(|recent| recent != &id && Some(recent) != previous.as_ref());
+            self.recent_chats.insert(0, id.clone());
+            if let Some(previous) = previous {
+                self.recent_chats.insert(1, previous);
+            }
+            self.recent_chats.truncate(2);
             self.reaction_target = None;
             self.reaction_anchor = None;
             self.composer_tools_open = false;

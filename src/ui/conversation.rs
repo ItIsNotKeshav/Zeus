@@ -1333,8 +1333,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .inner_margin(Margin {
                     left: 8,
                     right: 8,
-                    top: 0,
-                    bottom: 8,
+                    top: 12,
+                    bottom: 12,
                 }),
         )
         .show(ui, |ui| {
@@ -1856,46 +1856,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 // that message again.
                 app.actions.push(Action::SendRecording);
                 app.focus_composer = true;
-            }
-            if app.settings.show_shortcut_hints {
-                let hint_text = if enter_sends {
-                    crate::i18n::gettext(app.locale, "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
-                } else {
-                    crate::i18n::gettext(app.locale, "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture")
-                };
-                let hint = super::keys::label(hint_text.as_ref());
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    if theme::icon_button(
-                        ui,
-                        Icon::X,
-                        13.0,
-                        palette.dim,
-                        palette.secondary,
-                        crate::i18n::gettext(app.locale, "Hide shortcut hints (bring them back from Keyboard shortcuts)").as_ref(),
-                    )
-                    .clicked()
-                    {
-                        app.actions.push(Action::SetShortcutHints(false));
-                    }
-                    theme::text(ui, &hint, theme::regular(11.0), palette.dim);
-                    // Open the shortcut list without consuming typed `?`.
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Keyboard,
-                            13.0,
-                            palette.dim,
-                            palette.secondary,
-                            &crate::i18n::gettext(app.locale, "All shortcuts ({})")
-                                .replace("{}", &super::keys::label("Ctrl+/")),
-                        )
-                        .clicked()
-                        {
-                            app.actions.push(Action::ShowDialog(Dialog::Shortcuts));
-                        }
-                    });
-                });
             }
         });
     // A bottom panel is placed from last frame's height. When the composer
@@ -2662,6 +2622,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let key_start = time - f64::from(ui.input(|input| input.stable_dt.min(0.1)));
     let mut pinned = false;
     let mut visible_day = None;
+    let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
@@ -2979,6 +2940,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                             last_in_run,
                                             last_outgoing: last_outgoing_row,
                                         },
+                                        reduce_motion,
                                         &mut actions,
                                     )
                                 })
@@ -2999,6 +2961,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                                     last_in_run,
                                     last_outgoing: last_outgoing_row,
                                 },
+                                reduce_motion,
                                 &mut actions,
                             )
                         };
@@ -3838,6 +3801,7 @@ fn bubble(
     message: &Message,
     album: Option<&[Message]>,
     place: RunPlace,
+    reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let RunPlace {
@@ -4006,14 +3970,30 @@ fn bubble(
             .ctx()
             .data(|data| data.get_temp::<bool>(metadata_id))
             .unwrap_or(default_visible);
-        if clicked_inside || response.as_ref().is_some_and(egui::Response::clicked) {
+        let bubble_clicked =
+            clicked_inside || response.as_ref().is_some_and(egui::Response::clicked);
+        if bubble_clicked {
             visible = !visible;
             ui.ctx()
                 .data_mut(|data| data.insert_temp(metadata_id, visible));
         }
-        if visible {
+        let animation_time = if reduce_motion {
+            0.0
+        } else {
+            ui.ctx().global_style().animation_time.min(0.24)
+        };
+        let progress = ui.ctx().animate_bool_with_time_and_easing(
+            metadata_id.with("reveal"),
+            visible,
+            animation_time,
+            egui::emath::easing::quadratic_out,
+        );
+        if progress > 0.0 {
             let display_message = album.and_then(|members| members.last()).unwrap_or(message);
-            if reference_timestamp(ui, view, display_message, id.with("metadata-row")).clicked() {
+            if reference_timestamp(ui, view, display_message, id.with("metadata-row"), progress)
+                .clicked()
+                && !bubble_clicked
+            {
                 ui.ctx()
                     .data_mut(|data| data.insert_temp(metadata_id, false));
             }
@@ -4028,17 +4008,44 @@ fn reference_timestamp(
     view: &View<'_>,
     message: &Message,
     id: egui::Id,
+    progress: f32,
 ) -> egui::Response {
     let own = message.from_me;
-    ui.add_space(4.0);
-    let height = 16.0;
-    let width = ui.available_width();
+    const SPACING: f32 = 4.0;
+    const ROW_HEIGHT: f32 = 16.0;
+    let full_height = SPACING + ROW_HEIGHT;
+    let reveal_height = full_height * progress.clamp(0.0, 1.0);
+    let available = ui.available_rect_before_wrap();
+    let slot_top = ui.cursor().top();
+    let slot = Rect::from_min_size(
+        pos2(available.left(), slot_top),
+        vec2(available.width(), reveal_height),
+    );
+    ui.allocate_space(vec2(available.width(), reveal_height));
+
+    // Keep the metadata at its final position and reveal it through a clip
+    // that grows with the row. The transcript's ordinary layout then moves
+    // subsequent messages in step, instead of jumping by the whole row.
+    let row_rect = Rect::from_min_size(
+        pos2(available.left(), slot_top + SPACING),
+        vec2(available.width(), ROW_HEIGHT),
+    );
+    let clip = Rect::from_min_max(slot.min, pos2(slot.right(), slot.top() + reveal_height))
+        .intersect(ui.clip_rect());
+    let mut row_ui = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id)
+            .max_rect(row_rect)
+            .layout(Layout::top_down(if own { Align::Max } else { Align::Min })),
+    );
+    row_ui.set_clip_rect(clip);
+    row_ui.multiply_opacity(progress);
     let layout = if own {
         Layout::right_to_left(Align::Center)
     } else {
         Layout::left_to_right(Align::Center)
     };
-    let row = ui.allocate_ui_with_layout(vec2(width, height), layout, |ui| {
+    row_ui.with_layout(layout, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let time = crate::util::clock(message.timestamp);
         if own {
@@ -4075,7 +4082,7 @@ fn reference_timestamp(
             );
         }
     });
-    ui.interact(row.response.rect, id, Sense::click())
+    ui.interact(row_rect.intersect(clip), id, Sense::click())
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.

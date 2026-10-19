@@ -1013,12 +1013,12 @@ mod tests {
         assert!(settings.group_sounds);
     }
 
-    /// Settings written before the font could be chosen draw with the
-    /// platform's; the choice is saved by name.
+    /// Settings written before the font could be chosen use the current
+    /// default; explicit choices are saved by name.
     #[test]
-    fn the_font_defaults_to_the_platform_and_is_saved_by_name() {
+    fn the_font_defaults_to_google_sans_flex_and_is_saved_by_name() {
         let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
-        assert_eq!(older.font, FontChoice::System);
+        assert_eq!(older.font, FontChoice::GoogleSansFlex);
         let chosen: Settings = serde_json::from_str(r#"{"font":"inter"}"#).unwrap();
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();

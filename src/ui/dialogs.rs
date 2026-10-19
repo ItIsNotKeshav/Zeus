@@ -852,18 +852,6 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
                 }
             });
         });
-    ui.add_space(12.0);
-    // The hint bar's × hides it; this brings it back.
-    let mut hints = app.settings.show_shortcut_hints;
-    if ui
-        .checkbox(
-            &mut hints,
-            crate::i18n::gettext(app.locale, "Show shortcut hints under the message box"),
-        )
-        .changed()
-    {
-        app.actions.push(Action::SetShortcutHints(hints));
-    }
 }
 
 fn about(app: &mut App, ui: &mut egui::Ui) {

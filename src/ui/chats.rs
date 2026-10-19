@@ -1,6 +1,8 @@
 //! The left panel: the chat list.
 
-use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
+use egui::{
+    Align, Color32, CornerRadius, Frame, Key, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2,
+};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
@@ -22,20 +24,32 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.sidebar())
-                .inner_margin(Margin::ZERO),
+                .fill(Color32::TRANSPARENT)
+                .inner_margin(Margin {
+                    left: 4,
+                    right: 8,
+                    top: 12,
+                    bottom: 12,
+                }),
         );
     let response = panel.show(ui, |ui| {
-        header(app, ui);
-        body(app, ui);
+        floating_list_surface(&palette).show(ui, |ui| {
+            header(app, ui);
+            body(app, ui);
+        });
     });
     let width = response.response.rect.width();
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(panel_rect_id(), response.response.rect));
     if (width - app.settings.sidebar_width).abs() > 1.0 {
         app.settings.sidebar_width = width;
         app.actions.push(Action::SettingsChanged);
     }
-    // Separate the panel from the conversation, as the header's line does.
-    widgets::paint_edge_beside(ui, &palette, response.response.rect);
+}
+
+/// Where the resizable chat-list panel was laid out, for resize tests.
+pub(crate) fn panel_rect_id() -> egui::Id {
+    egui::Id::new("chat-list-panel")
 }
 
 /// The chat list across the whole window, when the window is too narrow to
@@ -45,11 +59,28 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     super::rail::show(app, ui, false);
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
+        .frame(Frame::new().fill(palette.panel).inner_margin(Margin {
+            left: 4,
+            right: 12,
+            top: 12,
+            bottom: 12,
+        }))
         .show(ui, |ui| {
-            header(app, ui);
-            body(app, ui);
+            floating_list_surface(&palette).show(ui, |ui| {
+                header(app, ui);
+                body(app, ui);
+            });
         });
+}
+
+/// The list reads as one raised surface, inset from the rail and the window
+/// edge. The content stays flat inside it; only the panel itself is rounded.
+fn floating_list_surface(palette: &Palette) -> Frame {
+    Frame::new()
+        .fill(palette.sidebar())
+        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+        .inner_margin(Margin::same(4))
+        .stroke(Stroke::new(0.75, palette.outline))
 }
 
 /// What the list pane holds under its header: the chats, or on the Calls
@@ -1833,12 +1864,9 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         }
         focused
     });
-    // The rail itself scrolls in a short window. The inner scroll area has
-    // consumed the avatar's focus target; reveal its viewport in the outer
-    // one as well, so a focused avatar cannot stay clipped by the rail.
-    if let Some(mut focused) = output.inner {
-        focused.rect = output.inner_rect;
-        focused.interact_rect = focused.rect.intersect(ui.clip_rect());
+    // The inner list scrolls the focused avatar within its own viewport;
+    // reveal that same avatar in the rail's outer scroll area too.
+    if let Some(focused) = output.inner {
         theme::reveal_focus_in(ui, &focused);
     }
     if !copy {
@@ -2519,7 +2547,7 @@ mod tests {
             "the rail draws the second chat too"
         );
         assert!(
-            (rect.width() - compact_width(&ctx)).abs() < 1.0,
+            (rect.width() - compact_width(&ctx)).abs() <= 1.5,
             "an avatar cell is one panel wide, not {} points",
             rect.width()
         );

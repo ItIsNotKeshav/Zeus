@@ -151,7 +151,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // step aside while the panel is open. The Calls tab's history needs the
     // full list pane: only the chats collapse into the rail's avatars.
     let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
-    let mut list_width = chats::compact_width(ui.ctx());
+    let mut list_width = rail::PANE_WIDTH;
     if full_list {
         list_width += app.settings.sidebar_width;
     }
@@ -393,8 +393,9 @@ fn track_keyboard_focus(ctx: &egui::Context) {
                 egui::Event::Key {
                     key: egui::Key::Tab,
                     pressed: true,
+                    modifiers,
                     ..
-                }
+                } if !modifiers.command
             )
         });
         (tab, input.pointer.any_pressed())
