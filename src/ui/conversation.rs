@@ -2618,14 +2618,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .as_ref()
         .filter(|divider| divider.chat == chat.id)
         .and_then(|divider| {
-            conversation
-                .messages
-                .iter()
-                .rev()
-                .filter(|message| !message.from_me)
-                .nth(divider.count.saturating_sub(1) as usize)
-                .map(|message| (message.id.clone(), divider.count, divider.placed))
+            let first = divider.first.clone().or_else(|| {
+                conversation
+                    .messages
+                    .iter()
+                    .rev()
+                    .filter(|message| !message.from_me)
+                    .nth(divider.count.saturating_sub(1) as usize)
+                    .map(|message| message.id.clone())
+            })?;
+            Some((first, divider.count, divider.placed))
         });
+    let divider_first = divider.as_ref().map(|(first, ..)| first.clone());
     let mut divider_placed = false;
     let selection: Option<Vec<String>> = app
         .selection
@@ -3016,8 +3020,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         });
                         // Messages curls its tail under a run's last bubble.
                         // The sender's picture: beside the first message of a
-                        // run in WhatsApp's style, beside the last in Messages.
-                        let show_avatar = if palette.bubbles == theme::BubbleStyle::Messages {
+                        // run in WhatsApp's style, beside the last in Messages
+                        // and Nothing.
+                        let show_avatar = if matches!(
+                            palette.bubbles,
+                            theme::BubbleStyle::Messages | theme::BubbleStyle::Nothing
+                        ) {
                             shows_sender_pictures(chat) && !message.from_me && last_in_run
                         } else {
                             show_sender
@@ -3469,6 +3477,24 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     conversation.key_scroll = key_scroll;
     app.conversations
         .insert(chat.id.clone(), std::mem::take(&mut conversation));
+    // Fixed to the message it first found, whatever arrives after it.
+    if let Some(divider) = app
+        .unread_divider
+        .as_mut()
+        .filter(|divider| divider.chat == chat.id && divider.first.is_none())
+    {
+        divider.first = divider_first;
+    }
+    // Scrolling down to the end reads what the divider marked.
+    if at_bottom
+        && !app.at_bottom
+        && app
+            .unread_divider
+            .as_ref()
+            .is_some_and(|divider| divider.chat == chat.id && divider.placed)
+    {
+        app.unread_divider = None;
+    }
     app.at_bottom = at_bottom;
     if app.scroll_to_bottom && (reader_scrolled || (keyboard_navigation.get() && !scroll_forced)) {
         app.scroll_to_bottom = false;
@@ -4175,11 +4201,16 @@ fn bubble_row(
                     if !show_avatar {
                         return;
                     }
-                    // Messages puts the avatar beside the run's last message,
-                    // level with its bottom; WhatsApp beside the first, at
-                    // its top.
+                    // Messages and Nothing put the avatar beside the run's last
+                    // message, level with its bottom; WhatsApp beside the
+                    // first, at its top.
                     let rect = match &response {
-                        Some(bubble) if view.palette.bubbles == theme::BubbleStyle::Messages => {
+                        Some(bubble)
+                            if matches!(
+                                view.palette.bubbles,
+                                theme::BubbleStyle::Messages | theme::BubbleStyle::Nothing
+                            ) =>
+                        {
                             Rect::from_min_size(
                                 pos2(
                                     space.left(),
@@ -4248,13 +4279,17 @@ fn bubble_row(
             .ctx()
             .data(|data| data.get_temp::<Rect>(id.with("rect")))
             .or_else(|| response.as_ref().map(|response| response.rect));
+        // A photo, video or link card opens itself: only the text and the
+        // bubble around it show the time.
+        let media = [id.with("picture"), id.with("preview")]
+            .map(|key| ui.ctx().data(|data| data.get_temp::<Rect>(key)));
         let clicked_inside = bubble_rect.is_some_and(|rect| {
             ui.input(|input| {
                 input.pointer.button_clicked(egui::PointerButton::Primary)
-                    && input
-                        .pointer
-                        .interact_pos()
-                        .is_some_and(|position| rect.contains(position))
+                    && input.pointer.interact_pos().is_some_and(|position| {
+                        rect.contains(position)
+                            && !media.iter().flatten().any(|media| media.contains(position))
+                    })
             })
         });
         let metadata_id = id.with("metadata-visible");
@@ -4263,8 +4298,13 @@ fn bubble_row(
             .ctx()
             .data(|data| data.get_temp::<bool>(metadata_id))
             .unwrap_or(default_visible);
+        let on_media = ui.input(|input| {
+            input.pointer.interact_pos().is_some_and(|position| {
+                media.iter().flatten().any(|media| media.contains(position))
+            })
+        });
         let bubble_clicked =
-            clicked_inside || response.as_ref().is_some_and(egui::Response::clicked);
+            clicked_inside || (!on_media && response.as_ref().is_some_and(egui::Response::clicked));
         if bubble_clicked {
             visible = !visible;
             ui.ctx()
@@ -4283,8 +4323,15 @@ fn bubble_row(
         );
         if progress > 0.0 {
             let display_message = album.and_then(|members| members.last()).unwrap_or(message);
-            if reference_timestamp(ui, view, display_message, id.with("metadata-row"), progress)
-                .clicked()
+            if reference_timestamp(
+                ui,
+                view,
+                display_message,
+                id.with("metadata-row"),
+                progress,
+                bubble_rect,
+            )
+            .clicked()
                 && !bubble_clicked
             {
                 ui.ctx()
@@ -4302,6 +4349,7 @@ fn reference_timestamp(
     message: &Message,
     id: egui::Id,
     progress: f32,
+    bubble: Option<Rect>,
 ) -> egui::Response {
     let own = message.from_me;
     const SPACING: f32 = 4.0;
@@ -4319,26 +4367,20 @@ fn reference_timestamp(
     // Keep the metadata at its final position and reveal it through a clip
     // that grows with the row. The transcript's ordinary layout then moves
     // subsequent messages in step, instead of jumping by the whole row.
-    let row_rect = Rect::from_min_size(
-        pos2(available.left(), slot_top + SPACING),
-        vec2(available.width(), ROW_HEIGHT),
-    );
+    // Under the bubble, ending at its right edge on either side.
+    let x = bubble.map_or(available.x_range(), |bubble| bubble.x_range());
+    let row_rect = Rect::from_x_y_ranges(x, slot_top + SPACING..=slot_top + SPACING + ROW_HEIGHT);
     let clip = Rect::from_min_max(slot.min, pos2(slot.right(), slot.top() + reveal_height))
         .intersect(ui.clip_rect());
     let mut row_ui = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(id)
             .max_rect(row_rect)
-            .layout(Layout::top_down(if own { Align::Max } else { Align::Min })),
+            .layout(Layout::top_down(Align::Max)),
     );
     row_ui.set_clip_rect(clip);
     row_ui.multiply_opacity(progress);
-    let layout = if own {
-        Layout::right_to_left(Align::Center)
-    } else {
-        Layout::left_to_right(Align::Center)
-    };
-    row_ui.with_layout(layout, |ui| {
+    row_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         let time = crate::util::clock(message.timestamp);
         if own {
@@ -6980,7 +7022,10 @@ fn content(
             }
         }
         Content::Sticker { media, animated } => {
-            picture(ui, view, message, media, width, Some(*animated), actions);
+            let drawn = picture(ui, view, message, media, width, Some(*animated), actions);
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(bubble_id(&view.chat.id, &message.id).with("picture"), drawn);
+            });
             None
         }
         Content::Video {
@@ -6990,11 +7035,21 @@ fn content(
             gif,
             note,
         } => {
-            let drawn = if *note {
-                video_note(ui, view, message, media, *seconds, actions)
-            } else {
-                video(ui, view, message, media, *seconds, *gif, width, actions)
-            };
+            let shown = ui.scope(|ui| {
+                if *note {
+                    video_note(ui, view, message, media, *seconds, actions)
+                } else {
+                    video(ui, view, message, media, *seconds, *gif, width, actions)
+                }
+            });
+            // Its click plays it; the bubble's own click must not count it.
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(
+                    bubble_id(&view.chat.id, &message.id).with("picture"),
+                    shown.response.rect,
+                );
+            });
+            let drawn = shown.inner;
             caption.as_ref().and_then(|caption| {
                 let wrap = if message.quoted.is_some() {
                     width.max(drawn)

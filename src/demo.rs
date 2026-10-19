@@ -2880,6 +2880,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     chat: id,
                     count: 3,
                     placed: false,
+                    first: None,
                 });
                 app.scroll_to_bottom = true;
             }

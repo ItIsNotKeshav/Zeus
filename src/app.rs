@@ -372,6 +372,9 @@ pub struct UnreadDivider {
     pub count: u32,
     /// The transcript has scrolled to it once.
     pub placed: bool,
+    /// The message it stands above, fixed once found, so messages that
+    /// arrive later do not move it.
+    pub first: Option<String>,
 }
 
 pub struct App {
@@ -3321,6 +3324,10 @@ impl App {
                     if !older && (self.at_bottom || was_empty) {
                         self.scroll_to_bottom = true;
                     }
+                    // Someone reading the end as it arrives has nothing unread.
+                    if !older && self.at_bottom && self.window_focused {
+                        self.unread_divider = None;
+                    }
                     if bare {
                         self.fetch_older(&chat, false);
                     }
@@ -5238,6 +5245,7 @@ impl App {
                         chat: id.clone(),
                         count: chat.unread,
                         placed: false,
+                        first: None,
                     });
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.prefilled = None;
@@ -21264,6 +21272,38 @@ mod app_lock_tests {
         app.maybe_notify(CHAT, &message);
         app.request_attention_on(&ctx, false);
         assert!(!attention_requested(&ctx));
+    }
+
+    #[test]
+    fn a_message_read_as_it_arrives_takes_the_unread_divider_away() {
+        let mut app = unlocked_app();
+        let mut message = incoming(&mut app);
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        app.page = Page::Chats;
+        app.open_chat = Some(CHAT.into());
+        app.window_focused = true;
+        app.at_bottom = true;
+        app.unread_divider = Some(UnreadDivider {
+            chat: CHAT.into(),
+            count: 1,
+            placed: true,
+            first: Some("m0".into()),
+        });
+        message.id = "m2".into();
+        events
+            .send(Event::Messages {
+                chat: CHAT.into(),
+                messages: vec![message],
+                older: false,
+                complete: true,
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(
+            app.unread_divider.is_none(),
+            "reading the end leaves nothing unread"
+        );
     }
 
     #[test]
