@@ -2993,6 +2993,17 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "messages" => {
                 app.settings.theme = ThemeChoice::Messages;
             }
+            // The colour themes, by name.
+            "red" | "blue" | "green" | "pink" | "purple" | "yellow" => {
+                app.settings.custom_theme = None;
+                app.settings.custom_theme_cache = None;
+                if let Some(&choice) = ThemeChoice::ALL
+                    .iter()
+                    .find(|choice| choice.label().eq_ignore_ascii_case(part))
+                {
+                    app.settings.theme = choice;
+                }
+            }
             // Messages follows the system; this shows its light side anywhere.
             "messages-light" => {
                 app.settings.custom_theme = Some("Messages light.json".into());
@@ -16978,8 +16989,13 @@ mod bubble_detail_tests {
                 "{id}: no strip under the picture ({picture:?} in {frame:?})"
             );
             assert!(
-                (frame.left() + 10.0 - picture.left()).abs() < 0.5
-                    && (frame.right() - 10.0 - picture.right()).abs() < 0.5,
+                // A forwarded photo keeps the text padding for its label;
+                // one alone has an even rim.
+                {
+                    let rim = if id == "photos-in" { 10.0 } else { 4.0 };
+                    (frame.left() + rim - picture.left()).abs() < 0.5
+                        && (frame.right() - rim - picture.right()).abs() < 0.5
+                },
                 "{id}: the bubble wraps the picture ({picture:?} in {frame:?})"
             );
         }

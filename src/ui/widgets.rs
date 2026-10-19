@@ -1075,6 +1075,8 @@ pub fn chip_scroll_row<R>(
             .id_salt(id_salt)
             .animated(false)
             .auto_shrink([false, true])
+            // The fade at the cut edge says the row scrolls on; a bar is noise.
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, add_contents)
     })
     .inner

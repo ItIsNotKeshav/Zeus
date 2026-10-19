@@ -228,6 +228,26 @@ impl Palette {
         p
     }
 
+    /// Nothing Dark with `rgb` as its accent: buttons, links, ticks, and
+    /// own bubbles in a deep shade of it.
+    pub fn nothing_tinted([r, g, b]: [u8; 3]) -> Self {
+        let mut p = Self::nothing_dark();
+        let accent = Color32::from_rgb(r, g, b);
+        p.accent = accent;
+        p.accent_hover = accent.lerp_to_gamma(Color32::WHITE, 0.2);
+        // Dark text on a light accent (yellow), white on the rest.
+        let luma = 0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b);
+        p.on_accent = if luma > 150.0 {
+            Color32::from_rgb(0x12, 0x12, 0x12)
+        } else {
+            Color32::WHITE
+        };
+        p.bubble_out = p.bubble_in.lerp_to_gamma(accent, 0.45);
+        p.link = accent.lerp_to_gamma(Color32::WHITE, 0.35);
+        p.read = p.link;
+        p
+    }
+
     /// Nothing OS inspired paper-white palette with translucent panels.
     pub fn nothing_light() -> Self {
         let mut p = Self::light();

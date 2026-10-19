@@ -66,7 +66,7 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
 /// The gutter between the window's edges and the floating conversation card.
 pub(crate) const CARD_GAP: f32 = 8.0;
 /// How round the conversation card is.
-pub(crate) const CARD_RADIUS: u8 = 12;
+pub(crate) const CARD_RADIUS: u8 = 16;
 /// How far the list sets its header below the top of its column. The chat
 /// header in the card beside it moves down as far, so the chat's name,
 /// picture and buttons sit on the same line as the list's title.
@@ -2536,12 +2536,10 @@ mod tests {
         );
     }
 
-    /// Both chip rows overflow in a narrow window (#444). Their scroll bars
-    /// are the app's floating ones: hidden at rest, shown over the bottom of
-    /// the hovered row's chips without taking a strip of their own.
-    /// Dragging the bar scrolls the row, and so does a plain vertical wheel.
+    /// Both chip rows overflow in a narrow window (#444). They show no
+    /// scroll bar, at rest or hovered, and a plain vertical wheel scrolls them.
     #[test]
-    fn narrow_chip_rows_show_a_scroll_bar_on_hover_and_follow_the_wheel() {
+    fn narrow_chip_rows_hide_their_scroll_bar_and_follow_the_wheel() {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _events) =
             App::headless(AppDirs::under(directory.path()), Settings::default());
@@ -2613,60 +2611,19 @@ mod tests {
             "the chip rows show bars at rest: {resting:?}"
         );
 
-        let mut filter_bar = None;
-        for (row, pointer, chip) in [
-            ("filter", all(&ctx).center(), all(&ctx)),
-            ("label", first_label.center(), first_label),
-        ] {
+        // Hovering a row shows no bar either: the fade at the cut edge says
+        // the row scrolls on.
+        for pointer in [all(&ctx).center(), first_label.center()] {
             let mut shapes = Vec::new();
             for _ in 0..5 {
                 shapes = frame(vec![egui::Event::PointerMoved(pointer)]);
             }
             let shown = bars(&shapes);
-            let bar = shown
-                .iter()
-                .copied()
-                .find(|bar| bar.center().y > chip.top() && bar.center().y < chip.bottom())
-                .unwrap_or_else(|| {
-                    panic!("hovering the {row} row showed no bar over its chips: {shown:?}")
-                });
-            // The bar lies over the chips, so the row is no taller for it.
-            assert!(
-                bar.bottom() <= chip.bottom() + 0.5,
-                "the {row} row's bar at {bar:?} reaches below its chips at {chip:?}"
-            );
-            if row == "filter" {
-                filter_bar = Some(bar);
-            }
+            assert!(shown.is_empty(), "a hovered chip row shows bars: {shown:?}");
         }
 
-        // Dragging the handle to the right scrolls the chips to the left.
-        let bar = filter_bar.expect("the filter row has a scroll bar");
-        let grab = egui::pos2(bar.left() + 10.0, bar.center().y);
         let before = all(&ctx).left();
-        let button = |pos, pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        frame(vec![egui::Event::PointerMoved(grab)]);
-        frame(vec![button(grab, true)]);
-        for step in 1..=4 {
-            frame(vec![egui::Event::PointerMoved(
-                grab + vec2(10.0 * step as f32, 0.0),
-            )]);
-        }
-        frame(vec![button(grab + vec2(40.0, 0.0), false)]);
-        frame(vec![]);
-        assert!(
-            all(&ctx).left() < before - 1.0,
-            "dragging the scroll bar left the filter chips at {before}, now {}",
-            all(&ctx).left()
-        );
-
-        let before = all(&ctx).left();
-        // The middle of the row; the All chip has scrolled out of view.
+        // The middle of the row.
         let pointer = egui::pos2(110.0, all(&ctx).center().y);
         frame(vec![
             egui::Event::PointerMoved(pointer),

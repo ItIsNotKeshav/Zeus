@@ -36,9 +36,18 @@ pub enum ThemeChoice {
     /// macOS's greys, light or dark as the system is, with bubbles shaped as
     /// Messages draws them.
     Messages,
-    /// Nothing OS inspired monochrome themes with translucent surfaces.
+    /// Nothing OS inspired monochrome themes with translucent surfaces,
+    /// offered as plain Dark and Light; `Dark` and `Light` above are
+    /// WhatsApp's own colours. The names stay for saved settings.
     NothingDark,
     NothingLight,
+    /// Dark with a coloured accent and own bubbles.
+    Red,
+    Blue,
+    Green,
+    Pink,
+    Purple,
+    Yellow,
 }
 
 impl ThemeChoice {
@@ -47,22 +56,55 @@ impl ThemeChoice {
     /// its own colours elsewhere (see [`crate::backdrop`]).
     pub const ALL: &[ThemeChoice] = &[
         Self::System,
+        Self::NothingLight,
+        Self::NothingDark,
+        Self::Red,
+        Self::Blue,
+        Self::Green,
+        Self::Pink,
+        Self::Purple,
+        Self::Yellow,
         Self::Light,
         Self::Dark,
         Self::Messages,
-        Self::NothingDark,
-        Self::NothingLight,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Dark => "Dark",
-            Self::Light => "Light",
+            Self::Dark => "WhatsApp Dark",
+            Self::Light => "WhatsApp Light",
             Self::System => "Follow system",
             Self::Messages => "Messages",
-            Self::NothingDark => "Nothing Dark",
-            Self::NothingLight => "Nothing Light",
+            Self::NothingDark => "Dark",
+            Self::NothingLight => "Light",
+            Self::Red => "Red",
+            Self::Blue => "Blue",
+            Self::Green => "Green",
+            Self::Pink => "Pink",
+            Self::Purple => "Purple",
+            Self::Yellow => "Yellow",
         }
+    }
+
+    /// The accent of a colour theme, as RGB.
+    pub fn accent(self) -> Option<[u8; 3]> {
+        match self {
+            Self::Red => Some([0xff, 0x45, 0x3a]),
+            Self::Blue => Some([0x0a, 0x84, 0xff]),
+            Self::Green => Some([0x30, 0xd1, 0x58]),
+            Self::Pink => Some([0xff, 0x37, 0x8f]),
+            Self::Purple => Some([0xbf, 0x5a, 0xf2]),
+            Self::Yellow => Some([0xff, 0xd6, 0x0a]),
+            _ => None,
+        }
+    }
+
+    /// Whether the window shows the desktop through it where it can.
+    pub fn vibrant(self) -> bool {
+        matches!(
+            self,
+            Self::Messages | Self::NothingDark | Self::NothingLight
+        ) || self.accent().is_some()
     }
 }
 

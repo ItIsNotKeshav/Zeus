@@ -2366,6 +2366,7 @@ fn sticky_date<R>(
     chat: &Chat,
     output: &egui::scroll_area::ScrollAreaOutput<R>,
     visible_day: Option<(i64, f32)>,
+    under: f32,
 ) {
     let id = egui::Id::new(("visible-message-date", &chat.id));
     let ctx = ui.ctx().clone();
@@ -2393,7 +2394,9 @@ fn sticky_date<R>(
     let Some((timestamp, separator_top)) = visible_day else {
         return;
     };
-    if opacity <= 0.0 || separator_top >= viewport.top() {
+    // Below the header a vibrant window lays over the list, not under its blur.
+    let top = viewport.top() + under;
+    if opacity <= 0.0 || separator_top >= top {
         return;
     }
     // Paint after the scroll contents, inside their clip, without changing
@@ -2401,7 +2404,7 @@ fn sticky_date<R>(
     let mut overlay = ui.new_child(
         egui::UiBuilder::new()
             .id_salt(id)
-            .max_rect(viewport.shrink2(vec2(0.0, 8.0)))
+            .max_rect(viewport.with_min_y(top).shrink2(vec2(0.0, 8.0)))
             .layout(Layout::top_down(Align::Center)),
     );
     overlay.set_clip_rect(viewport);
@@ -2411,6 +2414,77 @@ fn sticky_date<R>(
         palette,
         &crate::util::day_label(locale, timestamp),
     );
+}
+
+/// How long the list takes to slide up for a message that lands at its end.
+const GLIDE_SECONDS: f64 = 0.25;
+
+/// Slides the list up into place when a new last message lands while the
+/// reader is at the bottom, instead of jumping by its height in one frame.
+/// Only the picture moves: the scroll offset, and so every click, is already
+/// where it ends.
+fn glide_new_message<R>(
+    ui: &egui::Ui,
+    chat: &str,
+    newest: Option<String>,
+    output: &egui::scroll_area::ScrollAreaOutput<R>,
+    layer: egui::LayerId,
+    first_shape: egui::layers::ShapeIdx,
+    reduce_motion: bool,
+) {
+    let id = egui::Id::new(("message-glide", chat));
+    let now = ui.input(|input| input.time);
+    let height = output.content_size.y;
+    let at_bottom = output.state.offset.y + output.inner_rect.height() >= height - 1.0;
+    #[derive(Clone)]
+    struct Glide {
+        newest: Option<String>,
+        height: f32,
+        at_bottom: bool,
+        start: f64,
+        distance: f32,
+    }
+    let before = ui.ctx().data(|data| data.get_temp::<Glide>(id));
+    let mut glide = Glide {
+        newest: newest.clone(),
+        height,
+        at_bottom,
+        start: before.as_ref().map_or(0.0, |glide| glide.start),
+        distance: before.as_ref().map_or(0.0, |glide| glide.distance),
+    };
+    if let Some(before) = &before
+        && before.newest.is_some()
+        && before.newest != newest
+        && before.at_bottom
+        && at_bottom
+        && height > before.height
+        && !reduce_motion
+    {
+        glide.start = now;
+        glide.distance = (height - before.height).min(output.inner_rect.height());
+    }
+    let t = ((now - glide.start) / GLIDE_SECONDS) as f32;
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id, glide.clone()));
+    if t >= 1.0 || glide.distance <= 0.0 {
+        return;
+    }
+    // Ease out: it starts at the old place and settles gently.
+    let shift = glide.distance * (1.0 - t).powi(3);
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for index in first_shape.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                // The clip stays: the list slides within its viewport.
+                if clipped.clip_rect == output.inner_rect
+                    || output.inner_rect.contains_rect(clipped.clip_rect)
+                {
+                    clipped.shape.translate(vec2(0.0, shift));
+                }
+            });
+        }
+    });
+    ui.ctx().request_repaint();
 }
 
 /// The conversation's messages. `under` is how much of the list's top lies
@@ -2624,6 +2698,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
     let mut pinned = false;
     let mut visible_day = None;
     let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
+    let layer = ui.layer_id();
+    let first_shape = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let newest = conversation
+        .messages
+        .last()
+        .map(|message| message.id.clone());
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .auto_shrink([false, false])
@@ -3268,9 +3352,18 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32) {
                 ui.ctx().request_repaint();
             }
         });
+    glide_new_message(
+        ui,
+        &chat.id,
+        newest,
+        &output,
+        layer,
+        first_shape,
+        reduce_motion,
+    );
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
-    sticky_date(ui, &palette, app.locale, chat, &output, visible_day);
+    sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
     ui.ctx().data_mut(|data| {
@@ -3795,84 +3888,8 @@ struct RunPlace {
     last_outgoing: bool,
 }
 
-/// How long a new message takes to settle into its row.
-const ARRIVAL_SECONDS: f64 = 0.5;
-/// How old a message may be when first drawn and still arrive with a bounce:
-/// one just sent or received, not history or a chat opened later.
-const ARRIVAL_FRESH: i64 = 3;
-
-/// How far a message's arrival has come (0 to 1, overshooting on the way),
-/// or `None` once it has settled or when it arrives without one.
-fn arrival(ui: &egui::Ui, view: &View<'_>, message: &Message, reduce_motion: bool) -> Option<f32> {
-    if !view.animate
-        || reduce_motion
-        || (crate::util::now() - message.timestamp).abs() > ARRIVAL_FRESH
-    {
-        return None;
-    }
-    let id = egui::Id::new(("arrival", &view.chat.id, &message.id));
-    let now = ui.input(|input| input.time);
-    let start = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
-    let t = ((now - start) / ARRIVAL_SECONDS) as f32;
-    (t < 1.0).then(|| {
-        ui.ctx().request_repaint();
-        spring(t)
-    })
-}
-
-/// An underdamped spring from 0 to 1: past 1 once, then back, as Messages'
-/// bubbles land.
-fn spring(t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    1.0 - (-6.0 * t).exp() * (9.0 * t).cos()
-}
-
-/// Draws a message row, rising and growing into place from its own side
-/// when it has just arrived, and returns its bubble response for scrolling.
-fn bubble(
-    ui: &mut egui::Ui,
-    view: &View<'_>,
-    message: &Message,
-    album: Option<&[Message]>,
-    place: RunPlace,
-    reduce_motion: bool,
-    actions: &mut Vec<Action>,
-) -> Option<egui::Response> {
-    let Some(progress) = arrival(ui, view, message, reduce_motion) else {
-        return bubble_row(ui, view, message, album, place, reduce_motion, actions);
-    };
-    let layer = ui.layer_id();
-    let start = ui.ctx().graphics(|graphics| {
-        graphics
-            .get(layer)
-            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
-    });
-    let row = ui.scope(|ui| {
-        ui.multiply_opacity(progress.clamp(0.0, 1.0));
-        bubble_row(ui, view, message, album, place, reduce_motion, actions)
-    });
-    let rect = row.response.rect;
-    // Own messages grow from the composer's corner, others from their side.
-    let pivot = if message.from_me {
-        rect.right_bottom()
-    } else {
-        rect.left_bottom()
-    };
-    let scale = 0.6 + 0.4 * progress;
-    let rise = (1.0 - progress) * 28.0;
-    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2() + vec2(0.0, rise))
-        * egui::emath::TSTransform::from_scaling(scale)
-        * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
-    ui.ctx().graphics_mut(|graphics| {
-        let list = graphics.entry(layer);
-        let end = list.next_idx();
-        list.transform_range(start, end, transform);
-    });
-    row.inner
-}
-
 /// Draws a message row and returns its bubble response for scrolling.
-fn bubble_row(
+fn bubble(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
@@ -4607,6 +4624,9 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         } else {
             NOTHING_TEXT_MARGIN
         }
+    } else if over_picture && compact_picture_message(message) {
+        // A photo alone keeps an even rim, as in WhatsApp.
+        Margin::same(4)
     } else {
         Margin {
             left: 10,
@@ -10114,16 +10134,6 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_new_message_springs_past_its_place_and_settles() {
-        assert_eq!(spring(0.0), 0.0);
-        let peak = (1..100)
-            .map(|step| spring(step as f32 / 100.0))
-            .fold(0.0, f32::max);
-        assert!(peak > 1.05 && peak < 1.2, "overshoot {peak}");
-        assert!((spring(1.0) - 1.0).abs() < 0.01);
-    }
 
     #[test]
     fn account_read_receipt_privacy_hides_read_ticks_only_in_outgoing_dms() {

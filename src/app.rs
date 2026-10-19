@@ -1281,7 +1281,9 @@ impl App {
                 ThemeChoice::Messages => Palette::messages(),
                 ThemeChoice::NothingDark => Palette::nothing_dark(),
                 ThemeChoice::NothingLight => Palette::nothing_light(),
-                _ => Palette::dark(),
+                choice => choice
+                    .accent()
+                    .map_or_else(Palette::dark, Palette::nothing_tinted),
             });
         let locale = crate::i18n::resolve(settings.interface_language);
         // With a password set, ZapFast starts locked.
@@ -5863,7 +5865,13 @@ impl App {
             || match self.settings.theme {
                 ThemeChoice::Dark => egui::ThemePreference::Dark,
                 ThemeChoice::Light => egui::ThemePreference::Light,
-                ThemeChoice::NothingDark => egui::ThemePreference::Dark,
+                ThemeChoice::NothingDark
+                | ThemeChoice::Red
+                | ThemeChoice::Blue
+                | ThemeChoice::Green
+                | ThemeChoice::Pink
+                | ThemeChoice::Purple
+                | ThemeChoice::Yellow => egui::ThemePreference::Dark,
                 ThemeChoice::NothingLight => egui::ThemePreference::Light,
                 // Messages follows the system's appearance, as Messages does.
                 ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
@@ -5915,6 +5923,7 @@ impl App {
             .unwrap_or_else(|| match self.settings.theme {
                 ThemeChoice::NothingDark => Palette::nothing_dark(),
                 ThemeChoice::NothingLight => Palette::nothing_light(),
+                choice if let Some(accent) = choice.accent() => Palette::nothing_tinted(accent),
                 ThemeChoice::Messages => {
                     if dark {
                         Palette::messages()
@@ -5922,6 +5931,8 @@ impl App {
                         Palette::messages_light()
                     }
                 }
+                ThemeChoice::System if dark => Palette::nothing_dark(),
+                ThemeChoice::System => Palette::nothing_light(),
                 _ if dark => Palette::dark(),
                 _ => Palette::light(),
             });

@@ -215,7 +215,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
             ui.painter().rect_stroke(
                 rect,
                 radius,
-                Stroke::new(0.75, app.palette.outline),
+                Stroke::new(1.25, app.palette.outline),
                 egui::StrokeKind::Inside,
             );
         });

@@ -341,7 +341,7 @@ fn script() -> Vec<Cue> {
         32.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(33.0, Move(Label("Dark")));
+    add(33.0, Move(Label("WhatsApp Dark")));
     add(33.35, Click(left));
     add(33.5, Move(Label("Light")));
     add(33.85, Click(left));
@@ -1725,8 +1725,8 @@ mod tests {
         for _ in 0..3 {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
-        click(&mut app, &mut tour, &ctx, "Dark");
-        let menu_pos = tour.labels["Nord"];
+        click(&mut app, &mut tour, &ctx, "WhatsApp Dark");
+        let menu_pos = tour.labels["Follow system"];
         for name in [
             "Follow system",
             "Light",
@@ -1767,7 +1767,7 @@ mod tests {
             );
         }
         for _ in 0..20 {
-            if tour.labels.contains_key("Follow system") {
+            if tour.labels.contains_key("Nord") {
                 break;
             }
             frame(
@@ -1792,6 +1792,26 @@ mod tests {
             egui::Color32::from_rgb(0x2e, 0x34, 0x40)
         );
         click(&mut app, &mut tour, &ctx, "Nord");
+        // The menu reopens at Nord; scroll back up to the first choice.
+        for _ in 0..20 {
+            if tour.labels.contains_key("Follow system") {
+                break;
+            }
+            frame(
+                &mut app,
+                &mut tour,
+                &ctx,
+                vec![
+                    Event::PointerMoved(menu_pos),
+                    Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: vec2(0.0, 30.0),
+                        modifiers: Modifiers::NONE,
+                        phase: egui::TouchPhase::Move,
+                    },
+                ],
+            );
+        }
         click(&mut app, &mut tour, &ctx, "Follow system");
         assert!(app.settings.custom_theme.is_none());
         assert_eq!(app.settings.theme, ThemeChoice::System);
@@ -1894,7 +1914,7 @@ mod tests {
                     matches!(app.dialog, Some(Dialog::Forward { .. })),
                     app.page == Page::Settings && tour.labels.contains_key("Русский"),
                     app.settings_search == "privacy" && tour.labels.contains_key("Last seen"),
-                    app.settings.theme == ThemeChoice::Light,
+                    app.settings.theme == ThemeChoice::NothingLight,
                 ];
                 for (seen, check) in seen.iter_mut().zip(checks) {
                     *seen |= check;
@@ -1918,7 +1938,7 @@ mod tests {
         // nothing left open.
         assert_eq!(app.page, Page::Chats);
         assert_eq!(app.open_chat.as_deref(), Some(group));
-        assert_eq!(app.settings.theme, ThemeChoice::Light);
+        assert_eq!(app.settings.theme, ThemeChoice::NothingLight);
         assert_eq!(
             app.settings.interface_language,
             Some(crate::i18n::Locale::English)
@@ -1959,7 +1979,7 @@ mod tests {
                 seen[3] |= app.picker == Some(PickerTab::Stickers);
                 seen[4] |= app.info.is_some();
                 seen[5] |= matches!(app.dialog, Some(Dialog::Shortcuts));
-                seen[6] |= app.settings.theme == ThemeChoice::Light;
+                seen[6] |= app.settings.theme == ThemeChoice::NothingLight;
             });
             output.textures_delta.clear();
             assert!(
@@ -1998,7 +2018,7 @@ mod tests {
         }
         let group = &app.conversations[super::super::SAMPLES[1].id];
         assert_eq!(group.messages.last().unwrap().mentions.len(), 1);
-        assert_eq!(app.settings.theme, ThemeChoice::Dark);
+        assert_eq!(app.settings.theme, ThemeChoice::NothingDark);
         assert!(app.backend.is_offline());
         assert!(app.composer.is_empty());
         assert!(app.dialog.is_none());
