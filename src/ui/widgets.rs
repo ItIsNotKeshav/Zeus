@@ -861,7 +861,7 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
             rect.center().y,
         );
         let knob = egui::lerp(
-            egui::Rgba::from(palette.secondary)..=egui::Rgba::from(Color32::WHITE),
+            egui::Rgba::from(palette.secondary)..=egui::Rgba::from(switch_knob(palette)),
             t,
         );
         ui.painter()
@@ -875,6 +875,21 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
+
+/// The knob of a switch that is on: white on the accent track, unless the
+/// accent is so light that white would vanish into it (Nothing Dark's near
+/// white), where it takes the colour drawn on the accent instead, and the
+/// accent check on it shows again.
+fn switch_knob(palette: &Palette) -> Color32 {
+    if theme::contrast(Color32::WHITE, palette.accent) >= SWITCH_KNOB_CONTRAST {
+        Color32::WHITE
+    } else {
+        palette.on_accent
+    }
+}
+
+/// Least contrast a white knob needs against the accent track to stay.
+const SWITCH_KNOB_CONTRAST: f32 = 2.0;
 
 /// The author's website, linked from the credit line.
 pub const AUTHOR_URL: &str = "https://paolino.me";
@@ -1772,6 +1787,32 @@ pub fn dotted_chip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A switch that is on keeps a knob that stands out from its track in
+    /// every built-in palette: white on the green accents, dark on Nothing
+    /// Dark's near-white one.
+    #[test]
+    fn an_on_switch_keeps_its_knob_visible() {
+        use crate::theme::Palette;
+        for palette in [
+            Palette::light(),
+            Palette::dark(),
+            Palette::nothing_light(),
+            Palette::nothing_dark(),
+        ] {
+            let knob = switch_knob(&palette);
+            assert!(
+                theme::contrast(knob, palette.accent) >= 3.0,
+                "{knob:?} on {:?}",
+                palette.accent
+            );
+        }
+        assert_eq!(switch_knob(&Palette::dark()), Color32::WHITE);
+        assert_eq!(
+            switch_knob(&Palette::nothing_dark()),
+            Palette::nothing_dark().on_accent
+        );
+    }
 
     /// A name too wide for its room rests three seconds at its start, eases
     /// to its end at 40 points a second on average, rests there as long, and
