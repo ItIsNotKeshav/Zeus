@@ -219,7 +219,7 @@ impl AppDirs {
 
     /// Current-run log, replaced at startup.
     pub fn log_file(&self) -> PathBuf {
-        self.state.join("zapfast.log")
+        self.state.join(format!("{}.log", crate::brand::ID))
     }
 
     /// Panic log written before process exit.
