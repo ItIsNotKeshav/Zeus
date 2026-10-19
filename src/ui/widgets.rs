@@ -751,12 +751,12 @@ pub fn search_field(
     let height = 34.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
-    // Over a vibrant window's material, a tint that lets it show through.
-    let fill = match (palette.vibrant(), has_focus) {
-        (true, false) => palette.tint(theme::TINT_FIELD),
-        (true, true) => palette.tint(theme::TINT_FIELD + theme::TINT_HOVER),
-        (false, true) => palette.surface_hover,
-        (false, false) => palette.surface,
+    // A tint of the text colour stands out from whatever the sidebar is:
+    // a vibrant window's material or the rail's shade under the list.
+    let fill = if has_focus {
+        palette.tint(theme::TINT_FIELD + theme::TINT_HOVER)
+    } else {
+        palette.tint(theme::TINT_FIELD)
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
     let icon_rect =
@@ -1784,6 +1784,37 @@ pub fn dotted_chip(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Fills the four corners of `rect` outside a rounding of `radius` with
+/// `color`, so a card whose contents paint square edges reads as rounded.
+pub fn card_corners(rect: egui::Rect, radius: f32, color: Color32) -> egui::Shape {
+    use std::f32::consts::FRAC_PI_2;
+    const STEPS: usize = 8;
+    let mut mesh = egui::Mesh::default();
+    // Each corner is a fan from the window corner over the arc inside it.
+    let corners = [
+        (rect.left_top(), egui::vec2(1.0, 1.0), 2.0),
+        (rect.right_top(), egui::vec2(-1.0, 1.0), 3.0),
+        (rect.right_bottom(), egui::vec2(-1.0, -1.0), 0.0),
+        (rect.left_bottom(), egui::vec2(1.0, -1.0), 1.0),
+    ];
+    for (corner, inward, quarter) in corners {
+        let centre = corner + inward * radius;
+        let base = mesh.vertices.len() as u32;
+        mesh.colored_vertex(corner, color);
+        for step in 0..=STEPS {
+            let angle = (quarter + step as f32 / STEPS as f32) * FRAC_PI_2;
+            mesh.colored_vertex(
+                centre + radius * egui::vec2(angle.cos(), angle.sin()),
+                color,
+            );
+        }
+        for step in 0..STEPS as u32 {
+            mesh.add_triangle(base, base + 1 + step, base + 2 + step);
+        }
+    }
+    egui::Shape::mesh(mesh)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2515,5 +2546,20 @@ mod tests {
         assert!(off_outline > 0.0, "the off track is outlined");
         assert_eq!(on_outline, 0.0, "the on track is filled, not outlined");
         assert!(on_knob > off_knob, "the knob grows when on");
+    }
+
+    #[test]
+    fn card_corners_cover_only_outside_the_rounding() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let egui::Shape::Mesh(mesh) = super::card_corners(rect, 12.0, Color32::RED) else {
+            panic!("a mesh");
+        };
+        for vertex in &mesh.vertices {
+            assert!(rect.expand(0.01).contains(vertex.pos));
+            // Every vertex is a corner or on an arc: never inside the rounding.
+            assert!(rect.shrink(12.0).distance_to_pos(vertex.pos) >= 12.0 - 0.01);
+        }
+        // Four fans of eight triangles.
+        assert_eq!(mesh.indices.len(), 4 * 8 * 3);
     }
 }

@@ -5,7 +5,7 @@
 //! avatars fill the rail between the two, so every chat is still one click
 //! away. Beside the list they would only repeat it.
 
-use egui::{Color32, CornerRadius, Frame, Margin, Rect, Sense, Stroke, Vec2, vec2};
+use egui::{Frame, Margin, Rect, Sense, Vec2, vec2};
 
 use crate::app::App;
 use crate::i18n::gettext;
@@ -166,100 +166,93 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         .resizable(false)
         .exact_size(PANE_WIDTH)
         .show_separator_line(false)
-        .frame(
-            Frame::new()
-                .fill(Color32::TRANSPARENT)
-                .inner_margin(Margin {
-                    left: 8,
-                    right: 4,
-                    top: 12,
-                    bottom: 4,
-                }),
-        );
+        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
+            left: 8,
+            right: 4,
+            top: super::chats::HEADER_DROP as i8 - 4,
+            bottom: 4,
+        }));
     let response = panel.show(ui, |ui| {
-        Frame::new()
-            .fill(palette.rail())
-            .corner_radius(CornerRadius::same(theme::RADIUS))
-            .stroke(Stroke::new(0.75, palette.outline))
-            .show(ui, |ui| {
-                // The avatars keep the spacing they always had; the rest is tight.
-                let row_gap = ui.spacing().item_spacing.y;
-                ui.spacing_mut().item_spacing.y = 0.0;
-                let width = ui.available_width();
-                if theme::traffic_light_inset(ui.ctx()) > 0.0 {
-                    // The traffic lights, or the caption buttons ZapFast draws where
-                    // the desktop puts them on the left (GNOME's round ones end 42
-                    // points down), take the rail's top; it starts under them.
-                    let (strip, _) =
-                        ui.allocate_exact_size(vec2(width, LIGHTS_CLEARANCE), Sense::hover());
-                    super::titlebar_drag(ui, strip);
+        // Flat on the sidebar's colour, one column with the list beside it.
+        Frame::new().show(ui, |ui| {
+            // The avatars keep the spacing they always had; the rest is tight.
+            let row_gap = ui.spacing().item_spacing.y;
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let width = ui.available_width();
+            if theme::traffic_light_inset(ui.ctx()) > 0.0 {
+                // The traffic lights, or the caption buttons ZapFast draws where
+                // the desktop puts them on the left (GNOME's round ones end 42
+                // points down), take the rail's top; it starts under them.
+                let (strip, _) =
+                    ui.allocate_exact_size(vec2(width, LIGHTS_CLEARANCE), Sense::hover());
+                super::titlebar_drag(ui, strip);
+            } else {
+                ui.add_space(GAP);
+            }
+            let bottom: Vec<Destination> = [
+                Destination::Archived,
+                Destination::Locked,
+                Destination::Settings,
+            ]
+            .into_iter()
+            .filter(|destination| destination.offered(app))
+            .collect();
+            let foot = bottom.len() as f32 * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
+            let minimum = 3.0 * CELL
+                + foot
+                + if hidden {
+                    CELL + GAP + MIN_AVATARS
                 } else {
-                    ui.add_space(GAP);
-                }
-                let bottom: Vec<Destination> = [
-                    Destination::Archived,
-                    Destination::Locked,
-                    Destination::Settings,
-                ]
-                .into_iter()
-                .filter(|destination| destination.offered(app))
-                .collect();
-                let foot = bottom.len() as f32 * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
-                let minimum = 3.0 * CELL
-                    + foot
-                    + if hidden {
-                        CELL + GAP + MIN_AVATARS
-                    } else {
-                        0.0
-                    };
-                let height = ui.available_height().max(minimum);
-                egui::ScrollArea::vertical()
-                    .id_salt("navigation-rail")
-                    .auto_shrink([false, false])
-                    .min_scrolled_height(0.0)
-                    .show(ui, |ui| {
-                        // Keep the usual spacing in a tall window. In a short one
-                        // the content keeps its minimum height and scrolls instead
-                        // of leaving the bottom buttons beyond the window.
-                        ui.set_height(height);
-                        for destination in
-                            [Destination::Chats, Destination::Calls, Destination::Starred]
-                        {
-                            destination_button(app, ui, &palette, destination, CELL);
-                        }
-                        if hidden {
-                            // A cell of its own under Starred: nothing above it moves
-                            // when the list comes and goes.
-                            show_list_button(app, ui, &palette);
-                            ui.add_space(GAP / 2.0);
-                            let line = Rect::from_center_size(
-                                ui.cursor().min + vec2(width / 2.0, 0.0),
-                                vec2(DIVIDER, 1.0),
-                            );
-                            ui.painter().rect_filled(line, 0.0, palette.outline);
-                            ui.add_space(GAP / 2.0);
-                            let middle = (ui.available_height() - foot).max(MIN_AVATARS);
-                            ui.allocate_ui_with_layout(
-                                vec2(width, middle),
-                                egui::Layout::top_down(egui::Align::Center),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing.y = row_gap;
-                                    super::chats::compact_list(app, ui);
-                                },
-                            );
-                        }
-                        let rest = (ui.available_height() - foot).max(0.0);
-                        ui.add_space(rest);
-                        for destination in bottom {
-                            ui.add_space(GAP);
-                            destination_button(app, ui, &palette, destination, HIT_AREA);
-                        }
+                    0.0
+                };
+            let height = ui.available_height().max(minimum);
+            egui::ScrollArea::vertical()
+                .id_salt("navigation-rail")
+                .auto_shrink([false, false])
+                .min_scrolled_height(0.0)
+                .show(ui, |ui| {
+                    // Keep the usual spacing in a tall window. In a short one
+                    // the content keeps its minimum height and scrolls instead
+                    // of leaving the bottom buttons beyond the window.
+                    ui.set_height(height);
+                    for destination in
+                        [Destination::Chats, Destination::Calls, Destination::Starred]
+                    {
+                        destination_button(app, ui, &palette, destination, CELL);
+                    }
+                    if hidden {
+                        // A cell of its own under Starred: nothing above it moves
+                        // when the list comes and goes.
+                        show_list_button(app, ui, &palette);
+                        ui.add_space(GAP / 2.0);
+                        let line = Rect::from_center_size(
+                            ui.cursor().min + vec2(width / 2.0, 0.0),
+                            vec2(DIVIDER, 1.0),
+                        );
+                        ui.painter().rect_filled(line, 0.0, palette.outline);
+                        ui.add_space(GAP / 2.0);
+                        let middle = (ui.available_height() - foot).max(MIN_AVATARS);
+                        ui.allocate_ui_with_layout(
+                            vec2(width, middle),
+                            egui::Layout::top_down(egui::Align::Center),
+                            |ui| {
+                                ui.spacing_mut().item_spacing.y = row_gap;
+                                super::chats::compact_list(app, ui);
+                            },
+                        );
+                    }
+                    let rest = (ui.available_height() - foot).max(0.0);
+                    ui.add_space(rest);
+                    for destination in bottom {
                         ui.add_space(GAP);
-                        ui.vertical_centered(|ui| {
-                            super::accounts::avatar_button(app, ui, AVATAR).tab_stop(Stop::Profile);
-                        });
+                        destination_button(app, ui, &palette, destination, HIT_AREA);
+                    }
+                    ui.add_space(GAP);
+                    ui.vertical_centered(|ui| {
+                        super::accounts::avatar_button(app, ui, AVATAR).tab_stop(Stop::Profile);
                     });
-            });
+                });
+        });
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(rect_id(), response.response.rect));

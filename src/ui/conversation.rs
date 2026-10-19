@@ -61,15 +61,17 @@ const NOT_SENT_HINT: &str =
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let Some(chat) = app.current_chat().cloned() else {
-        if theme::chrome_in_headers(ui.ctx()) {
-            super::banner(app, ui);
-        }
         empty(app, ui);
         return;
     };
-    wallpaper::paint(ui, &app.wallpaper());
+    let radius = if super::narrow(ui.ctx()) {
+        0.0
+    } else {
+        f32::from(super::chats::CARD_RADIUS)
+    };
+    wallpaper::paint(ui, &app.wallpaper(), radius);
     // On a vibrant window the messages scroll on under the header, as in
-    // Messages: the header and any banner go on a layer above them.
+    // Messages: the header goes on a layer above them.
     if app.palette.vibrant() {
         let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-header"));
         let bar = ui
@@ -79,9 +81,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 let glass = ui.painter().add(egui::Shape::Noop);
                 let veil = ui.painter().add(egui::Shape::Noop);
                 header(app, ui, &chat);
-                if theme::chrome_in_headers(ui.ctx()) {
-                    super::banner(app, ui);
-                }
                 let bar = ui.min_rect();
                 // Strongest at the top, both ease off from within the bar to
                 // a little below it, so where they start never shows.
@@ -102,9 +101,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let header = header(app, ui, &chat);
-    if theme::chrome_in_headers(ui.ctx()) {
-        super::banner(app, ui);
-    }
     pin_banner(app, ui, &chat);
     composer(app, ui, &chat);
     messages(app, ui, &chat, 0.0);
@@ -392,13 +388,14 @@ fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
-    // Beside the floating list or the rail, the header's row sits as far
-    // down as the list's title row, so the two read as one line. A narrow
-    // window shows the chat alone and keeps the header tight.
+    // Beside the list or the rail, the header's row sits as far down as the
+    // list's title row, so the two read as one line; the card's own gutter
+    // already gives part of it. A narrow window shows the chat alone and
+    // keeps the header tight.
     let drop = if super::narrow(ui.ctx()) {
         0
     } else {
-        super::chats::HEADER_DROP as i8
+        (super::chats::HEADER_DROP - super::chats::CARD_GAP) as i8
     };
     egui::Panel::top("chat-header")
         .show_separator_line(false)

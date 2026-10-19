@@ -1,8 +1,6 @@
 //! The left panel: the chat list.
 
-use egui::{
-    Align, Color32, CornerRadius, Frame, Key, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2,
-};
+use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
@@ -22,21 +20,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .default_size(app.settings.sidebar_width)
         .size_range(260.0..=520.0)
         .show_separator_line(false)
-        .frame(
-            Frame::new()
-                .fill(Color32::TRANSPARENT)
-                .inner_margin(Margin {
-                    left: 4,
-                    right: 8,
-                    top: LIST_CANVAS,
-                    bottom: LIST_CANVAS,
-                }),
-        );
+        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
+            left: 4,
+            right: 8,
+            top: HEADER_DROP as i8,
+            bottom: 0,
+        }));
     let response = panel.show(ui, |ui| {
-        floating_list_surface(&palette).show(ui, |ui| {
-            header(app, ui);
-            body(app, ui);
-        });
+        header(app, ui);
+        body(app, ui);
     });
     let width = response.response.rect.width();
     ui.ctx()
@@ -59,39 +51,26 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     super::rail::show(app, ui, false);
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.panel).inner_margin(Margin {
+        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
             left: 4,
-            right: 12,
-            top: 12,
-            bottom: 12,
+            right: 8,
+            top: HEADER_DROP as i8,
+            bottom: 0,
         }))
         .show(ui, |ui| {
-            floating_list_surface(&palette).show(ui, |ui| {
-                header(app, ui);
-                body(app, ui);
-            });
+            header(app, ui);
+            body(app, ui);
         });
 }
 
-/// The window's canvas above and below the floating list.
-const LIST_CANVAS: i8 = 12;
-/// The list surface's own margin around its header and rows.
-const LIST_SURFACE_MARGIN: i8 = 4;
-/// How far the floating list sets its header below the top of its column:
-/// the canvas above the surface and the surface's margin. The chat header
-/// beside it moves down as far, so the chat's name, picture and buttons sit
-/// on the same line as the list's title.
-pub(crate) const HEADER_DROP: f32 = (LIST_CANVAS + LIST_SURFACE_MARGIN) as f32;
-
-/// The list reads as one raised surface, inset from the rail and the window
-/// edge. The content stays flat inside it; only the panel itself is rounded.
-fn floating_list_surface(palette: &Palette) -> Frame {
-    Frame::new()
-        .fill(palette.sidebar())
-        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
-        .inner_margin(Margin::same(LIST_SURFACE_MARGIN))
-        .stroke(Stroke::new(0.75, palette.outline))
-}
+/// The gutter between the window's edges and the floating conversation card.
+pub(crate) const CARD_GAP: f32 = 8.0;
+/// How round the conversation card is.
+pub(crate) const CARD_RADIUS: u8 = 12;
+/// How far the list sets its header below the top of its column. The chat
+/// header in the card beside it moves down as far, so the chat's name,
+/// picture and buttons sit on the same line as the list's title.
+pub(crate) const HEADER_DROP: f32 = 12.0;
 
 /// What the list pane holds under its header: the chats, or on the Calls
 /// tab the call history or the new-call list.
@@ -680,7 +659,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         // A translucent sidebar would show the fade as a band; the chips
         // are only cut there.
         if !palette.vibrant() {
-            widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.panel);
+            widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.rail());
         }
     }
     labels::chip_row(app, ui, &palette);

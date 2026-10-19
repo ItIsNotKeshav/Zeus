@@ -39,17 +39,22 @@ pub struct Look {
     pub image: Option<(u64, Arc<ColorImage>)>,
 }
 
-/// Paint the wallpaper over the conversation panel.
-pub fn paint(ui: &egui::Ui, look: &Look) {
-    paint_rect(ui, ui.max_rect(), look);
+/// Paint the wallpaper over the conversation panel, its colour rounded by
+/// `radius` so a translucent one leaves a card's corners clear.
+pub fn paint(ui: &egui::Ui, look: &Look, radius: f32) {
+    paint_rounded(ui, ui.max_rect(), look, radius);
 }
 
 /// Paint the wallpaper into a bounded rectangle: the image cover-fitted if
 /// there is one, otherwise the colour with the SVG's intrinsic 374 x 666
 /// logical-pixel doodle tile repeated in both axes.
 pub fn paint_rect(ui: &egui::Ui, rect: Rect, look: &Look) {
+    paint_rounded(ui, rect, look, 0.0);
+}
+
+fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
     let painter = ui.painter().with_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, look.color);
+    painter.rect_filled(rect, radius, look.color);
 
     match &look.image {
         Some(image) => {

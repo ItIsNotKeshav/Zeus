@@ -259,7 +259,7 @@ opens the other.
 ## Updates
 
 With **Check for updates** on, ZapFast asks GitHub once a day for a newer
-release. **Update** in the banner downloads and verifies it, and **Restart to
+release. **Update** in the status message at the bottom left downloads and verifies it, and **Restart to
 update** installs it when convenient. Downloads are checked against the
 release's SHA-256 checksums, whose manifest must carry a valid Ed25519
 publisher signature; a missing or invalid signature stops the update. The

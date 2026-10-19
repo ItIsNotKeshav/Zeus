@@ -72,6 +72,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
     ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
+    ctx.data_mut(|data| data.remove::<bool>(side_columns_id()));
     titlebar_strip(app, ui);
     if !app.is_linked() {
         login::show(app, ui);
@@ -83,11 +84,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         announce(app, ctx);
         return;
     }
-    // Where the headers share the top edge with the window's buttons, the
-    // banner goes under the open chat's header instead.
-    if !theme::chrome_in_headers(ctx) {
-        banner(app, ui);
-    }
     let narrow = narrow(ctx);
     let list_only = narrow && list_pane_only(app);
     let view = narrow.then_some(if list_only {
@@ -98,6 +94,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let slide = narrow_slide(ctx, view);
     // A call the reader stepped away from keeps a strip along the bottom.
     call::strip(app, ui);
+    // The status toast sits just above that strip.
+    let floor = ui.available_rect_before_wrap().bottom();
     match slide {
         Some(progress) => slide_in(app, ui, list_only, progress),
         None => main_view(app, ui, list_only),
@@ -112,6 +110,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     call::show(app, ctx);
     image_editor::show(app, ctx);
     drop_target(app, ctx);
+    banner(app, ctx, floor);
     toasts(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
@@ -155,6 +154,8 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     let crowded = app.info_visible()
         && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
     if !narrow(ui.ctx()) && !crowded {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(side_columns_id(), full_list));
         rail::show(app, ui, !full_list);
         if full_list {
             chats::show(app, ui);
@@ -162,23 +163,79 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     }
     let search_overlay = pane::show(app, ui);
     let info_overlay = info::show(app, ui);
+    // Beside the side columns the chat or page floats on the sidebar's colour
+    // as one rounded card; a narrow window gives it the whole window.
+    let card = !narrow(ui.ctx());
     egui::CentralPanel::default()
-        .frame(central_frame(app))
+        .frame(if card {
+            Frame::new()
+        } else {
+            central_frame(app)
+        })
         .show(ui, |ui| {
-            match app.page {
-                Page::Settings => settings::show(app, ui),
-                Page::Chats => conversation::show(app, ui),
-                // The open chat stays beside the call history.
-                Page::Calls if app.current_chat().is_some() => conversation::show(app, ui),
-                Page::Calls => calls::show(app, ui),
-                Page::Wallpaper => settings::wallpaper_show(app, ui),
+            if !card {
+                central_page(app, ui);
+                return;
             }
+            let outer = ui.max_rect();
+            let rect = outer
+                .with_min_y(outer.top() + chats::CARD_GAP)
+                .with_max_x(outer.right() - chats::CARD_GAP)
+                .with_max_y(outer.bottom() - chats::CARD_GAP);
+            let gutter = app.palette.rail();
+            let radius = f32::from(chats::CARD_RADIUS);
+            // The gutter goes around the card, never under it: under a
+            // translucent card it would show through.
+            let painter = ui.painter();
+            for strip in [
+                outer.with_max_y(rect.top()),
+                outer.with_min_y(rect.bottom()),
+                outer.with_min_x(rect.right()),
+            ] {
+                painter.rect_filled(strip, 0.0, gutter);
+            }
+            painter.add(widgets::card_corners(rect, radius, gutter));
+            let frame = central_frame(app);
+            painter.rect(
+                rect,
+                radius,
+                frame.fill,
+                frame.stroke,
+                egui::StrokeKind::Inside,
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+                central_page(app, ui);
+            });
+            // Square fills inside an opaque card are rounded off over the top.
+            if gutter.is_opaque() {
+                ui.painter()
+                    .add(widgets::card_corners(rect, radius, gutter));
+            }
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                Stroke::new(0.75, app.palette.outline),
+                egui::StrokeKind::Inside,
+            );
         });
     if let Some(region) = search_overlay {
         pane::show_overlay(app, ui.ctx(), region);
     }
     if let Some(region) = info_overlay {
         info::show_overlay(app, ui.ctx(), region);
+    }
+}
+
+/// The open chat or page in the central area.
+fn central_page(app: &mut App, ui: &mut egui::Ui) {
+    match app.page {
+        Page::Settings => settings::show(app, ui),
+        Page::Chats => conversation::show(app, ui),
+        // The open chat stays beside the call history.
+        Page::Calls if app.current_chat().is_some() => conversation::show(app, ui),
+        Page::Calls => calls::show(app, ui),
+        Page::Wallpaper => settings::wallpaper_show(app, ui),
     }
 }
 
@@ -490,8 +547,9 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
         });
 }
 
-/// Connection and history-sync banner.
-fn banner(app: &mut App, ui: &mut egui::Ui) {
+/// Connection and history-sync status, a small toast at the bottom left
+/// above `floor`, clear of the rail's account and settings buttons.
+fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
     let palette = app.palette;
     let update = app.update.clone();
     let (icon, text, color, retry, download) = match &app.link {
@@ -545,48 +603,83 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
             None,
         ),
     };
-    egui::Panel::top("banner")
-        .show_separator_line(false)
-        .frame(
-            Frame::new()
-                .fill(palette.panel)
-                .inner_margin(Margin::symmetric(14, 6)),
-        )
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                // Progress/connection events wake the window. A long history
-                // sync must not redraw every message just to spin this icon.
-                theme::icon(ui, icon, 15.0, color);
-                theme::text(ui, text, theme::medium(13.0), palette.text);
-                if retry || download.is_some() {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if download.is_some() {
-                            if theme::soft_button(
-                                ui,
-                                &palette,
-                                Some(Icon::ExternalLink),
-                                "Update",
-                                false,
-                            )
-                            .clicked()
-                            {
-                                app.actions.push(Action::ShowUpdate);
-                            }
-                        } else if theme::soft_button(
+    // One row at the bottom left of the side columns (or of the chat when
+    // they are hidden), lifted above the composer if it would cover it.
+    let content = ctx.content_rect();
+    let side = ctx.data(|data| data.get_temp::<bool>(side_columns_id()));
+    let left = content.left()
+        + match side {
+            Some(_) => rail::PANE_WIDTH,
+            None => 12.0,
+        };
+    let mut bottom = floor - 12.0;
+    let width = (content.right() - left - 12.0).max(120.0);
+    let row = Frame::new()
+        .fill(palette.overlay)
+        .stroke(Stroke::new(1.0, palette.outline))
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 4))
+        .shadow(palette.float_shadow());
+    // Last frame's size tells whether it reaches the composer.
+    let reach = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("banner")))
+        .map_or(width, |rect| rect.width());
+    if let Some(composer) = ctx.data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
+        && composer
+            .x_range()
+            .intersects(egui::Rangef::new(left, left + reach))
+    {
+        bottom = bottom.min(composer.top() - 8.0);
+    }
+    egui::Area::new(egui::Id::new("banner"))
+        .pivot(Align2::LEFT_BOTTOM)
+        .fixed_pos(egui::pos2(left, bottom))
+        .order(egui::Order::Foreground)
+        .interactable(retry || download.is_some())
+        .show(ctx, |ui| {
+            row.show(ui, |ui| {
+                ui.set_max_width(width - 20.0);
+                ui.horizontal(|ui| {
+                    ui.set_min_height(28.0);
+                    // Progress/connection events wake the window. A long history
+                    // sync must not redraw every message just to spin this icon.
+                    theme::icon(ui, icon, 14.0, color);
+                    // Wrapped, not truncated: a failure must be readable.
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(text)
+                                .font(theme::medium(12.5))
+                                .color(palette.text),
+                        )
+                        .wrap()
+                        .selectable(false),
+                    );
+                    if download.is_some() {
+                        if theme::soft_button(
                             ui,
                             &palette,
-                            Some(Icon::Refresh),
-                            "Retry",
+                            Some(Icon::ExternalLink),
+                            "Update",
                             false,
                         )
                         .clicked()
                         {
-                            app.actions.push(Action::Reconnect);
+                            app.actions.push(Action::ShowUpdate);
                         }
-                    });
-                }
+                    } else if retry
+                        && theme::soft_button(ui, &palette, Some(Icon::Refresh), "Retry", false)
+                            .clicked()
+                    {
+                        app.actions.push(Action::Reconnect);
+                    }
+                });
             });
         });
+}
+
+/// Whether the rail was drawn this frame, and the chat list beside it.
+fn side_columns_id() -> egui::Id {
+    egui::Id::new("side-columns")
 }
 
 /// Where the open chat's composer was drawn this frame.
@@ -851,7 +944,7 @@ mod idle_tests {
                     )),
                     ..Default::default()
                 },
-                |ui| banner(&mut app, ui),
+                |ui| banner(&mut app, ui.ctx(), 780.0),
             );
             delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
             output.textures_delta.clear();
