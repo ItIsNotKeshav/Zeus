@@ -14919,9 +14919,11 @@ mod tests {
                 (list.height() - chat.height()).abs() < 0.5,
                 "macOS {macos}: chat list and conversation header heights match: {list:?}, {chat:?}"
             );
+            // Within a point: the list surface's hairline (0.75) adds to its
+            // margin, and the chat header's margin is whole points.
             assert!(
-                list.top() - chat.top() >= 12.0,
-                "macOS {macos}: the floating list header sits below the conversation header: {list:?}, {chat:?}"
+                (list.top() - chat.top()).abs() < 1.0,
+                "macOS {macos}: the conversation header sits as low as the floating list's: {list:?}, {chat:?}"
             );
         }
     }

@@ -457,7 +457,9 @@ protocol. These notes are for coding agents and new contributors.
   `ui::titlebar_strip`. Windows and Linux always use the desktop's own
   frame; ZapFast draws no title bar or window buttons there.
   `theme::chrome_in_headers` is true on macOS only (banners go under the chat
-  header).
+  header). Beside the floating chat list, the chat header and the right-hand
+  panes' headers sit `chats::HEADER_DROP` lower, so their rows share the
+  list title's line.
 - Group delivery uses `archive::receipts`: save the recipients when filing an
   outgoing message, record each person's receipt, then take the least advanced
   recipient. Never promote a group from one reader, apply a receipt to earlier

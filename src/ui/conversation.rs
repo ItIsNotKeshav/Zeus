@@ -392,6 +392,14 @@ fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
 fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
+    // Beside the floating list or the rail, the header's row sits as far
+    // down as the list's title row, so the two read as one line. A narrow
+    // window shows the chat alone and keeps the header tight.
+    let drop = if super::narrow(ui.ctx()) {
+        0
+    } else {
+        super::chats::HEADER_DROP as i8
+    };
     egui::Panel::top("chat-header")
         .show_separator_line(false)
         .frame(
@@ -403,7 +411,12 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 } else {
                     palette.panel
                 })
-                .inner_margin(Margin::symmetric(14, 8)),
+                .inner_margin(Margin {
+                    left: 14,
+                    right: 14,
+                    top: 8 + drop,
+                    bottom: 8,
+                }),
         )
         .show(ui, |ui| {
             // The chat list, expanded or collapsed, clears the traffic lights.

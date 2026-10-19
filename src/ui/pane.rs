@@ -172,6 +172,26 @@ pub(super) fn overlay(
         });
 }
 
+/// Height of a pane's header row: its close button and title.
+const HEADER_ROW: f32 = 32.0;
+
+/// The margin around a pane's header row. Beside the chat header, the row
+/// is centred on the chat header's own row, which sits as low as the list's
+/// title, and the two headers end together. A narrow window's pane stands
+/// alone and keeps its tighter margin.
+pub(super) fn header_margin(ctx: &egui::Context) -> Margin {
+    if super::narrow(ctx) {
+        return Margin::symmetric(14, 10);
+    }
+    let centre = ((super::conversation::HEADER_ROW - HEADER_ROW) / 2.0) as i8;
+    Margin {
+        left: 14,
+        right: 14,
+        top: 8 + super::chats::HEADER_DROP as i8 + centre,
+        bottom: 8,
+    }
+}
+
 /// The pane's contents. Over a narrow conversation (`overlay`) a picked
 /// result folds the pane away, so the message it jumps to can be seen;
 /// the search comes back as it was with the header's Search.
@@ -180,10 +200,10 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
     let (scroll_to, mut picked) = keyboard(app, ui);
     let mut calendar_button = Rect::NOTHING;
     Frame::new()
-        .inner_margin(Margin::symmetric(14, 10))
+        .inner_margin(header_margin(ui.ctx()))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.set_min_height(32.0);
+                ui.set_min_height(HEADER_ROW);
                 let close = crate::i18n::gettext(app.locale, "Close search");
                 if theme::icon_button(ui, Icon::X, 18.0, palette.secondary, palette.text, &close)
                     .tab_stop(Stop::ChatSearchClose)

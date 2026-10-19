@@ -148,7 +148,7 @@ fn header(
 ) {
     let palette = app.palette;
     Frame::new()
-        .inner_margin(Margin::symmetric(14, 10))
+        .inner_margin(pane::header_margin(ui.ctx()))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.set_min_height(32.0);

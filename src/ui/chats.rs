@@ -28,8 +28,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .inner_margin(Margin {
                     left: 4,
                     right: 8,
-                    top: 12,
-                    bottom: 12,
+                    top: LIST_CANVAS,
+                    bottom: LIST_CANVAS,
                 }),
         );
     let response = panel.show(ui, |ui| {
@@ -73,13 +73,23 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
+/// The window's canvas above and below the floating list.
+const LIST_CANVAS: i8 = 12;
+/// The list surface's own margin around its header and rows.
+const LIST_SURFACE_MARGIN: i8 = 4;
+/// How far the floating list sets its header below the top of its column:
+/// the canvas above the surface and the surface's margin. The chat header
+/// beside it moves down as far, so the chat's name, picture and buttons sit
+/// on the same line as the list's title.
+pub(crate) const HEADER_DROP: f32 = (LIST_CANVAS + LIST_SURFACE_MARGIN) as f32;
+
 /// The list reads as one raised surface, inset from the rail and the window
 /// edge. The content stays flat inside it; only the panel itself is rounded.
 fn floating_list_surface(palette: &Palette) -> Frame {
     Frame::new()
         .fill(palette.sidebar())
         .corner_radius(CornerRadius::same(theme::RADIUS + 4))
-        .inner_margin(Margin::same(4))
+        .inner_margin(Margin::same(LIST_SURFACE_MARGIN))
         .stroke(Stroke::new(0.75, palette.outline))
 }
 
