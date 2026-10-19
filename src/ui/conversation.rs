@@ -3795,8 +3795,84 @@ struct RunPlace {
     last_outgoing: bool,
 }
 
-/// Draws a message row and returns its bubble response for scrolling.
+/// How long a new message takes to settle into its row.
+const ARRIVAL_SECONDS: f64 = 0.5;
+/// How old a message may be when first drawn and still arrive with a bounce:
+/// one just sent or received, not history or a chat opened later.
+const ARRIVAL_FRESH: i64 = 3;
+
+/// How far a message's arrival has come (0 to 1, overshooting on the way),
+/// or `None` once it has settled or when it arrives without one.
+fn arrival(ui: &egui::Ui, view: &View<'_>, message: &Message, reduce_motion: bool) -> Option<f32> {
+    if !view.animate
+        || reduce_motion
+        || (crate::util::now() - message.timestamp).abs() > ARRIVAL_FRESH
+    {
+        return None;
+    }
+    let id = egui::Id::new(("arrival", &view.chat.id, &message.id));
+    let now = ui.input(|input| input.time);
+    let start = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
+    let t = ((now - start) / ARRIVAL_SECONDS) as f32;
+    (t < 1.0).then(|| {
+        ui.ctx().request_repaint();
+        spring(t)
+    })
+}
+
+/// An underdamped spring from 0 to 1: past 1 once, then back, as Messages'
+/// bubbles land.
+fn spring(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    1.0 - (-6.0 * t).exp() * (9.0 * t).cos()
+}
+
+/// Draws a message row, rising and growing into place from its own side
+/// when it has just arrived, and returns its bubble response for scrolling.
 fn bubble(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    album: Option<&[Message]>,
+    place: RunPlace,
+    reduce_motion: bool,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let Some(progress) = arrival(ui, view, message, reduce_motion) else {
+        return bubble_row(ui, view, message, album, place, reduce_motion, actions);
+    };
+    let layer = ui.layer_id();
+    let start = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let row = ui.scope(|ui| {
+        ui.multiply_opacity(progress.clamp(0.0, 1.0));
+        bubble_row(ui, view, message, album, place, reduce_motion, actions)
+    });
+    let rect = row.response.rect;
+    // Own messages grow from the composer's corner, others from their side.
+    let pivot = if message.from_me {
+        rect.right_bottom()
+    } else {
+        rect.left_bottom()
+    };
+    let scale = 0.6 + 0.4 * progress;
+    let rise = (1.0 - progress) * 28.0;
+    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2() + vec2(0.0, rise))
+        * egui::emath::TSTransform::from_scaling(scale)
+        * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        let end = list.next_idx();
+        list.transform_range(start, end, transform);
+    });
+    row.inner
+}
+
+/// Draws a message row and returns its bubble response for scrolling.
+fn bubble_row(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
@@ -4513,6 +4589,9 @@ fn same_run(message: &Message, next: &Message) -> bool {
     message.from_me == next.from_me && (message.from_me || message.sender == next.sender)
 }
 
+/// A Nothing bubble's room around its text.
+const NOTHING_TEXT_MARGIN: Margin = Margin::symmetric(14, 10);
+
 /// Room around a bubble's contents: none around a picture that stands
 /// without one, Messages' insets in its style, WhatsApp's otherwise.
 fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Margin {
@@ -4526,7 +4605,7 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         } else if compact_attachment_message(message) {
             Margin::symmetric(16, 12)
         } else {
-            Margin::symmetric(14, 10)
+            NOTHING_TEXT_MARGIN
         }
     } else {
         Margin {
@@ -4960,6 +5039,35 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
 const QUOTE_BAR: f32 = 4.0;
 /// Corner radius of a quote.
 const QUOTE_RADIUS: u8 = 6;
+/// The even ring a Nothing bubble keeps around a card at its edge.
+const CARD_RING: i8 = 6;
+
+/// How far a card at a bubble's edge (a quote, a link preview) reaches past
+/// the bubble's text padding, and how round it is. In the Nothing style it
+/// sits in a thin even ring, its corners following the bubble's 18, while
+/// the text keeps the wider padding; elsewhere it keeps to the padding.
+fn edge_card(ui: &egui::Ui, palette: &Palette, radius: u8) -> (Margin, u8) {
+    if palette.bubbles != theme::BubbleStyle::Nothing {
+        return (Margin::ZERO, radius);
+    }
+    let pad = NOTHING_TEXT_MARGIN;
+    // Nothing drawn above it yet: it meets the bubble's top too.
+    let top = if ui.min_rect().height() < 1.0 {
+        CARD_RING - pad.top
+    } else {
+        0
+    };
+    let side = CARD_RING - pad.left;
+    (
+        Margin {
+            left: side,
+            right: side,
+            top,
+            bottom: 0,
+        },
+        18 - CARD_RING as u8,
+    )
+}
 
 /// Draws a stored quote and routes navigation to its source conversation.
 /// How a quoted reply is coloured inside its bubble.
@@ -5030,19 +5138,31 @@ fn quote_block(
             3.0,
         )
     });
-    let response = Frame::new()
-        .fill(colours.fill)
-        .corner_radius(CornerRadius::same(QUOTE_RADIUS))
-        .inner_margin(Margin {
+    let (bleed, radius) = edge_card(ui, &palette, QUOTE_RADIUS);
+    let padding = if radius == QUOTE_RADIUS {
+        Margin {
             left: QUOTE_BAR as i8 + 7,
             right: 10,
             top: 5,
             bottom: 6,
-        })
+        }
+    } else {
+        Margin {
+            left: 6 + QUOTE_BAR as i8 + 7,
+            right: 12,
+            top: 7,
+            bottom: 8,
+        }
+    };
+    let response = Frame::new()
+        .fill(colours.fill)
+        .corner_radius(CornerRadius::same(radius))
+        .outer_margin(bleed)
+        .inner_margin(padding)
         .show(ui, |ui| {
             // Include frame margins in the settled width. Use a bounded,
             // left-aligned layout because own bubbles inherit right-to-left flow.
-            let inner_width = (width - QUOTE_BAR - 17.0).max(0.0);
+            let inner_width = (width - bleed.sum().x - padding.sum().x).max(0.0);
             ui.allocate_ui_with_layout(
                 vec2(inner_width, 0.0),
                 Layout::top_down(Align::Min),
@@ -5055,27 +5175,34 @@ fn quote_block(
             );
         })
         .response;
-    // The bar runs the quote's full height along its rounded left edge.
-    let bar = Rect::from_min_size(response.rect.min, vec2(QUOTE_BAR, response.rect.height()));
-    ui.painter().rect_filled(
-        bar,
-        CornerRadius {
-            nw: QUOTE_RADIUS,
-            sw: QUOTE_RADIUS,
-            ne: 0,
-            se: 0,
-        },
-        colours.bar,
-    );
-    ui.ctx().data_mut(|data| {
-        data.insert_temp(
-            bubble_id(&view.chat.id, &message.id).with("quote"),
-            response.rect,
+    let card = response.rect - bleed;
+    if radius == QUOTE_RADIUS {
+        // The bar runs the quote's full height along its rounded left edge.
+        let bar = Rect::from_min_size(card.min, vec2(QUOTE_BAR, card.height()));
+        ui.painter().rect_filled(
+            bar,
+            CornerRadius {
+                nw: radius,
+                sw: radius,
+                ne: 0,
+                se: 0,
+            },
+            colours.bar,
         );
+    } else {
+        // A round card's edge curves away from a flush bar: it stands inside.
+        let bar = Rect::from_min_size(
+            card.min + vec2(6.0, 6.0),
+            vec2(QUOTE_BAR - 1.0, (card.height() - 12.0).max(0.0)),
+        );
+        ui.painter().rect_filled(bar, 2, colours.bar);
+    }
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble_id(&view.chat.id, &message.id).with("quote"), card);
     });
     let response = ui
         .interact(
-            response.rect,
+            card,
             ui.id().with(("quote", &message.id, &quoted.id)),
             Sense::click(),
         )
@@ -5300,7 +5427,16 @@ fn bare_picture(palette: &Palette, message: &Message) -> bool {
 fn picture_radius(palette: &Palette, message: &Message) -> f32 {
     if bare_picture(palette, message) {
         f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
-    } else if palette.bubbles == theme::BubbleStyle::Nothing && compact_picture_message(message) {
+    } else if palette.bubbles == theme::BubbleStyle::Nothing
+        && (compact_picture_message(message)
+            || matches!(
+                message.content,
+                Content::Image {
+                    caption: Some(_),
+                    ..
+                }
+            ))
+    {
         12.0
     } else {
         6.0
@@ -6573,7 +6709,26 @@ fn content(
             media,
             motion,
         } => {
-            let drawn = picture(ui, view, message, media, width, None, actions);
+            // A captioned photo reaches the bubble's ring, as a quote does.
+            let bleed = if caption.is_some() {
+                edge_card(ui, &palette, 0).0
+            } else {
+                Margin::ZERO
+            };
+            let drawn = Frame::new()
+                .outer_margin(bleed)
+                .show(ui, |ui| {
+                    picture(
+                        ui,
+                        view,
+                        message,
+                        media,
+                        width - bleed.sum().x,
+                        None,
+                        actions,
+                    )
+                })
+                .inner;
             if let Some(motion) = motion {
                 motion_clip(ui, view, message, motion, drawn, actions);
             }
@@ -6584,7 +6739,8 @@ fn content(
                 // The time and ticks go over the picture's corner.
                 return Some(drawn);
             };
-            let drawn = drawn.width();
+            // The caption keeps the bubble's text padding inside the ring.
+            let drawn = drawn.width() + bleed.sum().x;
             {
                 // Wrap the caption to the settled image or quote width.
                 let wrap = if message.quoted.is_some() {
@@ -8204,13 +8360,15 @@ fn preview_card(
         .next()
         .unwrap_or_default()
         .to_owned();
+    let (bleed, radius) = edge_card(ui, &palette, 6);
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
-        .corner_radius(CornerRadius::same(6))
+        .corner_radius(CornerRadius::same(radius))
+        .outer_margin(bleed)
         .inner_margin(Margin::same(8))
         .show(ui, |ui| {
             // Include margins in the settled card width.
-            let card_width = (width - 16.0).max(0.0);
+            let card_width = (width - bleed.sum().x - 16.0).max(0.0);
             ui.set_width(card_width);
             // Limit text to the space beside the thumbnail and keep it
             // left-aligned in own bubbles.
@@ -8254,18 +8412,12 @@ fn preview_card(
             });
         })
         .response;
+    let card = response.rect - bleed;
     ui.ctx().data_mut(|data| {
-        data.insert_temp(
-            bubble_id(&view.chat.id, &message.id).with("preview"),
-            response.rect,
-        );
+        data.insert_temp(bubble_id(&view.chat.id, &message.id).with("preview"), card);
     });
     let response = ui
-        .interact(
-            response.rect,
-            ui.id().with(("preview", &message.id)),
-            Sense::click(),
-        )
+        .interact(card, ui.id().with(("preview", &message.id)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() {
         actions.push(Action::OpenUrl(preview.url.clone()));
@@ -9962,6 +10114,16 @@ fn chat_of(chat: &ChatId) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_message_springs_past_its_place_and_settles() {
+        assert_eq!(spring(0.0), 0.0);
+        let peak = (1..100)
+            .map(|step| spring(step as f32 / 100.0))
+            .fold(0.0, f32::max);
+        assert!(peak > 1.05 && peak < 1.2, "overshoot {peak}");
+        assert!((spring(1.0) - 1.0).abs() < 0.01);
+    }
 
     #[test]
     fn account_read_receipt_privacy_hides_read_ticks_only_in_outgoing_dms() {
