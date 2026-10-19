@@ -11,7 +11,6 @@ cargo run --features demo -- --demo-shot shot.png --demo-page chat,light
 cargo run --features demo -- --demo-tour      # Space starts/replays a 41-second tour
 cargo run --features demo -- --demo-tour --demo-tour-script whats-new # what 0.16 added
 cargo run --features demo -- --demo-hover 900,400 # holds a fake pointer there
-cargo run --features demo -- --demo --demo-titlebar # Windows/Linux: the drawn title bar
 cargo test --all-features                      # includes a headless layout of every screen
 cargo clippy --all-targets --all-features -- -D warnings
 ```

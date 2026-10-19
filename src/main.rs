@@ -73,12 +73,6 @@ struct Cli {
     #[arg(long, requires = "demo")]
     demo_macos: bool,
 
-    /// Draw ZapFast's own title bar and window buttons, as Settings >
-    /// Appearance > Custom title bar does, on Windows and Linux (demo only).
-    #[cfg(feature = "demo")]
-    #[arg(long, conflicts_with = "demo_macos")]
-    demo_titlebar: bool,
-
     /// Demo view: `chat`, `phone-menu`, `empty`, `settings`, `login`,
     /// `pair`, `shortcuts`, `about`, `info`, `mention`, `light`, or a comma-separated
     /// mix such as `chat,light`.
@@ -330,23 +324,7 @@ fn run() -> eframe::Result<()> {
         log::error!("could not move the linked account into its folder: {error}");
         return Err(eframe::Error::AppCreation(error.into()));
     }
-    #[cfg(feature = "demo")]
-    let mut settings = settings::Settings::load(&dirs.settings_file());
-    #[cfg(not(feature = "demo"))]
     let settings = settings::Settings::load(&dirs.settings_file());
-    #[cfg(feature = "demo")]
-    if demo && cli.demo_titlebar {
-        settings.custom_titlebar = true;
-        settings.auto_hide_titlebar = true;
-    }
-    // The drawn title bar (Windows and Linux): GNOME's button layout and
-    // icons, read once, and the choice every window is made with.
-    fastframe_titlebar::init();
-    #[cfg(feature = "demo")]
-    let custom_titlebar = settings.custom_titlebar || cli.demo_titlebar;
-    #[cfg(not(feature = "demo"))]
-    let custom_titlebar = settings.custom_titlebar;
-    fastframe_titlebar::set_enabled(custom_titlebar);
     // A Cargo build has no application bundle to supply its Dock icon.
     #[cfg(target_os = "macos")]
     if let Err(error) = fastframe_dock::set_icon(include_bytes!("../packaging/macos/icon-1024.png"))
@@ -635,10 +613,7 @@ fn native_options(
         // its sidebar; every other theme paints the window opaque.
         .with_transparent(transparent)
         .with_titlebar_shown(false)
-        .with_title_shown(false)
-        // Windows and Linux: no frame when ZapFast draws its own title bar.
-        // Fixed for the window's life; a new choice replaces the window.
-        .with_decorations(!fastframe_titlebar::enabled());
+        .with_title_shown(false);
     eframe::NativeOptions {
         viewport,
         persistence_path: demo_persistence,

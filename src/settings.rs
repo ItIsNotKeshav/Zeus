@@ -436,15 +436,6 @@ pub struct Settings {
     pub(crate) messages_theme: bool,
     /// The interface's typeface.
     pub font: FontChoice,
-    /// Windows and Linux: draw ZapFast's own title bar and window buttons
-    /// instead of the desktop's. Off by default: on some Intel graphics
-    /// drivers a frameless window shows a black band at the top and its
-    /// clicks land below where they are drawn (Spotifast #348, #554).
-    pub custom_titlebar: bool,
-    /// Reveal the custom title-bar controls only while the pointer is near
-    /// the top edge of the window.
-    #[serde(default)]
-    pub auto_hide_titlebar: bool,
     /// Interface language. `None` follows the operating system's locale.
     pub interface_language: Option<crate::i18n::Locale>,
     /// Filename of the selected local JSON palette.
@@ -577,8 +568,6 @@ impl Default for Settings {
             theme: ThemeChoice::Dark,
             messages_theme: false,
             font: FontChoice::GoogleSansFlex,
-            custom_titlebar: false,
-            auto_hide_titlebar: false,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,

@@ -150,10 +150,8 @@ fn header(
     Frame::new()
         .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
-            let room = pane::caption_header(ui, vec2(14.0, 10.0));
             ui.horizontal(|ui| {
                 ui.set_min_height(32.0);
-                ui.add_space(room.left);
                 let button =
                     theme::icon_button(ui, icon, 18.0, palette.secondary, palette.text, label)
                         .tab_stop(Stop::InfoClose);

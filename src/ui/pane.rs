@@ -172,31 +172,6 @@ pub(super) fn overlay(
         });
 }
 
-/// What a pane's header row needs beside the caption buttons ZapFast draws:
-/// its close button and title.
-const HEADER_MIN_CONTENT: f32 = 240.0;
-
-/// The top of a pane's header, inside its frame of `margin`: at the window's
-/// top-right corner it drags the window and keeps clear of the caption
-/// buttons ZapFast draws, moving the header's row under them when the pane
-/// is too narrow to share it. Call it before the row, which leaves the
-/// returned room at its left (a narrow window's page over the chat reaches
-/// both corners).
-pub(super) fn caption_header(ui: &mut egui::Ui, margin: Vec2) -> super::CaptionRoom {
-    let rect = ui.max_rect();
-    let room = super::caption_room(ui.ctx(), rect, HEADER_MIN_CONTENT);
-    let top = Rect::from_min_max(
-        rect.min - margin,
-        pos2(
-            rect.right() + margin.x,
-            rect.top() + room.top + 32.0 + margin.y,
-        ),
-    );
-    super::caption_drag(ui, top);
-    ui.add_space(room.top);
-    room
-}
-
 /// The pane's contents. Over a narrow conversation (`overlay`) a picked
 /// result folds the pane away, so the message it jumps to can be seen;
 /// the search comes back as it was with the header's Search.
@@ -207,10 +182,8 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
     Frame::new()
         .inner_margin(Margin::symmetric(14, 10))
         .show(ui, |ui| {
-            let room = caption_header(ui, vec2(14.0, 10.0));
             ui.horizontal(|ui| {
                 ui.set_min_height(32.0);
-                ui.add_space(room.left);
                 let close = crate::i18n::gettext(app.locale, "Close search");
                 if theme::icon_button(ui, Icon::X, 18.0, palette.secondary, palette.text, &close)
                     .tab_stop(Stop::ChatSearchClose)

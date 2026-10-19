@@ -2723,10 +2723,6 @@ pub enum Action {
     SetTheme(crate::settings::ThemeChoice),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
-    /// Windows and Linux: draws ZapFast's own title bar and window buttons
-    /// (`true`) or the desktop's. Decorations are fixed when a window is
-    /// made, so the window is replaced.
-    SetCustomTitlebar(bool),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

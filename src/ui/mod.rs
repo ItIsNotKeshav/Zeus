@@ -44,7 +44,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         lock::show(app, ui);
         focus_ring(app, ctx);
         announce(app, ctx);
-        window_chrome(app, ui);
         return;
     }
     keys::handle(app, ctx);
@@ -82,7 +81,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         toasts(app, ctx);
         focus_ring(app, ctx);
         announce(app, ctx);
-        window_chrome(app, ui);
         return;
     }
     // Where the headers share the top edge with the window's buttons, the
@@ -117,7 +115,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     toasts(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
-    window_chrome(app, ui);
 }
 
 /// Whether a narrow window shows the list pane: the chat list with no chat
@@ -168,13 +165,6 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     egui::CentralPanel::default()
         .frame(central_frame(app))
         .show(ui, |ui| {
-            // The top of every page drags the window, beneath its own
-            // widgets: the empty pane, Settings, and the Calls tab's start.
-            let top = ui.max_rect();
-            caption_drag(
-                ui,
-                egui::Rect::from_min_size(top.min, vec2(top.width(), theme::TOP_BAR_HEIGHT)),
-            );
             match app.page {
                 Page::Settings => settings::show(app, ui),
                 Page::Chats => conversation::show(app, ui),
@@ -501,10 +491,6 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Connection and history-sync banner.
-/// What the banner needs beside the caption buttons ZapFast draws: its line
-/// and a button.
-const BANNER_MIN_CONTENT: f32 = 320.0;
-
 fn banner(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let update = app.update.clone();
@@ -567,21 +553,13 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                 .inner_margin(Margin::symmetric(14, 6)),
         )
         .show(ui, |ui| {
-            // Over a page with no header (Settings, or no chat open) the
-            // banner takes the top-right corner from the caption buttons
-            // ZapFast draws, beside them or under them.
-            let room = caption_room(ui.ctx(), ui.max_rect(), BANNER_MIN_CONTENT);
-            caption_drag(ui, ui.max_rect().with_max_y(ui.max_rect().top() + room.top));
-            ui.add_space(room.top);
             ui.horizontal(|ui| {
-                ui.add_space(room.left);
                 // Progress/connection events wake the window. A long history
                 // sync must not redraw every message just to spin this icon.
                 theme::icon(ui, icon, 15.0, color);
                 theme::text(ui, text, theme::medium(13.0), palette.text);
                 if retry || download.is_some() {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(room.right);
                         if download.is_some() {
                             if theme::soft_button(
                                 ui,
@@ -745,32 +723,19 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Draggable space across the top of the linking and lock screens, which
-/// have no header: for the macOS traffic lights, or for the caption buttons
-/// ZapFast draws.
+/// have no header, for the macOS traffic lights.
 fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
-    let linked = app.is_linked() && !app.app_lock.is_locked();
-    if linked {
+    if app.is_linked() && !app.app_lock.is_locked() {
         return;
     }
-    let inset = if theme::macos_chrome(ui.ctx()) {
-        theme::titlebar_inset(ui.ctx())
-    } else {
-        theme::caption_footprint(ui.ctx()).height
-    };
-    let progress = titlebar_reveal_progress(ui.ctx(), app.settings.auto_hide_titlebar);
-    let inset = inset * progress;
+    let inset = theme::titlebar_inset(ui.ctx());
     if inset == 0.0 {
         return;
     }
-    let fill = if linked {
-        app.palette.panel
-    } else {
-        app.palette.window
-    };
     egui::Panel::top("titlebar")
         .exact_size(inset)
         .show_separator_line(false)
-        .frame(Frame::new().fill(fill))
+        .frame(Frame::new().fill(app.palette.window))
         .show(ui, |ui| {
             let rect = ui.max_rect();
             titlebar_drag(ui, rect);
@@ -781,262 +746,6 @@ fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
 /// platform does (fastframe-titlebar).
 pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
     fastframe_titlebar::drag(ui, rect);
-}
-
-/// Makes `rect` drag the window while ZapFast draws the title bar, for the
-/// places macOS leaves to its own title bar strip: the pages, the panels at
-/// the right, and the screens over the window. Call it before the widgets
-/// inside `rect`, so they keep their clicks.
-pub(crate) fn caption_drag(ui: &mut egui::Ui, rect: egui::Rect) {
-    if theme::drawn_titlebar(ui.ctx()) && !theme::macos_chrome(ui.ctx()) {
-        titlebar_drag(ui, rect);
-    }
-}
-
-/// Where a header's own widgets go beside the caption buttons ZapFast draws
-/// (see [`caption_room`]).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(crate) struct CaptionRoom {
-    /// Width to leave free at the header's left end.
-    pub left: f32,
-    /// Width to leave free at the header's right end.
-    pub right: f32,
-    /// How far to move the header's widgets down, under the buttons, when
-    /// the header is too narrow to share the row with them.
-    pub top: f32,
-}
-
-/// The room a header laid out in `rect` leaves for the caption buttons
-/// ZapFast draws over the window's top corners. Only a header that reaches
-/// a corner shares it: the buttons' room at that end, less what already
-/// separates the header from the window's edge. A header whose own widgets
-/// need `min_content` beside the buttons and do not get it goes under them
-/// instead (`fastframe_titlebar::Footprint::reserve`). Nothing on macOS,
-/// whose traffic lights keep their own inset, or under the desktop's title
-/// bar.
-pub(crate) fn caption_room(ctx: &egui::Context, rect: egui::Rect, min_content: f32) -> CaptionRoom {
-    let footprint = theme::caption_footprint(ctx);
-    let window = ctx.content_rect();
-    let below = rect.top() - window.top();
-    if footprint.height <= below {
-        return CaptionRoom::default();
-    }
-    let left = (footprint.left - (rect.left() - window.left())).max(0.0);
-    let right = (footprint.right - (window.right() - rect.right())).max(0.0);
-    // Both ends taken as one, so a header narrower than its content and the
-    // buttons at either end moves down under them.
-    let reserve = fastframe_titlebar::Footprint {
-        left: 0.0,
-        right: left + right,
-        height: footprint.height - below,
-    }
-    .reserve(rect.width(), min_content);
-    if reserve.push_down > 0.0 {
-        CaptionRoom {
-            top: reserve.push_down,
-            ..CaptionRoom::default()
-        }
-    } else {
-        CaptionRoom {
-            left,
-            right,
-            top: 0.0,
-        }
-    }
-}
-
-/// The caption buttons ZapFast draws, over the window's top corners and
-/// above everything else in it, and the resizable edges, while the custom
-/// title bar is on (Windows and Linux).
-fn window_chrome(app: &App, ui: &mut egui::Ui) {
-    if !fastframe_titlebar::enabled() {
-        return;
-    }
-    let palette = app.palette;
-    let style = fastframe_titlebar::Style {
-        // GNOME's round buttons carry the text colour on the hover surface;
-        // Windows' glyphs are quieter, in the secondary colour.
-        icon: if cfg!(target_os = "linux") {
-            palette.text
-        } else {
-            palette.secondary
-        },
-        button: palette.surface_hover,
-        header_height: theme::TOP_BAR_HEIGHT,
-    };
-    // Literal calls, so xgettext extracts each label.
-    let minimize = crate::i18n::gettext(app.locale, "Minimize");
-    let maximize = crate::i18n::gettext(app.locale, "Maximize");
-    let restore = crate::i18n::gettext(app.locale, "Restore");
-    let close = crate::i18n::gettext(app.locale, "Close");
-    let labels = fastframe_titlebar::Labels {
-        minimize: &minimize,
-        maximize: &maximize,
-        restore: &restore,
-        close: &close,
-    };
-    let progress = titlebar_reveal_progress(ui.ctx(), app.settings.auto_hide_titlebar);
-    if app.settings.auto_hide_titlebar {
-        animated_titlebar_controls(ui.ctx(), &style, &labels, progress);
-    } else {
-        fastframe_titlebar::controls(ui, &style, &labels);
-    }
-    // The buttons draw in egui's foreground layer, as the call screen, the
-    // media viewer and dialogs do; a newer area there would cover them, and a
-    // modal one would take their clicks. These are the crate's area names.
-    let layout = fastframe_titlebar::layout();
-    for (area, buttons) in [
-        ("fastframe-titlebar-left", &layout.left),
-        ("fastframe-titlebar-right", &layout.right),
-    ] {
-        if buttons.is_empty() {
-            continue;
-        }
-        ui.ctx().move_to_top(egui::LayerId::new(
-            egui::Order::Foreground,
-            egui::Id::new(area),
-        ));
-    }
-    fastframe_titlebar::resize(ui);
-}
-
-/// Draws the window buttons in areas whose positions follow the reveal
-/// animation. Keeping the movement in the area layout also moves the hit
-/// targets with the buttons on both Windows and GNOME.
-fn animated_titlebar_controls(
-    ctx: &egui::Context,
-    style: &fastframe_titlebar::Style,
-    labels: &fastframe_titlebar::Labels<'_>,
-    progress: f32,
-) {
-    if !fastframe_titlebar::visible(ctx) {
-        return;
-    }
-    let linux = cfg!(target_os = "linux");
-    let screen = ctx.content_rect();
-    let button_size = if linux { 28.0 } else { 36.0 };
-    let gap = if linux { 8.0 } else { 0.0 };
-    let margin = if linux { 14.0 } else { 5.0 };
-    let top = if linux {
-        (theme::TOP_BAR_HEIGHT - button_size) / 2.0
-    } else {
-        (style.header_height - button_size) / 2.0 + 2.0
-    };
-    let travel = theme::TOP_BAR_HEIGHT * (1.0 - progress);
-
-    for (side, buttons) in [
-        ("left", &fastframe_titlebar::layout().left),
-        ("right", &fastframe_titlebar::layout().right),
-    ] {
-        if buttons.is_empty() {
-            continue;
-        }
-        let width =
-            buttons.len() as f32 * button_size + buttons.len().saturating_sub(1) as f32 * gap;
-        let x = if side == "right" {
-            screen.right() - margin - width
-        } else {
-            screen.left() + margin
-        };
-        egui::Area::new(egui::Id::new(format!("zapfast-auto-titlebar-{side}")))
-            .fixed_pos(egui::pos2(x, screen.top() + top - travel))
-            .constrain(false)
-            .movable(false)
-            .order(egui::Order::Foreground)
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                if linux {
-                    ui.spacing_mut().button_padding = vec2(6.0, 6.0);
-                }
-                ui.horizontal(|ui| {
-                    for &button in buttons {
-                        animated_titlebar_button(ui, button, style, labels, linux, button_size);
-                    }
-                });
-            });
-    }
-}
-
-fn animated_titlebar_button(
-    ui: &mut egui::Ui,
-    button: fastframe_titlebar::Button,
-    style: &fastframe_titlebar::Style,
-    labels: &fastframe_titlebar::Labels<'_>,
-    linux: bool,
-    size: f32,
-) {
-    let maximized = ui
-        .ctx()
-        .input(|input| input.viewport().maximized.unwrap_or(false));
-    let (icon, label, command) = match button {
-        fastframe_titlebar::Button::Minimize => (
-            Icon::Minus,
-            labels.minimize,
-            egui::ViewportCommand::Minimized(true),
-        ),
-        fastframe_titlebar::Button::Maximize if maximized => (
-            Icon::Copy,
-            labels.restore,
-            egui::ViewportCommand::Maximized(false),
-        ),
-        fastframe_titlebar::Button::Maximize => (
-            Icon::Maximize,
-            labels.maximize,
-            egui::ViewportCommand::Maximized(true),
-        ),
-        fastframe_titlebar::Button::Close => (Icon::X, labels.close, egui::ViewportCommand::Close),
-    };
-    let image = icon
-        .image(style.icon, if linux { 16.0 } else { 14.0 })
-        .fit_to_exact_size(vec2(
-            if linux { 16.0 } else { 14.0 },
-            if linux { 16.0 } else { 14.0 },
-        ))
-        .tint(style.icon)
-        .alt_text(label);
-    let mut control = egui::Button::image(image);
-    if linux {
-        control = control
-            .fill(style.button)
-            .corner_radius(egui::CornerRadius::same(14));
-    } else {
-        control = control.frame_when_inactive(false);
-    }
-    if ui
-        .add_sized(vec2(size, size), control)
-        .on_hover_text(label)
-        .clicked()
-    {
-        ui.ctx().send_viewport_cmd(command);
-    }
-}
-
-/// Slides the custom caption buttons down when the pointer reaches the top
-/// edge, and back up when it leaves the title-bar band.
-fn titlebar_reveal_progress(ctx: &egui::Context, auto_hide: bool) -> f32 {
-    if !auto_hide || !fastframe_titlebar::enabled() {
-        return 1.0;
-    }
-    let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
-    if fullscreen {
-        return 0.0;
-    }
-    let screen = ctx.content_rect();
-    let footprint = fastframe_titlebar::footprint(ctx, theme::TOP_BAR_HEIGHT);
-    let reveal = ctx.input(|input| {
-        input.pointer.hover_pos().is_some_and(|position| {
-            screen.contains(position)
-                && position.y <= screen.top() + theme::TOP_BAR_HEIGHT
-                && ((footprint.left > 0.0 && position.x <= screen.left() + footprint.left)
-                    || (footprint.right > 0.0 && position.x >= screen.right() - footprint.right))
-        })
-    });
-    ctx.animate_bool_with_time_and_easing(
-        egui::Id::new("auto-hide-titlebar"),
-        reveal,
-        ctx.global_style().animation_time,
-        egui::emath::easing::quadratic_out,
-    )
 }
 
 #[cfg(test)]

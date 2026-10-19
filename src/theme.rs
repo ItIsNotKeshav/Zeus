@@ -1571,9 +1571,8 @@ pub fn preview_macos(ctx: &egui::Context) {
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("macos-preview"), true));
 }
 
-/// Horizontal clearance for the window's buttons at the left of its top
-/// edge: the traffic lights on macOS, which do not scale with UI zoom, or the
-/// caption buttons ZapFast draws where the desktop puts them on the left.
+/// Horizontal clearance for the macOS traffic lights at the left of the
+/// window's top edge, which do not scale with UI zoom. Zero elsewhere.
 pub fn traffic_light_inset(ctx: &egui::Context) -> f32 {
     if cfg!(target_os = "macos") {
         fastframe_titlebar::footprint(ctx, TOP_BAR_HEIGHT).left
@@ -1582,67 +1581,15 @@ pub fn traffic_light_inset(ctx: &egui::Context) -> f32 {
         // The demo's preview of the macOS layout on other platforms.
         fastframe_titlebar::TRAFFIC_LIGHTS_WIDTH / ctx.zoom_factor()
     } else {
-        caption_footprint(ctx).left
+        0.0
     }
-}
-
-/// Whether ZapFast draws the window's title bar itself: on Windows and
-/// Linux when Settings > Appearance > Custom title bar is on
-/// (fastframe-titlebar), or in a layout test's preview of it.
-pub fn drawn_titlebar(ctx: &egui::Context) -> bool {
-    #[cfg(any(test, feature = "demo"))]
-    if ctx.data(|data| {
-        data.get_temp::<fastframe_titlebar::Footprint>(titlebar_preview_id())
-            .is_some()
-    }) {
-        return true;
-    }
-    let _ = ctx;
-    fastframe_titlebar::enabled()
 }
 
 /// Whether the headers run to the window's top edge and share it with the
-/// window's buttons: macOS's hidden title bar, or the one ZapFast draws.
-/// Status banners then go under the open chat's header, not across the top.
+/// window's buttons: macOS's hidden title bar. Status banners then go under
+/// the open chat's header, not across the top.
 pub fn chrome_in_headers(ctx: &egui::Context) -> bool {
-    macos_chrome(ctx) || drawn_titlebar(ctx)
-}
-
-/// The room the caption buttons ZapFast draws take at each end of the top
-/// edge, beside a header [`TOP_BAR_HEIGHT`] tall. Zero on macOS (the traffic
-/// lights are [`traffic_light_inset`]), under the desktop's own title bar,
-/// and in full screen.
-pub fn caption_footprint(ctx: &egui::Context) -> fastframe_titlebar::Footprint {
-    #[cfg(any(test, feature = "demo"))]
-    if let Some(preview) =
-        ctx.data(|data| data.get_temp::<fastframe_titlebar::Footprint>(titlebar_preview_id()))
-    {
-        let fullscreen = ctx.input(|input| input.viewport().fullscreen.unwrap_or(false));
-        return if fullscreen {
-            fastframe_titlebar::Footprint::default()
-        } else {
-            preview
-        };
-    }
-    if cfg!(target_os = "macos") {
-        return fastframe_titlebar::Footprint::default();
-    }
-    fastframe_titlebar::footprint(ctx, TOP_BAR_HEIGHT)
-}
-
-#[cfg(any(test, feature = "demo"))]
-fn titlebar_preview_id() -> egui::Id {
-    egui::Id::new("titlebar-preview")
-}
-
-/// Lays the window out around drawn caption buttons taking `footprint`, for
-/// layout tests. The buttons themselves follow the process-wide choice
-/// (`fastframe_titlebar::set_enabled`), which tests running side by side
-/// must not change, so only the room they take is previewed here; the demo
-/// binary's `--demo-titlebar` makes the choice for real.
-#[cfg(any(test, feature = "demo"))]
-pub fn preview_titlebar(ctx: &egui::Context, footprint: fastframe_titlebar::Footprint) {
-    ctx.data_mut(|data| data.insert_temp(titlebar_preview_id(), footprint));
+    macos_chrome(ctx)
 }
 
 /// Traffic-light strip used only while linking, before the chat header exists.

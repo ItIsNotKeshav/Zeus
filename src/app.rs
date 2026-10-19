@@ -7989,24 +7989,6 @@ impl App {
                 crate::theme::set_font(ctx, choice);
                 ctx.request_repaint();
             }
-            Action::SetCustomTitlebar(custom) => {
-                if self.settings.custom_titlebar != custom {
-                    self.settings.custom_titlebar = custom;
-                    self.mark_settings_dirty();
-                    // The choice is process-wide; tests share one process,
-                    // and a window drawn with it would change the layout
-                    // of every other test running beside this one.
-                    #[cfg(not(test))]
-                    fastframe_titlebar::set_enabled(custom);
-                    // Decorations are fixed when a window is made. Replace
-                    // the window, keeping the chat, the link and any call:
-                    // the shell opens the next one at once.
-                    if cfg!(any(windows, target_os = "linux")) && !self.window_hidden {
-                        self.reopen = true;
-                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                }
-            }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
@@ -14169,32 +14151,6 @@ mod tests {
         app.apply(Action::ShowWindow, &ctx);
         assert!(!app.reopen, "elsewhere the window is only focused");
         assert_ne!(app.closed(), Closed::Reopen);
-    }
-
-    /// The title bar choice is saved and, because decorations are fixed when
-    /// a window is made, replaces the window on Windows and Linux. macOS has
-    /// no such choice: its traffic lights stay.
-    #[test]
-    fn choosing_the_custom_title_bar_replaces_the_window() {
-        use fastframe_shell::{Closed, Resident};
-        let ctx = egui::Context::default();
-        let mut app = app();
-        assert!(!app.settings.custom_titlebar, "off by default");
-        app.apply(Action::SetCustomTitlebar(true), &ctx);
-        assert!(app.settings.custom_titlebar);
-        let replaced = cfg!(any(windows, target_os = "linux"));
-        assert_eq!(app.reopen, replaced);
-        assert_eq!(app.closed() == Closed::Reopen, replaced);
-
-        app.reopen = false;
-        app.apply(Action::SetCustomTitlebar(true), &ctx);
-        assert!(!app.reopen, "an unchanged choice keeps the window");
-
-        // A hidden app has no window to replace; the next one follows.
-        app.window_hidden = true;
-        app.apply(Action::SetCustomTitlebar(false), &ctx);
-        assert!(!app.settings.custom_titlebar);
-        assert!(!app.reopen);
     }
 
     #[test]

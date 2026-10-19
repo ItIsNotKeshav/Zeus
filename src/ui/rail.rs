@@ -55,8 +55,7 @@ pub fn destination_id(destination: Destination) -> egui::Id {
 
 /// How far the macOS traffic lights reach past the rail: what a header
 /// beside the rail leaves free at its left. Zero elsewhere and in full
-/// screen. The caption buttons ZapFast draws on the left (GNOME) are not
-/// counted here: headers measure their room from `ui::caption_room`.
+/// screen.
 pub fn lights_overhang(ctx: &egui::Context) -> f32 {
     if !theme::macos_chrome(ctx) {
         return 0.0;

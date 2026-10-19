@@ -118,17 +118,6 @@ name or description, in the interface language or in English.
   Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
   Chinese, Traditional Chinese, Turkish, and Indonesian are available; otherwise English.
   Message contents, names, and logs are never translated.
-- **Custom title bar** (Windows and Linux, off by default): ZapFast draws
-  its own title bar instead of the desktop's. The window buttons sit in the
-  top corner of whichever pane is there (the open chat's header, the info
-  panel, Settings, the Calls page, the call screen), on the left or the
-  right as GNOME's button layout says, or Windows' three square buttons;
-  the headers drag the window and a double-click maximizes or restores it,
-  and the window's edges resize it. Turning it on or off replaces the
-  window at once, keeping the open chat and any call. It is off by default
-  because some Intel graphics drivers draw a frameless window with a black
-  band at the top, with clicks landing below where they are drawn. macOS
-  always keeps its own traffic lights.
 
 **Chats**
 

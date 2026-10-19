@@ -170,31 +170,13 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             bottom: 8,
         })
         .show(ui, |ui| {
-            // Where ZapFast draws the title bar, the header's top drags the
-            // window and keeps clear of the caption buttons over a corner it
-            // reaches: the left one, or both while it fills a narrow window.
-            let top = ui.max_rect();
-            let room = super::caption_room(ui.ctx(), top, LIST_HEADER_MIN_CONTENT);
-            super::caption_drag(
-                ui,
-                Rect::from_min_size(
-                    top.min - vec2(14.0, 8.0),
-                    vec2(
-                        top.width() + 28.0,
-                        8.0 + room.top + super::conversation::HEADER_ROW,
-                    ),
-                ),
-            );
-            ui.add_space(room.top);
             let row = ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), super::conversation::HEADER_ROW),
                 Layout::left_to_right(Align::Center),
                 |ui| {
-                    ui.add_space(room.left);
                     let buttons = list_header_buttons(app, ui.ctx());
-                    // The title measures its room from the buttons and the
-                    // caption buttons' room after them.
-                    let buttons_width = header_buttons_width(ui, &buttons) + room.right;
+                    // The title measures its room from the buttons after it.
+                    let buttons_width = header_buttons_width(ui, &buttons);
                     if app.page == Page::Calls && app.new_call {
                         new_call_header(app, ui, 20.0, buttons_width);
                     } else if app.page != Page::Calls && app.show_starred {
@@ -258,7 +240,6 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.add_space(room.right);
                         header_button_row(app, ui, &buttons, false);
                     });
                 },
@@ -371,10 +352,6 @@ enum HeaderButton {
 
 /// The size of the header buttons' icons.
 const HEADER_ICON: f32 = 18.0;
-
-/// What the list header's first row needs beside the caption buttons
-/// ZapFast draws: the title and its buttons.
-const LIST_HEADER_MIN_CONTENT: f32 = 230.0;
 
 /// The buttons on the right of the chat list header, rightmost first, as
 /// `header_button_row` draws them: New chat, and Hide the chat list unless

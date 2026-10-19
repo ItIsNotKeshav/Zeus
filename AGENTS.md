@@ -454,26 +454,10 @@ protocol. These notes are for coding agents and new contributors.
   the content runs to the top. `src/macos.rs` keeps native application menus alive across window
   recreation; `fastframe_titlebar::align_traffic_lights` centres the traffic
   lights on the chat header. Linking retains
-  `ui::titlebar_strip`; other headers reserve horizontal space for the buttons.
-  On Windows and Linux, Settings > Appearance > Custom title bar
-  (`settings.custom_titlebar`, off by default for Intel drivers that
-  mis-draw a frameless window, Spotifast #348/#554) draws fastframe-titlebar's
-  caption buttons instead: `main` calls `init` and `set_enabled` before the
-  first window, `native_options` sets `with_decorations(!enabled())`, and
-  `SetCustomTitlebar` replaces the window through `Closed::Reopen`.
-  `ui::window_chrome` draws the buttons last each frame and keeps their areas
-  on top, then `resize`. `theme::chrome_in_headers` is true for macOS and the
-  drawn bar alike (banners go under the chat header); `theme::caption_footprint`
-  is the drawn buttons' room (`traffic_light_inset` includes its left end,
-  so the rail starts under left-hand GNOME buttons; `rail::lights_overhang`
-  stays macOS-only, and headers beside the rail measure their own room),
-  and `ui::caption_room(ctx, rect, min_content)` gives any header reaching
-  a top corner its room beside the buttons or under them
-  (`Footprint::reserve`). Every pane's top drags the window
-  (`ui::caption_drag` where macOS has no drag). Mica is unaffected: the crate
-  leaves the frame alone. Layout tests preview the room per context with
-  `theme::preview_titlebar`, never `set_enabled`, which is process-wide;
-  `--demo-titlebar` makes the choice for real in the demo.
+  `ui::titlebar_strip`. Windows and Linux always use the desktop's own
+  frame; ZapFast draws no title bar or window buttons there.
+  `theme::chrome_in_headers` is true on macOS only (banners go under the chat
+  header).
 - Group delivery uses `archive::receipts`: save the recipients when filing an
   outgoing message, record each person's receipt, then take the least advanced
   recipient. Never promote a group from one reader, apply a receipt to earlier

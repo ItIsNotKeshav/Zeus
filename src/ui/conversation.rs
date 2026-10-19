@@ -364,9 +364,6 @@ const NAME_GLASS_LINES: f32 = 32.0;
 const BUTTON_GLASS: f32 = 36.0;
 /// The space between two of a vibrant header's buttons, beyond their glass.
 const BUTTON_GAP: f32 = 10.0;
-/// What the chat header needs beside the caption buttons ZapFast draws: its
-/// most buttons (Back, two calls, Search and More), the avatar, and a name.
-const HEADER_MIN_CONTENT: f32 = 320.0;
 
 /// The round glass under one of a vibrant header's buttons.
 fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
@@ -413,10 +410,6 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
             if theme::chrome_in_headers(ui.ctx()) {
                 super::titlebar_drag(ui, ui.max_rect());
             }
-            // The caption buttons ZapFast draws over a corner the header
-            // reaches: beside its own buttons, or above them when narrow.
-            let room = super::caption_room(ui.ctx(), ui.max_rect(), HEADER_MIN_CONTENT);
-            ui.add_space(room.top);
             let narrow = super::narrow(ui.ctx());
             let row = ui.horizontal(|ui| {
                 // Give both rows a fixed height so their contents align.
@@ -431,7 +424,6 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     // Beside the rail alone, the lights reach over this header.
                     ui.add_space(super::rail::lights_overhang(ui.ctx()));
                 }
-                ui.add_space(room.left);
                 let picture = app.avatar(&chat.id);
                 let (subtitle, color) = subtitle(app, chat);
                 let call_here = app.call_live_here(&chat.id);
@@ -450,7 +442,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     buttons * 36.0 + (buttons - 0.5) * BUTTON_GAP + (BUTTON_GLASS - 30.0)
                 } else {
                     buttons * 36.0
-                } + room.right;
+                };
                 // On a vibrant window the name and the buttons sit on glass
                 // pills, drawn beneath them once they are measured.
                 let name_pill = ui.painter().add(egui::Shape::Noop);
@@ -607,7 +599,6 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 };
                 let select_messages_label = crate::i18n::gettext(app.locale, "Select messages");
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(room.right);
                     // Each button on a vibrant window floats on its own glass,
                     // with room around it.
                     if palette.vibrant() {

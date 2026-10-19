@@ -18,9 +18,6 @@ use super::conversation::thumbnail_uri;
 
 /// Height of the header across the top.
 const HEADER: f32 = 56.0;
-/// Keep a useful title beside the custom window controls before moving the
-/// viewer toolbar below them on narrow windows.
-const HEADER_MIN_CONTENT: f32 = 160.0;
 /// Height of the album strip along the bottom.
 const STRIP: f32 = 78.0;
 const THUMB: f32 = 56.0;
@@ -84,15 +81,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
             // Inset from the window's edges, so the title does not touch the
             // left one and the close button keeps clear of the right.
-            // The header drags the window, and its actions stay clear of the
-            // caption buttons ZapFast draws over the window's corners.
-            super::caption_drag(ui, header_rect);
-            let room = super::caption_room(ui.ctx(), header_rect, HEADER_MIN_CONTENT);
             let inset = header_rect.shrink2(vec2(14.0, 0.0));
-            let inset = Rect::from_min_max(
-                inset.min + vec2(room.left, room.top),
-                inset.max - vec2(room.right, 0.0),
-            );
             let mut head = ui.new_child(UiBuilder::new().max_rect(inset));
             head.set_clip_rect(header_rect);
             header(
