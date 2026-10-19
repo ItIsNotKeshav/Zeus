@@ -97,26 +97,34 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let area = ui.available_rect_before_wrap();
         let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-composer"));
         let foot = ui
-            .scope_builder(egui::UiBuilder::new().layer_id(layer), |ui| {
-                let glass = ui.painter().add(egui::Shape::Noop);
-                composer(app, ui, &chat);
-                // Only the strip around the field: from a little above it
-                // to the bottom, as wide as the chat.
-                let pill = ui
-                    .ctx()
-                    .data(|data| data.get_temp::<Rect>(composer_pill_id()))
-                    .unwrap_or(area);
-                let foot = Rect::from_x_y_ranges(
-                    area.x_range(),
-                    (pill.top() - 12.0).max(area.top())..=area.bottom(),
-                );
-                // Strongest at the bottom, easing off towards its top.
-                ui.painter().set(
-                    glass,
-                    super::glass::shape(foot, -foot.height() * HEADER_EASE),
-                );
-                foot
-            })
+            // Laid out from the bottom: a scope's own area spans from where
+            // its layout starts to its last widget, and on this layer above
+            // the messages it would take every click over them.
+            .scope_builder(
+                egui::UiBuilder::new()
+                    .layer_id(layer)
+                    .layout(Layout::bottom_up(Align::Min)),
+                |ui| {
+                    let glass = ui.painter().add(egui::Shape::Noop);
+                    composer(app, ui, &chat);
+                    // Only the strip around the field: from a little above it
+                    // to the bottom, as wide as the chat.
+                    let pill = ui
+                        .ctx()
+                        .data(|data| data.get_temp::<Rect>(composer_pill_id()))
+                        .unwrap_or(area);
+                    let foot = Rect::from_x_y_ranges(
+                        area.x_range(),
+                        (pill.top() - 12.0).max(area.top())..=area.bottom(),
+                    );
+                    // Strongest at the bottom, easing off towards its top.
+                    ui.painter().set(
+                        glass,
+                        super::glass::shape(foot, -foot.height() * HEADER_EASE),
+                    );
+                    foot
+                },
+            )
             .inner;
         let list = area.with_min_y(bar.top());
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
@@ -2462,6 +2470,34 @@ const GLIDE_SECONDS: f64 = 0.25;
 /// reader is at the bottom, instead of jumping by its height in one frame.
 /// Only the picture moves: the scroll offset, and so every click, is already
 /// where it ends.
+/// A glide under way: the list's last height and newest message, to notice
+/// the next one, and when the slide began and how far it goes.
+#[derive(Clone)]
+struct Glide {
+    newest: Option<String>,
+    height: f32,
+    at_bottom: bool,
+    start: f64,
+    distance: f32,
+}
+
+impl Glide {
+    fn id(chat: &str) -> egui::Id {
+        egui::Id::new(("message-glide", chat))
+    }
+
+    /// How far below its place the list is drawn at `now`. Ease out: it
+    /// starts at the old place and settles gently.
+    fn shift(&self, now: f64) -> f32 {
+        let t = ((now - self.start) / GLIDE_SECONDS) as f32;
+        if t >= 1.0 || self.distance <= 0.0 {
+            0.0
+        } else {
+            self.distance * (1.0 - t).powi(3)
+        }
+    }
+}
+
 fn glide_new_message<R>(
     ui: &egui::Ui,
     chat: &str,
@@ -2470,18 +2506,10 @@ fn glide_new_message<R>(
     layer: egui::LayerId,
     first_shape: egui::layers::ShapeIdx,
 ) {
-    let id = egui::Id::new(("message-glide", chat));
+    let id = Glide::id(chat);
     let now = ui.input(|input| input.time);
     let height = output.content_size.y;
     let at_bottom = output.state.offset.y + output.inner_rect.height() >= height - 1.0;
-    #[derive(Clone)]
-    struct Glide {
-        newest: Option<String>,
-        height: f32,
-        at_bottom: bool,
-        start: f64,
-        distance: f32,
-    }
     let before = ui.ctx().data(|data| data.get_temp::<Glide>(id));
     let mut glide = Glide {
         newest: newest.clone(),
@@ -2500,14 +2528,12 @@ fn glide_new_message<R>(
         glide.start = now;
         glide.distance = (height - before.height).min(output.inner_rect.height());
     }
-    let t = ((now - glide.start) / GLIDE_SECONDS) as f32;
     ui.ctx()
         .data_mut(|data| data.insert_temp(id, glide.clone()));
-    if t >= 1.0 || glide.distance <= 0.0 {
+    let shift = glide.shift(now);
+    if shift <= 0.0 {
         return;
     }
-    // Ease out: it starts at the old place and settles gently.
-    let shift = glide.distance * (1.0 - t).powi(3);
     ui.ctx().graphics_mut(|graphics| {
         let list = graphics.entry(layer);
         for index in first_shape.0..list.next_idx().0 {
@@ -4040,7 +4066,13 @@ fn bubble(
         // It grows out of the button: its corner there, a quarter of its
         // size, and both ease to its own place and size together.
         let p = 1.0 - (1.0 - t).powi(4);
-        let corner = rect.right_bottom();
+        // The list slides up to meet a new last message; aim where the row
+        // is drawn now, not where it ends, or the bubble overshoots it.
+        let gliding = ui
+            .ctx()
+            .data(|data| data.get_temp::<Glide>(Glide::id(&view.chat.id)))
+            .map_or(0.0, |glide| glide.shift(now));
+        let corner = rect.right_bottom() + vec2(0.0, gliding);
         let at = from.center() + (corner - from.center()) * p;
         let transform = egui::emath::TSTransform::from_translation(at.to_vec2())
             * egui::emath::TSTransform::from_scaling(0.25 + 0.75 * p)
@@ -4123,6 +4155,7 @@ fn bubble_row(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    let actions_before = actions.len();
     let RunPlace {
         show_sender,
         show_avatar,
@@ -4281,7 +4314,7 @@ fn bubble_row(
             .or_else(|| response.as_ref().map(|response| response.rect));
         // A photo, video or link card opens itself: only the text and the
         // bubble around it show the time.
-        let media = [id.with("picture"), id.with("preview")]
+        let media = [id.with("picture"), id.with("preview"), id.with("quote")]
             .map(|key| ui.ctx().data(|data| data.get_temp::<Rect>(key)));
         let clicked_inside = bubble_rect.is_some_and(|rect| {
             ui.input(|input| {
@@ -4303,8 +4336,24 @@ fn bubble_row(
                 media.iter().flatten().any(|media| media.contains(position))
             })
         });
-        let bubble_clicked =
-            clicked_inside || (!on_media && response.as_ref().is_some_and(egui::Response::clicked));
+        // A click that opened something (a link, a quote's message, a file,
+        // a sender) did what it was for; the time stays as it was.
+        let opened = actions[actions_before..].iter().any(|action| {
+            matches!(
+                action,
+                Action::OpenUrl(_)
+                    | Action::ScrollTo(_)
+                    | Action::OpenMessage { .. }
+                    | Action::PreviewImage { .. }
+                    | Action::PreviewSticker(_)
+                    | Action::OpenFile(_)
+                    | Action::OpenInfo(_)
+                    | Action::PlayVideo { .. }
+            )
+        });
+        let bubble_clicked = !opened
+            && (clicked_inside
+                || (!on_media && response.as_ref().is_some_and(egui::Response::clicked)));
         if bubble_clicked {
             visible = !visible;
             ui.ctx()

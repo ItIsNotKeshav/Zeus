@@ -1951,6 +1951,68 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_photo_opens_the_viewer_in_every_bubble_style() {
+        for theme in [ThemeChoice::Dark, ThemeChoice::NothingDark] {
+            let mut app = super::super::tests::app();
+            Script::WhatsNew.prepare(&mut app);
+            app.settings.theme = theme;
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            app.open_chat = Some(super::super::SAMPLES[0].id.into());
+            app.scroll_to_bottom = true;
+            // Tall enough that the photo is whole, clear of the header.
+            let run = |app: &mut App, events| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 1800.0))),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.background_frame(&ctx);
+                        app.frame_ui(ui);
+                    },
+                );
+                output.textures_delta.clear();
+            };
+            // The photo decodes off the frame; give it time to arrive.
+            for _ in 0..40 {
+                run(&mut app, Vec::new());
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+            let bubble =
+                crate::ui::conversation::bubble_id(super::super::SAMPLES[0].id, "ada-photo");
+            let picture = ctx
+                .data(|data| data.get_temp::<Rect>(bubble.with("picture")))
+                .expect("the photo was drawn");
+            let at = picture.center();
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            };
+            run(&mut app, vec![Event::PointerMoved(at)]);
+            eprintln!(
+                "DEBUG {theme:?} layer {:?} hits {:?}",
+                ctx.layer_id_at(at),
+                ctx.viewport(|viewport| viewport.hits.click.map(|widget| (
+                    widget.id,
+                    widget.layer_id,
+                    widget.rect
+                )))
+            );
+            run(&mut app, vec![button(true)]);
+            run(&mut app, vec![button(false)]);
+            run(&mut app, Vec::new());
+            assert!(
+                app.image_preview.is_some(),
+                "{theme:?}: clicking the photo at {at:?} in {picture:?} opens the viewer"
+            );
+        }
+    }
+
+    #[test]
     fn a_sent_text_flies_from_the_composer_to_its_new_bubble() {
         let mut app = super::super::tests::app();
         let ctx = egui::Context::default();
