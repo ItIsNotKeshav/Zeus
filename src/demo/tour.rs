@@ -1951,6 +1951,45 @@ mod tests {
     }
 
     #[test]
+    fn a_sent_text_flies_from_the_composer_to_its_new_bubble() {
+        let mut app = super::super::tests::app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.window_focused = true;
+        let mut tour = Tour::new(None, None);
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.composer = "Hi there".into();
+        app.focus_composer = true;
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        frame(
+            &mut app,
+            &mut tour,
+            &ctx,
+            vec![Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        let chat = app.open_chat.clone().expect("a chat is open");
+        let sent = app.conversations[&chat]
+            .messages
+            .last()
+            .expect("the text was sent");
+        assert!(sent.from_me && app.composer.is_empty());
+        assert_eq!(
+            crate::ui::conversation::flying_to(&ctx).as_deref(),
+            Some(sent.id.as_str()),
+            "the new bubble takes the flight from the composer"
+        );
+    }
+
+    #[test]
     fn real_input_opens_menus_completes_text_and_sends_offline_media() {
         let mut app = super::super::tests::app();
         prepare(&mut app);

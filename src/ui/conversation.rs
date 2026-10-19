@@ -1838,6 +1838,18 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 let text = std::mem::take(&mut app.composer);
                 if app.pending.is_empty() {
+                    if let Some(from) =
+                        ui.ctx().data(|data| data.get_temp::<Rect>(composer_text_id()))
+                    {
+                        let flight = SendFlight {
+                            chat: chat.id.clone(),
+                            from: from.min,
+                            sent: ui.input(|input| input.time),
+                            message: None,
+                        };
+                        ui.ctx()
+                            .data_mut(|data| data.insert_temp(send_flight_id(), flight));
+                    }
                     app.actions.push(Action::SendText {
                         chat: chat.id.clone(),
                         text,
@@ -3888,8 +3900,156 @@ struct RunPlace {
     last_outgoing: bool,
 }
 
-/// Draws a message row and returns its bubble response for scrolling.
+fn send_flight_id() -> egui::Id {
+    egui::Id::new("send-flight")
+}
+
+/// A sent text on its way from the composer to its bubble: `from` is where
+/// its first letter stood in the field, and `message` the row it became,
+/// with the time that row was first drawn.
+#[derive(Clone)]
+struct SendFlight {
+    chat: String,
+    from: egui::Pos2,
+    sent: f64,
+    message: Option<(String, f64)>,
+}
+
+/// The message a sent text is flying to, once its row has been drawn.
+#[cfg(test)]
+pub(crate) fn flying_to(ctx: &egui::Context) -> Option<String> {
+    ctx.data(|data| data.get_temp::<SendFlight>(send_flight_id()))
+        .and_then(|flight| flight.message)
+        .map(|(id, _)| id)
+}
+
+/// How long a sent message takes to travel from the composer to its place.
+const FLIGHT_SECONDS: f64 = 0.35;
+/// How long a received message takes to settle in.
+const LANDING_SECONDS: f64 = 0.3;
+/// How old a message may be when first drawn and still be animated in: one
+/// just sent or received, not history or a chat opened later.
+const ARRIVAL_FRESH: i64 = 3;
+
+/// Ease out: quick at first, gentle at the end, no overshoot.
+fn ease_out(t: f32) -> f32 {
+    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+}
+
+/// Draws a message row and returns its bubble response for scrolling. A
+/// message just sent flies there from the composer, carrying the text out
+/// of the field; one just received fades in and grows a little from its side.
 fn bubble(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    album: Option<&[Message]>,
+    place: RunPlace,
+    reduce_motion: bool,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let fresh = !reduce_motion
+        && view.animate
+        && (crate::util::now() - message.timestamp).abs() <= ARRIVAL_FRESH;
+    if !fresh {
+        return bubble_row(ui, view, message, album, place, reduce_motion, actions);
+    }
+    let now = ui.input(|input| input.time);
+    let layer = ui.layer_id();
+    let start = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    if message.from_me {
+        let mut flight = ui
+            .ctx()
+            .data(|data| data.get_temp::<SendFlight>(send_flight_id()))
+            .filter(|flight| flight.chat == view.chat.id);
+        if let Some(flight) = &mut flight
+            && flight.message.is_none()
+            && now - flight.sent < 2.0
+        {
+            flight.message = Some((message.id.clone(), now));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(send_flight_id(), flight.clone()));
+        }
+        let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
+        let Some((from, landed)) = flight.and_then(|flight| {
+            let (id, at) = flight.message?;
+            (id == message.id).then_some((flight.from, at))
+        }) else {
+            return response;
+        };
+        let t = ((now - landed) / FLIGHT_SECONDS) as f32;
+        if t >= 1.0 {
+            return response;
+        }
+        let Some(rect) = ui
+            .ctx()
+            .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")))
+        else {
+            return response;
+        };
+        let margin = bubble_margin(&view.palette, message, false);
+        let text = rect.min + vec2(f32::from(margin.left), f32::from(margin.top));
+        let shift = (from - text) * (1.0 - ease_out(t));
+        // Lifted onto a layer above the chat, so it can cross the composer
+        // and the list's edge on its way, and the list's own glide leaves it be.
+        let flying = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("send-flight"));
+        let clip = ui.ctx().content_rect();
+        ui.ctx().graphics_mut(|graphics| {
+            let list = graphics.entry(layer);
+            let end = list.next_idx();
+            let shapes: Vec<egui::Shape> = list
+                .all_entries()
+                .skip(start.0)
+                .take(end.0 - start.0)
+                .map(|clipped| clipped.shape.clone())
+                .collect();
+            for index in start.0..end.0 {
+                list.reset_shape(egui::layers::ShapeIdx(index));
+            }
+            let above = graphics.entry(flying);
+            for mut shape in shapes {
+                shape.translate(shift);
+                above.add(clip, shape);
+            }
+        });
+        ui.ctx().request_repaint();
+        return response;
+    }
+    // Received: the first time it is drawn starts its landing.
+    let id = egui::Id::new(("landing", &view.chat.id, &message.id));
+    let landed = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
+    let t = ((now - landed) / LANDING_SECONDS) as f32;
+    if t >= 1.0 {
+        return bubble_row(ui, view, message, album, place, reduce_motion, actions);
+    }
+    let p = ease_out(t);
+    let row = ui.scope(|ui| {
+        ui.multiply_opacity(p);
+        bubble_row(ui, view, message, album, place, reduce_motion, actions)
+    });
+    let pivot = row.response.rect.left_bottom();
+    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2())
+        * egui::emath::TSTransform::from_scaling(0.9 + 0.1 * p)
+        * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        let end = list.next_idx();
+        for index in start.0..end.0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                clipped.shape.transform(transform);
+            });
+        }
+    });
+    ui.ctx().request_repaint();
+    row.inner
+}
+
+/// Draws a message row and returns its bubble response for scrolling.
+fn bubble_row(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
