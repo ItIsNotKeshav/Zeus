@@ -17,7 +17,6 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use rodio::Source;
 use rodio::buffer::SamplesBuffer;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
@@ -79,6 +78,18 @@ const UNPLAYED_RESTARTS_BEFORE_DEFAULT: usize = 3;
 const RETRY: Duration = Duration::from_millis(500);
 /// How long a reader waits for room in the engine's channel before looking at its stop flag again.
 const BACKOFF: Duration = Duration::from_millis(5);
+/// How long a microphone reader waits for its next sample before looking at its stop flag again.
+const MIC_POLL: Duration = Duration::from_millis(100);
+/// How long a microphone that has just opened is given to send its first sample.
+///
+/// Some inputs open without complaint and never send anything: a laptop's headset jack with
+/// nothing in it, which Windows can still make the default microphone. A call on one connects and
+/// plays the peer while sending them nothing at all. Two seconds is far above any start-up a
+/// working microphone needs, and short enough that the peer hears the caller from the first
+/// sentence once the pump has moved on to a microphone that works.
+const MIC_STARTUP: Duration = Duration::from_millis(2_000);
+/// How long a microphone that was sending may go without a sample before its stream is reopened.
+const MIC_STALLED: Duration = Duration::from_millis(2_000);
 
 // ---------------------------------------------------------------------------
 // Conversion
@@ -331,7 +342,7 @@ fn chosen_available(
 /// The pump, the fallback rules and the framing above stay exactly as they are whichever this is,
 /// so what a test covers is the real behaviour rather than a second implementation of it.
 enum Mic {
-    Real(rodio::microphone::Microphone, crate::audio::Health),
+    Real(Capture, crate::audio::Health),
     /// Installed only by a test, and only while its guard lives.
     #[cfg(test)]
     Fake(fake::Microphone),
@@ -340,7 +351,7 @@ enum Mic {
 impl Mic {
     fn channels(&self) -> u16 {
         match self {
-            Mic::Real(microphone, _) => microphone.channels().get(),
+            Mic::Real(capture, _) => capture.channels,
             #[cfg(test)]
             Mic::Fake(microphone) => microphone.channels,
         }
@@ -348,7 +359,7 @@ impl Mic {
 
     fn rate(&self) -> u32 {
         match self {
-            Mic::Real(microphone, _) => microphone.sample_rate().get(),
+            Mic::Real(capture, _) => capture.rate,
             #[cfg(test)]
             Mic::Fake(microphone) => microphone.rate,
         }
@@ -363,44 +374,155 @@ impl Mic {
         }
     }
 
-    fn next(&mut self) -> Option<f32> {
+    /// The next sample, waiting at most `wait` for it.
+    fn read(&mut self, wait: Duration) -> Read {
         match self {
-            Mic::Real(microphone, _) => microphone.next(),
+            Mic::Real(capture, _) => match capture.samples.recv_timeout(wait) {
+                Ok(sample) => Read::Sample(sample),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Read::Waiting,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Read::Gone,
+            },
             #[cfg(test)]
-            Mic::Fake(microphone) => microphone.next(),
+            Mic::Fake(microphone) => microphone.read(wait),
         }
     }
 }
 
+/// What a microphone gave when it was asked for its next sample.
+enum Read {
+    Sample(f32),
+    /// Nothing yet: the device is slow, or sends nothing at all.
+    Waiting,
+    /// The stream ended.
+    Gone,
+}
+
+/// This machine's microphone, read through cpal, which rodio bundles.
+///
+/// rodio's own microphone waits for its next sample for ever, so a device that opens and then
+/// sends nothing held its reader, and the call, with no way to tell it from a quiet room. Read
+/// here with a timeout, such a device is noticed and given up for another.
+struct Capture {
+    /// Keeps the device open; its callback feeds `samples`.
+    _stream: rodio::cpal::Stream,
+    samples: std::sync::mpsc::Receiver<f32>,
+    channels: u16,
+    rate: u32,
+}
+
+/// Builds the stream that feeds a capture, for a device whose samples are `T`.
+fn capture_stream<T>(
+    device: &rodio::cpal::Device,
+    config: rodio::cpal::StreamConfig,
+    samples: std::sync::mpsc::SyncSender<f32>,
+    errors: impl FnMut(rodio::cpal::Error) + Send + 'static,
+) -> Result<rodio::cpal::Stream, rodio::cpal::Error>
+where
+    T: rodio::cpal::SizedSample,
+    f32: rodio::cpal::FromSample<T>,
+{
+    device.build_input_stream::<T, _, _>(
+        config,
+        move |data: &[T], _| {
+            for &sample in data {
+                // A reader that fell behind loses the newest audio, as rodio's did, rather than
+                // the device's callback waiting on it.
+                let _ = samples.try_send(sample.to_sample::<f32>());
+            }
+        },
+        errors,
+        None,
+    )
+}
+
 fn open_microphone(device: Option<&str>) -> Result<Mic, String> {
+    use rodio::cpal::SampleFormat;
+    use rodio::cpal::traits::StreamTrait;
     #[cfg(test)]
     if let Some(microphone) = fake::open_microphone(device) {
         return Ok(Mic::Fake(microphone));
     }
     let health = crate::audio::Health::new("call microphone");
-    let builder =
-        rodio::microphone::MicrophoneBuilder::new().with_error_callback(health.callback());
-    let builder = match device {
-        Some(name) => {
-            let input = rodio::microphone::available_inputs()
-                .map_err(|error| format!("the input devices could not be listed: {error}"))?
-                .into_iter()
-                .find(|input| input.to_string() == name)
-                .ok_or_else(|| format!("the microphone {name} is not available"))?;
-            builder
-                .device(input)
-                .map_err(|error| format!("the microphone {name} could not be used: {error}"))?
-        }
-        None => builder
-            .default_device()
-            .map_err(|error| format!("no microphone is available: {error}"))?,
+    let input = match device {
+        Some(name) => rodio::microphone::available_inputs()
+            .map_err(|error| format!("the input devices could not be listed: {error}"))?
+            .into_iter()
+            .find(|input| input.to_string() == name)
+            .ok_or_else(|| format!("the microphone {name} is not available"))?
+            .into_inner(),
+        None => rodio::cpal::default_host()
+            .default_input_device()
+            .ok_or_else(|| "no microphone is available".to_owned())?,
     };
-    builder
-        .default_config()
-        .map_err(|error| format!("the microphone has no supported format: {error}"))?
-        .open_stream()
-        .map(|microphone| Mic::Real(microphone, health))
-        .map_err(|error| format!("the microphone could not be opened: {error}"))
+    let supported = input
+        .default_input_config()
+        .map_err(|error| format!("the microphone has no supported format: {error}"))?;
+    let channels = supported.channels();
+    let rate = supported.sample_rate();
+    // A fifth of a second of the device's audio, which the reader drains a block at a time.
+    let (feed, samples) =
+        std::sync::mpsc::sync_channel::<f32>(usize::from(channels.max(1)) * rate as usize / 5);
+    let config = supported.config();
+    let errors = health.callback();
+    let stream = match supported.sample_format() {
+        SampleFormat::F32 => capture_stream::<f32>(&input, config, feed, errors),
+        SampleFormat::F64 => capture_stream::<f64>(&input, config, feed, errors),
+        SampleFormat::I8 => capture_stream::<i8>(&input, config, feed, errors),
+        SampleFormat::I16 => capture_stream::<i16>(&input, config, feed, errors),
+        SampleFormat::I32 => capture_stream::<i32>(&input, config, feed, errors),
+        SampleFormat::U8 => capture_stream::<u8>(&input, config, feed, errors),
+        SampleFormat::U16 => capture_stream::<u16>(&input, config, feed, errors),
+        SampleFormat::U32 => capture_stream::<u32>(&input, config, feed, errors),
+        other => {
+            return Err(format!(
+                "the microphone's {other:?} samples are not supported"
+            ));
+        }
+    }
+    .map_err(|error| format!("the microphone could not be opened: {error}"))?;
+    stream
+        .play()
+        .map_err(|error| format!("the microphone could not be started: {error}"))?;
+    Ok(Mic::Real(
+        Capture {
+            _stream: stream,
+            samples,
+            channels,
+            rate,
+        },
+        health,
+    ))
+}
+
+/// The name of the system's default microphone and of every microphone, which the pump moves
+/// through when one sends nothing.
+fn input_names() -> (Option<String>, Vec<String>) {
+    #[cfg(test)]
+    if let Some(names) = fake::input_names() {
+        return names;
+    }
+    let default = rodio::cpal::default_host()
+        .default_input_device()
+        .and_then(|device| device.description().ok())
+        .map(|description| description.name().to_string());
+    let all = microphones().into_iter().map(|(name, _)| name).collect();
+    (default, all)
+}
+
+/// The microphone to try after `silent` sent nothing, among those not `tried` yet: the system
+/// default first, then the others in the picker's order. `None` in the answer is the default.
+fn next_microphone(
+    tried: &[Option<String>],
+    default: Option<&str>,
+    all: &[String],
+) -> Option<Option<String>> {
+    let same = |a: &Option<String>, b: &Option<String>| {
+        a == b || a.as_deref().or(default) == b.as_deref().or(default)
+    };
+    let untried = |candidate: &Option<String>| !tried.iter().any(|seen| same(seen, candidate));
+    std::iter::once(None)
+        .chain(all.iter().cloned().map(Some))
+        .find(untried)
 }
 
 /// An open speaker. The sink has to outlive the player queued on it, or the stream closes with it.
@@ -589,6 +711,8 @@ async fn mic_pump(
     opens: Arc<AtomicUsize>,
 ) {
     let mut target = initial;
+    // The microphones that sent nothing in this call, so the pump moves on rather than back.
+    let mut silent: Vec<Option<String>> = Vec::new();
     loop {
         let reader = match MicReader::start(target.as_deref()) {
             Ok(reader) => {
@@ -644,12 +768,42 @@ async fn mic_pump(
         }
         let delivered = reader.delivered.load(Ordering::Relaxed);
         drop(reader);
-        // A headset switched off leaves its stream delivering nothing: reopen on the system default
-        // so the peer hears the call rather than silence, and let the call say what moved.
-        if !delivered && !swapped && target.is_some() {
-            log::warn!("[CALL] microphone {target:?} delivered nothing; using the default input");
-            target = None;
-            let _ = fell.try_send(());
+        if swapped {
+            // A device the user picked is theirs to try again.
+            silent.clear();
+            continue;
+        }
+        if delivered {
+            continue;
+        }
+        // A headset switched off, or a jack with nothing in it, leaves its stream sending nothing:
+        // move on so the peer hears the call rather than silence. A device the user picked falls
+        // back to the system default, and the call says so; a silent default moves on to the
+        // machine's other microphones in turn.
+        silent.push(target.clone());
+        let (default, all) = input_names();
+        match next_microphone(&silent, default.as_deref(), &all) {
+            Some(next) => {
+                log::warn!("[CALL] microphone {target:?} sent nothing; trying {next:?}");
+                if target.is_some() && next.is_none() {
+                    let _ = fell.try_send(());
+                }
+                target = next;
+            }
+            None => {
+                // Every microphone was tried. One may come back (a headset plugged in), so start
+                // over from the default, after a pause.
+                log::warn!("[CALL] no microphone sent anything; trying them all again");
+                silent.clear();
+                if target.is_some() {
+                    let _ = fell.try_send(());
+                }
+                target = None;
+                if out.is_closed() {
+                    return;
+                }
+                tokio::time::sleep(RETRY).await;
+            }
         }
     }
 }
@@ -725,6 +879,10 @@ fn read_microphone(
     let mut converter = Converter::new(microphone.channels(), microphone.rate());
     let mut block = vec![0.0_f32; converter.block()];
     let mut frames = Vec::new();
+    // When the last sample came, and whether any has: a device that never sends one is told from a
+    // slow start by `MIC_STARTUP`, and one that stops from a pause by `MIC_STALLED`.
+    let mut last = Instant::now();
+    let mut sent = false;
     while !stop.load(Ordering::Relaxed) {
         if microphone.failed() {
             // The pump opens another once this returns; the wait keeps a device that fails every
@@ -735,10 +893,34 @@ fn read_microphone(
             return;
         }
         for slot in &mut block {
-            match microphone.next() {
-                Some(sample) => *slot = sample,
-                // The device went away mid-read.
-                None => return,
+            loop {
+                match microphone.read(MIC_POLL) {
+                    Read::Sample(sample) => {
+                        *slot = sample;
+                        last = Instant::now();
+                        sent = true;
+                        break;
+                    }
+                    Read::Waiting => {
+                        if stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let limit = if sent { MIC_STALLED } else { MIC_STARTUP };
+                        if last.elapsed() >= limit {
+                            if sent {
+                                log::warn!("[CALL] the microphone stopped sending; reopening it");
+                            } else {
+                                log::warn!(
+                                    "[CALL] the microphone sent nothing in {} ms",
+                                    MIC_STARTUP.as_millis()
+                                );
+                            }
+                            return;
+                        }
+                    }
+                    // The device went away mid-read.
+                    Read::Gone => return,
+                }
             }
         }
         frames.clear();
@@ -1211,16 +1393,22 @@ pub(crate) mod fake {
         at: usize,
         /// Set to make the device behave as one that has been taken away.
         gone: bool,
+        /// Set to make the device behave as one that opens and never sends anything.
+        mute: bool,
     }
 
     impl Microphone {
-        pub(super) fn next(&mut self) -> Option<f32> {
+        pub(super) fn read(&mut self, wait: Duration) -> Read {
+            if self.mute {
+                std::thread::sleep(wait);
+                return Read::Waiting;
+            }
             if self.gone || self.samples.is_empty() {
-                return None;
+                return Read::Gone;
             }
             let sample = self.samples[self.at % self.samples.len()];
             self.at = self.at.wrapping_add(1);
-            Some(sample)
+            Read::Sample(sample)
         }
     }
 
@@ -1230,6 +1418,10 @@ pub(crate) mod fake {
         channels: u16,
         rate: u32,
         gone: bool,
+        /// The microphones that open and send nothing (`None` is the default), with the default's
+        /// name and every name, when a test stages a machine with more than one.
+        mute: Vec<Option<String>>,
+        names: Option<(Option<String>, Vec<String>)>,
     }
 
     /// The speaker a test supplies: what it was given, how far it played, and whether it drains.
@@ -1393,22 +1585,56 @@ pub(crate) mod fake {
                 channels,
                 rate,
                 gone: false,
+                mute: Vec::new(),
+                names: None,
             }),
             speaker: Some(speaker.clone()),
         });
         (Fixture { _alone: alone }, speaker)
     }
 
+    /// Stages a machine whose default microphone is `default` among `names`, where the devices in
+    /// `mute` open and never send anything.
+    pub(crate) fn microphones(default: &str, names: &[&str], mute: &[&str]) {
+        let mut installed = INSTALLED.lock().unwrap_or_else(|error| error.into_inner());
+        let spec = installed
+            .as_mut()
+            .and_then(|installed| installed.microphone.as_mut())
+            .expect("a fixture is installed");
+        spec.names = Some((
+            Some(default.to_owned()),
+            names.iter().map(|name| (*name).to_owned()).collect(),
+        ));
+        spec.mute = mute
+            .iter()
+            .map(|name| {
+                if *name == default {
+                    None
+                } else {
+                    Some((*name).to_owned())
+                }
+            })
+            .collect();
+    }
+
+    /// The default microphone's name and every name, if a test staged them.
+    pub(super) fn input_names() -> Option<(Option<String>, Vec<String>)> {
+        let installed = INSTALLED.lock().unwrap_or_else(|error| error.into_inner());
+        installed.as_ref()?.microphone.as_ref()?.names.clone()
+    }
+
     /// The microphone to hand a reader, if a test installed one.
-    pub(super) fn open_microphone(_device: Option<&str>) -> Option<Microphone> {
+    pub(super) fn open_microphone(device: Option<&str>) -> Option<Microphone> {
         let installed = INSTALLED.lock().unwrap_or_else(|error| error.into_inner());
         let spec = installed.as_ref()?.microphone.as_ref()?;
+        let device = device.map(str::to_owned);
         Some(Microphone {
             samples: spec.samples.clone(),
             channels: spec.channels,
             rate: spec.rate,
             at: 0,
             gone: spec.gone,
+            mute: spec.mute.contains(&device),
         })
     }
 
@@ -1630,6 +1856,54 @@ mod tests {
         assert!(
             got.iter().flatten().any(|sample| *sample != 0),
             "the frames carry what the microphone delivered"
+        );
+    }
+
+    /// A default microphone that opens and sends nothing, as a laptop's headset jack with nothing
+    /// in it does, is given up for the next microphone, and the peer hears the call.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_microphone_that_sends_nothing_is_given_up_for_one_that_does() {
+        let samples: Vec<f32> = (0..960).map(|sample| sample as f32 / 1_920.0).collect();
+        let (_devices, _speaker) = fake::install(samples, 1, 48_000, (48_000, 2));
+        fake::microphones("Jack Mic", &["Jack Mic", "Microphone Array"], &["Jack Mic"]);
+        let (input, frames) = AudioInput::spawn(None);
+        let started = Instant::now();
+        let mut heard = false;
+        while !heard && started.elapsed() < MIC_STARTUP + Duration::from_secs(3) {
+            if let Ok(Ok(frame)) =
+                tokio::time::timeout(Duration::from_millis(250), frames.recv()).await
+            {
+                heard = frame.iter().any(|sample| *sample != 0);
+            }
+        }
+        assert!(heard, "the call heard the microphone that sends");
+        assert!(
+            input.fell_back.try_recv().is_err(),
+            "moving off a silent default loses nothing the user picked"
+        );
+        drop(input);
+    }
+
+    /// After a microphone that sent nothing comes the default, then every other microphone in
+    /// order, never one already tried, whether it was named or reached as the default.
+    #[test]
+    fn the_next_microphone_is_one_not_tried_yet() {
+        let all = ["Jack Mic".to_owned(), "Microphone Array".to_owned()];
+        let default = Some("Jack Mic");
+        assert_eq!(
+            next_microphone(&[Some("Microphone Array".into())], default, &all),
+            Some(None),
+            "a picked device falls back to the default"
+        );
+        assert_eq!(
+            next_microphone(&[None], default, &all),
+            Some(Some("Microphone Array".into())),
+            "the default is the jack, so the jack is not tried again by name"
+        );
+        assert_eq!(
+            next_microphone(&[None, Some("Microphone Array".into())], default, &all),
+            None,
+            "every microphone was tried"
         );
     }
 
@@ -1996,6 +2270,7 @@ mod tests {
         eprintln!("microphones: {microphones:#?}");
         eprintln!("speakers: {speakers:#?}");
         eprintln!("unavailable: {:?}", unavailable(None, None));
+        eprintln!("default microphone: {:?}", input_names().0);
 
         // The default device first, then every device by name, so a machine whose default input
         // is silent still says which microphone a call should be pointed at.
@@ -2006,17 +2281,27 @@ mod tests {
             let (input, frames) = AudioInput::spawn(target.clone());
             let started = Instant::now();
             let mut heard = 0;
-            while started.elapsed() < Duration::from_millis(600) {
+            let mut peak = 0_i32;
+            let mut zeros = 0_usize;
+            let mut total = 0_usize;
+            // Long enough for a silent default to be given up for a microphone that sends.
+            while started.elapsed() < MIC_STARTUP + Duration::from_millis(1_500) {
                 match frames.try_recv() {
                     Ok(frame) => {
                         assert_eq!(frame.len(), FRAME_SAMPLES, "the engine's frame size");
                         heard += 1;
+                        peak =
+                            peak.max(frame.iter().map(|s| i32::from(*s).abs()).max().unwrap_or(0));
+                        zeros += frame.iter().filter(|s| **s == 0).count();
+                        total += frame.len();
                     }
                     Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
             }
             drop(input);
-            eprintln!("{target:?}: {heard} frames in 600 ms");
+            eprintln!(
+                "{target:?}: {heard} frames, peak {peak} of 32767, {zeros} of {total} samples exactly zero"
+            );
             tried.push((target, heard));
         }
         assert!(
