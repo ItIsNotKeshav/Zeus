@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Name=Zeus
+GenericName=WhatsApp Client
+Comment=A native WhatsApp client
+Exec=zeus %U
+Icon=zeus
+Terminal=false
+Categories=Network;InstantMessaging;Chat;
+Keywords=whatsapp;chat;messaging;
+StartupWMClass=zeus
+SingleMainWindow=true
+Actions=quit;
+
+[Desktop Action quit]
+Name=Quit Zeus
+Exec=zeus quit

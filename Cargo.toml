@@ -5,8 +5,8 @@ edition = "2024"
 rust-version = "1.98"
 license = "MIT"
 description = "A native WhatsApp client built with Rust and egui"
-homepage = "https://zapfast.rocks"
-repository = "https://github.com/crmne/zapfast"
+homepage = "https://github.com/ItIsNotKeshav/zapfast"
+repository = "https://github.com/ItIsNotKeshav/zapfast"
 keywords = ["whatsapp", "chat", "egui", "messaging"]
 categories = ["gui"]
 

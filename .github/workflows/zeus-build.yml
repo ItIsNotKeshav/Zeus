@@ -61,6 +61,9 @@ jobs:
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/zeus" "dist/$name/"
           cp README.md LICENSE "dist/$name/"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            cp packaging/applications/zeus.desktop packaging/icons/zeus.svg "dist/$name/"
+          fi
           tar czf "dist/$name.tar.gz" -C dist "$name"
           rm -rf "dist/$name"
 

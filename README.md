@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="docs/assets/images/logo.svg" alt="ZapFast logo" width="88" height="88">
+  <img src="docs/assets/images/logo.svg" alt="Zeus logo" width="88" height="88">
 </p>
 
-<h1 align="center">ZapFast</h1>
+<h1 align="center">Zeus</h1>
 
-<p align="center"><strong>WhatsApp, native and fast.</strong><br>A lightweight WhatsApp app for Linux, macOS, and Windows.</p>
+<p align="center"><strong>WhatsApp, native and fast.</strong><br>A lightweight WhatsApp app for Linux, macOS, and Windows.<br>A fork of <a href="https://github.com/crmne/zapfast">ZapFast</a> by Carmine Paolino.</p>
 
 <p align="center">
-  <a href="https://zapfast.rocks/download/"><strong>Download</strong></a> ·
+  <a href="https://github.com/ItIsNotKeshav/zapfast/releases/latest"><strong>Download</strong></a> ·
   <a href="https://zapfast.rocks/getting-started/">Getting started</a> ·
   <a href="https://zapfast.rocks/using-zapfast/">User guide</a> ·
   <a href="CONTRIBUTING.md">Contribute</a>
@@ -19,7 +19,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-00a884" alt="MIT license"></a>
 </p>
 
-ZapFast is a WhatsApp client written in Rust with
+Zeus is a WhatsApp client written in Rust with
 [egui](https://www.egui.rs) and [fastframe](https://fastframe.dev), the
 framework behind a family of native desktop apps. It links to your phone as a
 companion device through
@@ -34,7 +34,7 @@ and Turkish.
 
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
-  <img src="docs/screenshot.png" alt="ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview">
+  <img src="docs/screenshot.png" alt="Zeus showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview">
 </picture>
 
 <details>

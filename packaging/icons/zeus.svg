@@ -1,16 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
-<defs>
-<linearGradient id="g" x1="16" y1="8" x2="112" y2="120" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#3b82f6"/>
-<stop offset="1" stop-color="#7c3aed"/>
-</linearGradient>
-<linearGradient id="s" x1="0" y1="4" x2="0" y2="124" gradientUnits="userSpaceOnUse">
-<stop offset="0" stop-color="#ffffff" stop-opacity="0.22"/>
-<stop offset="0.5" stop-color="#ffffff" stop-opacity="0"/>
-</linearGradient>
-</defs>
-<rect x="4" y="4" width="120" height="120" rx="30" fill="url(#g)"/>
-<rect x="4" y="4" width="120" height="120" rx="30" fill="url(#s)"/>
-<polygon points="30,24 98,24 98,38 58,62 86,62 46,90 98,90 98,104 30,104 30,90 62,66 38,66 74,38 30,38" fill="#000" fill-opacity="0.18" transform="translate(0 3)"/>
-<polygon points="30,24 98,24 98,38 58,62 86,62 46,90 98,90 98,104 30,104 30,90 62,66 38,66 74,38 30,38" fill="#ffffff"/>
+<rect x="4" y="4" width="120" height="120" rx="30" fill="#0d0d0d"/>
+<rect x="5" y="5" width="118" height="118" rx="29" fill="none" stroke="#34353a" stroke-width="2"/>
+<path d="M34 30 H94 L52 64 H78 L34 98 H94" fill="none" stroke="#f4f4f4" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
