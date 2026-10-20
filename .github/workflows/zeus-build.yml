@@ -1,0 +1,104 @@
+name: Zeus build
+
+# Builds Zeus for Windows, macOS and Linux on GitHub's machines. Run it from
+# the Actions tab, or push a tag like `zeus-v0.19.0` to also attach the files
+# to a GitHub release. Separate from release.yml, which is ZapFast's own.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["zeus-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zeus-build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: rustup target add ${{ matrix.target }}
+      # Reuses compiled dependencies between runs: the first run is slow
+      # (about the 15 minutes of a cold local build), later ones are not.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Version
+        id: v
+        shell: bash
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
+
+      - name: Package (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: |
+          name="zeus-${{ steps.v.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/zeus" "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+          tar czf "dist/$name.tar.gz" -C dist "$name"
+          rm -rf "dist/$name"
+
+      # Inno Setup ships with the runner image. PowerShell, because bash on
+      # Windows rewrites /D... arguments as paths.
+      - name: Installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DVersion=${{ steps.v.outputs.version }}" "/DArch=x86_64" `
+            "/DBinary=$PWD\target\${{ matrix.target }}\release\zeus.exe" `
+            "/DOutputDir=$PWD\dist" packaging\windows\zeus.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: zeus-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*-setup.exe
+          if-no-files-found: error
+
+  release:
+    name: GitHub release
+    if: startsWith(github.ref, 'refs/tags/zeus-v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          name: Zeus ${{ github.ref_name }}
+          prerelease: true
