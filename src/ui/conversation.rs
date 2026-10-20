@@ -5812,9 +5812,14 @@ fn picture_radius(palette: &Palette, message: &Message) -> f32 {
         f32::from(widgets::MESSAGES_BUBBLE_RADIUS)
     } else if palette.bubbles == theme::BubbleStyle::Nothing
         && (compact_picture_message(message)
+            || message.quoted.is_some()
+            || message.forwarded
             || matches!(
                 message.content,
                 Content::Image {
+                    caption: Some(_),
+                    ..
+                } | Content::Video {
                     caption: Some(_),
                     ..
                 }
@@ -5829,9 +5834,32 @@ fn picture_radius(palette: &Palette, message: &Message) -> f32 {
 /// A photo without accompanying text can use a tighter frame than a text
 /// balloon; quotes and forwarded labels keep the room they need.
 fn compact_picture_message(message: &Message) -> bool {
-    matches!(message.content, Content::Image { caption: None, .. })
+    (matches!(message.content, Content::Image { caption: None, .. })
+        || (matches!(
+            message.content,
+            Content::Video {
+                caption: None,
+                note: false,
+                ..
+            }
+        ) && !compact_attachment_message(message)))
         && message.quoted.is_none()
         && !message.forwarded
+}
+
+/// How far a picture or video in a Nothing bubble that also holds a quote,
+/// a forwarded label or a caption reaches past the text padding, so it sits
+/// in the same even ring as a picture alone. Without a caption it meets the
+/// bubble's bottom too.
+fn picture_bleed(ui: &egui::Ui, palette: &Palette, message: &Message, captioned: bool) -> Margin {
+    if compact_picture_message(message) {
+        return Margin::ZERO;
+    }
+    let mut bleed = edge_card(ui, palette, 0).0;
+    if palette.bubbles == theme::BubbleStyle::Nothing && !captioned {
+        bleed.bottom = CARD_RING - NOTHING_TEXT_MARGIN.bottom;
+    }
+    bleed
 }
 
 /// File cards have their own inset surface inside the message balloon.
@@ -7095,12 +7123,9 @@ fn content(
             media,
             motion,
         } => {
-            // A captioned photo reaches the bubble's ring, as a quote does.
-            let bleed = if caption.is_some() {
-                edge_card(ui, &palette, 0).0
-            } else {
-                Margin::ZERO
-            };
+            // A photo with a caption, a quote or a label reaches the
+            // bubble's ring, as a quote does.
+            let bleed = picture_bleed(ui, &palette, message, caption.is_some());
             let drawn = Frame::new()
                 .outer_margin(bleed)
                 .show(ui, |ui| {
@@ -7160,10 +7185,16 @@ fn content(
             gif,
             note,
         } => {
-            let shown = ui.scope(|ui| {
+            let bleed = if *note || compact_attachment_message(message) {
+                Margin::ZERO
+            } else {
+                picture_bleed(ui, &palette, message, caption.is_some())
+            };
+            let shown = Frame::new().outer_margin(bleed).show(ui, |ui| {
                 if *note {
                     video_note(ui, view, message, media, *seconds, actions)
                 } else {
+                    let width = width - bleed.sum().x;
                     video(ui, view, message, media, *seconds, *gif, width, actions)
                 }
             });
@@ -7174,7 +7205,8 @@ fn content(
                     shown.response.rect,
                 );
             });
-            let drawn = shown.inner;
+            // The caption keeps to the text padding the video reaches past.
+            let drawn = shown.inner + bleed.sum().x;
             caption.as_ref().and_then(|caption| {
                 let wrap = if message.quoted.is_some() {
                     width.max(drawn)
@@ -8902,6 +8934,17 @@ pub(crate) fn thumbnail_uri(ctx: &egui::Context, chat: &str, id: &str, bytes: &[
 
 /// Default image bounds based on [`CARD_WIDTH`].
 const PICTURE_WIDTH: f32 = CARD_WIDTH;
+
+/// The widest a picture or video grows: in a Nothing bubble that also holds
+/// a quote, a label or a caption it reaches into the text padding on both
+/// sides, as the quote above it does, so the two line up.
+fn picture_limit(palette: &Palette, message: &Message) -> f32 {
+    if palette.bubbles == theme::BubbleStyle::Nothing && !compact_picture_message(message) {
+        PICTURE_WIDTH + f32::from(2 * (NOTHING_TEXT_MARGIN.left - CARD_RING))
+    } else {
+        PICTURE_WIDTH
+    }
+}
 const PICTURE_HEIGHT: f32 = 440.0;
 const STICKER_SIDE: f32 = 180.0;
 /// Height of a header row, the chat list's and the conversation's alike, so
@@ -8971,7 +9014,7 @@ fn picture(
     let radius = picture_radius(&palette, message);
     let (max_width, max_height) = match sticker {
         Some(_) => (STICKER_SIDE, STICKER_SIDE),
-        None => (width.min(PICTURE_WIDTH), PICTURE_HEIGHT),
+        None => (width.min(picture_limit(&palette, message)), PICTURE_HEIGHT),
     };
     if let Some(path) = &media.path {
         // Phones often leave a sticker's animated flag out, so a downloaded
@@ -9278,6 +9321,7 @@ fn video(
 ) -> f32 {
     use crate::video::State;
     let palette = view.palette;
+    let radius = picture_radius(&palette, message);
     // A video sent before ZapFast made thumbnails has none; its file is
     // here, so its first frame stands in. Without either, it is a file card.
     let thumbnail = message.thumbnail.as_deref();
@@ -9301,7 +9345,7 @@ fn video(
         );
         return width;
     }
-    let limit = width.min(PICTURE_WIDTH);
+    let limit = width.min(picture_limit(&palette, message));
     // Without its size, a widescreen frame that fills the bubble: the hint is
     // in pixels, so a bare 16 by 9 would shrink it to the narrowest picture.
     let size = frame_size(
@@ -9349,13 +9393,13 @@ fn video(
         }
         match status.as_ref().and_then(|status| status.frame.as_ref()) {
             Some(frame) => {
-                ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
+                ui.painter().rect_filled(rect, radius, Color32::BLACK);
                 paint_texture(
                     ui,
                     fit_within(frame.size_vec2(), rect),
                     frame.id(),
                     Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                    6.0,
+                    radius,
                 );
             }
             None => match (thumbnail, &media.path) {
@@ -9364,11 +9408,11 @@ fn video(
                     let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, thumbnail);
                     egui::Image::new(uri)
                         .fit_to_exact_size(size)
-                        .corner_radius(6.0)
+                        .corner_radius(radius)
                         .paint_at(ui, rect);
                 }
                 (None, Some(path)) => {
-                    ui.painter().rect_filled(rect, 6.0, Color32::BLACK);
+                    ui.painter().rect_filled(rect, radius, Color32::BLACK);
                     if let animation::Frame::Ready(texture) =
                         animation::frame(ui, path, rect, false)
                     {
@@ -9377,7 +9421,7 @@ fn video(
                             fit_within(texture.size_vec2(), rect),
                             texture.id(),
                             Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
-                            6.0,
+                            radius,
                         );
                     }
                 }
@@ -9387,7 +9431,7 @@ fn video(
         let state = status.as_ref().map(|status| status.state);
         if state != Some(State::Playing) {
             ui.painter()
-                .rect_filled(rect, 6.0, Color32::from_black_alpha(40));
+                .rect_filled(rect, radius, Color32::from_black_alpha(40));
             let disc = Rect::from_center_size(rect.center(), Vec2::splat(48.0));
             ui.painter()
                 .circle_filled(disc.center(), 24.0, Color32::from_black_alpha(140));

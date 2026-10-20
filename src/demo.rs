@@ -1752,6 +1752,62 @@ fn motion_sample(app: &mut App, playing: bool) {
 /// Replaces the first chat with videos: a downloaded one, a round video
 /// message of our own, and one still on WhatsApp's servers. `play` starts
 /// one of them.
+fn media_replies_sample(app: &mut App) {
+    let id = SAMPLES[0].id;
+    let now = crate::util::now();
+    let quote = || Quoted {
+        labelled: None,
+        chat: None,
+        id: "demo-asked".into(),
+        sender: id.into(),
+        sender_name: None,
+        summary: "Show me the engine running".into(),
+        mentions: Vec::new(),
+    };
+    let video = |caption: Option<&str>| Content::Video {
+        caption: caption.map(str::to_owned),
+        media: media("video/mp4", 820_000, Some(1280), Some(720)),
+        seconds: Some(11),
+        gif: false,
+        note: false,
+    };
+    let mut rows = vec![
+        message(
+            id,
+            "demo-asked",
+            false,
+            now - 400,
+            Content::text("Show me the engine running"),
+        ),
+        message(id, "demo-video-alone", true, now - 300, video(None)),
+        message(
+            id,
+            "demo-photo-reply",
+            true,
+            now - 200,
+            Content::Image {
+                caption: None,
+                media: media("image/jpeg", 120_000, Some(1280), Some(720)),
+                motion: None,
+            },
+        ),
+        message(
+            id,
+            "demo-video-reply",
+            true,
+            now - 100,
+            video(Some("Here it is")),
+        ),
+    ];
+    for row in &mut rows[1..] {
+        row.thumbnail = Some(stock::thumbnail(stock::LAUNCH));
+    }
+    rows[2].quoted = Some(quote());
+    rows[3].quoted = Some(quote());
+    app.conversations.entry(id.into()).or_default().messages = rows;
+    app.open_chat = Some(id.into());
+}
+
 fn video_sample(app: &mut App, play: Option<&str>) {
     let id = SAMPLES[0].id;
     let now = crate::util::now();
@@ -2088,6 +2144,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
             }
             "video" => video_sample(app, None),
+            // A video alone, and a photo and a video replying to a message.
+            "media-replies" => media_replies_sample(app),
             "video-playing" => video_sample(app, Some("demo-video")),
             "video-expanded" => {
                 video_sample(app, None);
