@@ -423,7 +423,7 @@ fn run() -> eframe::Result<()> {
             // Decided as each window is made: it cannot become transparent
             // later.
             let transparent = zeus::backdrop::transparent_window(
-                lease.peek(|app: &app::App| app.settings.theme.vibrant()),
+                lease.peek(|app: &app::App| app.settings.vibrant_window()),
             );
             let geometry = if demo_persistence.is_some() {
                 fastframe_shell::window::Geometry::default()

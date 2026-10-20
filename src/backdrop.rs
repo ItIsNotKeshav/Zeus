@@ -11,6 +11,18 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
+static BLUR: AtomicBool = AtomicBool::new(true);
+
+/// Whether glass is frosted, as Settings' Blur says. Off, the frosted header
+/// and composer, glass and window material give way to solid surfaces.
+pub fn blur() -> bool {
+    BLUR.load(Ordering::Relaxed)
+}
+
+/// Records Settings' Blur for [`blur`]; the app does so every frame.
+pub fn set_blur(on: bool) {
+    BLUR.store(on, Ordering::Relaxed);
+}
 
 /// Whether the desktop shows through the window this frame: the Messages
 /// theme is on and the platform gave the window its material.
@@ -31,7 +43,7 @@ pub fn transparent_window(messages: bool) -> bool {
 /// Gives the window its material while `palette` wants one, takes it away
 /// otherwise, and records which for [`active`]. Cheap to call every frame.
 pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, transparent: bool) {
-    let wanted = palette.vibrant() && transparent;
+    let wanted = palette.vibrant() && transparent && blur();
     ACTIVE.store(platform::apply(frame, palette, wanted), Ordering::Relaxed);
 }
 

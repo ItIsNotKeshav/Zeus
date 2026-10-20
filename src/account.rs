@@ -53,6 +53,9 @@ pub struct Account {
     pub search_selected: Option<ChatId>,
     pub search_hits: Vec<Message>,
     pub typing: HashMap<ChatId, Vec<(String, Instant)>>,
+    /// Attachments on their way, oldest first.
+    pub uploads: Vec<crate::model::Upload>,
+    pub(crate) next_upload: crate::model::UploadId,
     pub presence: HashMap<String, crate::app::Presence>,
     pub account_receipts_off: bool,
     pub(crate) avatars: HashMap<String, Option<PathBuf>>,
@@ -168,6 +171,8 @@ impl Account {
             search_selected: None,
             search_hits: Vec::new(),
             typing: HashMap::new(),
+            uploads: Vec::new(),
+            next_upload: 0,
             presence: HashMap::new(),
             account_receipts_off: false,
             avatars: HashMap::new(),

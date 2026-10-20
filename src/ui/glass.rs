@@ -26,6 +26,10 @@ const SATURATION: f32 = 1.3;
 /// A paint callback that frosts `rect`, the bottom `fade` points easing from
 /// blurred to sharp (the top ones, for a negative `fade`).
 pub fn shape(rect: egui::Rect, fade: f32) -> egui::Shape {
+    // Settings' Blur off: nothing is frosted, and what floats above is solid.
+    if !crate::backdrop::blur() {
+        return egui::Shape::Noop;
+    }
     egui::Shape::Callback(egui::PaintCallback {
         rect,
         callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {

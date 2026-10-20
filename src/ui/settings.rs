@@ -2,13 +2,16 @@
 
 use std::borrow::Cow;
 
-use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2};
+use egui::{
+    Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2,
+};
 
 use crate::app::App;
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{Settings, ThemeChoice, WallpaperColor};
+use crate::settings::{Settings, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -328,7 +331,38 @@ fn sections(app: &App) -> Vec<Section> {
     } else {
         Text::default()
     };
-    appearance.row(translated(locale, "Theme"), detail, theme_picker);
+    // The language first: it is what a reader who cannot read the rest
+    // looks for.
+    appearance.row(translated(locale, "Language"), "", language_picker);
+    appearance.block(
+        vec![translated(locale, "Preview"), translated(locale, "Theme")],
+        chat_preview,
+    );
+    appearance.row(
+        translated(locale, "Mode"),
+        translated(locale, "Light, dark, or as the system is."),
+        mode_picker,
+    );
+    appearance.block(
+        vec![
+            translated(locale, "Chat theme"),
+            translated(locale, "Theme"),
+            "Agent Orchestrator".into(),
+        ],
+        move |ui, app| theme_cards(ui, app, &detail),
+    );
+    appearance.block(
+        vec![translated(locale, "Accent"), translated(locale, "Colour")],
+        accent_picker,
+    );
+    appearance.toggle(
+        translated(locale, "Blur"),
+        translated(
+            locale,
+            "Frosted glass under the chat header and the message field, and the desktop through the window where the system allows. Off keeps every surface solid.",
+        ),
+        |settings| &mut settings.blur,
+    );
     appearance.row(
         translated(locale, "Font"),
         translated(
@@ -390,7 +424,6 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
-    appearance.row(translated(locale, "Language"), "", language_picker);
 
     let mut chats = Section::new(translated(locale, "Chats"));
     chats.toggle(
@@ -1031,90 +1064,567 @@ fn keyed(text: Text) -> Text {
     }
 }
 
-/// The theme menu and the button that opens the themes folder.
-fn theme_picker(ui: &mut egui::Ui, app: &mut App) {
+/// A title and description over a control laid out below them, for settings
+/// too wide to sit beside their name.
+fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description: &str) {
+    if !title.is_empty() {
+        widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
+    }
+    if !description.is_empty() {
+        let description = widgets::line(
+            ui,
+            description,
+            theme::regular(12.5),
+            palette.secondary,
+            ui.available_width(),
+            usize::MAX,
+        );
+        let (rect, _) = ui.allocate_exact_size(description.size(), Sense::hover());
+        if ui.is_rect_visible(rect) {
+            description.paint(ui, rect.min, palette.secondary);
+        }
+    }
+    ui.add_space(10.0);
+}
+
+/// How tall the live preview of a conversation is.
+const PREVIEW_HEIGHT: f32 = 216.0;
+
+/// A small conversation drawn in the colours on screen, so a change of
+/// theme, mode, accent or blur shows here as it does in the chats.
+fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
-    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-        let selected = app
-            .settings
-            .custom_theme
-            .as_deref()
-            .map(fastframe_theme::display_name)
-            .unwrap_or_else(|| app.settings.theme.label());
-        let response = egui::ComboBox::from_id_salt("appearance_theme")
-            .selected_text(" ")
-            .width(200.0_f32.min(ui.available_width()))
-            .height(320.0)
-            .show_ui(ui, |ui| {
-                for &choice in ThemeChoice::ALL {
-                    if theme_option(
-                        ui,
-                        &palette,
-                        choice.label(),
-                        app.settings.custom_theme.is_none() && app.settings.theme == choice,
-                    ) {
-                        app.actions.push(Action::SetTheme(choice));
-                    }
-                }
-                if app.custom_themes.picker_themes().next().is_some() {
-                    ui.separator();
-                }
-                for custom in app.custom_themes.picker_themes() {
-                    if theme_option(
-                        ui,
-                        &palette,
-                        fastframe_theme::display_name(&custom.filename),
-                        app.settings.custom_theme.as_deref() == Some(custom.filename.as_str()),
-                    ) {
-                        app.actions
-                            .push(Action::SetCustomTheme(custom.filename.clone()));
-                    }
-                }
-            });
-        theme::reveal_focus(&response.response);
-        let rect = response.response.rect;
-        let text = widgets::line(
-            ui,
-            selected,
-            theme::regular(14.0),
-            palette.text,
-            rect.width() - 36.0,
-            1,
+    let locale = app.locale;
+    let (rect, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), PREVIEW_HEIGHT), Sense::hover());
+    ui.add_space(14.0);
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let text = |source: &'static str| crate::i18n::gettext(locale, source).into_owned();
+    let painter = ui.painter_at(rect);
+    let radius = f32::from(theme::RADIUS) + 4.0;
+    painter.rect_filled(rect, radius, app.wallpaper().color);
+    // The header, as the chat draws it: solid, or a veil over the messages
+    // easing out under it.
+    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 46.0));
+    let header_fill = if palette.vibrant() {
+        palette.vibrant_header(palette.chat)
+    } else {
+        palette.panel
+    };
+    painter.rect_filled(
+        header,
+        CornerRadius {
+            nw: radius as u8,
+            ne: radius as u8,
+            sw: 0,
+            se: 0,
+        },
+        header_fill,
+    );
+    let avatar = pos2(header.left() + 26.0, header.center().y);
+    painter.circle_filled(avatar, 14.0, palette.avatar(0.58));
+    painter.text(
+        avatar,
+        egui::Align2::CENTER_CENTER,
+        "A",
+        theme::semibold(13.0),
+        Color32::WHITE,
+    );
+    painter.text(
+        pos2(avatar.x + 22.0, header.center().y - 8.0),
+        egui::Align2::LEFT_CENTER,
+        "Ava",
+        theme::semibold(13.5),
+        palette.text,
+    );
+    painter.text(
+        pos2(avatar.x + 22.0, header.center().y + 8.0),
+        egui::Align2::LEFT_CENTER,
+        text("online"),
+        theme::regular(11.5),
+        palette.secondary,
+    );
+
+    // Messages: theirs on the left, ours on the right with its ticks.
+    let bubble = |top: f32, label: String, own: bool| -> f32 {
+        let colours = palette.on_bubble(own);
+        let galley = painter.layout_no_wrap(label, theme::regular(13.0), colours.text);
+        let meta = if own { 30.0 } else { 0.0 };
+        let size = galley.size() + vec2(24.0 + meta, 14.0);
+        let left = if own {
+            rect.right() - 16.0 - size.x
+        } else {
+            rect.left() + 16.0
+        };
+        let shape = Rect::from_min_size(pos2(left, top), size);
+        let fill = if own {
+            palette.bubble_out
+        } else {
+            palette.bubble_in
+        };
+        painter.rect_filled(shape, 12.0, fill);
+        painter.galley(shape.min + vec2(12.0, 7.0), galley, colours.text);
+        if own {
+            let ticks = Rect::from_center_size(
+                pos2(shape.right() - 22.0, shape.center().y),
+                Vec2::splat(14.0),
+            );
+            widgets::ticks_in(
+                ui,
+                &colours,
+                ticks,
+                crate::model::Delivery::Read,
+                colours.secondary,
+            );
+        }
+        shape.bottom()
+    };
+    let mut y = header.bottom() + 12.0;
+    y = bubble(y, text("Did you see the new themes?"), false) + 6.0;
+    y = bubble(y, text("Trying them all right now"), true) + 6.0;
+    bubble(y, text("Pick one with a light mode too"), false);
+
+    // The message field, on glass or a solid pill.
+    let field = Rect::from_min_max(
+        pos2(rect.left() + 12.0, rect.bottom() - 40.0),
+        pos2(rect.right() - 52.0, rect.bottom() - 10.0),
+    );
+    let field_fill = if palette.vibrant() {
+        palette.glass()
+    } else {
+        palette.surface
+    };
+    painter.rect_filled(field, field.height() / 2.0, field_fill);
+    painter.text(
+        pos2(field.left() + 14.0, field.center().y),
+        egui::Align2::LEFT_CENTER,
+        text("Message"),
+        theme::regular(13.0),
+        palette.dim,
+    );
+    let send = pos2(rect.right() - 28.0, field.center().y);
+    painter.circle_filled(send, 15.0, palette.accent);
+    theme::paint_icon(
+        ui,
+        Icon::Send,
+        Rect::from_center_size(send, Vec2::splat(16.0)),
+        16.0,
+        palette.on_accent,
+    );
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0, palette.outline),
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// Light, dark or system, as three segments of one control.
+fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let custom = app.settings.custom_theme.is_some();
+    let selected = (!custom).then_some(app.settings.mode);
+    let segment = vec2(72.0, 30.0);
+    let (outer, _) = ui.allocate_exact_size(
+        vec2(segment.x * Mode::ALL.len() as f32 + 6.0, segment.y + 6.0),
+        Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(outer, outer.height() / 2.0, palette.surface);
+    for (index, mode) in Mode::ALL.into_iter().enumerate() {
+        let rect = Rect::from_min_size(
+            outer.min + vec2(3.0 + segment.x * index as f32, 3.0),
+            segment,
         );
-        text.paint(
-            ui,
-            egui::pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
-            palette.text,
+        let response = ui.interact(rect, ui.id().with(("mode", index)), Sense::click());
+        theme::reveal_focus(&response);
+        theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
+        let on = selected == Some(mode);
+        let color = if on {
+            palette.on_accent
+        } else if response.hovered() {
+            palette.text
+        } else {
+            palette.secondary
+        };
+        if on {
+            ui.painter()
+                .rect_filled(rect, rect.height() / 2.0, palette.accent);
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, rect.height() / 2.0, palette.surface_hover);
+        }
+        let label = crate::i18n::gettext(app.locale, mode.label());
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label.as_ref(),
+            theme::medium(13.0),
+            color,
         );
-        response.response.widget_info(|| {
-            let mut info =
-                egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), "Theme");
-            info.current_text_value = Some(selected.to_owned());
-            info
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::RadioButton,
+                ui.is_enabled(),
+                on,
+                label.as_ref(),
+            )
         });
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::ExternalLink),
-            "Open themes folder",
-            false,
-        )
-        .clicked()
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
         {
-            app.actions.push(Action::OpenThemesFolder);
+            app.actions.push(Action::SetMode(mode));
+            if custom {
+                // A theme file has one mode of its own: leave it for the
+                // chat theme it replaced, in the mode asked for.
+                app.actions
+                    .push(Action::SetChatTheme(app.settings.chat_theme));
+            }
         }
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::ExternalLink),
-            &crate::i18n::gettext(app.locale, "How to make a theme"),
-            false,
+    }
+}
+
+/// How wide an accent swatch is.
+const SWATCH: f32 = 26.0;
+
+/// The accent swatches: the theme's own, then the colours.
+fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let chat_theme = app.settings.chat_theme;
+    let custom = app.settings.custom_theme.is_some();
+    let description = if custom {
+        crate::i18n::gettext(locale, "Theme files keep their own accent.")
+    } else if !chat_theme.takes_accent() {
+        crate::i18n::gettext(locale, "Messages keeps the system blue.")
+    } else {
+        crate::i18n::gettext(
+            locale,
+            "Buttons, links, ticks and your own messages take this colour.",
         )
-        .clicked()
-        {
-            app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
-        }
+    };
+    block_heading(
+        ui,
+        &palette,
+        &crate::i18n::gettext(locale, "Accent"),
+        &description,
+    );
+    let enabled = !custom && chat_theme.takes_accent();
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 10.0;
+            for accent in Accent::ALL {
+                let (rect, response) =
+                    ui.allocate_exact_size(Vec2::splat(SWATCH + 6.0), Sense::click());
+                theme::reveal_focus(&response);
+                theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
+                let on = enabled && app.settings.accent == accent;
+                // The theme's own accent, in the mode on screen.
+                let color = accent.rgb().map_or_else(
+                    || chat_theme.palette(palette.dark, Accent::Theme).accent,
+                    |[r, g, b]| Color32::from_rgb(r, g, b),
+                );
+                let color = if enabled {
+                    color
+                } else {
+                    color.gamma_multiply(0.4)
+                };
+                let center = rect.center();
+                if on {
+                    ui.painter().circle_stroke(
+                        center,
+                        SWATCH / 2.0 + 2.5,
+                        Stroke::new(2.0, palette.text),
+                    );
+                } else if response.hovered() {
+                    ui.painter().circle_stroke(
+                        center,
+                        SWATCH / 2.0 + 2.5,
+                        Stroke::new(1.0, palette.secondary),
+                    );
+                }
+                ui.painter().circle_filled(center, SWATCH / 2.0, color);
+                if accent == Accent::Theme {
+                    // The theme's own: its accent ringed round its canvas.
+                    let own = chat_theme.palette(palette.dark, Accent::Theme);
+                    ui.painter().circle_filled(center, SWATCH * 0.22, own.panel);
+                    ui.painter().circle_stroke(
+                        center,
+                        SWATCH / 2.0,
+                        Stroke::new(1.0, palette.outline),
+                    );
+                }
+                if on && accent != Accent::Theme {
+                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0);
+                    theme::paint_icon(
+                        ui,
+                        Icon::Check,
+                        Rect::from_center_size(center, Vec2::splat(14.0)),
+                        14.0,
+                        tick,
+                    );
+                }
+                let label = crate::i18n::gettext(locale, accent.label());
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::RadioButton,
+                        ui.is_enabled(),
+                        on,
+                        label.as_ref(),
+                    )
+                });
+                if response
+                    .on_hover_text(label.as_ref())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    app.actions.push(Action::SetAccent(accent));
+                }
+            }
+        });
     });
+    ui.add_space(16.0);
+}
+
+/// The least width of a theme card.
+const CARD_WIDTH: f32 = 128.0;
+/// How tall the coloured part of a theme card is.
+const CARD_PREVIEW: f32 = 62.0;
+/// How tall the name under it is.
+const CARD_LABEL: f32 = 30.0;
+/// The space between cards.
+const CARD_GAP: f32 = 10.0;
+
+/// The chat themes as cards, each in the mode on screen, then the theme
+/// files and their folder.
+fn theme_cards(ui: &mut egui::Ui, app: &mut App, detail: &Text) {
+    let palette = app.palette;
+    let locale = app.locale;
+    // The name, with the themes folder and its guide at the far end.
+    ui.horizontal(|ui| {
+        widgets::rich_text(
+            ui,
+            &crate::i18n::gettext(locale, "Chat theme"),
+            theme::medium(14.0),
+            palette.text,
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::ExternalLink),
+                &crate::i18n::gettext(locale, "How to make a theme"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
+            }
+            if theme::soft_button(
+                ui,
+                &palette,
+                Some(Icon::ExternalLink),
+                &crate::i18n::gettext(locale, "Open themes folder"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::OpenThemesFolder);
+            }
+        });
+    });
+    block_heading(
+        ui,
+        &palette,
+        "",
+        &crate::i18n::gettext(
+            locale,
+            "Zeus, WhatsApp and Messages, and the themes of Agent Orchestrator, each in light and dark.",
+        ),
+    );
+    ui.add_space(12.0);
+    let custom = app.settings.custom_theme.clone();
+    let cards: Vec<(String, Palette, bool, Action)> = ChatTheme::ALL
+        .into_iter()
+        .map(|choice| {
+            (
+                choice.label().to_owned(),
+                choice.palette(palette.dark, app.settings.accent),
+                custom.is_none() && app.settings.chat_theme == choice,
+                Action::SetChatTheme(choice),
+            )
+        })
+        .collect();
+    card_grid(ui, app, "chat-theme", cards);
+
+    let files: Vec<(String, Palette, bool, Action)> = app
+        .custom_themes
+        .picker_themes()
+        .map(|file| {
+            (
+                fastframe_theme::display_name(&file.filename).to_owned(),
+                file.palette,
+                custom.as_deref() == Some(file.filename.as_str()),
+                Action::SetCustomTheme(file.filename.clone()),
+            )
+        })
+        .collect();
+    if !files.is_empty() {
+        ui.add_space(6.0);
+        block_heading(
+            ui,
+            &palette,
+            &crate::i18n::gettext(locale, "Theme files"),
+            &detail.shown,
+        );
+        card_grid(ui, app, "theme-file", files);
+    } else if !detail.shown.is_empty() {
+        block_heading(ui, &palette, "", &detail.shown);
+    }
+    ui.add_space(16.0);
+}
+
+/// Theme cards in as many columns as fit, widened to fill the row.
+fn card_grid(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    salt: &str,
+    cards: Vec<(String, Palette, bool, Action)>,
+) {
+    let width = ui.available_width();
+    let columns = (((width + CARD_GAP) / (CARD_WIDTH + CARD_GAP)).floor() as usize).max(1);
+    let card = vec2(
+        (width - CARD_GAP * (columns - 1) as f32) / columns as f32,
+        CARD_PREVIEW + CARD_LABEL,
+    );
+    let rows = cards.len().div_ceil(columns);
+    let (area, _) = ui.allocate_exact_size(
+        vec2(
+            width,
+            rows as f32 * card.y + rows.saturating_sub(1) as f32 * CARD_GAP,
+        ),
+        Sense::hover(),
+    );
+    ui.add_space(12.0);
+    for (index, (label, colours, selected, action)) in cards.into_iter().enumerate() {
+        let rect = Rect::from_min_size(
+            area.min
+                + vec2(
+                    (index % columns) as f32 * (card.x + CARD_GAP),
+                    (index / columns) as f32 * (card.y + CARD_GAP),
+                ),
+            card,
+        );
+        let response = ui.interact(rect, ui.id().with((salt, index)), Sense::click());
+        theme::reveal_focus(&response);
+        theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS) + 2.0);
+        if ui.is_rect_visible(rect) {
+            theme_card(
+                ui,
+                &app.palette,
+                rect,
+                &label,
+                &colours,
+                selected,
+                response.hovered(),
+            );
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::RadioButton,
+                ui.is_enabled(),
+                selected,
+                &label,
+            )
+        });
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            app.actions.push(action);
+        }
+    }
+}
+
+/// One theme card: its conversation with a bubble each way, over its name
+/// on its own list colour, with its accent beside the name.
+fn theme_card(
+    ui: &egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    label: &str,
+    colours: &Palette,
+    selected: bool,
+    hovered: bool,
+) {
+    let painter = ui.painter_at(rect.expand(3.0));
+    let radius = f32::from(theme::RADIUS) + 2.0;
+    let r = radius as u8;
+    let preview = Rect::from_min_size(rect.min, vec2(rect.width(), CARD_PREVIEW));
+    let footer = Rect::from_min_max(pos2(rect.left(), preview.bottom()), rect.max);
+    painter.rect_filled(
+        preview,
+        CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        },
+        colours.chat,
+    );
+    painter.rect_filled(
+        footer,
+        CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: r,
+            se: r,
+        },
+        colours.panel,
+    );
+    let inner = preview.shrink2(vec2(10.0, 11.0));
+    let line = 12.0;
+    let theirs = Rect::from_min_size(inner.min, vec2(inner.width() * 0.62, line));
+    painter.rect_filled(theirs, line / 2.0, colours.bubble_in);
+    let ours = Rect::from_min_size(
+        pos2(inner.right() - inner.width() * 0.5, theirs.bottom() + 6.0),
+        vec2(inner.width() * 0.5, line),
+    );
+    painter.rect_filled(ours, line / 2.0, colours.bubble_out);
+    let short = Rect::from_min_size(
+        pos2(inner.left(), ours.bottom() + 6.0),
+        vec2(inner.width() * 0.36, line),
+    );
+    painter.rect_filled(short, line / 2.0, colours.bubble_in);
+    let dot = pos2(footer.right() - 14.0, footer.center().y);
+    painter.circle_filled(dot, 5.0, colours.accent);
+    let name = widgets::line(
+        ui,
+        label,
+        theme::medium(12.5),
+        colours.text,
+        footer.width() - 36.0,
+        1,
+    );
+    name.paint(
+        ui,
+        pos2(
+            footer.left() + 10.0,
+            footer.center().y - name.size().y / 2.0,
+        ),
+        colours.text,
+    );
+    let edge = if selected {
+        Stroke::new(2.0, palette.accent)
+    } else if hovered {
+        Stroke::new(1.0, palette.secondary)
+    } else {
+        Stroke::new(1.0, palette.outline)
+    };
+    painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Outside);
 }
 
 /// The website's page on writing a theme.

@@ -19,7 +19,7 @@ use crate::model::{
 };
 use crate::nav::{History, Location};
 use crate::paths::AppDirs;
-use crate::settings::{AccountRoster, NotificationSound, Settings, ThemeChoice};
+use crate::settings::{AccountRoster, NotificationSound, Settings};
 use crate::single_instance::{ControlCommand, Guard};
 use crate::theme::{self, Palette};
 
@@ -1280,17 +1280,8 @@ impl App {
         active: usize,
         waker: Waker,
     ) -> Self {
-        let palette = settings
-            .cached_palette()
-            .unwrap_or_else(|| match settings.theme {
-                ThemeChoice::Light => Palette::light(),
-                ThemeChoice::Messages => Palette::messages(),
-                ThemeChoice::NothingDark => Palette::nothing_dark(),
-                ThemeChoice::NothingLight => Palette::nothing_light(),
-                choice => choice
-                    .accent()
-                    .map_or_else(Palette::dark, Palette::nothing_tinted),
-            });
+        // Until the window says, a theme that follows the system starts dark.
+        let palette = settings.palette(settings.mode != crate::chat_themes::Mode::Light);
         let locale = crate::i18n::resolve(settings.interface_language);
         // With a password set, ZapFast starts locked.
         let app_lock = crate::app_lock::AppLock::new(settings.app_lock_hash.is_some());
@@ -3581,6 +3572,26 @@ impl App {
                     self.contacts.insert(contact.id.clone(), contact);
                 }
             }
+            Event::UploadProgress {
+                chat,
+                upload,
+                sent,
+                total,
+            } => {
+                if let Some(entry) = self
+                    .uploads
+                    .iter_mut()
+                    .find(|entry| entry.id == upload && entry.chat == chat)
+                {
+                    // A retried upload starts again from where it resumes.
+                    entry.sent = sent;
+                    entry.total = total;
+                }
+            }
+            Event::UploadEnded { chat, upload } => {
+                self.uploads
+                    .retain(|entry| entry.id != upload || entry.chat != chat);
+            }
             Event::Typing {
                 chat,
                 sender,
@@ -5614,8 +5625,19 @@ impl App {
                     width,
                     height,
                     rgba,
-                    ..
+                    texture,
                 } => {
+                    let upload = self.begin_upload(
+                        &chat,
+                        crate::model::UploadKind::Image,
+                        String::new(),
+                        Some(crate::model::UploadPreview::Pixels {
+                            width,
+                            height,
+                            rgba: rgba.clone(),
+                            texture,
+                        }),
+                    );
                     self.backend.send(Command::SendImage {
                         chat: chat.clone(),
                         width: width as u32,
@@ -5624,6 +5646,7 @@ impl App {
                         caption: caption.take(),
                         mentions: std::mem::take(&mut mentions),
                         quoting: quoting.take(),
+                        upload: Some(upload),
                     });
                     continue;
                 }
@@ -5636,6 +5659,19 @@ impl App {
             }
         }
         for (documents, paths) in runs {
+            let uploads = paths
+                .iter()
+                .map(|path| {
+                    let kind = crate::model::UploadKind::of(path, documents);
+                    let name = path
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let preview = (kind == crate::model::UploadKind::Image)
+                        .then(|| crate::model::UploadPreview::File(path.clone()));
+                    self.begin_upload(&chat, kind, name, preview)
+                })
+                .collect();
             self.backend.send(Command::SendFiles {
                 chat: chat.clone(),
                 paths,
@@ -5643,6 +5679,7 @@ impl App {
                 caption: caption.take(),
                 mentions: std::mem::take(&mut mentions),
                 quoting: quoting.take(),
+                uploads,
             });
         }
         // Everything staged has gone, so nothing is remembered about it.
@@ -5671,8 +5708,32 @@ impl App {
             caption: None,
             mentions: Vec::new(),
             quoting: None,
+            uploads: Vec::new(),
         });
         self.follow_outgoing();
+    }
+
+    /// Shows an attachment at the end of its chat while it goes, and names it
+    /// for the backend's reports.
+    fn begin_upload(
+        &mut self,
+        chat: &ChatId,
+        kind: crate::model::UploadKind,
+        name: String,
+        preview: Option<crate::model::UploadPreview>,
+    ) -> crate::model::UploadId {
+        let id = self.next_upload;
+        self.next_upload += 1;
+        self.uploads.push(crate::model::Upload {
+            id,
+            chat: chat.clone(),
+            kind,
+            name,
+            preview,
+            sent: 0,
+            total: 0,
+        });
+        id
     }
 
     fn tick(&mut self, ctx: &egui::Context) {
@@ -5883,29 +5944,7 @@ impl App {
     }
 
     fn apply_theme(&mut self, ctx: &egui::Context) {
-        let preference = self.settings.cached_palette().map_or_else(
-            || match self.settings.theme {
-                ThemeChoice::Dark => egui::ThemePreference::Dark,
-                ThemeChoice::Light => egui::ThemePreference::Light,
-                ThemeChoice::NothingDark
-                | ThemeChoice::Red
-                | ThemeChoice::Blue
-                | ThemeChoice::Green
-                | ThemeChoice::Pink
-                | ThemeChoice::Purple
-                | ThemeChoice::Yellow => egui::ThemePreference::Dark,
-                ThemeChoice::NothingLight => egui::ThemePreference::Light,
-                // Messages follows the system's appearance, as Messages does.
-                ThemeChoice::System | ThemeChoice::Messages => egui::ThemePreference::System,
-            },
-            |palette| {
-                if palette.dark {
-                    egui::ThemePreference::Dark
-                } else {
-                    egui::ThemePreference::Light
-                }
-            },
-        );
+        let preference = self.settings.preference();
         if !self.zoom_applied {
             ctx.set_zoom_factor(self.settings.zoom);
             self.zoom_applied = true;
@@ -5939,25 +5978,8 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        let palette = self
-            .settings
-            .cached_palette()
-            .unwrap_or_else(|| match self.settings.theme {
-                ThemeChoice::NothingDark => Palette::nothing_dark(),
-                ThemeChoice::NothingLight => Palette::nothing_light(),
-                choice if let Some(accent) = choice.accent() => Palette::nothing_tinted(accent),
-                ThemeChoice::Messages => {
-                    if dark {
-                        Palette::messages()
-                    } else {
-                        Palette::messages_light()
-                    }
-                }
-                ThemeChoice::System if dark => Palette::nothing_dark(),
-                ThemeChoice::System => Palette::nothing_light(),
-                _ if dark => Palette::dark(),
-                _ => Palette::light(),
-            });
+        crate::backdrop::set_blur(self.settings.blur);
+        let palette = self.settings.palette(dark);
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
         }
@@ -8013,9 +8035,26 @@ impl App {
                 }
             }
             Action::SetTheme(choice) => {
-                self.settings.theme = choice;
+                self.settings.set_theme(choice);
                 self.settings.custom_theme = None;
                 self.settings.custom_theme_cache = None;
+                self.mark_settings_dirty();
+                self.apply_theme(ctx);
+            }
+            Action::SetChatTheme(choice) => {
+                self.settings.chat_theme = choice;
+                self.settings.custom_theme = None;
+                self.settings.custom_theme_cache = None;
+                self.mark_settings_dirty();
+                self.apply_theme(ctx);
+            }
+            Action::SetMode(mode) => {
+                self.settings.mode = mode;
+                self.mark_settings_dirty();
+                self.apply_theme(ctx);
+            }
+            Action::SetAccent(accent) => {
+                self.settings.accent = accent;
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
             }
@@ -9860,6 +9899,7 @@ pub use calls::CallPerson;
 mod tests {
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
+    use crate::settings::ThemeChoice;
 
     #[test]
     fn toasts_errors_and_connection_changes_are_announced() {
@@ -14659,7 +14699,7 @@ mod tests {
     #[test]
     fn follow_system_retains_the_os_theme_between_platform_events() {
         let mut app = app();
-        app.settings.theme = ThemeChoice::System;
+        app.settings.set_theme(ThemeChoice::System);
         let ctx = egui::Context::default();
         let mut input = egui::RawInput::default();
         for theme in [egui::Theme::Light, egui::Theme::Dark] {
@@ -14768,19 +14808,19 @@ mod tests {
     fn follow_system_uses_the_desktops_preference_on_linux() {
         let mut app = app();
         let ctx = egui::Context::default();
-        app.settings.theme = ThemeChoice::System;
+        app.settings.set_theme(ThemeChoice::System);
         assert!(app.settings.cached_palette().is_none());
         app.system_appearance = Some(crate::appearance::SystemAppearance::fixed(false));
         app.apply_theme(&ctx);
         assert_eq!(ctx.theme(), egui::Theme::Light);
-        assert_eq!(app.palette, Palette::light());
+        assert_eq!(app.palette, Palette::nothing_light());
 
         app.system_appearance = Some(crate::appearance::SystemAppearance::fixed(true));
         app.apply_theme(&ctx);
         assert_eq!(ctx.theme(), egui::Theme::Dark);
-        assert_eq!(app.palette, Palette::dark());
+        assert_eq!(app.palette, Palette::nothing_dark());
 
-        app.settings.theme = ThemeChoice::Light;
+        app.settings.set_theme(ThemeChoice::Light);
         app.apply_theme(&ctx);
         assert_eq!(ctx.theme(), egui::Theme::Light, "a chosen theme wins");
         assert_eq!(app.palette, Palette::light());
@@ -14793,7 +14833,7 @@ mod tests {
     fn a_theme_change_holds_the_old_colours_until_its_reveal_can_start() {
         let mut app = app();
         app.reveal_theme_changes = true;
-        app.settings.theme = ThemeChoice::Dark;
+        app.settings.set_theme(ThemeChoice::Dark);
         app.settings.custom_theme = None;
         let ctx = egui::Context::default();
         let at = |app: &mut App, time: f64| {
@@ -14813,7 +14853,7 @@ mod tests {
             "the first palette applies at once"
         );
 
-        app.settings.theme = ThemeChoice::Light;
+        app.settings.set_theme(ThemeChoice::Light);
         at(&mut app, 1.0);
         assert_eq!(
             app.palette,

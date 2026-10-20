@@ -113,7 +113,7 @@ pub fn prepare(app: &mut App) {
 /// local stickers and GIFs in place of downloads.
 fn common_setup(app: &mut App) {
     assert!(app.backend.is_offline(), "a tour requires an offline app");
-    app.settings.theme = ThemeChoice::Dark;
+    app.settings.set_theme(ThemeChoice::Dark);
     app.settings.keep_running_in_background = false;
     app.page = Page::Chats;
     app.dialog = None;
@@ -341,7 +341,7 @@ fn script() -> Vec<Cue> {
         32.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(33.0, Move(Label("WhatsApp Dark")));
+    add(33.0, Move(Label("Zeus")));
     add(33.35, Click(left));
     add(33.5, Move(Label("Light")));
     add(33.85, Click(left));
@@ -361,10 +361,8 @@ fn script() -> Vec<Cue> {
         37.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(38.0, Move(Label("Light")));
+    add(38.0, Move(Label("Dark")));
     add(38.35, Click(left));
-    add(38.5, Move(Label("Dark")));
-    add(38.85, Click(left));
     add(
         39.2,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
@@ -1714,7 +1712,7 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_dropdown_selects_spotifast_palettes_and_returns_to_follow_system() {
+    fn the_theme_cards_select_chat_themes_modes_and_theme_files() {
         let mut app = super::super::tests::app();
         app.page = Page::Settings;
         app.custom_themes =
@@ -1725,49 +1723,19 @@ mod tests {
         for _ in 0..3 {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
-        click(&mut app, &mut tour, &ctx, "WhatsApp Dark");
-        let menu_pos = tour.labels["Follow system"];
-        for name in [
-            "Follow system",
-            "Light",
-            "Dark",
-            "Catppuccin Latte",
-            "Catppuccin",
-            "Nord",
-            "Ristretto",
-            "Tokyo Night",
-            "Rose Pine",
-            "Rose Pine Moon",
-            "Rose Pine Dawn",
-        ] {
-            // The bundled choices now exceed the popup's visible height.
-            // Scroll over the menu, as a user would, to reveal later entries.
-            for _ in 0..20 {
-                if tour.labels.contains_key(name) {
-                    break;
-                }
-                frame(
-                    &mut app,
-                    &mut tour,
-                    &ctx,
-                    vec![
-                        Event::PointerMoved(menu_pos),
-                        Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: vec2(0.0, -30.0),
-                            modifiers: Modifiers::NONE,
-                            phase: egui::TouchPhase::Move,
-                        },
-                    ],
-                );
-            }
-            assert!(
-                tour.labels.contains_key(name),
-                "missing theme choice {name}"
-            );
-        }
-        for _ in 0..20 {
-            if tour.labels.contains_key("Nord") {
+        click(&mut app, &mut tour, &ctx, "Zeus");
+        assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
+        click(&mut app, &mut tour, &ctx, "Light");
+        assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingLight);
+        assert_eq!(app.palette, crate::theme::Palette::nothing_light());
+        // The theme files follow the chat themes, further down.
+        let middle = Pos2::new(700.0, 500.0);
+        for _ in 0..40 {
+            if tour
+                .labels
+                .get("Ristretto")
+                .is_some_and(|spot| spot.y < 740.0)
+            {
                 break;
             }
             frame(
@@ -1775,26 +1743,29 @@ mod tests {
                 &mut tour,
                 &ctx,
                 vec![
-                    Event::PointerMoved(menu_pos),
+                    Event::PointerMoved(middle),
                     Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
-                        delta: vec2(0.0, 30.0),
+                        delta: vec2(0.0, -40.0),
                         modifiers: Modifiers::NONE,
                         phase: egui::TouchPhase::Move,
                     },
                 ],
             );
         }
-        click(&mut app, &mut tour, &ctx, "Nord");
-        assert_eq!(app.settings.custom_theme.as_deref(), Some("Nord.json"));
+        click(&mut app, &mut tour, &ctx, "Ristretto");
+        let file = app.settings.custom_theme.clone().expect("a theme file");
+        assert!(file.starts_with("Ristretto"), "{file}");
         assert_eq!(
-            app.palette.window,
-            egui::Color32::from_rgb(0x2e, 0x34, 0x40)
+            Some(app.palette),
+            app.settings
+                .custom_theme_cache
+                .as_ref()
+                .map(|theme| theme.palette)
         );
-        click(&mut app, &mut tour, &ctx, "Nord");
-        // The menu reopens at Nord; scroll back up to the first choice.
-        for _ in 0..20 {
-            if tour.labels.contains_key("Follow system") {
+        // A mode leaves the file for the chat theme it replaced.
+        for _ in 0..40 {
+            if tour.labels.get("Dark").is_some_and(|spot| spot.y > 60.0) {
                 break;
             }
             frame(
@@ -1802,19 +1773,19 @@ mod tests {
                 &mut tour,
                 &ctx,
                 vec![
-                    Event::PointerMoved(menu_pos),
+                    Event::PointerMoved(middle),
                     Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
-                        delta: vec2(0.0, 30.0),
+                        delta: vec2(0.0, 40.0),
                         modifiers: Modifiers::NONE,
                         phase: egui::TouchPhase::Move,
                     },
                 ],
             );
         }
-        click(&mut app, &mut tour, &ctx, "Follow system");
+        click(&mut app, &mut tour, &ctx, "Dark");
         assert!(app.settings.custom_theme.is_none());
-        assert_eq!(app.settings.theme, ThemeChoice::System);
+        assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
     }
 
     #[test]
@@ -1914,7 +1885,7 @@ mod tests {
                     matches!(app.dialog, Some(Dialog::Forward { .. })),
                     app.page == Page::Settings && tour.labels.contains_key("Русский"),
                     app.settings_search == "privacy" && tour.labels.contains_key("Last seen"),
-                    app.settings.theme == ThemeChoice::NothingLight,
+                    app.settings.legacy_theme() == ThemeChoice::NothingLight,
                 ];
                 for (seen, check) in seen.iter_mut().zip(checks) {
                     *seen |= check;
@@ -1938,7 +1909,7 @@ mod tests {
         // nothing left open.
         assert_eq!(app.page, Page::Chats);
         assert_eq!(app.open_chat.as_deref(), Some(group));
-        assert_eq!(app.settings.theme, ThemeChoice::NothingLight);
+        assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingLight);
         assert_eq!(
             app.settings.interface_language,
             Some(crate::i18n::Locale::English)
@@ -1955,7 +1926,7 @@ mod tests {
         for theme in [ThemeChoice::Dark, ThemeChoice::NothingDark] {
             let mut app = super::super::tests::app();
             Script::WhatsNew.prepare(&mut app);
-            app.settings.theme = theme;
+            app.settings.set_theme(theme);
             let ctx = egui::Context::default();
             app.attach(&ctx);
             app.open_chat = Some(super::super::SAMPLES[0].id.into());
@@ -2080,7 +2051,7 @@ mod tests {
                 seen[3] |= app.picker == Some(PickerTab::Stickers);
                 seen[4] |= app.info.is_some();
                 seen[5] |= matches!(app.dialog, Some(Dialog::Shortcuts));
-                seen[6] |= app.settings.theme == ThemeChoice::NothingLight;
+                seen[6] |= app.settings.legacy_theme() == ThemeChoice::NothingLight;
             });
             output.textures_delta.clear();
             assert!(
@@ -2119,7 +2090,7 @@ mod tests {
         }
         let group = &app.conversations[super::super::SAMPLES[1].id];
         assert_eq!(group.messages.last().unwrap().mentions.len(), 1);
-        assert_eq!(app.settings.theme, ThemeChoice::NothingDark);
+        assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
         assert!(app.backend.is_offline());
         assert!(app.composer.is_empty());
         assert!(app.dialog.is_none());

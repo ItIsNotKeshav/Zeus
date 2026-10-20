@@ -2585,6 +2585,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     // Check out the conversation while drawing rows and collecting actions.
     let mut conversation = app.conversations.remove(&chat.id).unwrap_or_default();
     let typing = app.typing_in(&chat.id);
+    let uploads: Vec<crate::model::Upload> = app
+        .uploads
+        .iter()
+        .filter(|upload| upload.chat == chat.id)
+        .cloned()
+        .collect();
     let mut avatars = HashMap::new();
     if shows_sender_pictures(chat) {
         let mut senders: HashSet<String> = conversation
@@ -3379,6 +3385,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     for notice in &notices[placed..] {
                         pin_notice(ui, &palette, view.locale, view.names_or, notice);
                     }
+                    upload_rows(ui, &palette, &uploads);
                     if !typing.is_empty() {
                         typing_indicator(ui, &view, &typing);
                     }
@@ -4966,7 +4973,7 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         if compact_picture_message(message) {
             Margin::symmetric(6, 6)
         } else if compact_attachment_message(message) {
-            Margin::symmetric(16, 12)
+            Margin::same(NOTHING_ATTACHMENT_RIM)
         } else {
             NOTHING_TEXT_MARGIN
         }
@@ -9878,6 +9885,49 @@ fn fit_within(size: Vec2, rect: Rect) -> Rect {
     Rect::from_center_size(rect.center(), size * scale)
 }
 
+/// How wide the round icon of a file card is.
+const ATTACHMENT_DISC: f32 = 36.0;
+/// The least height of a file card's contents: its icon.
+const ATTACHMENT_ROW: f32 = ATTACHMENT_DISC;
+/// The space between a file card's icon, its text and its action.
+const ATTACHMENT_GAP: f32 = 12.0;
+/// The space between a file's name and the line under it.
+const ATTACHMENT_LINE_GAP: f32 = 2.0;
+/// How wide a file card's open or download action is.
+const ATTACHMENT_ACTION: f32 = 20.0;
+
+/// The room around a file card inside its bubble, and inside the card around
+/// its contents. A Nothing bubble holds the card with the even rim it gives a
+/// photo, and the card keeps the room a text bubble gives its text, so a file
+/// lines up with the messages around it.
+fn attachment_insets(palette: &Palette) -> (Vec2, Vec2) {
+    if palette.bubbles == theme::BubbleStyle::Nothing {
+        (
+            vec2(NOTHING_ATTACHMENT_RIM.into(), NOTHING_ATTACHMENT_RIM.into()),
+            vec2(
+                f32::from(NOTHING_TEXT_MARGIN.left) - f32::from(NOTHING_ATTACHMENT_RIM),
+                f32::from(NOTHING_TEXT_MARGIN.top),
+            ),
+        )
+    } else {
+        // WhatsApp's bubble margin, and an even room inside the card.
+        (vec2(10.0, 6.0), vec2(10.0, 10.0))
+    }
+}
+
+/// How round a file card's corners are: inside a Nothing bubble, its
+/// corners less the rim, so the two curves run together.
+fn attachment_radius(palette: &Palette) -> f32 {
+    if palette.bubbles == theme::BubbleStyle::Nothing {
+        12.0
+    } else {
+        8.0
+    }
+}
+
+/// The even rim of a Nothing bubble around a file card, as around a photo.
+const NOTHING_ATTACHMENT_RIM: i8 = 6;
+
 #[allow(clippy::too_many_arguments)]
 fn attachment(
     ui: &mut egui::Ui,
@@ -9891,66 +9941,81 @@ fn attachment(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let (card_x, card_y, radius) = if palette.bubbles == theme::BubbleStyle::Nothing {
-        (12, 10, 12)
-    } else {
-        (10, 8, 8)
+    let (_, inset) = attachment_insets(&palette);
+    let text_left = ATTACHMENT_DISC + ATTACHMENT_GAP;
+    let text_width =
+        (width - inset.x * 2.0 - text_left - ATTACHMENT_GAP - ATTACHMENT_ACTION).max(0.0);
+    let name = widgets::line(ui, title, theme::medium(14.0), palette.text, text_width, 2);
+    let detail = match &media.state {
+        MediaState::Failed(error) => format!("{error}. Click to retry."),
+        _ => detail.to_owned(),
     };
-    let response = Frame::new()
-        .fill(palette.window.gamma_multiply(0.35))
-        .corner_radius(CornerRadius::same(radius))
-        .inner_margin(Margin::symmetric(card_x, card_y))
-        .show(ui, |ui| {
-            // Include margins in the settled row width.
-            let card = (width - f32::from(card_x) * 2.0).max(0.0);
-            ui.set_width(card);
-
-            let disc = |ui: &mut egui::Ui| {
-                let (disc, _) = ui.allocate_exact_size(Vec2::splat(36.0), Sense::hover());
-                ui.painter().circle_filled(
-                    disc.center(),
-                    18.0,
-                    palette.accent.gamma_multiply(0.25),
-                );
-                theme::paint_icon(ui, icon, disc, 18.0, palette.accent);
-            };
-            let action = |ui: &mut egui::Ui| match (&media.path, &media.state) {
-                (Some(_), _) => {
-                    theme::icon(ui, Icon::ExternalLink, 18.0, palette.secondary);
-                }
-                (None, MediaState::Downloading) => {
-                    theme::spinner(ui, 18.0, palette.accent);
-                }
-                (None, _) => {
-                    theme::icon(ui, Icon::Download, 18.0, palette.secondary);
-                }
-            };
-            let column = |ui: &mut egui::Ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    // Reserve 70 points for the icon, action, and gaps.
-                    ui.set_width((card - 70.0).max(0.0));
-                    widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
-                    let detail = match &media.state {
-                        MediaState::Failed(error) => format!("{error}. Click to retry."),
-                        _ => detail.to_owned(),
-                    };
-                    theme::text(ui, detail, theme::regular(12.0), palette.secondary);
-                });
-            };
-            // Fix the row left-to-right at the card width in own bubbles.
-            ui.allocate_ui_with_layout(
-                vec2(card, 52.0),
-                Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    disc(ui);
-                    column(ui);
-                    action(ui);
-                },
-            );
-        })
-        .response;
-    let auto = ui.is_rect_visible(response.rect)
+    let detail = widgets::line(
+        ui,
+        &detail,
+        theme::regular(12.0),
+        palette.secondary,
+        text_width,
+        1,
+    );
+    let lines = name.size().y + ATTACHMENT_LINE_GAP + detail.size().y;
+    // The card is as tall as its icon or its two lines, whichever is more,
+    // with the same room above and below.
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(width, lines.max(ATTACHMENT_ROW) + inset.y * 2.0),
+        Sense::hover(),
+    );
+    if ui.is_rect_visible(rect) {
+        ui.painter().rect_filled(
+            rect,
+            attachment_radius(&palette),
+            palette.window.gamma_multiply(0.35),
+        );
+        let content = rect.shrink2(inset);
+        let disc = pos2(content.left() + ATTACHMENT_DISC / 2.0, content.center().y);
+        ui.painter().circle_filled(
+            disc,
+            ATTACHMENT_DISC / 2.0,
+            palette.accent.gamma_multiply(0.25),
+        );
+        theme::paint_icon(
+            ui,
+            icon,
+            Rect::from_center_size(disc, Vec2::splat(18.0)),
+            18.0,
+            palette.accent,
+        );
+        let top = content.center().y - lines / 2.0;
+        name.paint(ui, pos2(content.left() + text_left, top), palette.text);
+        detail.paint(
+            ui,
+            pos2(
+                content.left() + text_left,
+                top + name.size().y + ATTACHMENT_LINE_GAP,
+            ),
+            palette.secondary,
+        );
+        let action = Rect::from_center_size(
+            pos2(
+                content.right() - ATTACHMENT_ACTION / 2.0,
+                content.center().y,
+            ),
+            Vec2::splat(ATTACHMENT_ACTION),
+        );
+        match (&media.path, &media.state) {
+            (Some(_), _) => {
+                theme::paint_icon(ui, Icon::ExternalLink, action, 18.0, palette.secondary);
+            }
+            (None, MediaState::Downloading) => {
+                theme::paint_spinner(ui, action, 18.0, palette.accent);
+                ui.ctx().request_repaint();
+            }
+            (None, _) => {
+                theme::paint_icon(ui, Icon::Download, action, 18.0, palette.secondary);
+            }
+        }
+    }
+    let auto = ui.is_rect_visible(rect)
         && media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
@@ -9964,14 +10029,11 @@ fn attachment(
         });
     }
     ui.ctx().data_mut(|data| {
-        data.insert_temp(
-            bubble_id(&view.chat.id, &message.id).with("card"),
-            response.rect,
-        );
+        data.insert_temp(bubble_id(&view.chat.id, &message.id).with("card"), rect);
     });
     let response = ui
         .interact(
-            response.rect,
+            rect,
             ui.id().with(("attachment", &message.id)),
             Sense::click(),
         )
@@ -10499,6 +10561,304 @@ fn status_label(status: Delivery) -> &'static str {
 #[allow(dead_code)]
 fn chat_of(chat: &ChatId) -> &str {
     chat
+}
+
+/// How long an upload takes to rise into place when it is sent.
+const UPLOAD_ENTRANCE: f32 = 0.28;
+/// How far below its place an upload starts its entrance.
+const UPLOAD_RISE: f32 = 14.0;
+/// The widest an upload's picture is drawn.
+const UPLOAD_PICTURE_WIDTH: f32 = 260.0;
+/// The progress ring over a picture: its radius and stroke.
+const UPLOAD_RING: f32 = 22.0;
+const UPLOAD_RING_STROKE: f32 = 3.0;
+
+/// Attachments on their way, as your own messages at the end of the chat:
+/// a picture with a progress ring over it, or a file card whose icon is
+/// ringed by its progress, each rising into place when it is sent and
+/// replaced by its message once that is in the archive.
+fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate::model::Upload]) {
+    if uploads.is_empty() {
+        return;
+    }
+    // The ring turns while anything is on its way.
+    ui.ctx().request_repaint();
+    let cap = (ui.available_width() * WHATSAPP_WIDTH_SHARE).min(CARD_WIDTH);
+    for upload in uploads {
+        let id = ui.id().with(("upload", upload.id));
+        let shown = ui.ctx().animate_bool_with_time(id, true, UPLOAD_ENTRANCE);
+        // Eased out, so it settles softly.
+        let eased = 1.0 - (1.0 - shown).powi(3);
+        let fraction = upload.fraction().map(|fraction| {
+            ui.ctx()
+                .animate_value_with_time(id.with("progress"), fraction, 0.25)
+        });
+        let picture = upload.preview.as_ref().filter(|_| {
+            matches!(
+                upload.kind,
+                crate::model::UploadKind::Image | crate::model::UploadKind::Video
+            )
+        });
+        ui.add_space(RUN_GAP);
+        match picture {
+            Some(preview) => upload_picture(ui, palette, preview, fraction, cap, eased),
+            None => upload_card(ui, palette, upload, fraction, cap, eased),
+        }
+    }
+}
+
+/// The bubble of an upload, at the right edge, `eased` of the way into place.
+fn upload_bubble(ui: &mut egui::Ui, palette: &Palette, size: Vec2, eased: f32) -> (Rect, f32) {
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), size.y), Sense::hover());
+    let rect = Rect::from_min_size(pos2(row.right() - size.x, row.top()), size)
+        .translate(vec2(0.0, UPLOAD_RISE * (1.0 - eased)));
+    let fill = palette.bubble_out.gamma_multiply(eased);
+    if palette.bubbles == theme::BubbleStyle::Nothing {
+        ui.painter()
+            .add(widgets::grouped_bubble_shape(rect, fill, true, true, true));
+    } else {
+        ui.painter()
+            .rect_filled(rect, f32::from(theme::RADIUS) + 2.0, fill);
+    }
+    (rect, eased)
+}
+
+/// A picture on its way: the picture itself, dimmed, under its progress.
+fn upload_picture(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    preview: &crate::model::UploadPreview,
+    fraction: Option<f32>,
+    cap: f32,
+    eased: f32,
+) {
+    let width = UPLOAD_PICTURE_WIDTH.min(cap);
+    let (texture, natural) = match preview {
+        crate::model::UploadPreview::Pixels {
+            width: w,
+            height: h,
+            texture,
+            ..
+        } => (
+            texture.as_ref().map(egui::TextureHandle::id),
+            Some(vec2(*w as f32, *h as f32)),
+        ),
+        crate::model::UploadPreview::File(path) => {
+            match widgets::file_image(ui, path).load_for_size(ui.ctx(), Vec2::splat(width)) {
+                Ok(poll) => (poll.texture_id(), poll.size()),
+                Err(_) => (None, None),
+            }
+        }
+    };
+    let aspect = natural
+        .filter(|size| size.x > 0.0 && size.y > 0.0)
+        .map_or(0.75, |size| size.y / size.x);
+    let margin = 4.0;
+    let picture_size = vec2(width, (width * aspect).clamp(120.0, 320.0));
+    let (bubble, eased) =
+        upload_bubble(ui, palette, picture_size + Vec2::splat(margin * 2.0), eased);
+    let picture = bubble.shrink(margin);
+    let radius = if palette.bubbles == theme::BubbleStyle::Nothing {
+        12.0
+    } else {
+        6.0
+    };
+    let painter = ui.painter_at(bubble);
+    match texture {
+        Some(texture) => {
+            // Cover the frame, cropping the longer side.
+            let uv = natural.map_or(Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), |size| {
+                cover_uv(size, picture.size())
+            });
+            painter.add(
+                egui::epaint::RectShape::filled(
+                    picture,
+                    CornerRadius::same(radius as u8),
+                    Color32::WHITE.gamma_multiply(eased),
+                )
+                .with_texture(texture, uv),
+            );
+        }
+        None => {
+            painter.rect_filled(picture, radius, palette.surface);
+            theme::paint_icon(
+                ui,
+                Icon::Image,
+                Rect::from_center_size(picture.center(), Vec2::splat(28.0)),
+                28.0,
+                palette.secondary,
+            );
+        }
+    }
+    painter.rect_filled(
+        picture,
+        radius,
+        Color32::from_black_alpha((90.0 * eased) as u8),
+    );
+    let ring = Rect::from_center_size(picture.center(), Vec2::splat(UPLOAD_RING * 2.0 + 12.0));
+    painter.circle_filled(
+        ring.center(),
+        UPLOAD_RING + 6.0,
+        Color32::from_black_alpha((110.0 * eased) as u8),
+    );
+    progress_ring(
+        ui,
+        ring.center(),
+        UPLOAD_RING,
+        fraction,
+        Color32::WHITE.gamma_multiply(eased),
+    );
+    theme::paint_icon(
+        ui,
+        Icon::ArrowUp,
+        Rect::from_center_size(ring.center(), Vec2::splat(18.0)),
+        18.0,
+        Color32::WHITE.gamma_multiply(eased),
+    );
+    if let Some(fraction) = fraction {
+        let label = format!("{:.0}%", fraction * 100.0);
+        let galley = painter.layout_no_wrap(label, theme::medium(12.0), Color32::WHITE);
+        let chip = Rect::from_min_size(
+            picture.left_bottom() + vec2(8.0, -8.0 - galley.size().y - 6.0),
+            galley.size() + vec2(14.0, 6.0),
+        );
+        painter.rect_filled(
+            chip,
+            chip.height() / 2.0,
+            Color32::from_black_alpha((130.0 * eased) as u8),
+        );
+        painter.galley(
+            chip.min + vec2(7.0, 3.0),
+            galley,
+            Color32::WHITE.gamma_multiply(eased),
+        );
+    }
+}
+
+/// The part of a picture of `natural` size that covers a frame of `frame`
+/// size, centred.
+fn cover_uv(natural: Vec2, frame: Vec2) -> Rect {
+    let scale = (frame.x / natural.x).max(frame.y / natural.y);
+    let shown = frame / (natural * scale);
+    let min = (Vec2::splat(1.0) - shown) / 2.0;
+    Rect::from_min_size(pos2(min.x, min.y), shown)
+}
+
+/// A file on its way, laid out as its message will be: the file card with
+/// its icon ringed by the progress, its name, and how much has gone.
+fn upload_card(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    upload: &crate::model::Upload,
+    fraction: Option<f32>,
+    cap: f32,
+    eased: f32,
+) {
+    let colours = palette.on_bubble(true);
+    let (margin, inset) = attachment_insets(palette);
+    let card = vec2(cap - margin.x * 2.0, ATTACHMENT_ROW);
+    let (bubble, eased) = upload_bubble(ui, palette, card + inset * 2.0 + margin * 2.0, eased);
+    let card = Rect::from_min_size(bubble.min + margin, card + inset * 2.0);
+    let painter = ui.painter_at(bubble);
+    painter.rect_filled(
+        card,
+        attachment_radius(palette),
+        palette.window.gamma_multiply(0.35 * eased),
+    );
+    let content = card.shrink2(inset);
+    let disc = pos2(content.left() + ATTACHMENT_DISC / 2.0, content.center().y);
+    painter.circle_filled(
+        disc,
+        ATTACHMENT_DISC / 2.0,
+        colours.accent.gamma_multiply(0.25 * eased),
+    );
+    progress_ring(
+        ui,
+        disc,
+        ATTACHMENT_DISC / 2.0 - 1.5,
+        fraction,
+        colours.accent.gamma_multiply(eased),
+    );
+    let icon = match upload.kind {
+        crate::model::UploadKind::Image => Icon::Image,
+        crate::model::UploadKind::Video => Icon::Video,
+        crate::model::UploadKind::Audio => Icon::Music,
+        crate::model::UploadKind::Document => Icon::FileText,
+    };
+    theme::paint_icon(
+        ui,
+        icon,
+        Rect::from_center_size(disc, Vec2::splat(18.0)),
+        18.0,
+        colours.accent.gamma_multiply(eased),
+    );
+    let text_left = disc.x + ATTACHMENT_DISC / 2.0 + 12.0;
+    let text_width = (content.right() - text_left).max(0.0);
+    let name = widgets::line(
+        ui,
+        if upload.name.is_empty() {
+            "Photo"
+        } else {
+            &upload.name
+        },
+        theme::medium(14.0),
+        colours.text,
+        text_width,
+        1,
+    );
+    let detail = match fraction {
+        Some(fraction) if fraction >= 1.0 => "Sending…".to_owned(),
+        Some(fraction) => format!(
+            "{} of {} · {:.0}%",
+            crate::util::bytes((fraction as f64 * upload.total as f64) as u64),
+            crate::util::bytes(upload.total),
+            fraction * 100.0
+        ),
+        None => "Preparing…".to_owned(),
+    };
+    let detail = painter.layout_no_wrap(detail, theme::regular(12.0), colours.secondary);
+    let gap = 2.0;
+    let top = content.center().y - (name.size().y + gap + detail.size().y) / 2.0;
+    name.paint(ui, pos2(text_left, top), colours.text.gamma_multiply(eased));
+    painter.galley(
+        pos2(text_left, top + name.size().y + gap),
+        detail,
+        colours.secondary.gamma_multiply(eased),
+    );
+}
+
+/// A ring of `fraction` round from the top, clockwise, over a faint track;
+/// without one, a quarter turning, as nothing is known yet.
+fn progress_ring(
+    ui: &egui::Ui,
+    center: egui::Pos2,
+    radius: f32,
+    fraction: Option<f32>,
+    color: Color32,
+) {
+    let painter = ui.painter();
+    let stroke = UPLOAD_RING_STROKE.min(radius / 5.0).max(2.0);
+    painter.circle_stroke(
+        center,
+        radius,
+        Stroke::new(stroke, color.gamma_multiply(0.25)),
+    );
+    let time = ui.input(|input| input.time) as f32;
+    let (start, sweep) = match fraction {
+        Some(fraction) => (
+            -std::f32::consts::FRAC_PI_2,
+            fraction.max(0.02) * std::f32::consts::TAU,
+        ),
+        None => (time * 4.0, std::f32::consts::FRAC_PI_2),
+    };
+    let steps = ((sweep / std::f32::consts::TAU) * 64.0).ceil().max(2.0) as usize;
+    let points: Vec<egui::Pos2> = (0..=steps)
+        .map(|step| {
+            let angle = start + sweep * step as f32 / steps as f32;
+            center + Vec2::angled(angle) * radius
+        })
+        .collect();
+    painter.add(egui::Shape::line(points, Stroke::new(stroke, color)));
 }
 
 #[cfg(test)]

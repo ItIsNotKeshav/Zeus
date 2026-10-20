@@ -1963,6 +1963,44 @@ fn starred_sample(app: &mut App, menu: Option<&str>) {
     app.open_list_menu = menu.map(|id| (chat, id.to_owned()));
 }
 
+/// A photo, a document and a video on their way in the open chat: the photo
+/// part uploaded, the document nearly, the video still being prepared.
+fn uploads_sample(app: &mut App) {
+    let Some(chat) = app.open_chat.clone() else {
+        return;
+    };
+    let photo = stock::save_photo(&app.dirs.media_cache_dir(), stock::LAUNCH);
+    let uploads = [
+        (
+            crate::model::UploadKind::Image,
+            "launch.jpg",
+            Some(crate::model::UploadPreview::File(photo)),
+            0.42,
+        ),
+        (
+            crate::model::UploadKind::Document,
+            "Mission timeline.pdf",
+            None,
+            0.78,
+        ),
+        (crate::model::UploadKind::Video, "Countdown.mp4", None, 0.0),
+    ];
+    for (kind, name, preview, fraction) in uploads {
+        let id = app.next_upload;
+        app.next_upload += 1;
+        let total: u64 = 2_480_000;
+        app.uploads.push(crate::model::Upload {
+            id,
+            chat: chat.clone(),
+            kind,
+            name: name.to_owned(),
+            preview,
+            sent: (total as f64 * fraction) as u64,
+            total: if fraction > 0.0 { total } else { 0 },
+        });
+    }
+}
+
 /// Configures synthetic offline demo states and appearance for tests and screenshots.
 /// Audio fixtures vary voice-note and forwarding metadata independently without playback.
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
@@ -2644,7 +2682,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .unwrap()
                     .clone();
                 system.filename = "omarchy.json".into();
-                app.settings.theme = crate::settings::ThemeChoice::System;
+                app.settings.set_theme(crate::settings::ThemeChoice::System);
                 app.settings.custom_theme = None;
                 app.settings.system_theme_cache = Some(system.clone());
                 themes.push(system);
@@ -2998,20 +3036,39 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // on the bubble.
             "pinned" => pin_sample(app),
             "light" => {
-                app.settings.theme = ThemeChoice::Light;
+                app.settings.set_theme(ThemeChoice::Light);
+            }
+            // Attachments on their way at the end of the open chat.
+            "uploads" => uploads_sample(app),
+            "mode-light" => app.settings.mode = crate::chat_themes::Mode::Light,
+            "mode-dark" => app.settings.mode = crate::chat_themes::Mode::Dark,
+            "noblur" => app.settings.blur = false,
+            // A chat theme by its stored name, or an accent.
+            part if let Ok(theme) =
+                serde_json::from_value::<crate::chat_themes::ChatTheme>(part.into()) =>
+            {
+                app.settings.custom_theme = None;
+                app.settings.custom_theme_cache = None;
+                app.settings.chat_theme = theme;
+            }
+            part if let Some(accent) = part
+                .strip_prefix("accent-")
+                .and_then(|name| serde_json::from_value(name.into()).ok()) =>
+            {
+                app.settings.accent = accent;
             }
             "nothing" => {
                 app.settings.custom_theme = None;
                 app.settings.custom_theme_cache = None;
-                app.settings.theme = ThemeChoice::NothingDark;
+                app.settings.set_theme(ThemeChoice::NothingDark);
             }
             "nothing-light" => {
                 app.settings.custom_theme = None;
                 app.settings.custom_theme_cache = None;
-                app.settings.theme = ThemeChoice::NothingLight;
+                app.settings.set_theme(ThemeChoice::NothingLight);
             }
             "messages" => {
-                app.settings.theme = ThemeChoice::Messages;
+                app.settings.set_theme(ThemeChoice::Messages);
             }
             // The colour themes, by name.
             "red" | "blue" | "green" | "pink" | "purple" | "yellow" => {
@@ -3021,7 +3078,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .iter()
                     .find(|choice| choice.label().eq_ignore_ascii_case(part))
                 {
-                    app.settings.theme = choice;
+                    app.settings.set_theme(choice);
                 }
             }
             // Messages follows the system; this shows its light side anywhere.
@@ -4822,7 +4879,7 @@ mod tests {
                 message.sender = ME.into();
             }
             if light {
-                app.settings.theme = ThemeChoice::Light;
+                app.settings.set_theme(ThemeChoice::Light);
             }
             let ctx = egui::Context::default();
             app.attach(&ctx);

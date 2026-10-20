@@ -400,6 +400,9 @@ pub enum Command {
         mentions: Vec<String>,
         /// The message the first file replies to.
         quoting: Option<crate::model::ReplyTarget>,
+        /// The interface's name for each file's upload, in order; files past
+        /// its end are not followed.
+        uploads: Vec<crate::model::UploadId>,
     },
     /// Sends a clipboard image as straight-alpha RGBA.
     SendImage {
@@ -410,6 +413,7 @@ pub enum Command {
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
+        upload: Option<crate::model::UploadId>,
     },
     /// Syncs chat mute state. `Some(0)` is indefinite and `None` unmutes.
     SetMuted(ChatId, Option<i64>),
@@ -887,6 +891,20 @@ pub enum Command {
         chat: ChatId,
         row: Box<Message>,
         raw: Vec<u8>,
+        /// The upload the message ends, now it is in the archive.
+        upload: Option<crate::model::UploadId>,
+    },
+    /// Internal: how far an upload has got.
+    UploadProgress {
+        chat: ChatId,
+        upload: crate::model::UploadId,
+        sent: u64,
+        total: u64,
+    },
+    /// Internal: an upload that failed, or was refused.
+    UploadEnded {
+        chat: ChatId,
+        upload: crate::model::UploadId,
     },
     /// Internal send audience. The sender waits for it to be archived.
     GroupRecipients {
@@ -983,6 +1001,19 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// How far an attachment on its way has got, in encrypted bytes.
+    UploadProgress {
+        chat: ChatId,
+        upload: crate::model::UploadId,
+        sent: u64,
+        total: u64,
+    },
+    /// An attachment that is no longer on its way: its message is in the
+    /// archive, or it failed.
+    UploadEnded {
+        chat: ChatId,
+        upload: crate::model::UploadId,
+    },
     InteractiveReplyState {
         chat: ChatId,
         message: String,

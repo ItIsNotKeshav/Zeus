@@ -12,6 +12,82 @@ use serde::{Deserialize, Serialize};
 /// Chat JID string: `<phone>@s.whatsapp.net`, `<id>@g.us`, or `<id>@lid`.
 pub type ChatId = String;
 
+/// Names one attachment on its way to WhatsApp, unique within an account.
+pub type UploadId = u64;
+
+/// An attachment on its way to WhatsApp, drawn at the end of its chat from
+/// the moment it is sent until its message arrives.
+#[derive(Clone)]
+pub struct Upload {
+    pub id: UploadId,
+    pub chat: ChatId,
+    pub kind: UploadKind,
+    /// The file's name, or nothing for a pasted picture.
+    pub name: String,
+    pub preview: Option<UploadPreview>,
+    /// Encrypted bytes on their way, of `total`; nothing is known before the
+    /// upload begins, while the file is read, converted and encrypted.
+    pub sent: u64,
+    pub total: u64,
+}
+
+impl Upload {
+    /// How much of it is uploaded, once the upload has begun.
+    pub fn fraction(&self) -> Option<f32> {
+        (self.total > 0).then(|| (self.sent as f64 / self.total as f64).clamp(0.0, 1.0) as f32)
+    }
+}
+
+/// What an upload is sent as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadKind {
+    Image,
+    Video,
+    Audio,
+    Document,
+}
+
+impl UploadKind {
+    /// What a file at `path` goes as: a document when asked, otherwise by
+    /// its type, as the backend decides.
+    pub fn of(path: &std::path::Path, document: bool) -> Self {
+        if document {
+            return Self::Document;
+        }
+        let mime = mime_guess2::from_path(path).first_or_octet_stream();
+        match mime.type_().as_str() {
+            // The pictures the backend converts to a photo; others go as
+            // documents.
+            "image"
+                if matches!(
+                    mime.subtype().as_str(),
+                    "jpeg" | "png" | "webp" | "bmp" | "tiff"
+                ) =>
+            {
+                Self::Image
+            }
+            "video" => Self::Video,
+            "audio" => Self::Audio,
+            _ => Self::Document,
+        }
+    }
+}
+
+/// The picture an upload shows while it goes.
+#[derive(Clone)]
+pub enum UploadPreview {
+    /// A picture file on disk.
+    File(PathBuf),
+    /// A pasted picture, as straight-alpha RGBA.
+    Pixels {
+        width: usize,
+        height: usize,
+        rgba: std::sync::Arc<Vec<u8>>,
+        /// The composer's thumbnail of it, when it made one.
+        texture: Option<egui::TextureHandle>,
+    },
+}
+
 /// Stable folder name for a linked WhatsApp account on this computer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct AccountId(pub String);
@@ -2891,6 +2967,12 @@ pub enum Action {
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
+    /// Draws the window in one of the chat themes, leaving any theme file.
+    SetChatTheme(crate::chat_themes::ChatTheme),
+    /// Light, dark, or as the system is.
+    SetMode(crate::chat_themes::Mode),
+    /// An accent over the chat theme's own.
+    SetAccent(crate::chat_themes::Accent),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
