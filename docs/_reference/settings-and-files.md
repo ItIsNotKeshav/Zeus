@@ -99,25 +99,26 @@ name or description, in the interface language or in English.
 
 - **Preview**: a small conversation at the top of the section, drawn in the
   colours chosen below, so every change shows before you leave Settings.
-- **Mode**: **System**, **Light** or **Dark**. System follows the operating
-  system's appearance (on Linux, the desktop portal's, and Omarchy's colours
-  with the Zeus theme).
-- **Accent**: the theme's own, or red, orange, yellow, green, teal, blue,
-  purple or pink, for buttons, switches, links, ticks and your own bubbles.
-  In a light mode a bright accent is darkened until it reads on white.
-  Messages keeps the system blue, and theme files keep their own.
-- **Chat theme**: cards for **Zeus** (monochrome glass), **WhatsApp**,
-  **Messages**, and the twenty themes of
-  [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
-  (Orchestrate, Vercel, GitHub, One, Catppuccin, Tokyo Night, Dracula, Nord,
-  Gruvbox, Rosé Pine, Solarized, Kanagawa, VS Code, Monokai, Material, Ayu,
-  Night Owl, Everforest, Vitesse and Flexoki), each with a light and a dark
-  palette. Local JSON palettes from the themes folder follow as **Theme
-  files**. See [Making a theme]({{ '/themes/' | relative_url }}).
-  **Messages** draws bubbles shaped, spaced and coloured as Messages on the
-  Mac draws them (yours in iMessage blue, shading deeper down the window),
-  the Mac's system blue for buttons and highlights, and photos without a
-  bubble.
+- **Colours**: **Custom** or **Themes**. Picking a card opens the new
+  colours from that card outwards. Each side remembers its last choice, so
+  switching back returns to it.
+  - **Custom** makes a look your own. **Look** is **Zeus** (monochrome
+    glass), **WhatsApp**, or **Messages**, which draws bubbles shaped, spaced
+    and coloured as Messages on the Mac draws them (yours in iMessage blue,
+    shading deeper down the window), the Mac's system blue for buttons and
+    highlights, and photos without a bubble. **Mode** is **System**,
+    **Light** or **Dark**; System follows the operating system's appearance
+    (on Linux, the desktop portal's, and Omarchy's colours with the Zeus
+    look). **Accent** is the look's own, or red, orange, yellow, green, teal,
+    blue, purple or pink, for buttons, switches, links, ticks and your own
+    bubbles. In a light mode a bright accent is darkened until it reads on
+    white. Messages keeps the system blue.
+  - **Themes** are the twenty ready-made themes of
+    [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
+    (Orchestrate, Vercel, GitHub, One, Catppuccin, Tokyo Night, Dracula, Nord,
+    Gruvbox, Rosé Pine, Solarized, Kanagawa, VS Code, Monokai, Material, Ayu,
+    Night Owl, Everforest, Vitesse and Flexoki), each in light and dark with
+    its own accent. **Mode** picks between them here too.
 - **Blur**: every theme but WhatsApp draws glass: a frosted header that
   messages scroll under, a frosted message field, and the desktop through
   the sidebar and conversation where the platform offers a material:
@@ -126,6 +127,9 @@ name or description, in the interface language or in English.
   in the theme's colours. Turning Blur off makes every one of those surfaces
   solid at once; turning it on again shows the desktop through a window
   opened after the change.
+- **Always show time**: the time and ticks inside every message, as
+  WhatsApp shows them. Off, the Zeus look shows them below a message you
+  click, and below your last message.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.

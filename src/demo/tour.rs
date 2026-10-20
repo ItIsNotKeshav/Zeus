@@ -1712,80 +1712,82 @@ mod tests {
     }
 
     #[test]
-    fn the_theme_cards_select_chat_themes_modes_and_theme_files() {
+    fn custom_and_themes_choose_looks_modes_accents_and_ready_made_themes() {
+        use crate::chat_themes::{Accent, ChatTheme, Style};
         let mut app = super::super::tests::app();
         app.page = Page::Settings;
-        app.custom_themes =
-            crate::theme::Catalog::preview(crate::theme::presets().collect(), false);
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let mut tour = Tour::new(None, None);
         for _ in 0..3 {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
+        // Scrolls the page until `label` is on screen.
+        let show = |app: &mut App, tour: &mut Tour, label: &str| {
+            let middle = Pos2::new(700.0, 400.0);
+            for _ in 0..60 {
+                let spot = tour.labels.get(label).copied();
+                if spot.is_some_and(|spot| (80.0..700.0).contains(&spot.y)) {
+                    return;
+                }
+                let delta = if spot.is_some_and(|spot| spot.y < 80.0) {
+                    40.0
+                } else {
+                    -40.0
+                };
+                frame(
+                    app,
+                    tour,
+                    &ctx,
+                    vec![
+                        Event::PointerMoved(middle),
+                        Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: vec2(0.0, delta),
+                            modifiers: Modifiers::NONE,
+                            phase: egui::TouchPhase::Move,
+                        },
+                    ],
+                );
+            }
+        };
+        assert_eq!(app.settings.style(), Style::Custom);
+        show(&mut app, &mut tour, "Zeus");
         click(&mut app, &mut tour, &ctx, "Zeus");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
+        show(&mut app, &mut tour, "Light");
         click(&mut app, &mut tour, &ctx, "Light");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingLight);
         assert_eq!(app.palette, crate::theme::Palette::nothing_light());
-        // The theme files follow the chat themes, further down.
-        let middle = Pos2::new(700.0, 500.0);
-        for _ in 0..40 {
-            if tour
-                .labels
-                .get("Ristretto")
-                .is_some_and(|spot| spot.y < 740.0)
-            {
-                break;
-            }
-            frame(
-                &mut app,
-                &mut tour,
-                &ctx,
-                vec![
-                    Event::PointerMoved(middle),
-                    Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        delta: vec2(0.0, -40.0),
-                        modifiers: Modifiers::NONE,
-                        phase: egui::TouchPhase::Move,
-                    },
-                ],
-            );
-        }
-        click(&mut app, &mut tour, &ctx, "Ristretto");
-        let file = app.settings.custom_theme.clone().expect("a theme file");
-        assert!(file.starts_with("Ristretto"), "{file}");
+        // The swatches carry no text to find; pick one as their click does.
+        app.actions
+            .push(crate::model::Action::SetAccent(Accent::Red));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
         assert_eq!(
-            Some(app.palette),
-            app.settings
-                .custom_theme_cache
-                .as_ref()
-                .map(|theme| theme.palette)
+            app.palette.accent,
+            egui::Color32::from_rgb(0xff, 0x45, 0x3a)
         );
-        // A mode leaves the file for the chat theme it replaced.
-        for _ in 0..40 {
-            if tour.labels.get("Dark").is_some_and(|spot| spot.y > 60.0) {
-                break;
-            }
-            frame(
-                &mut app,
-                &mut tour,
-                &ctx,
-                vec![
-                    Event::PointerMoved(middle),
-                    Event::MouseWheel {
-                        unit: egui::MouseWheelUnit::Point,
-                        delta: vec2(0.0, 40.0),
-                        modifiers: Modifiers::NONE,
-                        phase: egui::TouchPhase::Move,
-                    },
-                ],
-            );
-        }
-        click(&mut app, &mut tour, &ctx, "Dark");
-        assert!(app.settings.custom_theme.is_none());
-        assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
+        // Themes swaps the look, mode and accent rows for the ready-made
+        // themes, which keep their own accent.
+        show(&mut app, &mut tour, "Themes");
+        click(&mut app, &mut tour, &ctx, "Themes");
+        assert_eq!(app.settings.style(), Style::Themes);
+        assert_eq!(app.settings.chat_theme, ChatTheme::Catppuccin);
+        assert_eq!(
+            app.palette,
+            ChatTheme::Catppuccin.palette(false, Accent::Theme)
+        );
+        show(&mut app, &mut tour, "Nord");
+        click(&mut app, &mut tour, &ctx, "Nord");
+        assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
+        // Custom comes back to the look and accent it had.
+        show(&mut app, &mut tour, "Custom");
+        click(&mut app, &mut tour, &ctx, "Custom");
+        assert_eq!(app.settings.chat_theme, ChatTheme::Zeus);
+        assert_eq!(app.settings.accent, Accent::Red);
+        show(&mut app, &mut tour, "Themes");
+        click(&mut app, &mut tour, &ctx, "Themes");
+        assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
     }
 
     #[test]

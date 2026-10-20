@@ -897,9 +897,8 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         }
     });
     ui.add_space(4.0);
-    if super::widgets::credit(ui, &palette, app.locale) {
-        app.actions
-            .push(Action::OpenUrl(super::widgets::AUTHOR_URL.to_owned()));
+    if let Some(url) = super::widgets::credit(ui, &palette, app.locale) {
+        app.actions.push(Action::OpenUrl(url.to_owned()));
     }
 }
 

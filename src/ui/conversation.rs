@@ -2276,6 +2276,9 @@ struct View<'a> {
     player: &'a crate::audio::Player,
     /// The speed this chat's voice messages play at.
     voice_speed: f32,
+    /// Whether the time and ticks sit inside every bubble. The Nothing
+    /// style leaves them below the bubble unless Always show time is on.
+    time_inside: bool,
     video: &'a crate::video::Player,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
 }
@@ -2656,6 +2659,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .map(|(_, message)| message.as_str()),
         player: &app.player,
         voice_speed: app.voice_speed_in(Some(&chat.id)),
+        time_inside: app.palette.bubbles != theme::BubbleStyle::Nothing
+            || app.settings.always_show_time,
         video: &app.video,
         // Whole-message exports are already formatted. Do not let the
         // text-selection annotator reinterpret them as drawn body text.
@@ -4357,7 +4362,7 @@ fn bubble_row(
             }
         },
     );
-    if view.palette.bubbles == theme::BubbleStyle::Nothing && !view.selecting {
+    if !view.time_inside && !view.selecting {
         let bubble_rect = ui
             .ctx()
             .data(|data| data.get_temp::<Rect>(id.with("rect")))
@@ -5081,7 +5086,8 @@ fn bubble_frame(
             // An album's footer is its last member's, marks included.
             let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
             let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
-            let reserve = message_footer_width(ui, last, starred, pinned, &palette);
+            let reserve =
+                message_footer_width(ui, last, starred, pinned, &palette, view.time_inside);
             let settled = album
                 .map(|_| CARD_WIDTH.min(cap))
                 .or_else(|| settled_width(ui, view, message, cap));
@@ -5400,7 +5406,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
-    let reserve = message_footer_width(ui, message, starred, pinned, &palette);
+    let reserve = message_footer_width(ui, message, starred, pinned, &palette, view.time_inside);
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
     } else {
@@ -5736,8 +5742,9 @@ fn message_footer_width(
     starred: bool,
     pinned: bool,
     palette: &Palette,
+    time_inside: bool,
 ) -> f32 {
-    if palette.bubbles != theme::BubbleStyle::Nothing {
+    if time_inside {
         return footer_width(ui, message, starred, pinned);
     }
     let edited = if message.edited {
@@ -6008,7 +6015,7 @@ fn footer(
     actions: &mut Vec<Action>,
 ) {
     let palette = &view.palette;
-    if palette.bubbles == theme::BubbleStyle::Nothing {
+    if !view.time_inside {
         reference_footer_marks(ui, message, slot, starred, pinned, palette);
         return;
     }
@@ -6130,7 +6137,7 @@ fn reference_footer_marks(
     pinned: bool,
     palette: &Palette,
 ) {
-    let width = message_footer_width(ui, message, starred, pinned, palette);
+    let width = message_footer_width(ui, message, starred, pinned, palette, false);
     if width <= 0.0 {
         return;
     }
@@ -6360,6 +6367,8 @@ pub(crate) fn list_menu(
         animate: false,
         player: &app.player,
         voice_speed: app.voice_speed_in(Some(&chat.id)),
+        time_inside: app.palette.bubbles != theme::BubbleStyle::Nothing
+            || app.settings.always_show_time,
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
@@ -7004,7 +7013,7 @@ fn content(
     let own = message.from_me;
     // Nothing-style metadata lives below/on hover, so the text galley must
     // not reserve the usual inline timestamp gap on its final row.
-    let footer_reserve = (palette.bubbles != theme::BubbleStyle::Nothing).then_some(reserve);
+    let footer_reserve = view.time_inside.then_some(reserve);
     // Add non-text messages to cross-message transcript copies.
     let has_body = match &message.content {
         Content::Text { .. } => true,
@@ -11707,6 +11716,8 @@ mod tests {
             animate: false,
             player: &app.player,
             voice_speed: app.settings.voice_speed,
+            time_inside: app.palette.bubbles != theme::BubbleStyle::Nothing
+                || app.settings.always_show_time,
             video: &app.video,
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),

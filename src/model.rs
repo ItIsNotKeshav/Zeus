@@ -2969,6 +2969,11 @@ pub enum Action {
     SetTheme(crate::settings::ThemeChoice),
     /// Draws the window in one of the chat themes, leaving any theme file.
     SetChatTheme(crate::chat_themes::ChatTheme),
+    /// Opens the next change of colours from this point, where a theme
+    /// card was clicked.
+    RevealThemeFrom(egui::Pos2),
+    /// A look made your own, or a ready-made theme.
+    SetStyle(crate::chat_themes::Style),
     /// Light, dark, or as the system is.
     SetMode(crate::chat_themes::Mode),
     /// An accent over the chat theme's own.
