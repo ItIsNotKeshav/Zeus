@@ -1441,8 +1441,7 @@ dependencies = [
 [[package]]
 name = "cpal"
 version = "0.18.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f02e8d0327b42d3e2e4ab2119af397344eb9fc54a34bf0ddeaa1277af8681f1"
+source = "git+https://github.com/crmne/cpal?rev=fcd8b6ebee9d822426fa8d6839cdd89af6e0d491#fcd8b6ebee9d822426fa8d6839cdd89af6e0d491"
 dependencies = [
  "alsa",
  "block2 0.6.2",
@@ -2304,8 +2303,8 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fastframe-audio"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "cpal",
  "libc",
@@ -2316,8 +2315,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-autostart"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "fastframe-file",
  "log",
@@ -2330,8 +2329,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-desktop"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "log",
  "mac-usernotifications",
@@ -2340,16 +2339,16 @@ dependencies = [
 
 [[package]]
 name = "fastframe-dirs"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "directories",
 ]
 
 [[package]]
 name = "fastframe-dock"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "log",
  "objc2 0.6.4",
@@ -2362,8 +2361,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-emoji"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "egui",
  "fastframe-fonts",
@@ -2380,8 +2379,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-file"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "log",
  "windows-sys 0.60.2",
@@ -2389,8 +2388,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-fonts"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "directories",
  "egui",
@@ -2402,8 +2401,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-i18n"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "include-po",
  "polib",
@@ -2413,16 +2412,16 @@ dependencies = [
 
 [[package]]
 name = "fastframe-icons"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "fastframe-instance"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "directories",
  "getrandom 0.4.3",
@@ -2431,8 +2430,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-log"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "env_logger",
  "jiff",
@@ -2441,8 +2440,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-notifications"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "block2 0.6.2",
  "directories",
@@ -2464,8 +2463,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-power"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "log",
  "objc2 0.6.4",
@@ -2476,16 +2475,16 @@ dependencies = [
 
 [[package]]
 name = "fastframe-scroll"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "egui",
 ]
 
 [[package]]
 name = "fastframe-shell"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "eframe",
  "egui",
@@ -2500,8 +2499,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-text"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "egui",
  "zbus",
@@ -2509,8 +2508,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-theme"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "directories",
  "egui",
@@ -2522,8 +2521,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-titlebar"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "directories",
  "eframe",
@@ -2538,8 +2537,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-tray"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "ksni",
  "log",
@@ -2552,8 +2551,8 @@ dependencies = [
 
 [[package]]
 name = "fastframe-update"
-version = "0.13.0"
-source = "git+https://github.com/crmne/fastframe?tag=v0.13.0#d5e1a99702f39fda6e252b7acb5582c60becf545"
+version = "0.14.0"
+source = "git+https://github.com/crmne/fastframe?tag=v0.14.0#dfd2db7bc6a5ae0c62a98383c84235f64da2cace"
 dependencies = [
  "anyhow",
  "fastframe-dirs",
@@ -7540,7 +7539,7 @@ dependencies = [
 [[package]]
 name = "wacore"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "aes 0.9.3",
  "aes-gcm",
@@ -7590,7 +7589,7 @@ dependencies = [
 [[package]]
 name = "wacore-appstate"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "anyhow",
  "buffa",
@@ -7611,7 +7610,7 @@ dependencies = [
 [[package]]
 name = "wacore-binary"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "bytes",
  "compact_str",
@@ -7628,7 +7627,7 @@ dependencies = [
 [[package]]
 name = "wacore-derive"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7638,7 +7637,7 @@ dependencies = [
 [[package]]
 name = "wacore-libsignal"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "aes 0.9.3",
  "async-lock",
@@ -7669,7 +7668,7 @@ dependencies = [
 [[package]]
 name = "wacore-noise"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "anyhow",
  "buffa",
@@ -7706,7 +7705,7 @@ dependencies = [
 [[package]]
 name = "waproto"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "buffa",
  "buffa-build",
@@ -8108,7 +8107,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -8155,7 +8154,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust-sqlite-storage"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "async-trait",
  "buffa",
@@ -8178,7 +8177,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust-tokio-transport"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -8198,7 +8197,7 @@ dependencies = [
 [[package]]
 name = "whatsapp-rust-ureq-http-client"
 version = "0.7.0"
-source = "git+https://github.com/crmne/whatsapp-rust?rev=5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f#5925a608fdb8e8b8c7f07b5ddf2ea51bb845853f"
+source = "git+https://github.com/crmne/whatsapp-rust?rev=55e45b8c88601bb9e8f817f884975577a78361b6#55e45b8c88601bb9e8f817f884975577a78361b6"
 dependencies = [
  "anyhow",
  "async-trait",

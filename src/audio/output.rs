@@ -107,15 +107,22 @@ pub(crate) struct Kept {
 
 impl MixOutput {
     /// Opens `device` in stereo at 48 kHz where the device takes it (the rate voice messages
-    /// decode at), so the mixer seldom has to be made again. Opening asks the device, which can
-    /// take a moment: never on the UI thread.
-    pub(crate) fn open(device: Device, pause_when_idle: Option<Duration>) -> Result<Self, String> {
+    /// decode at), so the mixer seldom has to be made again. `call` names it as a call's sound in
+    /// the system's volume mixer, which lowers other sound while it plays. Opening asks the device,
+    /// which can take a moment: never on the UI thread.
+    pub(crate) fn open(
+        device: Device,
+        pause_when_idle: Option<Duration>,
+        call: bool,
+    ) -> Result<Self, String> {
         let follow_default = matches!(device, Device::Default);
         let options = fastframe_audio::OutputOptions {
             device,
             sample_rate: Some(crate::voice::RATE),
             follow_default,
             pause_when_idle,
+            media_name: call.then(|| super::CALL_STREAM.to_owned()),
+            role: call.then_some(fastframe_audio::StreamRole::Communication),
             ..fastframe_audio::OutputOptions::default()
         };
         let (mix, slot) = Mix::new();
@@ -300,7 +307,7 @@ fn run_shared(requests: &mpsc::Receiver<Request>, generation: &AtomicU64) {
             wakers.retain(|wake| wake.strong_count() > 0);
             wakers.extend(wake);
             if output.is_none() {
-                match MixOutput::open(Device::Default, Some(IDLE_PAUSE)) {
+                match MixOutput::open(Device::Default, Some(IDLE_PAUSE), false) {
                     Ok(opened) => {
                         log::info!(
                             "sound output: playing through {} ({})",

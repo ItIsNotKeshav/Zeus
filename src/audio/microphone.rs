@@ -56,9 +56,10 @@ pub struct Microphone {
 }
 
 impl Microphone {
-    /// Opens `device` at its own rate and channel count. Blocks while the device opens, and may
-    /// make the system ask the person for the microphone.
-    pub fn open(device: Device, label: &'static str) -> Result<Self, String> {
+    /// Opens `device` at its own rate and channel count; `call` names it as a call's microphone in
+    /// the system's volume mixer. Blocks while the device opens, and may make the system ask the
+    /// person for the microphone.
+    pub fn open(device: Device, label: &'static str, call: bool) -> Result<Self, String> {
         let follow_default = matches!(device, Device::Default);
         let (producer, ring) = rtrb::RingBuffer::new(RING_SAMPLES);
         let rate = Arc::new(AtomicU32::new(0));
@@ -71,6 +72,8 @@ impl Microphone {
         let options = InputOptions {
             device,
             follow_default,
+            media_name: call.then(|| super::CALL_STREAM.to_owned()),
+            role: call.then_some(fastframe_audio::StreamRole::Communication),
             ..InputOptions::default()
         };
         let input = Input::open(options, tap).map_err(|error| match error {

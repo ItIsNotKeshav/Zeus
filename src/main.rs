@@ -324,6 +324,12 @@ fn run() -> eframe::Result<()> {
         log::error!("could not move the linked account into its folder: {error}");
         return Err(eframe::Error::AppCreation(error.into()));
     }
+    // The name and icon volume mixers show for every sound ZapFast plays or records; set before
+    // anything opens or lists a device.
+    let _ = fastframe_audio::set_app_info(fastframe_audio::AppInfo {
+        name: "ZapFast".into(),
+        icon: Some("zapfast".into()),
+    });
     let settings = settings::Settings::load(&dirs.settings_file());
     // A Cargo build has no application bundle to supply its Dock icon.
     #[cfg(target_os = "macos")]

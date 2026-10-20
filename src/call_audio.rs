@@ -390,7 +390,7 @@ fn open_microphone(device: Option<&str>) -> Result<Mic, String> {
         }
         None => fastframe_audio::Device::Default,
     };
-    crate::audio::Microphone::open(target, "call microphone")
+    crate::audio::Microphone::open(target, "call microphone", true)
         .map(|microphone| Mic::Real(Box::new(microphone)))
 }
 
@@ -427,7 +427,7 @@ fn open_sink(device: Option<&str>) -> Result<Sink, String> {
         }
         None => fastframe_audio::Device::Default,
     };
-    let output = crate::audio::MixOutput::open(target, None)
+    let output = crate::audio::MixOutput::open(target, None, true)
         .map_err(|error| format!("the speaker could not be opened: {error}"))?;
     Ok(Sink::real(output))
 }

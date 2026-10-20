@@ -29,6 +29,9 @@ fn rate() -> NonZero<u32> {
 mod microphone;
 mod output;
 
+/// What a call's speaker and microphone are called in the system's volume mixer.
+const CALL_STREAM: &str = "Call";
+
 pub use microphone::{Microphone, microphones};
 pub(crate) use output::MixOutput;
 pub use output::{Output, open_output};
@@ -805,7 +808,7 @@ fn record(stop: &AtomicBool, live: &Live, wake: &dyn Fn()) -> Result<Vec<f32>, S
 
 /// Opens the default microphone, with its channel count and sample rate.
 fn open_microphone() -> Result<(Microphone, u16, u32), String> {
-    let microphone = Microphone::open(fastframe_audio::Device::Default, "voice recording")?;
+    let microphone = Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?;
     let channels = microphone.channels();
     let rate = microphone.rate();
     Ok((microphone, channels, rate))
