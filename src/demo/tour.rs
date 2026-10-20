@@ -1649,6 +1649,9 @@ mod tests {
         // rather than reading whatever this machine is set to.
         app.settings.interface_language = Some(crate::i18n::Locale::English);
         app.locale = crate::i18n::Locale::English;
+        // With the list hidden every category shares one page, as in a
+        // narrow window.
+        app.sidebar_visible = false;
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let mut tour = Tour::new(None, None);

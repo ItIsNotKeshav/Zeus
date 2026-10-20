@@ -715,6 +715,8 @@ pub struct App {
     pub focus_search: bool,
     /// What the Settings page is filtered by.
     pub settings_search: String,
+    /// The settings category shown beside the list of them.
+    pub settings_section: usize,
     pub focus_settings_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
@@ -1461,6 +1463,7 @@ impl App {
             focus_composer: false,
             focus_search: false,
             settings_search: String::new(),
+            settings_section: 0,
             focus_settings_search: false,
             quit_requested: false,
             window_focused: false,
@@ -8079,6 +8082,10 @@ impl App {
                 self.settings.choose_chat_theme(choice);
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
+            }
+            Action::OpenSettingsSection(index) => {
+                self.settings_section = index;
+                self.settings_search.clear();
             }
             Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),
             Action::SetStyle(style) => {

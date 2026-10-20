@@ -2972,6 +2972,8 @@ pub enum Action {
     /// Opens the next change of colours from this point, where a theme
     /// card was clicked.
     RevealThemeFrom(egui::Pos2),
+    /// Shows one settings category beside the list of them.
+    OpenSettingsSection(usize),
     /// A look made your own, or a ready-made theme.
     SetStyle(crate::chat_themes::Style),
     /// Light, dark, or as the system is.

@@ -3125,6 +3125,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "mode-dark" => app.settings.mode = crate::chat_themes::Mode::Dark,
             "noblur" => app.settings.blur = false,
             "always-time" => app.settings.always_show_time = true,
+            // A settings category beside the list of them, by its place.
+            part if let Some(index) = part
+                .strip_prefix("section-")
+                .and_then(|index| index.parse().ok()) =>
+            {
+                app.settings_section = index;
+            }
             // A chat theme by its stored name, or an accent.
             part if let Ok(theme) =
                 serde_json::from_value::<crate::chat_themes::ChatTheme>(part.into()) =>
@@ -15954,26 +15961,16 @@ mod tests {
     fn tab_scrolls_the_focused_control_into_view() {
         let mut app = app();
         apply_flags(&mut app, Some("settings"));
+        // Settings lists its categories where the chats are, so the page
+        // shows every category only with the list hidden: Tab walks it.
+        app.sidebar_visible = false;
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let height = 420.0;
         for _ in 0..3 {
             frame_sized(&mut app, &ctx, height, Vec::new());
         }
-        // The chat list only lays out rows it shows.
-        let row = |ctx: &egui::Context, id: &str| {
-            ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(id)))
-        };
-        let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
-        let hidden: Vec<&String> = ids
-            .iter()
-            .filter(|id| row(&ctx, id).is_none_or(|rect| rect.top() >= height))
-            .collect();
-        assert!(
-            !hidden.is_empty(),
-            "the window is short enough to hide rows"
-        );
-        let mut reached_hidden = false;
+        let mut reached = std::collections::HashSet::new();
         for _ in 0..30 {
             frame_sized(&mut app, &ctx, height, tab());
             // egui moves focus at the end of the Tab frame; the next frame
@@ -15991,11 +15988,10 @@ mod tests {
                 focused.interact_rect, focused.rect,
                 "the focused control is fully visible"
             );
-            reached_hidden |= hidden
-                .iter()
-                .any(|id| row(&ctx, id).is_some_and(|rect| rect == focused.rect));
+            reached.insert(focused.id);
         }
-        assert!(reached_hidden, "Tab reached chats that were out of view");
+        // More controls than a 420-point window holds at once.
+        assert!(reached.len() > 8, "Tab walked down the settings page");
     }
 
     /// The same with the list hidden, at the window's least height: the
