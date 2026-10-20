@@ -649,7 +649,15 @@ A release is not finished when the tag is pushed. Do these in order:
   `--demo-shot` to look at the result.
 - Update the docs site (`docs/`) when user-visible behaviour, settings,
   files, or network access changes. The README stays a short pointer to it.
-- Run the full checks before finishing:
+- In this fork, a routine change does not wait on the full suite: build it,
+  run `cargo fmt --all --check` and only the tests that directly cover the
+  change, then push to `main` and let GitHub CI (`ci.yml`) run the rest. If
+  CI fails, fix it forward. A test build installed on the maintainer's PC
+  needs no checks at all. The maintainer asked for this because waiting on
+  the full suite on their machine (15 to 20 minutes, and it can run out of
+  memory) cost more than it caught.
+- Run the full checks locally at most once a day, and before a major
+  release:
 
   ```sh
   cargo fmt --all --check
