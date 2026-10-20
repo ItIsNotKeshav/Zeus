@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use serde::{Deserialize, Serialize};
 
 /// Verifying the locked-chat code costs about 20 ms, paid once per distinct
@@ -470,7 +471,20 @@ pub struct Settings {
     /// [`SETTINGS_VERSION`] when written; missing, and so 0, in older files.
     #[serde(default)]
     pub version: u32,
-    pub theme: ThemeChoice,
+    /// The theme as releases before chat themes stored it, kept in step with
+    /// the fields below so an older release still reads a fitting one. Read
+    /// only by [`Settings::migrate`]; set through [`Settings::set_theme`].
+    #[serde(rename = "theme")]
+    pub(crate) legacy_theme: ThemeChoice,
+    /// The family of colours, light or dark as [`Settings::mode`] says.
+    pub chat_theme: ChatTheme,
+    /// Light, dark, or as the system is.
+    pub mode: Mode,
+    /// An accent over the theme's own.
+    pub accent: Accent,
+    /// Frosted glass under the header and composer, and the desktop through
+    /// the window where the platform offers it, for themes that draw glass.
+    pub blur: bool,
     /// Whether a `"system"` theme is really Messages. The file says
     /// `"system"` for Messages, which releases before it read as Follow
     /// system instead of rejecting the whole file; this marks the rest.
@@ -607,7 +621,11 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
-            theme: ThemeChoice::Dark,
+            legacy_theme: ThemeChoice::Dark,
+            chat_theme: ChatTheme::WhatsApp,
+            mode: Mode::Dark,
+            accent: Accent::Theme,
+            blur: true,
             messages_theme: false,
             font: FontChoice::GoogleSansFlex,
             interface_language: None,
@@ -666,7 +684,9 @@ impl Default for Settings {
 ///
 /// 1. The wallpaper colours that were the defaults (Beige, and Black in dark
 ///    mode) become [`WallpaperColor::Theme`], the new default.
-pub const SETTINGS_VERSION: u32 = 1;
+/// 2. The one theme menu becomes a chat theme, a mode and an accent
+///    ([`Settings::set_theme`]).
+pub const SETTINGS_VERSION: u32 = 2;
 
 /// Optional build-time GIPHY key from `ZAPFAST_GIPHY_KEY`.
 /// The previous name remains accepted for existing build setups.
@@ -689,10 +709,78 @@ impl Settings {
         self.wallpaper_color_for(palette.dark).color32(palette)
     }
 
+    /// Picks a theme as releases before chat themes named them: WhatsApp's
+    /// Dark and Light, Zeus's Dark, Light and Follow system, Messages, and
+    /// Zeus's dark colour themes.
+    pub fn set_theme(&mut self, choice: ThemeChoice) {
+        self.legacy_theme = choice;
+        (self.chat_theme, self.mode, self.accent) = match choice {
+            ThemeChoice::Dark => (ChatTheme::WhatsApp, Mode::Dark, Accent::Theme),
+            ThemeChoice::Light => (ChatTheme::WhatsApp, Mode::Light, Accent::Theme),
+            ThemeChoice::System => (ChatTheme::Zeus, Mode::System, Accent::Theme),
+            ThemeChoice::Messages => (ChatTheme::Messages, Mode::System, Accent::Theme),
+            ThemeChoice::NothingDark => (ChatTheme::Zeus, Mode::Dark, Accent::Theme),
+            ThemeChoice::NothingLight => (ChatTheme::Zeus, Mode::Light, Accent::Theme),
+            ThemeChoice::Red => (ChatTheme::Zeus, Mode::Dark, Accent::Red),
+            ThemeChoice::Blue => (ChatTheme::Zeus, Mode::Dark, Accent::Blue),
+            ThemeChoice::Green => (ChatTheme::Zeus, Mode::Dark, Accent::Green),
+            ThemeChoice::Pink => (ChatTheme::Zeus, Mode::Dark, Accent::Pink),
+            ThemeChoice::Purple => (ChatTheme::Zeus, Mode::Dark, Accent::Purple),
+            ThemeChoice::Yellow => (ChatTheme::Zeus, Mode::Dark, Accent::Yellow),
+        };
+    }
+
+    /// The nearest theme a release before chat themes knows.
+    pub fn legacy_theme(&self) -> ThemeChoice {
+        let dark = self.mode != Mode::Light;
+        match self.chat_theme {
+            ChatTheme::Messages => ThemeChoice::Messages,
+            ChatTheme::WhatsApp if dark => ThemeChoice::Dark,
+            ChatTheme::WhatsApp => ThemeChoice::Light,
+            ChatTheme::Zeus if self.mode == Mode::System => ThemeChoice::System,
+            _ if !dark => ThemeChoice::NothingLight,
+            _ => match self.accent {
+                Accent::Red => ThemeChoice::Red,
+                Accent::Blue => ThemeChoice::Blue,
+                Accent::Green => ThemeChoice::Green,
+                Accent::Pink => ThemeChoice::Pink,
+                Accent::Purple => ThemeChoice::Purple,
+                Accent::Yellow => ThemeChoice::Yellow,
+                _ => ThemeChoice::NothingDark,
+            },
+        }
+    }
+
+    /// Whether the window's colours are light, dark, or the system's, for
+    /// egui's own controls as well as ours. A theme file decides for itself.
+    pub fn preference(&self) -> egui::ThemePreference {
+        match self.cached_palette() {
+            Some(palette) if palette.dark => egui::ThemePreference::Dark,
+            Some(_) => egui::ThemePreference::Light,
+            None => match self.mode {
+                Mode::System => egui::ThemePreference::System,
+                Mode::Light => egui::ThemePreference::Light,
+                Mode::Dark => egui::ThemePreference::Dark,
+            },
+        }
+    }
+
+    /// The palette to draw with, given whether the window is dark.
+    pub fn palette(&self, dark: bool) -> crate::theme::Palette {
+        self.cached_palette()
+            .unwrap_or_else(|| self.chat_theme.palette(dark, self.accent))
+    }
+
+    /// Whether the window should let the desktop show through it.
+    pub fn vibrant_window(&self) -> bool {
+        self.blur && self.chat_theme.vibrant()
+    }
+
     pub(crate) fn cached_palette(&self) -> Option<crate::theme::Palette> {
         let theme = if self.custom_theme.is_some() {
             self.custom_theme_cache.as_ref()
-        } else if self.theme == ThemeChoice::System {
+        } else if self.chat_theme == ChatTheme::Zeus && self.mode == Mode::System {
+            // Follow system on Linux follows Omarchy's colours.
             self.system_theme_cache.as_ref()
         } else {
             None
@@ -779,8 +867,10 @@ impl Settings {
     /// The settings as the file stores them: Messages is written as Follow
     /// system plus a mark, so older releases still read the file.
     fn to_file(&self) -> std::io::Result<serde_json::Value> {
-        let mut value = serde_json::to_value(self).map_err(std::io::Error::other)?;
-        if self.theme == ThemeChoice::Messages
+        let mut file = self.clone();
+        file.legacy_theme = self.legacy_theme();
+        let mut value = serde_json::to_value(&file).map_err(std::io::Error::other)?;
+        if file.legacy_theme == ThemeChoice::Messages
             && let Some(fields) = value.as_object_mut()
         {
             fields.insert("theme".into(), serde_json::to_value(ThemeChoice::System)?);
@@ -793,8 +883,8 @@ impl Settings {
     /// step runs once: the next save records the version, so a colour chosen
     /// again afterwards is kept.
     fn migrate(&mut self) {
-        if std::mem::take(&mut self.messages_theme) && self.theme == ThemeChoice::System {
-            self.theme = ThemeChoice::Messages;
+        if std::mem::take(&mut self.messages_theme) && self.legacy_theme == ThemeChoice::System {
+            self.legacy_theme = ThemeChoice::Messages;
         }
         if self.version < 1 {
             // Old files store every field, so a default colour cannot be told
@@ -805,6 +895,9 @@ impl Settings {
             if self.dark_wallpaper_color == WallpaperColor::Black {
                 self.dark_wallpaper_color = WallpaperColor::Theme;
             }
+        }
+        if self.version < 2 {
+            self.set_theme(self.legacy_theme);
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -1062,43 +1155,86 @@ mod tests {
     fn messages_theme_round_trips_and_old_palettes_keep_whatsapp_bubbles() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.json");
-        let settings = Settings {
-            theme: ThemeChoice::Messages,
-            ..Settings::default()
-        };
+        let mut settings = Settings::default();
+        settings.set_theme(ThemeChoice::Messages);
         settings.save(&path).unwrap();
         // Releases before Messages read the file, and see Follow system.
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(written["theme"], "system");
         assert_eq!(written["messages_theme"], true);
-        assert_eq!(Settings::load(&path).theme, ThemeChoice::Messages);
+        assert_eq!(Settings::load(&path).legacy_theme(), ThemeChoice::Messages);
         // Follow system stays Follow system, without the mark.
-        let system = Settings {
-            theme: ThemeChoice::System,
-            ..Settings::default()
-        };
+        let mut system = Settings::default();
+        system.set_theme(ThemeChoice::System);
         system.save(&path).unwrap();
         assert!(
             !std::fs::read_to_string(&path)
                 .unwrap()
                 .contains("messages_theme")
         );
-        assert_eq!(Settings::load(&path).theme, ThemeChoice::System);
+        assert_eq!(Settings::load(&path).legacy_theme(), ThemeChoice::System);
         // Files written by development builds before this still load.
         let parsed: Settings = serde_json::from_str(r#"{"theme":"messages"}"#).expect("parses");
-        assert_eq!(parsed.theme, ThemeChoice::Messages);
+        assert_eq!(parsed.legacy_theme, ThemeChoice::Messages);
         let mut cached = serde_json::to_value(crate::theme::Palette::dark()).unwrap();
         cached.as_object_mut().unwrap().remove("bubbles");
         let cached: crate::theme::Palette = serde_json::from_value(cached).unwrap();
         assert_eq!(cached.bubbles, crate::theme::BubbleStyle::WhatsApp);
     }
 
+    /// A file from before chat themes keeps its look: its one theme becomes
+    /// a chat theme, a mode and an accent, and an older release reading the
+    /// file back finds the nearest theme it knows.
+    #[test]
+    fn the_old_theme_menu_becomes_a_chat_theme_mode_and_accent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        for (old, chat_theme, mode, accent) in [
+            ("dark", ChatTheme::WhatsApp, Mode::Dark, Accent::Theme),
+            ("light", ChatTheme::WhatsApp, Mode::Light, Accent::Theme),
+            ("system", ChatTheme::Zeus, Mode::System, Accent::Theme),
+            ("nothingdark", ChatTheme::Zeus, Mode::Dark, Accent::Theme),
+            ("nothinglight", ChatTheme::Zeus, Mode::Light, Accent::Theme),
+            ("purple", ChatTheme::Zeus, Mode::Dark, Accent::Purple),
+        ] {
+            std::fs::write(&path, format!(r#"{{"version":1,"theme":"{old}"}}"#)).unwrap();
+            let settings = Settings::load(&path);
+            assert_eq!(
+                (settings.chat_theme, settings.mode, settings.accent),
+                (chat_theme, mode, accent),
+                "{old}"
+            );
+            assert_eq!(settings.version, SETTINGS_VERSION);
+            settings.save(&path).unwrap();
+            let written: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(written["theme"], old);
+        }
+        // A ported theme reads as Zeus's own in an older release, and comes
+        // back as itself.
+        let settings = Settings {
+            chat_theme: ChatTheme::Dracula,
+            mode: Mode::Light,
+            blur: false,
+            ..Settings::default()
+        };
+        settings.save(&path).unwrap();
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(written["theme"], "nothinglight");
+        let loaded = Settings::load(&path);
+        assert_eq!(loaded.chat_theme, ChatTheme::Dracula);
+        assert_eq!(loaded.mode, Mode::Light);
+        assert!(!loaded.blur);
+        assert!(!loaded.vibrant_window());
+    }
+
     #[test]
     fn unknown_and_missing_fields_are_tolerated() {
         let parsed: Settings =
             serde_json::from_str(r#"{"theme":"light","future_field":1}"#).expect("parses");
-        assert_eq!(parsed.theme, ThemeChoice::Light);
+        assert_eq!(parsed.legacy_theme, ThemeChoice::Light);
         assert!(parsed.enter_sends);
         assert!(parsed.check_for_updates);
         assert!(!parsed.download_updates_automatically);
@@ -1346,11 +1482,11 @@ mod tests {
     fn saves_through_the_writer_land_after_a_flush() {
         let dir = tempfile::tempdir().unwrap();
         let files = fastframe_file::Writer::new();
-        let settings = Settings {
-            theme: ThemeChoice::Messages,
+        let mut settings = Settings {
             check_for_updates: false,
             ..Settings::default()
         };
+        settings.set_theme(ThemeChoice::Messages);
         let settings_path = dir.path().join("settings.json");
         settings.save_to(&files, &settings_path).unwrap();
         let account = AccountSettings {

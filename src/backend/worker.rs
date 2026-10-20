@@ -6287,8 +6287,9 @@ impl Worker {
                 caption,
                 mentions,
                 quoting,
+                uploads,
             } => {
-                self.send_files(chat, paths, documents, caption, mentions, quoting);
+                self.send_files(chat, paths, documents, caption, mentions, quoting, uploads);
             }
             Command::SendImage {
                 chat,
@@ -6298,8 +6299,35 @@ impl Worker {
                 caption,
                 mentions,
                 quoting,
-            } => self.send_pasted_image(chat, width, height, rgba, caption, mentions, quoting),
-            Command::Outbound { chat, row, raw } => self.outbound(chat, *row, raw),
+                upload,
+            } => self.send_pasted_image(
+                chat, width, height, rgba, caption, mentions, quoting, upload,
+            ),
+            Command::Outbound {
+                chat,
+                row,
+                raw,
+                upload,
+            } => {
+                self.outbound(chat.clone(), *row, raw);
+                if let Some(upload) = upload {
+                    self.emit(Event::UploadEnded { chat, upload });
+                }
+            }
+            Command::UploadProgress {
+                chat,
+                upload,
+                sent,
+                total,
+            } => self.emit(Event::UploadProgress {
+                chat,
+                upload,
+                sent,
+                total,
+            }),
+            Command::UploadEnded { chat, upload } => {
+                self.emit(Event::UploadEnded { chat, upload });
+            }
             Command::SendSticker {
                 chat,
                 path,
@@ -9689,6 +9717,7 @@ impl Worker {
     }
 
     /// Dispatches selected files with the first attachment carrying the caption and quote.
+    #[allow(clippy::too_many_arguments)]
     fn send_files(
         &mut self,
         chat: ChatId,
@@ -9697,6 +9726,7 @@ impl Worker {
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
+        uploads: Vec<crate::model::UploadId>,
     ) {
         let unsent = |paths, caption| Unsent::Files {
             paths,
@@ -9706,11 +9736,13 @@ impl Worker {
         let mut quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
+                self.end_uploads(&chat, &uploads);
                 self.refuse(chat, quoting, unsent(paths, caption), reason);
                 return;
             }
         };
         let Some(client) = self.connected_client() else {
+            self.end_uploads(&chat, &uploads);
             self.refuse(chat, quoting, unsent(paths, caption), Refusal::Offline);
             return;
         };
@@ -9726,6 +9758,12 @@ impl Worker {
             // Like the caption, the reply belongs to the first file.
             let quote = quote.take();
             let commands = self.commands.clone();
+            let upload = uploads.get(index).copied();
+            let reporter = upload.map(|upload| UploadReporter {
+                commands: commands.clone(),
+                chat: chat.clone(),
+                upload,
+            });
             let chat = chat.clone();
             let dir = self.dirs.media_cache_dir();
             let me = self.me();
@@ -9737,7 +9775,7 @@ impl Worker {
                 Vec::new()
             };
             tokio::spawn(async move {
-                let outcome = async {
+                let outcome = follow_upload(reporter, async {
                     let bytes = tokio::fs::read(&path)
                         .await
                         .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -9756,7 +9794,7 @@ impl Worker {
                         &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                     )
                     .await
-                }
+                })
                 .await;
                 match outcome {
                     Ok((row, raw)) => {
@@ -9764,9 +9802,16 @@ impl Worker {
                             chat,
                             row: Box::new(row),
                             raw,
+                            upload,
                         });
                     }
                     Err(error) => {
+                        if let Some(upload) = upload {
+                            let _ = commands.send(Command::UploadEnded {
+                                chat: chat.clone(),
+                                upload,
+                            });
+                        }
                         let _ = commands.send(Command::Sent {
                             chat,
                             id: String::new(),
@@ -9789,7 +9834,9 @@ impl Worker {
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
+        upload: Option<crate::model::UploadId>,
     ) {
+        let uploads: Vec<_> = upload.into_iter().collect();
         let unsent = |rgba, caption| Unsent::Image {
             width,
             height,
@@ -9799,11 +9846,13 @@ impl Worker {
         let quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
+                self.end_uploads(&chat, &uploads);
                 self.refuse(chat, quoting, unsent(rgba, caption), reason);
                 return;
             }
         };
         let Some(client) = self.connected_client() else {
+            self.end_uploads(&chat, &uploads);
             self.refuse(chat, quoting, unsent(rgba, caption), Refusal::Offline);
             return;
         };
@@ -9817,8 +9866,13 @@ impl Worker {
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
         let me = self.me();
+        let reporter = upload.map(|upload| UploadReporter {
+            commands: commands.clone(),
+            chat: chat.clone(),
+            upload,
+        });
         tokio::spawn(async move {
-            let outcome = async {
+            let outcome = follow_upload(reporter, async {
                 let encoded = tokio::task::spawn_blocking(move || {
                     let image = image::RgbaImage::from_raw(width, height, rgba)
                         .ok_or_else(|| "Clipboard image data is invalid".to_owned())?;
@@ -9831,7 +9885,7 @@ impl Worker {
                     &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                 )
                 .await
-            }
+            })
             .await;
             match outcome {
                 Ok((row, raw)) => {
@@ -9839,9 +9893,16 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        upload,
                     });
                 }
                 Err(error) => {
+                    if let Some(upload) = upload {
+                        let _ = commands.send(Command::UploadEnded {
+                            chat: chat.clone(),
+                            upload,
+                        });
+                    }
                     let _ = commands.send(Command::Sent {
                         chat,
                         id: String::new(),
@@ -9898,6 +9959,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        upload: None,
                     });
                 }
                 Err(error) => {
@@ -9971,6 +10033,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        upload: None,
                     });
                 }
                 Err(error) => {
@@ -10030,6 +10093,7 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
+                        upload: None,
                     });
                 }
                 Err(error) => {
@@ -10044,6 +10108,16 @@ impl Worker {
     }
 
     /// Archives and sends an uploaded attachment message.
+    /// Tells the interface these uploads will not happen.
+    fn end_uploads(&self, chat: &ChatId, uploads: &[crate::model::UploadId]) {
+        for &upload in uploads {
+            self.emit(Event::UploadEnded {
+                chat: chat.clone(),
+                upload,
+            });
+        }
+    }
+
     fn outbound(&mut self, chat: ChatId, row: Message, raw: Vec<u8>) {
         let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
             self.emit(Event::Error("Not connected to WhatsApp".to_owned()));
@@ -11280,6 +11354,126 @@ fn thumbnail_jpeg(image: &image::DynamicImage) -> Option<Vec<u8>> {
     encode_jpeg(&small, 60).ok()
 }
 
+tokio::task_local! {
+    /// Where the upload of the file a task is sending reports its progress,
+    /// set by [`follow_upload`] around the task's work.
+    static UPLOAD: UploadReporter;
+}
+
+/// Reports one upload's progress to the worker, which tells the interface.
+#[derive(Clone)]
+struct UploadReporter {
+    commands: tokio::sync::mpsc::UnboundedSender<Command>,
+    chat: ChatId,
+    upload: crate::model::UploadId,
+}
+
+impl UploadReporter {
+    fn report(&self, sent: u64, total: u64) {
+        let _ = self.commands.send(Command::UploadProgress {
+            chat: self.chat.clone(),
+            upload: self.upload,
+            sent,
+            total,
+        });
+    }
+}
+
+/// Runs `work` with its upload, if it has one, reporting progress.
+async fn follow_upload<T>(
+    reporter: Option<UploadReporter>,
+    work: impl std::future::Future<Output = T>,
+) -> T {
+    match reporter {
+        Some(reporter) => UPLOAD.scope(reporter, work).await,
+        None => work.await,
+    }
+}
+
+/// How often an upload's progress reaches the interface at most.
+const UPLOAD_REPORT_INTERVAL: Duration = Duration::from_millis(80);
+
+/// The encrypted file as the library streams it to WhatsApp, counting what
+/// it has read.
+struct CountedUpload {
+    bytes: Arc<[u8]>,
+    reporter: UploadReporter,
+}
+
+impl whatsapp_rust::wacore::upload::UploadSource for CountedUpload {
+    fn len(&self) -> u64 {
+        (*self.bytes).len() as u64
+    }
+
+    fn reader_from(&self, offset: u64) -> std::io::Result<Box<dyn std::io::Read + Send>> {
+        let total = self.len();
+        let mut cursor = std::io::Cursor::new(Arc::clone(&self.bytes));
+        cursor.set_position(offset.min(total));
+        self.reporter.report(offset.min(total), total);
+        Ok(Box::new(CountingReader {
+            inner: cursor,
+            sent: offset.min(total),
+            total,
+            reported: Instant::now(),
+            reporter: self.reporter.clone(),
+        }))
+    }
+}
+
+struct CountingReader {
+    inner: std::io::Cursor<Arc<[u8]>>,
+    sent: u64,
+    total: u64,
+    reported: Instant,
+    reporter: UploadReporter,
+}
+
+impl std::io::Read for CountingReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        let read = std::io::Read::read(&mut self.inner, buffer)?;
+        self.sent += read as u64;
+        if self.reported.elapsed() >= UPLOAD_REPORT_INTERVAL || self.sent >= self.total {
+            self.reported = Instant::now();
+            self.reporter.report(self.sent, self.total);
+        }
+        Ok(read)
+    }
+}
+
+/// Encrypts and uploads media through the library. A file followed by
+/// [`follow_upload`] streams from memory so its progress can be counted;
+/// anything else goes in one piece.
+async fn upload_media(
+    client: &Client,
+    data: Vec<u8>,
+    media_type: MediaType,
+) -> anyhow::Result<whatsapp_rust::upload::UploadResponse> {
+    let Ok(reporter) = UPLOAD.try_with(UploadReporter::clone) else {
+        return client
+            .upload(data, media_type, UploadOptions::default())
+            .await;
+    };
+    let file_length = data.len() as u64;
+    let encrypted = tokio::task::spawn_blocking(move || {
+        whatsapp_rust::wacore::upload::encrypt_media_with_key_and_sidecar(
+            &data, media_type, None, None,
+        )
+    })
+    .await??;
+    let info = whatsapp_rust::wacore::upload::EncryptedMediaInfo {
+        media_key: encrypted.media_key,
+        file_sha256: encrypted.file_sha256,
+        file_enc_sha256: encrypted.file_enc_sha256,
+        file_length,
+        streaming_sidecar: encrypted.streaming_sidecar,
+    };
+    let source = CountedUpload {
+        bytes: Arc::from(encrypted.data_to_upload),
+        reporter,
+    };
+    client.upload_stream(source, info, media_type).await
+}
+
 /// Uploads a recording and builds a push-to-talk message with waveform.
 async fn prepare_voice(
     client: &Client,
@@ -11290,8 +11484,7 @@ async fn prepare_voice(
 ) -> Result<Prepared, String> {
     let mime = "audio/ogg; codecs=opus".to_owned();
     let size = bytes.len() as u64;
-    let upload = client
-        .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
+    let upload = upload_media(client, bytes.clone(), MediaType::Audio)
         .await
         .map_err(|error| error.to_string())?;
     let message = audio_message(upload, {
@@ -11360,8 +11553,7 @@ async fn prepare_media(
             encode_jpeg(&decoded, 88)?
         };
         let thumbnail = thumbnail_jpeg(&decoded);
-        let upload = client
-            .upload(jpeg.clone(), MediaType::Image, UploadOptions::default())
+        let upload = upload_media(client, jpeg.clone(), MediaType::Image)
             .await
             .map_err(|error| error.to_string())?;
         let mut message = image_message(upload, {
@@ -11409,8 +11601,7 @@ async fn prepare_media(
             .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
         let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
         let seconds = poster.as_ref().map(|poster| poster.seconds);
-        let upload = client
-            .upload(bytes.clone(), MediaType::Video, UploadOptions::default())
+        let upload = upload_media(client, bytes.clone(), MediaType::Video)
             .await
             .map_err(|error| error.to_string())?;
         let mut message = video_message(upload, {
@@ -11449,8 +11640,7 @@ async fn prepare_media(
     }
     if let Some(audio_mime) = whatsapp_audio_mime(mime) {
         let mime_owned = audio_mime.to_owned();
-        let upload = client
-            .upload(bytes.clone(), MediaType::Audio, UploadOptions::default())
+        let upload = upload_media(client, bytes.clone(), MediaType::Audio)
             .await
             .map_err(|error| error.to_string())?;
         let message = audio_message(
@@ -11486,8 +11676,7 @@ async fn prepare_document(
 ) -> Result<Prepared, String> {
     let size = bytes.len() as u64;
     let mime_owned = mime.to_owned();
-    let upload = client
-        .upload(bytes.clone(), MediaType::Document, UploadOptions::default())
+    let upload = upload_media(client, bytes.clone(), MediaType::Document)
         .await
         .map_err(|error| error.to_string())?;
     let name = file_name.unwrap_or("file").to_owned();
@@ -11527,8 +11716,7 @@ async fn prepare_sticker(client: &Client, bytes: Vec<u8>) -> Result<Prepared, St
     })
     .await
     .map_err(|error| error.to_string())??;
-    let upload = client
-        .upload(bytes.clone(), MediaType::Sticker, UploadOptions::default())
+    let upload = upload_media(client, bytes.clone(), MediaType::Sticker)
         .await
         .map_err(|error| error.to_string())?;
     let message = {
@@ -19916,6 +20104,7 @@ mod receipt_tests {
                     caption: Some("Caption fixture".into()),
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
+                    uploads: Vec::new(),
                 },
                 Unsent::Files {
                     paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
@@ -19931,6 +20120,7 @@ mod receipt_tests {
                     caption: None,
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
+                    uploads: Vec::new(),
                 },
                 Unsent::Files {
                     paths: vec!["/fixture/c.png".into()],
@@ -19947,6 +20137,7 @@ mod receipt_tests {
                     caption: Some("Picture fixture".into()),
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
+                    upload: None,
                 },
                 Unsent::Image {
                     width: 1,

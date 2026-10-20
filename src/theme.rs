@@ -230,22 +230,52 @@ impl Palette {
 
     /// Nothing Dark with `rgb` as its accent: buttons, links, ticks, and
     /// own bubbles in a deep shade of it.
-    pub fn nothing_tinted([r, g, b]: [u8; 3]) -> Self {
-        let mut p = Self::nothing_dark();
-        let accent = Color32::from_rgb(r, g, b);
-        p.accent = accent;
-        p.accent_hover = accent.lerp_to_gamma(Color32::WHITE, 0.2);
+    pub fn nothing_tinted(rgb: [u8; 3]) -> Self {
+        Self::nothing_dark().with_accent(rgb)
+    }
+
+    /// This palette with `rgb` as its accent: buttons and switches in it,
+    /// links and ticks in a readable tint of it, and your own bubbles washed
+    /// with it (a deep shade in a dark palette, a pale one in a light one)
+    /// only as far as their text stays readable.
+    pub fn with_accent(mut self, [r, g, b]: [u8; 3]) -> Self {
+        let raw = Color32::from_rgb(r, g, b);
+        let accent = if self.dark {
+            raw
+        } else {
+            // A bright accent vanishes as text or a switch on white.
+            readable_on(self.panel, raw, Color32::BLACK, 3.0)
+        };
+        self.accent = accent;
+        self.accent_hover = if self.dark {
+            accent.lerp_to_gamma(Color32::WHITE, 0.2)
+        } else {
+            accent.lerp_to_gamma(Color32::BLACK, 0.15)
+        };
         // Dark text on a light accent (yellow), white on the rest.
+        let [r, g, b, _] = accent.to_array();
         let luma = 0.2126 * f32::from(r) + 0.7152 * f32::from(g) + 0.0722 * f32::from(b);
-        p.on_accent = if luma > 150.0 {
+        self.on_accent = if luma > 150.0 {
             Color32::from_rgb(0x12, 0x12, 0x12)
         } else {
             Color32::WHITE
         };
-        p.bubble_out = p.bubble_in.lerp_to_gamma(accent, 0.45);
-        p.link = accent.lerp_to_gamma(Color32::WHITE, 0.35);
-        p.read = p.link;
-        p
+        let mut wash = if self.dark { 0.45 } else { 0.25 };
+        loop {
+            self.bubble_out = self.bubble_in.lerp_to_gamma(raw, wash);
+            if wash <= 0.1 || contrast(self.text, self.bubble_out) >= 4.5 {
+                break;
+            }
+            wash -= 0.05;
+        }
+        let link = if self.dark {
+            raw.lerp_to_gamma(Color32::WHITE, 0.35)
+        } else {
+            accent
+        };
+        self.link = readable_on(self.chat, link, self.text, 4.5);
+        self.read = self.link;
+        self
     }
 
     /// Nothing OS inspired paper-white palette with translucent panels.
@@ -365,6 +395,9 @@ impl Palette {
     /// The conversation's background on a vibrant theme: mostly `color`,
     /// with a little of the material behind the window showing through.
     pub fn vibrant_chat(&self, color: Color32) -> Color32 {
+        if !crate::backdrop::blur() {
+            return color;
+        }
         if self.bubbles == BubbleStyle::Nothing {
             translucent(color, if self.dark { 218 } else { 232 })
         } else {
@@ -375,6 +408,11 @@ impl Palette {
     /// The veil of a vibrant header over the frosted messages under it, a
     /// light one: its name and buttons sit on pills of their own.
     pub fn vibrant_header(&self, color: Color32) -> Color32 {
+        // Without the frost under it, a thin veil leaves the messages
+        // sharp under the title; it starts solid and eases out instead.
+        if !crate::backdrop::blur() {
+            return color;
+        }
         if self.bubbles == BubbleStyle::Nothing {
             return translucent(color, if self.dark { 184 } else { 210 });
         }
@@ -390,6 +428,9 @@ impl Palette {
     /// A glass pill under a vibrant header's name or buttons: much more of
     /// `color` than the veil, so text on it reads over any picture.
     pub fn vibrant_pill(&self, color: Color32) -> Color32 {
+        if !crate::backdrop::blur() {
+            return color;
+        }
         if self.bubbles == BubbleStyle::Nothing {
             return translucent(color, if self.dark { 224 } else { 238 });
         }
@@ -1032,6 +1073,7 @@ fastframe_icons::icons! {
         Archive => "archive",
         ArrowDown => "arrow-down",
         ArrowLeft => lucide "arrow-left",
+        ArrowUp => "arrow-up",
         Ban => "ban",
         Bell => "bell",
         BellOff => "bell-off",

@@ -97,20 +97,35 @@ name or description, in the interface language or in English.
 
 **Appearance**
 
-- **Theme**: dark, light, follow the system, Messages, or a local JSON
-  palette from the themes folder. See [Making a theme]({{ '/themes/' | relative_url }}).
-  **Messages** follows the system's light or dark appearance in macOS's
-  greys, with bubbles shaped, spaced and coloured as Messages on the Mac
-  draws them (yours in iMessage blue, shading deeper down the window), the
-  Mac's system blue for buttons and highlights, a frosted header that
-  messages scroll under, and photos without a bubble. Its sidebar and
-  conversation show the desktop through the window where the platform
-  offers a material: AppKit's on macOS, Mica on Windows 11 22H2 and later,
-  and Hyprland's blur on Linux. Elsewhere, including other Linux desktops,
-  where an unblurred desktop behind the sidebar would cost its text
-  contrast, and in a window opened before choosing it on Windows or Linux,
-  the window is opaque in the theme's colours; it turns translucent from
-  the next window.
+- **Preview**: a small conversation at the top of the section, drawn in the
+  colours chosen below, so every change shows before you leave Settings.
+- **Mode**: **System**, **Light** or **Dark**. System follows the operating
+  system's appearance (on Linux, the desktop portal's, and Omarchy's colours
+  with the Zeus theme).
+- **Accent**: the theme's own, or red, orange, yellow, green, teal, blue,
+  purple or pink, for buttons, switches, links, ticks and your own bubbles.
+  In a light mode a bright accent is darkened until it reads on white.
+  Messages keeps the system blue, and theme files keep their own.
+- **Chat theme**: cards for **Zeus** (monochrome glass), **WhatsApp**,
+  **Messages**, and the twenty themes of
+  [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
+  (Orchestrate, Vercel, GitHub, One, Catppuccin, Tokyo Night, Dracula, Nord,
+  Gruvbox, Rosé Pine, Solarized, Kanagawa, VS Code, Monokai, Material, Ayu,
+  Night Owl, Everforest, Vitesse and Flexoki), each with a light and a dark
+  palette. Local JSON palettes from the themes folder follow as **Theme
+  files**. See [Making a theme]({{ '/themes/' | relative_url }}).
+  **Messages** draws bubbles shaped, spaced and coloured as Messages on the
+  Mac draws them (yours in iMessage blue, shading deeper down the window),
+  the Mac's system blue for buttons and highlights, and photos without a
+  bubble.
+- **Blur**: every theme but WhatsApp draws glass: a frosted header that
+  messages scroll under, a frosted message field, and the desktop through
+  the sidebar and conversation where the platform offers a material:
+  AppKit's on macOS, Mica on Windows 11 22H2 and later, and Hyprland's blur
+  on Linux. Elsewhere, including other Linux desktops, the window is opaque
+  in the theme's colours. Turning Blur off makes every one of those surfaces
+  solid at once; turning it on again shows the desktop through a window
+  opened after the change.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.

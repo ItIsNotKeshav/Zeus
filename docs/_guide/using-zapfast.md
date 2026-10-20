@@ -208,6 +208,13 @@ caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
+A sent attachment appears at the end of the chat straight away, as your own
+message: a picture as itself, dimmed under a progress ring, and any other
+file as its card, with its icon ringed by the progress and how much has gone
+beside it. The ring turns while the file is read and encrypted, then fills as
+the upload goes, and the attachment's message takes its place once WhatsApp
+has the file.
+
 Pictures sent this way become photos, which WhatsApp shows inline but
 compresses: transparency and the file's metadata are lost. To send a picture as
 it is, choose **Send as document** in the plus menu beside the message field
