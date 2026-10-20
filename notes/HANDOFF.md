@@ -5,19 +5,18 @@ or an agent). Read this first, then [DECISIONS.md](DECISIONS.md) for why
 things are the way they are, [ARCHITECTURE.md](ARCHITECTURE.md) for how the
 app fits together, and [NOTES.md](NOTES.md) for commands and gotchas.
 
-Last updated: 2026-10-19.
+Last updated: 2026-10-20.
 
 ## Repository
 
 - Fork: `github.com/ItIsNotKeshav/zapfast` (remote `origin`). Upstream is
   `github.com/crmne/zapfast`.
-- Working branch: `codex/nothing-themes-fonts-auto-titlebar`, cut from this
-  fork's `main` at `d1fdf55` ("Move fastframe to 0.10.0"). The branch is not
-  behind `main`.
-- **Nothing on this branch since `b7b221a` is pushed.** `origin` has the
-  branch up to `b7b221a`; the four commits after it exist only locally.
+- All work is on `main`, pushed to `origin`. The feature branches are gone.
+- Since 2026-10-19 the app is **Zeus** (`src/brand.rs`), installed beside
+  ZapFast. How to build it and its installer is in [`AGENTS.md`](../AGENTS.md),
+  under "Zeus builds on Windows".
 - The project's own rules live in [`AGENTS.md`](../AGENTS.md). It asks for
-  trunk-based work on `main`; this fork has been using a feature branch.
+  trunk-based work on `main`, one topic per commit.
 
 ## What the branch contains
 

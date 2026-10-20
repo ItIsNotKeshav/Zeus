@@ -640,6 +640,47 @@ A release is not finished when the tag is pushed. Do these in order:
 - Never log message contents, phone numbers, keys, or QR payloads at a
   level that ships. The log file is meant to be attached to bug reports.
 
+## Zeus builds on Windows (this fork)
+
+This fork ships as Zeus (`src/brand.rs`), installed beside ZapFast. On the
+maintainer's Windows machine:
+
+- One command makes the release binary and the installer:
+  `packaging\windows\build-zeus.cmd`. It enters the Visual Studio 2019 Build
+  Tools environment, puts Scoop's perl first (Git Bash's perl cannot configure
+  OpenSSL, so never run a release build from Git Bash), builds into
+  `target-nmake` with NMake, and runs Inno Setup on
+  `packaging/windows/zeus.iss`. Out come `target-nmake/release/zeus.exe` and
+  `dist/zeus-<version>-x86_64-setup.exe`. A warm release build takes about
+  5 minutes; a cold one about 15.
+- Debug builds, tests and previews run from Git Bash with plain `cargo`: a
+  local, untracked `.cargo/config.toml` sets `target-nmake` and NMake.
+- To show the maintainer a change without their account, preview it with the
+  synthetic demo: `cargo build --features demo`, then
+  `target-nmake/debug/zeus.exe --demo-shot target-nmake/shots/NAME.png
+  --demo-page chat,nothing --demo-size 1333x780`, and look at the PNG (it is
+  1.5x, so divide pixels by 1.5 for points). Pages include `chat`, `light`,
+  `nothing`, `nothing-light`, `red` (and the other colour themes), `rail`,
+  `info`, `settings`, `calls`, `offline`, `connecting`; see `DEMO.md`.
+  `zeus.exe --demo` opens a live demo window to click around in. Motion
+  (send and receive animations, scrolling) does not show in a screenshot:
+  say so, and let the maintainer try it on their account.
+- To try a build on the maintainer's account, quit the installed copy
+  (`zeus.exe quit`), copy the new `zeus.exe` over
+  `%LOCALAPPDATA%\Programs\Zeus\zeus.exe`, start it, and check
+  `%LOCALAPPDATA%\paolino\zeus\data\zeus.log` says `link: connected`. Never
+  read chats out of its archive. Running a debug build over a running one
+  needs the running `.exe` renamed first; Windows locks it.
+- Share `dist/zeus-<version>-x86_64-setup.exe`. It installs per user without
+  administrator rights, under its own AppId, folder and uninstall entry, so it
+  never replaces ZapFast. Never reuse ZapFast's AppId or edit
+  `packaging/windows/zapfast.iss` for Zeus. The installer is unsigned, so
+  SmartScreen warns once.
+- Zeus has no update feed (`brand::UPDATES` is false); a new version reaches
+  people as a new installer.
+- More machine notes, including timings and microphone tests, are in
+  `notes/NOTES.md`; where the work stands is in `notes/HANDOFF.md`.
+
 ## Disk use
 
 Builds go through [mbx](https://mr-boxington.jdx.dev), enabled for mise users
