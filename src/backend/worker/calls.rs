@@ -230,25 +230,27 @@ impl Worker {
             self.emit_call(placing.not_placed());
             return;
         };
-        // A call opens on the system's default devices; the call screen's pickers move it to
-        // others while it runs.
+        // A call opens on the microphone Settings picked and the system's default speaker; the
+        // call screen's pickers move it to others while it runs.
         let devices = self.emit_call_devices().await;
         let camera = video
             .then(|| calls::default_camera(&devices, None))
             .flatten();
+        let input = self.preferred_microphone(&devices);
         let placed = Call::place(
             &client,
             generation,
             chat.to_string(),
             video,
-            None,
+            input.microphone,
             None,
             camera,
             &cancel,
         )
         .await;
         match placed {
-            Ok((call, frames)) => {
+            Ok((mut call, frames)) => {
+                self.prepare_input(&mut call, input.lost_devices);
                 let mut runtime = CallRuntime::new(call, frames);
                 runtime.watch();
                 let update = runtime.call.update();
@@ -307,11 +309,22 @@ impl Worker {
         let camera = video
             .then(|| calls::default_camera(&devices, None))
             .flatten();
+        let input = self.preferred_microphone(&devices);
         let (done, answers) = async_channel::bounded(1);
-        let joined =
-            Call::join_link(&client, generation, token, video, camera, &cancel, done).await;
+        let joined = Call::join_link(
+            &client,
+            generation,
+            token,
+            video,
+            input.microphone,
+            camera,
+            &cancel,
+            done,
+        )
+        .await;
         match joined {
-            Ok((call, frames)) => {
+            Ok((mut call, frames)) => {
+                self.prepare_input(&mut call, input.lost_devices);
                 let (tx, events) = async_channel::bounded(1);
                 // The join's answer, as the runtime's first event.
                 tokio::spawn(async move {
@@ -351,8 +364,9 @@ impl Worker {
                 // checked against the machine so one that vanished falls back rather than opening a
                 // stream that can never deliver.
                 let (microphone, speaker, camera) = runtime.call.selections();
-                let resolved =
+                let mut resolved =
                     calls::resolve_devices(&discover_devices().await, microphone, speaker, camera);
+                self.call_input.name_lost(&mut resolved.lost_devices);
                 let answered = runtime
                     .call
                     .answer(
@@ -456,6 +470,50 @@ impl Worker {
                 log::error!("[CALL] the camera could not be toggled: {error}");
                 self.emit(Event::Error(error.to_string()));
             }
+        }
+    }
+
+    /// The microphone Settings picked, checked against `devices`: one the machine no longer has
+    /// falls back to the system default, and the call screen says so.
+    fn preferred_microphone(&self, devices: &calls::DeviceList) -> calls::ResolvedDevices {
+        self.call_input.resolve(devices)
+    }
+
+    /// Readies a new call's microphone: push to talk starts closed, whatever was held during the
+    /// last call, and a picked microphone that is missing is reported.
+    pub(super) fn prepare_input(&mut self, call: &mut Call, lost: Vec<calls::LostDevice>) {
+        self.call_input.talking = false;
+        call.set_mic_open(self.call_input.mic_open());
+        if !lost.is_empty() {
+            call.set_lost_devices(lost);
+        }
+    }
+
+    /// What Settings say about the microphone, for the next call; push to talk applies to the
+    /// running one at once.
+    pub(super) fn set_call_input(
+        &mut self,
+        microphone: Option<crate::settings::SavedDevice>,
+        push_to_talk: bool,
+    ) {
+        self.call_input.microphone = microphone;
+        if push_to_talk != self.call_input.push_to_talk {
+            self.call_input.push_to_talk = push_to_talk;
+            self.call_input.talking = false;
+            self.apply_mic_open();
+        }
+    }
+
+    /// The push to talk key went down or up.
+    pub(super) fn set_call_talking(&mut self, talking: bool) {
+        self.call_input.talking = talking;
+        self.apply_mic_open();
+    }
+
+    fn apply_mic_open(&mut self) {
+        let open = self.call_input.mic_open();
+        if let Some(runtime) = self.call.as_mut() {
+            runtime.call.set_mic_open(open);
         }
     }
 
@@ -673,7 +731,10 @@ impl Worker {
             return;
         }
         let video = calls::offer_is_video(action);
-        let call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        let mut call = Call::ringing(chat, Box::new(incoming.clone()), video);
+        // Answering checks the picked microphone against the machine, so it is only named here.
+        call.set_microphone(self.call_input.microphone_id());
+        self.prepare_input(&mut call, Vec::new());
         let update = call.update();
         self.call = Some(CallRuntime::new(call, None));
         self.emit_call_devices().await;

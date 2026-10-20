@@ -194,8 +194,15 @@ protocol. These notes are for coding agents and new contributors.
   untried, so a group has no call button, and a group's voice call cannot gain video. Call
   updates are withheld during privacy recovery like other private content,
   and a locked chat's call shows only "Locked chat" until its folder opens.
-  Calls open the system default devices; the call screen's pickers apply to
-  the running call only and are not saved. Video: `src/camera.rs` reads
+  Calls open the microphone Settings picked (`Settings::microphone`, sent to
+  every backend as `Command::SetCallInput`, checked against the machine by
+  `InputPreferences::resolve`; voice messages record from it too) and the
+  system default speaker; the call screen's pickers apply to the running call
+  only and are not saved. Push to talk (`src/voice_input.rs`) is read from the
+  window's keys (`ui::keys::push_to_talk`) and the call screen's talk button;
+  only whether it is held goes to the call's backend (`SetCallTalking`), which
+  feeds the engine zeroed frames (`AudioInput::set_open`) and tells the peer
+  nothing, unlike mute. Each call starts closed. Video: `src/camera.rs` reads
   cameras through linuxvideo on Linux (pure Rust, no build-time bindings) and
   nokhwa on macOS and Windows, converts every layout to YUV 4:2:0, and the
   call's capture thread encodes it with openh264 (Constrained Baseline, 720p

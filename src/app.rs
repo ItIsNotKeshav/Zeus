@@ -732,6 +732,12 @@ pub struct App {
     pub call_devices: crate::calls::DeviceList,
     /// Whether the call screen shows its device pickers.
     pub call_devices_open: bool,
+    /// The microphones Settings offers.
+    pub microphones: crate::voice_input::MicrophoneScan,
+    /// The microphone Settings is listening to, while its check runs.
+    pub mic_check: Option<crate::voice_input::MicCheck>,
+    /// Push to talk's key and button, and what the call was last told.
+    pub push_to_talk: crate::voice_input::PushToTalk,
     /// Whether the full call screen is put aside so a chat can be read while
     /// the call runs. The call itself is untouched; a bar offers the way back.
     pub call_surface_hidden: bool,
@@ -1199,6 +1205,7 @@ impl App {
             })
             .ok();
         let folder = app.settings.download_folder.clone();
+        app.send_call_input();
         for account in &app.accounts {
             account
                 .backend
@@ -1463,6 +1470,9 @@ impl App {
             call_surface_until: None,
             call_devices: crate::calls::DeviceList::default(),
             call_devices_open: false,
+            microphones: crate::voice_input::MicrophoneScan::default(),
+            mic_check: None,
+            push_to_talk: crate::voice_input::PushToTalk::default(),
             call_surface_hidden: false,
             call_fullscreen: false,
             call_notified: None,
@@ -1734,6 +1744,7 @@ impl App {
                 }
             }
         };
+        account.backend.send(self.call_input());
         account.backend.send(Command::SetDownloadFolder(
             self.settings.download_folder.clone(),
         ));
@@ -6137,6 +6148,15 @@ impl App {
                 // The cache grows with every download: measure it again
                 // whenever Settings opens.
                 if page == Page::Settings && self.page != Page::Settings {
+                    self.refresh_microphones();
+                }
+                // Nothing listens to the microphone, or waits for a key,
+                // on a page nobody sees.
+                if page != Page::Settings {
+                    self.mic_check = None;
+                    self.push_to_talk.capturing = false;
+                }
+                if page == Page::Settings && self.page != Page::Settings {
                     self.storage_token += 1;
                     let token = self.storage_token;
                     self.backend.send(Command::LoadStorageStats { token });
@@ -7226,10 +7246,11 @@ impl App {
                     let recorder = if self.backend.is_offline() {
                         Recorder::simulated(self.waker.clone())
                     } else {
-                        Recorder::start(self.waker.clone())
+                        Recorder::start(self.waker.clone(), self.settings.microphone_id())
                     };
                     #[cfg(not(any(test, feature = "demo")))]
-                    let recorder = Recorder::start(self.waker.clone());
+                    let recorder =
+                        Recorder::start(self.waker.clone(), self.settings.microphone_id());
                     self.recording = Some(recorder);
                 }
             }
@@ -8225,6 +8246,32 @@ impl App {
                         .send(Command::SetDownloadFolder(folder.clone()));
                 }
             }
+            Action::SetMicrophone(device) => {
+                self.settings.microphone = device;
+                self.mark_settings_dirty();
+                self.send_call_input();
+                // A check in progress moves to the new microphone.
+                if self.mic_check.is_some() {
+                    self.start_mic_check();
+                }
+            }
+            Action::RefreshMicrophones => self.microphones.refresh(&self.waker),
+            Action::CheckMicrophone(on) => {
+                if on {
+                    self.start_mic_check();
+                } else {
+                    self.mic_check = None;
+                }
+            }
+            Action::SetPushToTalk(on) => {
+                self.settings.push_to_talk = on;
+                self.mark_settings_dirty();
+                self.send_call_input();
+            }
+            Action::SetPushToTalkKey(name) => {
+                self.settings.push_to_talk_key = name;
+                self.mark_settings_dirty();
+            }
             Action::SetKeepChatsArchived(keep) => {
                 self.settings.keep_chats_archived = keep;
                 self.mark_settings_dirty();
@@ -8575,7 +8622,9 @@ impl App {
         self.tick(ctx);
         self.tick_audio(ctx);
         self.tick_video(ctx);
+        self.tick_voice_input();
         self.apply_actions(ctx);
+        self.sync_push_to_talk();
         self.sync_prefetch();
         self.hold_media();
         self.follow_receipts();
@@ -9289,6 +9338,9 @@ impl App {
         }
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        // The key went down or up this frame: the call hears it now, not on
+        // the next event.
+        self.sync_push_to_talk();
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         self.theme_reveal.paint(ctx);
@@ -9913,6 +9965,9 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 
 mod calls;
 pub use calls::CallPerson;
+mod voice_input;
+#[cfg(any(test, feature = "demo"))]
+pub(crate) use voice_input::demo_microphones;
 
 #[cfg(test)]
 mod tests {
@@ -11591,6 +11646,73 @@ mod tests {
                 .any(|command| matches!(command, Command::SetKeepChatsArchived(false))),
             "the hidden account unarchives on new messages too"
         );
+    }
+
+    #[test]
+    fn the_microphone_and_push_to_talk_reach_every_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        let ctx = egui::Context::default();
+        let device = crate::settings::SavedDevice {
+            id: "usb-mic".into(),
+            name: "USB Microphone".into(),
+        };
+        app.apply(Action::SetMicrophone(Some(device.clone())), &ctx);
+        app.apply(Action::SetPushToTalk(true), &ctx);
+        assert_eq!(app.settings.microphone, Some(device.clone()));
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                command,
+                Command::SetCallInput { microphone: Some(ref picked), push_to_talk: true }
+                    if *picked == device
+            )),
+            "the hidden account's calls open the microphone and wait for the key too"
+        );
+    }
+
+    /// The call's own account hears when the push to talk key goes down and up, once each, and
+    /// nothing while push to talk is off or the window is not in front.
+    #[test]
+    fn push_to_talk_tells_the_calls_account_when_the_key_is_held() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = two_accounts(directory.path());
+        let mut call =
+            crate::calls::CallUpdate::placing(1, "15550001111@s.whatsapp.net".into(), false);
+        call.phase = crate::calls::CallPhase::Active;
+        app.call = Some(call);
+        app.call_account = Some(app.accounts[1].id.clone());
+        app.window_focused = true;
+        let mut talking = |app: &mut App| {
+            app.sync_push_to_talk();
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::SetCallTalking(held) => Some(held),
+                    _ => None,
+                })
+                .collect::<Vec<bool>>()
+        };
+        app.push_to_talk.key_held = true;
+        assert_eq!(talking(&mut app), Vec::<bool>::new(), "push to talk is off");
+        app.settings.push_to_talk = true;
+        assert_eq!(talking(&mut app), vec![true]);
+        assert_eq!(talking(&mut app), Vec::<bool>::new(), "said once");
+        app.push_to_talk.key_held = false;
+        app.push_to_talk.pointer_held = true;
+        assert_eq!(
+            talking(&mut app),
+            Vec::<bool>::new(),
+            "the button holds it too"
+        );
+        app.push_to_talk.pointer_held = false;
+        assert_eq!(talking(&mut app), vec![false]);
+        app.push_to_talk.key_held = true;
+        app.window_focused = false;
+        assert_eq!(
+            talking(&mut app),
+            Vec::<bool>::new(),
+            "a key held in another window is not ours"
+        );
+        assert!(!app.push_to_talk.key_held);
     }
 
     /// `zapfast quit` takes the tray's Quit path, and does even behind the

@@ -282,6 +282,52 @@ pub struct DeviceList {
     pub cameras: Vec<CameraDevice>,
 }
 
+/// What Settings say about a call's microphone: the device it opens, and
+/// whether push to talk keeps it silent until the key is held.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InputPreferences {
+    /// The microphone a call opens, and the name it was picked under; `None`
+    /// is the system default.
+    pub microphone: Option<crate::settings::SavedDevice>,
+    pub push_to_talk: bool,
+    /// Whether the push to talk key is held now.
+    pub talking: bool,
+}
+
+impl InputPreferences {
+    /// Whether the engine hears the microphone.
+    pub fn mic_open(&self) -> bool {
+        !self.push_to_talk || self.talking
+    }
+
+    /// The picked microphone's id.
+    pub fn microphone_id(&self) -> Option<String> {
+        self.microphone.as_ref().map(|device| device.id.clone())
+    }
+
+    /// The picked microphone checked against `list`. One the machine no
+    /// longer has falls back to the system default and is named as it was
+    /// picked, since the list cannot name it any more.
+    pub fn resolve(&self, list: &DeviceList) -> ResolvedDevices {
+        let mut resolved = resolve_devices(list, self.microphone_id(), None, None);
+        resolved.camera = None;
+        self.name_lost(&mut resolved.lost_devices);
+        resolved
+    }
+
+    /// Names the picked microphone, among devices a call gave up, as it was
+    /// picked rather than by its id.
+    pub fn name_lost(&self, lost: &mut [LostDevice]) {
+        if let Some(saved) = &self.microphone {
+            for lost in lost {
+                if lost.kind == DeviceKind::Microphone && lost.name == saved.id {
+                    lost.name.clone_from(&saved.name);
+                }
+            }
+        }
+    }
+}
+
 /// Which of the three kinds of call device a selection belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -1507,6 +1553,9 @@ pub struct Call {
     /// Active only once the peer has answered *and* there is a media path to talk over.
     media_ready: bool,
     mic: Option<AudioInput>,
+    /// Whether the engine hears the microphone: push to talk closes it
+    /// between presses. Kept for a microphone not yet open, as while ringing.
+    mic_open: bool,
     speaker: Option<AudioOutput>,
     video_pipe: Option<VideoPipeline>,
     remote_video: bool,
@@ -1771,6 +1820,7 @@ impl Call {
                 handle: Some(handle),
                 media_ready: false,
                 mic: Some(mic),
+                mic_open: true,
                 speaker: Some(output),
                 camera_wanted: video_pipe
                     .as_ref()
@@ -1814,6 +1864,7 @@ impl Call {
             handle: None,
             media_ready: false,
             mic: None,
+            mic_open: true,
             speaker: None,
             video_pipe: None,
             remote_video: false,
@@ -1839,11 +1890,12 @@ impl Call {
         generation: u64,
         token: String,
         video: bool,
+        microphone: Option<String>,
         camera: Option<String>,
         cancel: &AtomicBool,
         done: async_channel::Sender<std::result::Result<CallHandle, String>>,
     ) -> Result<(Self, Option<async_channel::Receiver<VideoTick>>)> {
-        if let Some(missing) = missing_audio_device_off_thread(None, None).await {
+        if let Some(missing) = missing_audio_device_off_thread(microphone.clone(), None).await {
             return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         let mut pipe = None;
@@ -1859,7 +1911,7 @@ impl Call {
         if cancel.load(Ordering::Relaxed) {
             return Err(Cancelled.into());
         }
-        let (mic, mic_rx) = AudioInput::spawn(None);
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
         let (output, output_tx) = AudioOutput::spawn(None);
         let endpoints = pipe
             .as_ref()
@@ -1899,6 +1951,7 @@ impl Call {
                 handle: None,
                 media_ready: false,
                 mic: Some(mic),
+                mic_open: true,
                 speaker: Some(output),
                 camera_wanted: video_pipe
                     .as_ref()
@@ -1907,7 +1960,7 @@ impl Call {
                 began: crate::util::now(),
                 video_pipe,
                 remote_video: false,
-                microphone: None,
+                microphone,
                 speaker_device: None,
                 camera,
                 lost_devices: Vec::new(),
@@ -1968,6 +2021,7 @@ impl Call {
             handle: None,
             media_ready: false,
             mic: None,
+            mic_open: true,
             speaker: None,
             video_pipe: None,
             remote_video: false,
@@ -2184,6 +2238,7 @@ impl Call {
         }
         require_video(self.video, pipe.is_some())?;
         let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
+        mic.set_open(self.mic_open);
         let (output, output_tx) = AudioOutput::spawn(speaker.clone());
 
         let voip = client.voip();
@@ -3021,6 +3076,28 @@ impl Call {
         log::warn!("[CALL] video upgrade refused call_id={}", self.call_id);
     }
 
+    /// Lets the engine hear the microphone, or feeds it silence, for push to
+    /// talk. Unlike [`Call::set_muted`] the peer is told nothing, so a press
+    /// costs no signaling and takes effect on the next frame.
+    pub fn set_mic_open(&mut self, open: bool) {
+        if self.mic_open != open {
+            log::debug!(
+                "[CALL] push to talk {}",
+                if open { "open" } else { "closed" }
+            );
+        }
+        self.mic_open = open;
+        if let Some(mic) = &self.mic {
+            mic.set_open(open);
+        }
+    }
+
+    /// Whether the engine hears the microphone, for tests.
+    #[cfg(test)]
+    pub(crate) fn mic_is_open(&self) -> bool {
+        self.mic_open
+    }
+
     /// Rebinds the microphone. The engine's channel is untouched.
     pub fn set_microphone(&mut self, device: Option<String>) -> CallUpdate {
         self.microphone = device.clone();
@@ -3199,6 +3276,65 @@ mod tests {
                 label: "Laptop Camera".to_owned(),
             }],
         }
+    }
+
+    /// A microphone picked in Settings opens while the machine has it; once it is gone the call
+    /// takes the default and names it as it was picked, not by the system's id.
+    #[test]
+    fn a_picked_microphone_falls_back_by_the_name_it_was_picked_under() {
+        let list = DeviceList {
+            microphones: vec![AudioDevice {
+                id: "usb-mic".into(),
+                label: "USB Microphone".into(),
+            }],
+            ..DeviceList::default()
+        };
+        let mut input = InputPreferences {
+            microphone: Some(crate::settings::SavedDevice {
+                id: "usb-mic".into(),
+                name: "USB Microphone".into(),
+            }),
+            ..InputPreferences::default()
+        };
+        let resolved = input.resolve(&list);
+        assert_eq!(resolved.microphone.as_deref(), Some("usb-mic"));
+        assert!(resolved.lost_devices.is_empty());
+        assert_eq!(resolved.camera, None, "a voice call opens no camera here");
+
+        input.microphone = Some(crate::settings::SavedDevice {
+            id: "{0.0.1.00000000}.{headset}".into(),
+            name: "Wireless Headset".into(),
+        });
+        let resolved = input.resolve(&list);
+        assert_eq!(resolved.microphone, None, "the system default instead");
+        assert_eq!(
+            resolved.lost_devices,
+            vec![LostDevice {
+                kind: DeviceKind::Microphone,
+                name: "Wireless Headset".into(),
+            }]
+        );
+
+        // An empty list means discovery could not run, and the pick stands.
+        let resolved = input.resolve(&DeviceList::default());
+        assert_eq!(
+            resolved.microphone.as_deref(),
+            Some("{0.0.1.00000000}.{headset}")
+        );
+    }
+
+    /// Push to talk keeps the microphone closed until the key is held; off, it is always open.
+    #[test]
+    fn push_to_talk_opens_the_microphone_only_while_held() {
+        let mut input = InputPreferences::default();
+        assert!(
+            input.mic_open(),
+            "without push to talk the microphone is heard"
+        );
+        input.push_to_talk = true;
+        assert!(!input.mic_open());
+        input.talking = true;
+        assert!(input.mic_open());
     }
 
     /// The pickers list what rodio reports, each device named and labelled.
@@ -4252,6 +4388,7 @@ mod tests {
             handle: None,
             media_ready: false,
             mic: None,
+            mic_open: true,
             speaker: None,
             video_pipe: None,
             remote_video: false,

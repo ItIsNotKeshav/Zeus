@@ -597,6 +597,8 @@ fn sections(app: &App) -> Vec<Section> {
         notifications.row(title, description, |ui, app| sound_control(ui, app, true));
     }
 
+    let voice = voice_section(app);
+
     let mut privacy = Section::new(translated(locale, "Privacy"));
     let receipts_note = if app.account_receipts_off {
         translated(locale, "Off for your account, so only groups get them.")
@@ -906,12 +908,232 @@ fn sections(app: &App) -> Vec<Section> {
         appearance,
         chats,
         notifications,
+        voice,
         privacy,
         system,
         account_section,
         files,
         about_section,
     ]
+}
+
+/// The microphone calls and voice messages use, a check of how it hears the
+/// room, and push to talk.
+fn voice_section(app: &App) -> Section {
+    let locale = app.locale;
+    let mut voice = Section::new(translated(locale, "Calls and voice"));
+    // A picked microphone the last scan did not find is named, so the reader
+    // knows why calls use another one. An empty scan proves nothing.
+    let missing = app.settings.microphone.as_ref().filter(|device| {
+        app.microphones
+            .found
+            .as_ref()
+            .is_some_and(|found| !found.is_empty() && !found.iter().any(|(id, _)| *id == device.id))
+    });
+    let description = match missing {
+        Some(device) => {
+            let text = translated(
+                locale,
+                "“{name}” is not connected. Zeus uses the system default until it is.",
+            );
+            Text {
+                shown: text.shown.replace("{name}", &device.name).into(),
+                source: text.source.replace("{name}", &device.name).into(),
+            }
+        }
+        None => translated(locale, "The input device for calls and voice messages."),
+    };
+    voice.row(
+        translated(locale, "Microphone"),
+        description,
+        microphone_picker,
+    );
+    voice.row(
+        translated(locale, "Check your microphone"),
+        translated(
+            locale,
+            "Speak and watch the level. Nothing is recorded or sent.",
+        ),
+        microphone_check,
+    );
+    voice.row(
+        translated(locale, "Push to talk"),
+        translated(
+            locale,
+            "During calls your microphone stays silent until you hold a key, or the talk button on the call screen.",
+        ),
+        |ui, app| {
+            let palette = app.palette;
+            let mut on = app.settings.push_to_talk;
+            let response = widgets::switch(ui, &palette, &mut on);
+            theme::reveal_focus(&response);
+            let label = crate::i18n::gettext(app.locale, "Push to talk");
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    on,
+                    label.as_ref(),
+                )
+            });
+            if response.changed() {
+                app.actions.push(Action::SetPushToTalk(on));
+            }
+        },
+    );
+    if app.settings.push_to_talk {
+        voice.row(
+            translated(locale, "Push to talk key"),
+            translated(
+                locale,
+                "Works while Zeus is in front. While you type a message, use an F key or open the call screen.",
+            ),
+            push_to_talk_key,
+        );
+    }
+    voice
+}
+
+/// The microphone list, with the system default first.
+fn microphone_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let default_label = crate::i18n::gettext(locale, "System default").into_owned();
+    let saved = app.settings.microphone.clone();
+    let selected = match &saved {
+        Some(device) => app
+            .microphones
+            .label(&device.id)
+            .unwrap_or(&device.name)
+            .to_owned(),
+        None => default_label.clone(),
+    };
+    let found = app.microphones.found.clone().unwrap_or_default();
+    let mut picked = None;
+    let response = egui::ComboBox::from_id_salt("settings-microphone")
+        .selected_text(selected)
+        .width(220.0_f32.min(ui.available_width()))
+        .truncate()
+        .show_ui(ui, |ui| {
+            if theme_option(ui, &palette, &default_label, saved.is_none()) {
+                picked = Some(None);
+            }
+            for (id, label) in &found {
+                let current = saved.as_ref().is_some_and(|device| device.id == *id);
+                if theme_option(ui, &palette, label, current) {
+                    picked = Some(Some(crate::settings::SavedDevice {
+                        id: id.clone(),
+                        name: label.clone(),
+                    }));
+                }
+            }
+        });
+    theme::reveal_focus(&response.response);
+    let scanning = app.microphones.scanning();
+    let refresh = ui
+        .add_enabled_ui(!scanning, |ui| {
+            theme::icon_button(
+                ui,
+                Icon::Refresh,
+                15.0,
+                palette.secondary,
+                palette.text,
+                &crate::i18n::gettext(locale, "Look for microphones again"),
+            )
+        })
+        .inner;
+    if refresh.clicked() {
+        app.actions.push(Action::RefreshMicrophones);
+    }
+    if let Some(device) = picked
+        && device != saved
+    {
+        app.actions.push(Action::SetMicrophone(device));
+    }
+}
+
+/// Listens to the picked microphone and shows how loud it hears the room.
+fn microphone_check(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let in_call = app.call.as_ref().is_some_and(|call| call.phase.is_live());
+    let checking = app.mic_check.is_some();
+    let label = if checking {
+        crate::i18n::gettext(locale, "Stop")
+    } else {
+        crate::i18n::gettext(locale, "Check")
+    };
+    let button = ui
+        .add_enabled_ui(!in_call, |ui| {
+            theme::soft_button(ui, &palette, Some(Icon::Mic), &label, checking)
+        })
+        .inner
+        .on_disabled_hover_text(crate::i18n::gettext(
+            locale,
+            "The call is using the microphone.",
+        ));
+    if button.clicked() {
+        app.actions.push(Action::CheckMicrophone(!checking));
+    }
+    let Some(check) = &app.mic_check else {
+        return;
+    };
+    if check.failure().is_some() {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Could not hear this microphone"),
+            theme::medium(12.5),
+            palette.danger,
+        );
+        return;
+    }
+    if !check.listening() {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Opening…"),
+            theme::medium(12.5),
+            palette.secondary,
+        );
+        return;
+    }
+    level_meter(ui, &palette, check.level());
+}
+
+/// A horizontal bar filled to `level`, from 0 to 1.
+fn level_meter(ui: &mut egui::Ui, palette: &Palette, level: f32) {
+    let (rect, response) = ui.allocate_exact_size(vec2(120.0, 6.0), Sense::hover());
+    let radius = CornerRadius::same(3);
+    ui.painter()
+        .rect_filled(rect, radius, palette.surface_active);
+    if level > 0.0 {
+        let filled = Rect::from_min_size(rect.min, vec2(rect.width() * level, rect.height()));
+        ui.painter().rect_filled(filled, radius, palette.accent);
+    }
+    let percent = (level * 100.0).round();
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::ProgressIndicator,
+            true,
+            format!("Microphone level {percent}%"),
+        )
+    });
+}
+
+/// The key push to talk listens for; clicked, it waits for the next key.
+fn push_to_talk_key(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let capturing = app.push_to_talk.capturing;
+    let label = if capturing {
+        crate::i18n::gettext(app.locale, "Press a key…").into_owned()
+    } else {
+        crate::voice_input::key_label(app.settings.push_to_talk_key())
+    };
+    let response = theme::soft_button(ui, &palette, Some(Icon::Keyboard), &label, capturing);
+    theme::reveal_focus(&response);
+    if response.clicked() {
+        // A flag of this view's own: the next key press is read in `keys`.
+        app.push_to_talk.capturing = !capturing;
+    }
 }
 
 /// The app lock: a password, how long ZapFast may go unused, and the form

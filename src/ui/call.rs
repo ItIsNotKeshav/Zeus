@@ -118,6 +118,25 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                 if !call.phase.is_live() {
                     return;
                 }
+                if app.settings.push_to_talk && call.phase.is_connected() {
+                    let locale = app.locale;
+                    let text = if call.muted {
+                        gettext(locale, "Muted").into_owned()
+                    } else if app.push_to_talk.held() {
+                        gettext(locale, "Talking").into_owned()
+                    } else if ui.ctx().text_edit_focused()
+                        && !crate::voice_input::free_while_typing(app.settings.push_to_talk_key())
+                    {
+                        // The key types into the field instead (see `keys::push_to_talk`).
+                        gettext(locale, "Push to talk paused while typing").into_owned()
+                    } else {
+                        let key = crate::voice_input::key_label(app.settings.push_to_talk_key());
+                        gettext(locale, "Hold {key} to talk").replace("{key}", &key)
+                    };
+                    ui.add_space(6.0);
+                    theme::text(ui, "·", theme::medium(13.0), palette.on_accent);
+                    theme::text(ui, text, theme::medium(13.0), palette.on_accent);
+                }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let locale = app.locale;
                     let hang_up = gettext(locale, "Hang up").into_owned();
@@ -268,8 +287,9 @@ fn live(
     corner_buttons(ui, app, call, area, remote.is_some());
 
     let controls_row = bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
+    let top = talk_button(ui, app, call, palette, area, controls_row.top() - 20.0);
     if app.call_devices_open && call.phase.is_live() {
-        let above = area.with_max_y(controls_row.top() - 20.0);
+        let above = area.with_max_y(top);
         bottom_row(ui, above, PICKER_HEIGHT, |ui| {
             devices(ui, app, call, palette)
         });
@@ -552,13 +572,13 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         }
 
         let open = app.call_devices_open;
-        let tip = gettext(locale, "Devices");
+        let tip = gettext(locale, "Microphone and speaker");
         let (fill, tint) = if open {
             (palette.text, palette.window)
         } else {
             (palette.surface_active, palette.text)
         };
-        if control(ui, Icon::Volume2, fill, tint, &tip, live).clicked() {
+        if control(ui, Icon::Settings, fill, tint, &tip, live).clicked() {
             app.call_devices_open = !open;
         }
 
@@ -577,6 +597,84 @@ fn controls(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palet
         }
     }
 }
+
+/// Push to talk's button, centred above the controls while push to talk is
+/// on: it shows whether the microphone is heard, and holding it with the
+/// pointer talks as holding the key does. `bottom` is where the row above
+/// the controls ends; returns where the next one up should end.
+fn talk_button(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    call: &CallUpdate,
+    palette: &Palette,
+    area: Rect,
+    bottom: f32,
+) -> f32 {
+    if !app.settings.push_to_talk || !call.phase.is_connected() {
+        app.push_to_talk.pointer_held = false;
+        return bottom;
+    }
+    let locale = app.locale;
+    let talking = app.push_to_talk.held() && !call.muted;
+    let (icon, text) = if call.muted {
+        (Icon::MicOff, gettext(locale, "Muted").into_owned())
+    } else if talking {
+        (Icon::Mic, gettext(locale, "Talking").into_owned())
+    } else {
+        let key = crate::voice_input::key_label(app.settings.push_to_talk_key());
+        (
+            Icon::Mic,
+            gettext(locale, "Hold {key} to talk").replace("{key}", &key),
+        )
+    };
+    let (fill, tint) = if talking {
+        (palette.accent, palette.on_accent)
+    } else {
+        (palette.surface_active, palette.text)
+    };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.clone(), theme::semibold(13.0), tint);
+    let size = vec2(galley.size().x + 15.0 + 8.0 + 2.0 * 16.0, TALK_HEIGHT);
+    let rect = Rect::from_center_size(
+        // A little nearer the controls than the rows above, as it belongs with them.
+        egui::pos2(area.center().x, bottom + 4.0 - TALK_HEIGHT / 2.0),
+        size,
+    );
+    // Dragging is how egui reports a button held down rather than clicked.
+    let response = ui.interact(
+        rect,
+        egui::Id::new(SURFACE).with("talk"),
+        egui::Sense::drag(),
+    );
+    app.push_to_talk.pointer_held = response.is_pointer_button_down_on();
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, text.as_str()));
+    let fill = if response.hovered() && !talking {
+        theme::blend(fill, palette.text, 0.06)
+    } else {
+        fill
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same((TALK_HEIGHT / 2.0) as u8), fill);
+    let icon_rect = Rect::from_min_size(
+        egui::pos2(rect.left() + 16.0, rect.center().y - 7.5),
+        Vec2::splat(15.0),
+    );
+    theme::paint_icon(ui, icon, icon_rect, 15.0, tint);
+    painter.galley(
+        egui::pos2(
+            icon_rect.right() + 8.0,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        tint,
+    );
+    rect.top() - 16.0
+}
+
+/// The height of push to talk's button.
+const TALK_HEIGHT: f32 = 34.0;
 
 /// The microphone and speaker pickers. Each one rebinds a live stream, so
 /// what it shows is what is in use; nothing about the system changes.
@@ -938,9 +1036,10 @@ fn group_live(
     corner_buttons(ui, app, call, area, false);
 
     let controls_row = bottom_row(ui, area, CONTROL, |ui| controls(ui, app, call, palette));
-    let mut bottom = controls_row.top() - 20.0;
+    let top = talk_button(ui, app, call, palette, area, controls_row.top() - 20.0);
+    let mut bottom = top;
     if app.call_devices_open && call.phase.is_live() {
-        let above = area.with_max_y(controls_row.top() - 20.0);
+        let above = area.with_max_y(top);
         let pickers = bottom_row(ui, above, PICKER_HEIGHT, |ui| {
             devices(ui, app, call, palette)
         });

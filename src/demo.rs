@@ -2003,6 +2003,19 @@ fn uploads_sample(app: &mut App) {
 
 /// Configures synthetic offline demo states and appearance for tests and screenshots.
 /// Audio fixtures vary voice-note and forwarding metadata independently without playback.
+/// Settings found at its Calls and voice section, with the demo's
+/// microphones listed and one of them picked.
+fn voice_settings_sample(app: &mut App) {
+    app.page = Page::Settings;
+    app.settings_search = "Calls and voice".to_owned();
+    app.microphones = crate::voice_input::MicrophoneScan::fixed(crate::app::demo_microphones());
+    app.settings.microphone = Some(crate::settings::SavedDevice {
+        id: "demo-usb".into(),
+        name: "USB Microphone".into(),
+    });
+    app.settings.push_to_talk = true;
+}
+
 pub fn apply_flags(app: &mut App, page: Option<&str>) {
     let Some(page) = page else {
         return;
@@ -2486,6 +2499,23 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            // Settings' microphone and push to talk, with a check listening.
+            "voice-settings" => {
+                voice_settings_sample(app);
+                app.mic_check = Some(crate::voice_input::MicCheck::start(
+                    crate::audio::Recorder::rehearsal(),
+                ));
+            }
+            // A picked microphone that is not plugged in.
+            "voice-settings-missing" => {
+                voice_settings_sample(app);
+                app.settings.microphone = Some(crate::settings::SavedDevice {
+                    id: "demo-bluetooth".into(),
+                    name: "Wireless Headset".into(),
+                });
+            }
+            // Push to talk on, for a call page drawn after it.
+            "push-to-talk" => app.settings.push_to_talk = true,
             choice if choice.starts_with("settings-search=") => {
                 app.page = Page::Settings;
                 app.settings_search = choice["settings-search=".len()..].to_owned();
@@ -6021,6 +6051,8 @@ mod tests {
             "settings-search=Notifications",
             "settings-search=System",
             "settings-search=Storage",
+            "voice-settings",
+            "voice-settings-missing",
             "clear-media",
             "wallpaper",
             "wallpaper,light",
@@ -6160,6 +6192,8 @@ mod tests {
             "call-connecting",
             "call-failed",
             "call-devices",
+            "call-active,push-to-talk",
+            "call-strip,push-to-talk",
             "call-ended",
             "call-strip",
             "call-group",
@@ -17580,7 +17614,7 @@ mod call_surface_tests {
         running.attach(&ctx);
         ctx.enable_accesskit();
         let shown = labels(&mut running, &ctx);
-        for expected in ["Mute", "Devices", "Hang up"] {
+        for expected in ["Mute", "Microphone and speaker", "Hang up"] {
             assert!(
                 shown.contains(&expected.to_owned()),
                 "{expected} is on the call screen: {shown:?}"
@@ -17616,7 +17650,7 @@ mod call_surface_tests {
             "Full screen",
             "Mute",
             "Start video",
-            "Devices",
+            "Microphone and speaker",
             "Hang up",
         ] {
             assert!(
