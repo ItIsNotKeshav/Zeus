@@ -157,7 +157,10 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         ui.ctx()
             .data_mut(|data| data.insert_temp(side_columns_id(), full_list));
         rail::show(app, ui, !full_list);
-        if full_list {
+        if full_list && app.page == Page::Settings {
+            // Settings puts its categories where the chats were.
+            settings::sidebar(app, ui);
+        } else if full_list {
             chats::show(app, ui);
         }
     }
@@ -678,7 +681,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
 }
 
 /// Whether the rail was drawn this frame, and the chat list beside it.
-fn side_columns_id() -> egui::Id {
+pub(crate) fn side_columns_id() -> egui::Id {
     egui::Id::new("side-columns")
 }
 

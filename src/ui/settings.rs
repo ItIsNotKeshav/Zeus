@@ -184,13 +184,14 @@ impl Section {
     }
 
     /// Draws the section, returning whether anything in it matched.
-    fn show(self, ui: &mut egui::Ui, app: &mut App, filter: &Filter) -> bool {
+    fn show(self, ui: &mut egui::Ui, app: &mut App, filter: &Filter, titled: bool) -> bool {
         let (title, entries) = self.visible(filter);
         if entries.is_empty() {
             return false;
         }
         let palette = app.palette;
-        section(ui, &palette, &title.shown, |ui| {
+        let title = if titled { title.shown } else { "".into() };
+        section(ui, &palette, &title, |ui| {
             for (row, control) in entries {
                 match control {
                     Control::Row(control) => widgets::setting_row(
@@ -217,6 +218,10 @@ impl Section {
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
+    let beside = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(super::side_columns_id()))
+        .unwrap_or(false);
     egui::ScrollArea::vertical()
         .id_salt("settings")
         .auto_shrink([false, false])
@@ -237,6 +242,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layout(Layout::top_down(Align::Min)),
                 |ui| {
                     ui.set_width(width);
+                    let all = sections(app);
+                    let searching = !app.settings_search.trim().is_empty();
+                    let section = app.settings_section.min(all.len().saturating_sub(1));
+                    // Beside its categories the page shows the one picked,
+                    // under its own name, or what a search finds.
+                    let one = beside.then_some(section).filter(|_| !searching);
+                    let heading = match one {
+                        Some(index) => all[index].title.shown.clone(),
+                        None => crate::i18n::gettext(locale, "Settings"),
+                    };
                     ui.horizontal(|ui| {
                         if theme::icon_button(
                             ui,
@@ -250,20 +265,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         {
                             app.actions.push(Action::Open(Page::Chats));
                         }
-                        theme::text(
-                            ui,
-                            crate::i18n::gettext(locale, "Settings"),
-                            theme::bold(24.0),
-                            palette.text,
-                        );
+                        theme::text(ui, heading.as_ref(), theme::bold(24.0), palette.text);
                     });
                     ui.add_space(14.0);
-                    search(app, ui);
-                    ui.add_space(6.0);
+                    if !beside {
+                        search(app, ui);
+                        ui.add_space(6.0);
+                    }
                     let filter = Filter::new(&app.settings_search);
                     let mut found = false;
-                    for section in sections(app) {
-                        found |= section.show(ui, app, &filter);
+                    for (index, section) in all.into_iter().enumerate() {
+                        if one.is_some_and(|one| one != index) {
+                            continue;
+                        }
+                        found |= section.show(ui, app, &filter, one.is_none());
                     }
                     if !found {
                         ui.add_space(24.0);
@@ -279,6 +294,137 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             ui.add_space(TOP_MARGIN);
         });
+}
+
+/// How tall a category row in the settings list is.
+const CATEGORY_ROW: f32 = 44.0;
+
+/// The icon beside a settings category, by its English name.
+fn category_icon(source: &str) -> Icon {
+    match source {
+        "Appearance" => Icon::Sun,
+        "Chats" => Icon::MessageCircle,
+        "Calls and voice" => Icon::Phone,
+        "Notifications" => Icon::Bell,
+        "Privacy" => Icon::Lock,
+        "System" => Icon::Monitor,
+        "Account" => Icon::User,
+        "Files" => Icon::Download,
+        "About" => Icon::Info,
+        _ => Icon::Settings,
+    }
+}
+
+/// The settings categories in the list column, where the chats are on the
+/// Chats tab, with the settings search above them.
+pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let panel = egui::Panel::left("settings-categories")
+        .resizable(false)
+        .exact_size(app.settings.sidebar_width)
+        .show_separator_line(false)
+        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
+            left: 4,
+            right: 8,
+            top: super::chats::HEADER_DROP as i8,
+            bottom: 0,
+        }));
+    panel.show(ui, |ui| {
+        Frame::new()
+            .inner_margin(Margin {
+                left: 14,
+                right: 14,
+                top: 8,
+                bottom: 8,
+            })
+            .show(ui, |ui| {
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), super::conversation::HEADER_ROW),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        theme::text(
+                            ui,
+                            crate::i18n::gettext(app.locale, "Settings"),
+                            theme::bold(20.0),
+                            palette.text,
+                        );
+                    },
+                );
+                ui.add_space(8.0);
+                search(app, ui);
+            });
+        ui.add_space(4.0);
+        let searching = !app.settings_search.trim().is_empty();
+        let titles: Vec<Text> = sections(app)
+            .into_iter()
+            .map(|section| section.title)
+            .collect();
+        let current = app.settings_section.min(titles.len().saturating_sub(1));
+        egui::ScrollArea::vertical()
+            .id_salt("settings-categories")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // Rows line up with the search field above them.
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let inner = ui.available_rect_before_wrap();
+                let inner = Rect::from_x_y_ranges(
+                    inner.left() + 8.0..=inner.right() - 4.0,
+                    inner.y_range(),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    for (index, title) in titles.iter().enumerate() {
+                        let selected = !searching && index == current;
+                        let (rect, response) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), CATEGORY_ROW),
+                            Sense::click(),
+                        );
+                        theme::reveal_focus(&response);
+                        theme::focus_outline(ui, response.id, rect, 12.0);
+                        if selected {
+                            ui.painter().rect_filled(rect, 12.0, palette.surface);
+                        } else if response.hovered() {
+                            ui.painter().rect_filled(rect, 12.0, palette.surface_hover);
+                        }
+                        let color = if selected {
+                            palette.text
+                        } else {
+                            palette.secondary
+                        };
+                        theme::paint_icon(
+                            ui,
+                            category_icon(&title.source),
+                            Rect::from_center_size(
+                                pos2(rect.left() + 26.0, rect.center().y),
+                                Vec2::splat(20.0),
+                            ),
+                            20.0,
+                            color,
+                        );
+                        ui.painter().text(
+                            pos2(rect.left() + 50.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            title.shown.as_ref(),
+                            theme::medium(15.0),
+                            if selected { palette.text } else { color },
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::SelectableLabel,
+                                ui.is_enabled(),
+                                selected,
+                                title.shown.as_ref(),
+                            )
+                        });
+                        if response
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            .clicked()
+                        {
+                            app.actions.push(Action::OpenSettingsSection(index));
+                        }
+                    }
+                });
+            });
+    });
 }
 
 /// Widest the settings column grows.
@@ -2317,9 +2463,11 @@ fn section(
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add_space(12.0);
-    theme::text(ui, title, theme::bold(18.0), palette.text);
-    ui.add_space(8.0);
+    if !title.is_empty() {
+        ui.add_space(12.0);
+        theme::text(ui, title, theme::bold(18.0), palette.text);
+        ui.add_space(8.0);
+    }
     Frame::new()
         .fill(theme::blend(palette.panel, palette.surface, 0.5))
         .stroke(Stroke::new(1.0, palette.outline))
