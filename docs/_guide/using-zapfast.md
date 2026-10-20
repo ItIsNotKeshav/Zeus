@@ -414,12 +414,18 @@ Voice messages play in the chat with a seekable waveform; audio files show a
 music icon and a seek bar instead. The chip beside the waveform or seek bar
 cycles the playback speed between 1x, 1.5x, and 2x. Right-click the
 message for every speed, including 1.25x and 1.75x. The choice is remembered
-for later messages. When a voice message ends, playback carries on through the
+for later messages. To give one chat its own speed, right-click the chat in the
+list and pick **Voice message speed**. That chat then always plays at its own
+speed, and the chip there changes only that chat. Pick **Default** to follow
+the speed of the other chats again. When a voice message ends, playback carries on through the
 voice messages right after it that you have not heard yet, as on the phone;
 any other message ends the run. The speaker's pitch stays the same at every
 speed. The first play sends
 a played receipt. When the composer is empty, the send button becomes a
-microphone. Press Enter or the send button to send the recording, or Escape or
+microphone. The light beside the time turns red, and the time starts, once the
+microphone delivers sound: one the system had put to sleep can take a moment to
+wake, and anything said before then is not recorded. Press Enter or the send
+button to send the recording, or Escape or
 the delete button to discard it. ZapFast raises the volume of quiet recordings.
 Starting a reply before recording includes the quoted message.
 
@@ -470,7 +476,7 @@ call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
 macOS (which asks once for permission), and Media Foundation on Windows. The
 Flatpak is allowed its devices for this, since Flatpak has no narrower
 permission for cameras.
-Calls use your platform's own audio (PipeWire or ALSA on Linux, Core Audio on
+Calls use your platform's own audio (PipeWire, PulseAudio or ALSA on Linux, Core Audio on
 macOS, WASAPI on Windows), with no echo cancellation of their own: use
 headphones, or your system's echo cancellation, when the speaker is loud.
 

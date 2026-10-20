@@ -154,9 +154,10 @@ protocol. These notes are for coding agents and new contributors.
   `src/call_tones.rs` synthesises the ETSI ringback (while `Ringing`) and
   the incoming ringtone (while the call's notification may sound) on the
   default output, and only tracks them in tests and demos;
-  `src/call_audio.rs` bridges the engine's 16 kHz frames to rodio's
-  microphone and speaker behind stable channels, so a device change rebinds
-  a stream instead of the call. `backend/worker/calls.rs` owns at most one
+  `src/call_audio.rs` bridges the engine's 16 kHz frames to a
+  fastframe-audio microphone and a speaker output of the call's own behind
+  stable channels, so a device change rebinds a stream instead of the call;
+  its pickers list and open devices by the system's id (`DeviceId`). `backend/worker/calls.rs` owns at most one
   call per account; the window (`app/calls.rs`) holds one call across all
   accounts with its `AccountId`, routes call actions to that account's
   backend, and declines another account's offer while one is up. Group
@@ -200,7 +201,13 @@ protocol. These notes are for coding agents and new contributors.
   adapts the bitrate (from 700 kbit/s) and the step of size and frame rate
   (480p15, 540p20, 720p20) to the peer's RTCP loss, its REMB, dropped video,
   and queue delay (the round trip from its reports' LSR/DLSR above the call's
-  shortest, since a deep buffer holds seconds before it loses); the camera is thinned to every nth frame of its measured rate and
+  shortest, since a deep buffer holds seconds before it loses), and climbs
+  quickly back only to just under where loss was last reported, slowly past it;
+  keyframes go out every five seconds unasked, and on the peer's request. The
+  call's heartbeat logs both directions' frame counts, keyframes and decode
+  failures, and the peer's H.264 profile (`src/call_diag.rs`);
+  `ZAPFAST_CALL_VIDEO_DUMP=<folder>` writes both directions' access units as
+  raw H.264 for offline analysis, never by default. The camera is thinned to every nth frame of its measured rate and
   stamped from capture time, never thinned by elapsed time; the peer's access
   units decode on a thread of their own and reach the window as
   `Event::CallVideo` frames. A camera that cannot open leaves a video call
@@ -284,7 +291,8 @@ protocol. These notes are for coding agents and new contributors.
   keyframe before the start (openh264 must not flush after each packet or
   B-frames stop it) and streams scaled frames with presentation times; the
   interface thread shows the due frame in one texture. `mp4` reads the AAC
-  track too, symphonia's AAC decoder decodes it, and rodio plays it; its
+  track too, symphonia's AAC decoder decodes it, and a rodio player on the
+  shared output plays it; its
   position steers the clock. rodio's own MP4 reader (symphonia 0.5's isomp4)
   is not used for it: it refuses WhatsApp's videos, whose `esds` carries a
   custom SLConfigDescriptor (#265). Unsupported formats
@@ -372,7 +380,7 @@ protocol. These notes are for coding agents and new contributors.
   showing without saying so (Hyprland does for a window covered by a
   fullscreen or maximized one, #190), and a vsync swap there blocks the event
   loop and its ping replies, so the compositor calls the app unresponsive.
-  The shared egui fork (crmne/egui apps-0.36, emilk/egui#8631) presents
+  The shared egui fork (crmne/egui apps-0.36.2, emilk/egui#8631) presents
   without a blocking swap on Wayland, paces frames by frame callbacks, and
   runs only `App::logic` when a redraw is 250 ms overdue; the winit fork
   (apps-0.30, rust-windowing/winit#4709) reports `suspended` as `Occluded`.
@@ -383,13 +391,20 @@ protocol. These notes are for coding agents and new contributors.
   (the `ogg` crate for the container, `opus` with libopus bundled and
   built by cmake for the codec, so cmake is a build dependency), plus
   the 64-bar waveform WhatsApp draws and a mono/48 kHz resampler.
-  `src/audio.rs` is the sound: `Player` plays one clip at a time through
-  rodio (OGG/Opus through `voice`, MP3/M4A/WAV through rodio's decoders,
-  decoded on a thread, the device opened on demand and released when the
-  clip ends) and `Recorder` reads the default microphone through rodio's
-  `Microphone` on a thread, keeping a loudness per 50 ms for the live bars.
-  Linux needs ALSA headers to build (`libasound2-dev` on Debian,
-  `alsa-lib` on Arch). `Action::PlayVoice/SeekVoice` drive the player from
+  `src/audio.rs` is the sound. Every sound and recording goes through
+  fastframe-audio, never rodio's or cpal's own devices: rodio only decodes
+  and mixes. `audio/output.rs` keeps one shared output on a thread of its
+  own (`open_output` hands out its mixer, to connect rodio players to); it
+  pauses while nothing is connected and lets the device go after a long
+  pause, so a player is dropped when its sound ends. Its `Mix` renderer
+  stands in for fastframe-audio's `MixerRender`, which mixes with rodio 0.21,
+  until that follows rodio's newer line. `audio/microphone.rs` is an input
+  read without blocking. `Player` plays one clip at a time (OGG/Opus through
+  `voice`, MP3/M4A/WAV through rodio's decoders, decoded on a thread) and
+  `Recorder` reads the default microphone on a thread, keeping a loudness
+  per 50 ms for the live bars. Linux needs ALSA's and libpipewire's headers
+  and clang to build (`libasound2-dev libpipewire-0.3-dev clang
+  libclang-dev` on Debian, `alsa-lib pipewire clang` on Arch). `Action::PlayVoice/SeekVoice` drive the player from
   the bubble, and a clip that ends hands its message back
   (`Player::take_finished`) so the app plays the next unheard voice message
   of the same run (`App::next_voice_after`), keeping other apps' media paused

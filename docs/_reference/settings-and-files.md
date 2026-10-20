@@ -278,3 +278,17 @@ the new one.
 Each run replaces `zapfast.log` and records warnings and errors, never
 message contents, phone numbers, or keys. Include the end of this file when
 reporting an issue. **Settings > Files > Log > Open** shows it.
+
+During a call the log also records the call's numbers every few seconds: the
+video rate, loss and keyframes in each direction, and the audio devices'
+health. They are counts and sizes only.
+
+### Saving a call's video for diagnosis
+
+To work on a video call's picture quality, start ZapFast with
+`ZAPFAST_CALL_VIDEO_DUMP` set to a folder. Each video call then writes the
+video it sends and the video it receives there, as raw H.264
+(`<time>-<call>-sent.h264` and `-received.h264`), which `ffmpeg` and media
+players read. Nothing is written without the variable. The files are the
+picture of both people on the call, so only set it for a call whose other side
+agreed, and delete the files when you are done.

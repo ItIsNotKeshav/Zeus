@@ -81,6 +81,11 @@ const CONGESTION_HOLD: Duration = Duration::from_secs(3);
 /// The rise for a clean report, and how often it may be applied.
 const RISE: f64 = 1.08;
 const RISE_EVERY: Duration = Duration::from_secs(1);
+/// Where a rate that met loss is remembered as the path's limit: a little under it.
+const LOSS_CEILING: f64 = 0.9;
+/// The rise past that limit: a slow probe, since the path lost video there not long ago. A real
+/// call climbed back to its old rate within ten seconds of each loss, and lost again there.
+const PROBE_RISE: f64 = 1.02;
 /// Reported loss above this is congestion; below `LOSS_CLEAN` the path is clean. Between the two
 /// the rate holds, since a few percent is what a healthy wireless link loses anyway.
 const LOSS_CONGESTED: f64 = 0.10;
@@ -213,6 +218,9 @@ pub struct RateControl {
     stepped_up_at: Option<Instant>,
     congested_at: Option<Instant>,
     raised_at: Option<Instant>,
+    /// A little under the rate the peer last reported loss at: clean reports climb quickly up to
+    /// it and slowly past it.
+    loss_ceiling: Option<u32>,
     /// The peer's latest estimate of what it can receive, and when it said so.
     estimate: Option<(u32, Instant)>,
     /// The shortest round trip of the call, the path with nothing queued, and the latest one.
@@ -236,6 +244,7 @@ impl RateControl {
             stepped_up_at: None,
             congested_at: None,
             raised_at: None,
+            loss_ceiling: None,
             estimate: None,
             round_trip_floor: None,
             round_trip: None,
@@ -295,11 +304,12 @@ impl RateControl {
         let before = self.setting;
         let reason = if loss > LOSS_CONGESTED {
             self.congested(now);
+            self.loss_ceiling = Some(scale(self.setting.bitrate, LOSS_CEILING).max(MIN_BITRATE));
             self.setting.bitrate = scale(self.setting.bitrate, 1.0 - loss / 2.0);
             Reason::Loss(loss)
         } else if loss < LOSS_CLEAN && self.may_rise(now) {
             self.raised_at = Some(now);
-            self.setting.bitrate = scale(self.setting.bitrate, RISE);
+            self.setting.bitrate = self.risen(self.setting.bitrate);
             Reason::Clean
         } else {
             return self.restep(now, before, Reason::Loss(loss));
@@ -376,6 +386,16 @@ impl RateControl {
             && now.duration_since(at) < STEP_UP_PROBATION
         {
             self.step_up_hold = (self.step_up_hold * 2).min(MAX_STEP_UP_HOLD);
+        }
+    }
+
+    /// The rate after one clean report: up by [`RISE`] to the loss ceiling, by [`PROBE_RISE`] past
+    /// it.
+    fn risen(&self, bitrate: u32) -> u32 {
+        match self.loss_ceiling {
+            Some(ceiling) if bitrate >= ceiling => scale(bitrate, PROBE_RISE),
+            Some(ceiling) => scale(bitrate, RISE).min(ceiling.max(scale(bitrate, PROBE_RISE))),
+            None => scale(bitrate, RISE),
         }
     }
 
@@ -723,6 +743,42 @@ mod tests {
             control.on_loss(0, now + Duration::from_millis(300)),
             None,
             "at most once a second"
+        );
+    }
+
+    #[test]
+    fn after_loss_the_rate_climbs_quickly_to_under_where_it_was_lost_and_slowly_past_it() {
+        let (mut control, _) = control();
+        let mut now = Instant::now();
+        for _ in 0..40 {
+            now += Duration::from_secs(1);
+            control.on_loss(0, now);
+        }
+        let top = control.setting().bitrate;
+        assert_eq!(top, TIERS[2].max_bitrate, "a clean call reaches the top");
+        // The peer loses a quarter of it, as a real call did at 1.5 Mbit/s.
+        now += Duration::from_secs(1);
+        control.on_loss(64, now);
+        let ceiling = scale(top, LOSS_CEILING);
+        now += CONGESTION_HOLD;
+        let mut seconds = 0;
+        while control.setting().bitrate < ceiling {
+            now += Duration::from_secs(1);
+            seconds += 1;
+            control.on_loss(0, now);
+        }
+        assert!(seconds <= 5, "back near the limit in {seconds} s");
+        assert_eq!(
+            control.setting().bitrate,
+            ceiling,
+            "and not past it in one step"
+        );
+        now += Duration::from_secs(1);
+        let change = control.on_loss(0, now).expect("still rises");
+        assert_eq!(
+            change.to.bitrate,
+            scale(ceiling, PROBE_RISE),
+            "slowly past it"
         );
     }
 

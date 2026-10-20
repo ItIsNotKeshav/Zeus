@@ -7,8 +7,8 @@ arch=('x86_64' 'aarch64')
 url="https://zapfast.rocks"
 license=('MIT' 'GPL-2.0-only')
 install="${pkgname}.install"
-depends=('alsa-lib' 'alsa-plugins' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
-makedepends=('cargo' 'cmake' 'perl')
+depends=('alsa-lib' 'libpipewire' 'libglvnd' 'libxkbcommon' 'libxkbcommon-x11' 'wayland' 'libx11' 'libxcb' 'libxcursor' 'libxi' 'libxrandr')
+makedepends=('cargo' 'cmake' 'perl' 'clang')
 optdepends=('org.freedesktop.secrets: archive encryption key storage'
             'noto-fonts-emoji: colour emoji in messages and reactions'
             'xdg-desktop-portal: the file picker for attachments')

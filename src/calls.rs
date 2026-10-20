@@ -592,6 +592,7 @@ impl CameraCapture {
         device: Option<String>,
         ticks: async_channel::Sender<VideoTick>,
         rate: Arc<RateShare>,
+        diag: Arc<crate::call_diag::CallVideo>,
     ) -> Result<Self> {
         let (frames, timed) = async_channel::bounded::<TimedVideoFrame>(4);
         let running = Arc::new(AtomicBool::new(true));
@@ -609,6 +610,7 @@ impl CameraCapture {
                     stopping: &stopping,
                     keyframe: &forced,
                     rate: &rate,
+                    diag: &diag,
                 };
                 capture(device, frames, ticks, controls, ready);
                 let _ = done.send(());
@@ -697,6 +699,8 @@ pub struct VideoPipeline {
     /// path has not changed because the camera did.
     rate: RateControl,
     rate_share: Arc<RateShare>,
+    /// What both directions' pictures did, counted for the heartbeat, and dumped when asked.
+    diag: Arc<crate::call_diag::CallVideo>,
     /// What the peer's RTCP feedback has asked of our video, for the heartbeat's log line.
     feedback: crate::video_rate::PeerFeedback,
     /// The WhatsApp extension of the peer's latest report on our video: 24 bytes of transport
@@ -712,32 +716,39 @@ impl VideoPipeline {
     /// frames to the UI. Waits for the camera, so it runs on a blocking thread.
     pub async fn start(
         device: Option<String>,
+        call_id: &str,
     ) -> Result<(Self, async_channel::Receiver<VideoTick>)> {
-        tokio::task::spawn_blocking(move || Self::start_blocking(device))
+        let diag = Arc::new(crate::call_diag::CallVideo::new(call_id));
+        tokio::task::spawn_blocking(move || Self::start_blocking(device, diag))
             .await
             .map_err(|error| anyhow!("the camera thread failed: {error}"))?
     }
 
     fn start_blocking(
         device: Option<String>,
+        diag: Arc<crate::call_diag::CallVideo>,
     ) -> Result<(Self, async_channel::Receiver<VideoTick>)> {
         // Room for a picture from each of several group members between two drains.
         let (ticks, tick_rx) = async_channel::bounded::<VideoTick>(8);
         let (remote_tx, remote_rx) = async_channel::bounded::<VideoFrame>(8);
-        decode_remote(remote_rx, ticks.clone());
+        decode_remote(remote_rx, ticks.clone(), Arc::clone(&diag));
         let rate_share = Arc::new(RateShare::default());
         let rate = RateControl::new(Arc::clone(&rate_share));
         // A machine without a camera, or one whose camera is busy, still takes part in a video
         // call: it sees the other side, its own camera reads as off, and the camera button says
         // why when pressed.
-        let camera =
-            match CameraCapture::start(device.clone(), ticks.clone(), Arc::clone(&rate_share)) {
-                Ok(camera) => Some(camera),
-                Err(error) => {
-                    log::warn!("[CALL] the video call goes on without our camera: {error}");
-                    None
-                }
-            };
+        let camera = match CameraCapture::start(
+            device.clone(),
+            ticks.clone(),
+            Arc::clone(&rate_share),
+            Arc::clone(&diag),
+        ) {
+            Ok(camera) => Some(camera),
+            Err(error) => {
+                log::warn!("[CALL] the video call goes on without our camera: {error}");
+                None
+            }
+        };
         Ok((
             Self {
                 ticks,
@@ -749,6 +760,7 @@ impl VideoPipeline {
                 feedback: Default::default(),
                 report_extension: Vec::new(),
                 peer_jitter: None,
+                diag,
             },
             tick_rx,
         ))
@@ -821,11 +833,12 @@ impl VideoPipeline {
         self.device = device.clone();
         let ticks = self.ticks.clone();
         let rate = Arc::clone(&self.rate_share);
+        let diag = Arc::clone(&self.diag);
         // The old camera is released first, on the same blocking thread, so the new one never
         // races it for the device.
         let camera = tokio::task::spawn_blocking(move || {
             drop(previous);
-            CameraCapture::start(device, ticks, rate)
+            CameraCapture::start(device, ticks, rate, diag)
         })
         .await
         .map_err(|error| anyhow!("the camera thread failed: {error}"))??;
@@ -904,6 +917,8 @@ struct CaptureControls<'a> {
     keyframe: &'a AtomicBool,
     /// The rate and the picture size the call's rate control last chose.
     rate: &'a RateShare,
+    /// Where what is sent is counted, and dumped when asked.
+    diag: &'a crate::call_diag::CallVideo,
 }
 
 /// How the camera's frames are being sent right now: at what size, how many of them, and how fast.
@@ -1007,8 +1022,16 @@ impl CameraEncoder {
     }
 }
 
+/// How often the camera sends a keyframe unasked.
+///
+/// A keyframe is several times a delta frame's size, and it leaves at once: on a path near its
+/// limit it is what gets lost. Every two seconds took a large share of a call's rate, and the peer
+/// asks for one whenever its decoder loses its reference (a real call's peer asked forty times in
+/// four minutes), so the unasked ones are only a backstop.
+const KEYFRAME_EVERY: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The H.264 encoder a call's camera feeds: Constrained Baseline, which is what WhatsApp's clients
-/// decode, with a keyframe every two seconds so a peer that lost one recovers on its own.
+/// decode, with a keyframe every [`KEYFRAME_EVERY`] so a peer that lost one recovers on its own.
 ///
 /// Rate control keeps to the bitrate rather than to a quality: on a call the bitrate is what the
 /// path carries, and an encoder that overshoots it on a busy scene is sending loss.
@@ -1025,7 +1048,9 @@ fn video_encoder(
         .bitrate(BitRate::from_bps(bitrate))
         .rate_control_mode(RateControlMode::Bitrate)
         .max_frame_rate(FrameRate::from_hz(fps as f32))
-        .intra_frame_period(IntraFramePeriod::from_num_frames((fps * 2.0).round() as u32))
+        .intra_frame_period(IntraFramePeriod::from_num_frames(
+            (fps * KEYFRAME_EVERY.as_secs_f64()).round() as u32,
+        ))
         .skip_frames(false);
     Encoder::with_api_config(openh264::OpenH264API::from_source(), config)
 }
@@ -1171,6 +1196,8 @@ fn capture_frames(
         if encode {
             match encoder.encode(&planes, keyframe) {
                 Ok(unit) => {
+                    controls.diag.counters.sent(&unit);
+                    controls.diag.sent.write(&unit);
                     let frame = TimedVideoFrame::builder()
                         .data(unit)
                         .timestamp(clock.stamp(captured))
@@ -1243,6 +1270,7 @@ impl openh264::formats::YUVSource for Yuv420<'_> {
 fn decode_remote(
     frames: async_channel::Receiver<VideoFrame>,
     ticks: async_channel::Sender<VideoTick>,
+    diag: Arc<crate::call_diag::CallVideo>,
 ) {
     let spawned = std::thread::Builder::new()
         .name("zapfast-remote-video".to_owned())
@@ -1254,7 +1282,24 @@ fn decode_remote(
             // The order the senders began in, so the cap lets go of the oldest stream.
             let mut order: std::collections::VecDeque<Option<Jid>> =
                 std::collections::VecDeque::new();
+            // What the peer's stream says of itself, logged when it changes: which H.264 features
+            // the decoder has to handle, and the picture's size.
+            let mut profile = None;
+            let mut size = (0, 0);
             while let Ok(frame) = frames.recv_blocking() {
+                diag.received.write(&frame.data);
+                if let Some(seen) = crate::call_diag::stream_profile(&frame.data)
+                    && profile != Some(seen)
+                {
+                    profile = Some(seen);
+                    log::info!(
+                        "[CALL] the peer's video is H.264 {} (profile_idc={} constraints=0x{:02x} level_idc={})",
+                        seen.name(),
+                        seen.profile,
+                        seen.constraints,
+                        seen.level
+                    );
+                }
                 let key = frame.sender.as_ref().map(Jid::to_non_ad);
                 if !streams.contains_key(&key) {
                     let Ok(decoder) = openh264::decoder::Decoder::new() else {
@@ -1312,6 +1357,11 @@ fn decode_remote(
                         if width == 0 || height == 0 {
                             continue;
                         }
+                        diag.counters.decoded();
+                        if (width, height) != size {
+                            size = (width, height);
+                            log::info!("[CALL] the peer's video decodes at {width}x{height}");
+                        }
                         // A member's picture fills a tile of a grid, never the window, so it is
                         // converted at a tile's size: a dozen full pictures a frame would be more
                         // than the interface thread can upload.
@@ -1337,6 +1387,7 @@ fn decode_remote(
                     }
                     Ok(None) => {}
                     Err(error) => {
+                        diag.counters.undecodable();
                         log::debug!("[CALL] remote video frame was not decodable: {error}");
                         let _ = ticks.try_send(VideoTick::Lost);
                     }
@@ -1665,7 +1716,7 @@ impl Call {
         // exists and before the peer is rung, because a video call must not silently become voice.
         let mut pipe = None;
         if video {
-            match VideoPipeline::start(camera.clone()).await {
+            match VideoPipeline::start(camera.clone(), "").await {
                 Ok((pipeline, frames)) => pipe = Some((pipeline, frames)),
                 Err(error) => log::warn!("[CALL] video pipeline could not start: {error}"),
             }
@@ -1797,7 +1848,7 @@ impl Call {
         }
         let mut pipe = None;
         if video {
-            match VideoPipeline::start(camera.clone()).await {
+            match VideoPipeline::start(camera.clone(), "").await {
                 Ok((pipeline, frames)) => pipe = Some((pipeline, frames)),
                 Err(error) => log::warn!("[CALL] video pipeline could not start: {error}"),
             }
@@ -2126,7 +2177,7 @@ impl Call {
         // ringing and the user can still decline it.
         let mut pipe = None;
         if self.video {
-            match VideoPipeline::start(camera.clone()).await {
+            match VideoPipeline::start(camera.clone(), &self.call_id).await {
                 Ok((pipeline, frames)) => pipe = Some((pipeline, frames)),
                 Err(error) => log::warn!("[CALL] video pipeline could not start: {error}"),
             }
@@ -2622,6 +2673,7 @@ impl Call {
             let rate = pipe.rate();
             let feedback = pipe.feedback;
             let (round_trip, floor) = pipe.rate.round_trips();
+            let counts = pipe.diag.counters.take();
             let millis = |time: Option<std::time::Duration>| {
                 time.map_or_else(|| "none".to_owned(), |time| time.as_millis().to_string())
             };
@@ -2629,7 +2681,8 @@ impl Call {
                 "[CALL] video send call_id={} at={} bitrate_kbps={} picture={} max_fps={} \
                  peer_nacked_packets={} peer_plis={} peer_firs={} peer_estimates={} \
                  peer_estimate_kbps={} rtt_ms={} rtt_floor_ms={} peer_jitter_ms={} \
-                 peer_report_extension={}",
+                 peer_report_extension={} encoded_frames={} keyframes={} largest_keyframe_kb={} \
+                 peer_frames_decoded={} peer_frames_undecodable={}",
                 self.call_id,
                 marker,
                 rate.bitrate / 1000,
@@ -2647,6 +2700,11 @@ impl Call {
                 pipe.peer_jitter
                     .map_or_else(|| "none".to_owned(), |ticks| (ticks / 90).to_string()),
                 crate::settings::hex(&pipe.report_extension),
+                counts.sent_frames,
+                counts.sent_keyframes,
+                counts.largest_keyframe / 1024,
+                counts.decoded,
+                counts.undecodable,
             );
         }
         self.log_audio_path(marker);
@@ -2918,7 +2976,7 @@ impl Call {
         self.note_transition("video requested");
         if self.video_pipe.is_none() {
             let request = self.peer_video_request.take();
-            let (pipe, frames) = VideoPipeline::start(camera.clone()).await?;
+            let (pipe, frames) = VideoPipeline::start(camera.clone(), &self.call_id).await?;
             self.media_stream_changed();
             self.camera_wanted = pipe.camera_running();
             self.video_pipe = Some(pipe);
@@ -3240,6 +3298,7 @@ mod tests {
             feedback: Default::default(),
             report_extension: Vec::new(),
             peer_jitter: None,
+            diag: Arc::new(crate::call_diag::CallVideo::new("test")),
         }
     }
 
@@ -3487,7 +3546,7 @@ mod tests {
             return;
         };
         eprintln!("driving {device} ({label})");
-        let (mut pipe, ticks) = VideoPipeline::start(Some(device.clone()))
+        let (mut pipe, ticks) = VideoPipeline::start(Some(device.clone()), "test")
             .await
             .expect("the camera opens");
         assert!(pipe.camera_running(), "a started camera reads as on");
@@ -3513,7 +3572,7 @@ mod tests {
     /// still arrives, and our own camera reads as off.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_video_call_goes_on_without_a_camera_it_cannot_open() {
-        let (pipe, _ticks) = VideoPipeline::start(Some("no such camera".to_owned()))
+        let (pipe, _ticks) = VideoPipeline::start(Some("no such camera".to_owned()), "test")
             .await
             .expect("the decoder side starts");
         assert!(!pipe.camera_running(), "the camera reads as off");

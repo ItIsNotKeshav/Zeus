@@ -42,13 +42,14 @@ jobs:
       matrix:
         include:
           # The oldest supported Ubuntu: the binary needs the glibc it was
-          # built against or newer (2.35), so the packages install on
-          # Ubuntu 22.04 and Debian 12 as well as newer releases.
-          - os: ubuntu-22.04
+          # built against or newer (2.39), so the packages install on
+          # Ubuntu 24.04 and Debian 13 and newer. 22.04's libpipewire is too
+          # old for the PipeWire output.
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           # A native arm64 runner, so the GUI's system libraries need no
           # cross-compilation sysroot.
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -73,7 +74,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev cmake perl
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
       # No compiler cache: published binaries never build from outputs
       # restored from an Actions cache.
       - run: cargo build --locked --release --target ${{ matrix.target }}
