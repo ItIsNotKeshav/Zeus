@@ -2960,6 +2960,17 @@ pub enum Action {
     SetDownloadFolder(Option<PathBuf>),
     /// Keeps archived chats archived when a new message comes, or not.
     SetKeepChatsArchived(bool),
+    /// Picks the microphone calls and voice messages use; `None` follows the
+    /// system default.
+    SetMicrophone(Option<crate::settings::SavedDevice>),
+    /// Lists the microphones again for Settings.
+    RefreshMicrophones,
+    /// Starts or stops listening to the microphone in Settings.
+    CheckMicrophone(bool),
+    /// Turns push to talk on or off.
+    SetPushToTalk(bool),
+    /// Binds push to talk to a key, by egui's name for it.
+    SetPushToTalkKey(String),
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
     /// Plays a notification sound once, as a preview.

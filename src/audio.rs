@@ -591,7 +591,7 @@ type Outcome = Arc<Mutex<Option<Result<Vec<f32>, String>>>>;
 
 /// Records until told to stop, pushing a level per 50 ms and calling the
 /// wake function after each, and returns the mono 48 kHz samples.
-type Take = fn(&AtomicBool, &Live, &dyn Fn()) -> Result<Vec<f32>, String>;
+type Take = Box<dyn FnOnce(&AtomicBool, &Live, &dyn Fn()) -> Result<Vec<f32>, String> + Send>;
 
 /// What a take shows while it records: a loudness per 50 ms, and when the
 /// microphone first delivered sound.
@@ -618,7 +618,7 @@ impl Live {
     }
 }
 
-/// Records from the default microphone until told to stop.
+/// Records from a microphone until told to stop.
 pub struct Recorder {
     stop: Arc<AtomicBool>,
     /// Loudness for each recorded 50 ms segment, and when sound first came.
@@ -631,8 +631,13 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    pub fn start(waker: Waker) -> Self {
-        Self::spawn(waker, record)
+    /// Records from `device`, the system's id for a microphone, or from the
+    /// system default when it is `None` or cannot be opened.
+    pub fn start(waker: Waker, device: Option<String>) -> Self {
+        Self::spawn(
+            waker,
+            Box::new(move |stop, live, wake| record(device, stop, live, wake)),
+        )
     }
 
     /// Records a synthetic voice instead of the microphone, at the pace a
@@ -640,7 +645,7 @@ impl Recorder {
     /// and sending it yields that many seconds of a speech-like tone.
     #[cfg(any(test, feature = "demo"))]
     pub fn simulated(waker: Waker) -> Self {
-        Self::spawn(waker, rehearse)
+        Self::spawn(waker, Box::new(rehearse))
     }
 
     fn spawn(waker: Waker, body: Take) -> Self {
@@ -802,13 +807,43 @@ fn rehearse(stop: &AtomicBool, live: &Live, wake: &dyn Fn()) -> Result<Vec<f32>,
     Ok(samples)
 }
 
-fn record(stop: &AtomicBool, live: &Live, wake: &dyn Fn()) -> Result<Vec<f32>, String> {
-    record_from(open_microphone, STALLED_MICROPHONE, stop, live, wake)
+fn record(
+    device: Option<String>,
+    stop: &AtomicBool,
+    live: &Live,
+    wake: &dyn Fn(),
+) -> Result<Vec<f32>, String> {
+    record_from(
+        move || open_microphone(device),
+        STALLED_MICROPHONE,
+        stop,
+        live,
+        wake,
+    )
 }
 
-/// Opens the default microphone, with its channel count and sample rate.
-fn open_microphone() -> Result<(Microphone, u16, u32), String> {
-    let microphone = Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?;
+/// Opens `device`, or the default microphone, with its channel count and
+/// sample rate. A picked device that will not open (unplugged since it was
+/// picked) gives way to the default, as a call's does, rather than leaving
+/// nothing to record from.
+fn open_microphone(device: Option<String>) -> Result<(Microphone, u16, u32), String> {
+    let picked = device.map(|id| {
+        Microphone::open(
+            fastframe_audio::Device::Id(fastframe_audio::DeviceId::new(id)),
+            "voice recording",
+            false,
+        )
+    });
+    let microphone = match picked {
+        Some(Ok(microphone)) => microphone,
+        Some(Err(error)) => {
+            log::warn!(
+                "recording: the picked microphone could not be opened ({error}); using the default"
+            );
+            Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?
+        }
+        None => Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?,
+    };
     let channels = microphone.channels();
     let rate = microphone.rate();
     Ok((microphone, channels, rate))
@@ -1527,7 +1562,7 @@ mod tests {
     #[test]
     #[ignore = "needs a microphone"]
     fn records_a_second_on_this_machine() {
-        let recorder = Recorder::start(Waker::default());
+        let recorder = Recorder::start(Waker::default(), None);
         // A suspended USB microphone takes a few hundred milliseconds to wake.
         let asked = Instant::now();
         while !recorder.listening() && asked.elapsed() < Duration::from_secs(3) {

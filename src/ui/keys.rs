@@ -7,6 +7,11 @@ use crate::model::{Action, Chat, Dialog, InfoView, Page, Scroll};
 
 /// Routes keyboard commands to actions, respecting overlays and text focus.
 pub fn handle(app: &mut App, ctx: &egui::Context) {
+    if app.push_to_talk.capturing {
+        capture_push_to_talk_key(app, ctx);
+        return;
+    }
+    push_to_talk(app, ctx);
     if app.picture_edit.is_some() {
         editor_keys(app, ctx);
         return;
@@ -501,6 +506,56 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
             .retain(|event| !crate::image_preview::consumes_key(event));
     });
     app.actions.extend(actions);
+}
+
+/// Binds the next key pressed to push to talk, for Settings. Nothing else
+/// sees the press; Escape cancels without binding.
+fn capture_push_to_talk_key(app: &mut App, ctx: &egui::Context) {
+    let Some(key) = ctx.input(|input| crate::voice_input::pressed_key(&input.events)) else {
+        return;
+    };
+    ctx.input_mut(|input| {
+        input
+            .events
+            .retain(|event| !matches!(event, egui::Event::Key { .. } | egui::Event::Text(_)));
+    });
+    app.push_to_talk.capturing = false;
+    if key != Key::Escape {
+        app.actions
+            .push(Action::SetPushToTalkKey(key.name().to_owned()));
+    }
+}
+
+/// Reads whether the push to talk key is held during a connected call.
+///
+/// While it applies the key is push to talk's alone: a focused button does
+/// not click, and on the call screen the composer under it types nothing.
+/// With the call screen put aside, a key that types gives way to a focused
+/// text field, so a message can still be written.
+fn push_to_talk(app: &mut App, ctx: &egui::Context) {
+    let connected = app
+        .call
+        .as_ref()
+        .is_some_and(|call| call.phase.is_connected());
+    let key = app.settings.push_to_talk_key();
+    let surface = app.call_surface_open();
+    let applies = app.settings.push_to_talk
+        && connected
+        && app.window_focused
+        && (surface || !ctx.text_edit_focused() || crate::voice_input::free_while_typing(key));
+    if !applies {
+        app.push_to_talk.key_held = false;
+        return;
+    }
+    app.push_to_talk.key_held = ctx.input(|input| input.key_down(key));
+    let typing = surface && !crate::voice_input::free_while_typing(key);
+    ctx.input_mut(|input| {
+        input.events.retain(|event| match event {
+            egui::Event::Key { key: pressed, .. } => *pressed != key,
+            egui::Event::Text(_) => !typing,
+            _ => true,
+        });
+    });
 }
 
 /// Handles keys while the cropper covers the window: Escape leaves the

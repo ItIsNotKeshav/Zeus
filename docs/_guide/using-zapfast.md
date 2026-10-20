@@ -448,8 +448,12 @@ you open the locked chats with their code.
 
 During a call the window shows the length of the call, counted from the moment
 the two sides are connected, and the controls along the bottom: mute, the
-microphone and speaker pickers, and hang up. Mute tells the other side, as on
-the phone. The arrow in the top corner puts the call screen aside: the call
+camera, the microphone and speaker pickers (the gear button), and hang up.
+Mute tells the other side, as on the phone. With **Push to talk** on in
+Settings, a button above the controls says **Hold Space to talk** (or your
+key): hold the key, or the button, to be heard, and let go to go quiet. The
+strip at the bottom of the window says the same while the call screen is put
+aside. The arrow in the top corner puts the call screen aside: the call
 keeps running in a strip at the bottom of the window with **Return to the
 call** and a hang-up button, and you can read and write in any chat meanwhile.
 Escape does the same, and leaves full screen first. Only hanging up ends a
@@ -469,9 +473,11 @@ rises to 720p at 20 frames a second while the other side reports a clean
 connection; when it reports loss, or the connection cannot keep up, ZapFast
 sends a smaller picture at a lower frame rate rather than one that freezes.
 
-Calls open the system's default microphone and speaker, and the first camera.
-The pickers move a call to another device while it runs without changing your
-system's defaults; a device that goes away falls back to the default, and the
+Calls open the microphone picked in **Settings > Calls and voice** (the
+system's default unless you pick another), the default speaker, and the first
+camera. Voice messages record from the same microphone. The pickers on the
+call screen move a call to another device while it runs without changing your
+system's defaults or the one in Settings; a device that goes away falls back to the default, and the
 call screen says so. Cameras come through Video4Linux on Linux, AVFoundation on
 macOS (which asks once for permission), and Media Foundation on Windows. The
 Flatpak is allowed its devices for this, since Flatpak has no narrower

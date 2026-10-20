@@ -562,6 +562,14 @@ pub struct Settings {
     pub download_updates_automatically: bool,
     /// Voice and audio playback speed multiplier.
     pub voice_speed: f32,
+    /// The microphone calls and voice messages use; `None` follows the
+    /// system default.
+    pub microphone: Option<SavedDevice>,
+    /// Keeps a call's microphone silent until [`Self::push_to_talk_key`] is
+    /// held.
+    pub push_to_talk: bool,
+    /// The key held to talk, by egui's name for it (`Key::name`).
+    pub push_to_talk_key: String,
     /// Pause other apps' media while recording, or while a voice message,
     /// audio, or video plays with sound.
     pub pause_other_media: bool,
@@ -644,6 +652,9 @@ impl Default for Settings {
             download_updates_automatically: false,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
+            microphone: None,
+            push_to_talk: false,
+            push_to_talk_key: DEFAULT_PUSH_TO_TALK_KEY.to_owned(),
             pause_other_media: true,
             pause_media_while_recording: None,
             pause_media_while_playing: None,
@@ -667,6 +678,17 @@ impl Default for Settings {
 /// 1. The wallpaper colours that were the defaults (Beige, and Black in dark
 ///    mode) become [`WallpaperColor::Theme`], the new default.
 pub const SETTINGS_VERSION: u32 = 1;
+
+/// The key push to talk starts on.
+pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
+
+/// An audio device picked in Settings: the system's id for it, which opens
+/// it, and the name it had, to say which one is missing when it is gone.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedDevice {
+    pub id: String,
+    pub name: String,
+}
 
 /// Optional build-time GIPHY key from `ZAPFAST_GIPHY_KEY`.
 /// The previous name remains accepted for existing build setups.
@@ -698,6 +720,19 @@ impl Settings {
             None
         };
         theme.map(|theme| theme.palette)
+    }
+
+    /// The push to talk key, or the default one when the saved name is not a
+    /// key this egui knows.
+    pub fn push_to_talk_key(&self) -> egui::Key {
+        egui::Key::from_name(&self.push_to_talk_key)
+            .filter(|key| *key != egui::Key::Escape)
+            .unwrap_or(egui::Key::Space)
+    }
+
+    /// The id of the microphone calls and voice messages open.
+    pub fn microphone_id(&self) -> Option<String> {
+        self.microphone.as_ref().map(|device| device.id.clone())
     }
 
     /// Returns the user key, built-in key, or `None`.

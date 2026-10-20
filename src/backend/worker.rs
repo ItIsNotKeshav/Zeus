@@ -711,6 +711,7 @@ pub async fn run(
         handle: None,
         call: None,
         call_devices: crate::calls::DeviceList::default(),
+        call_input: crate::calls::InputPreferences::default(),
         wa_sender,
         me_pn: None,
         me_lid: None,
@@ -1221,6 +1222,8 @@ struct Worker {
     /// The devices the call screen was last handed, kept so a device that goes away can be named
     /// by the description the user saw in the picker rather than by its node name.
     call_devices: crate::calls::DeviceList,
+    /// The microphone Settings picked, and push to talk.
+    call_input: crate::calls::InputPreferences,
 }
 
 /// A queued forward: where it goes, the protobuf, and its disappearing timer.
@@ -5978,6 +5981,11 @@ impl Worker {
             Command::RefreshCallDevices => {
                 self.emit_call_devices().await;
             }
+            Command::SetCallInput {
+                microphone,
+                push_to_talk,
+            } => self.set_call_input(microphone, push_to_talk),
+            Command::SetCallTalking(talking) => self.set_call_talking(talking),
             Command::LoadCallLog => self.emit_call_log(),
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),
             Command::PollHistoryFailed {
@@ -14229,6 +14237,38 @@ mod tests {
         );
     }
 
+    /// Push to talk follows the key on the running call, and a new call starts closed even when
+    /// the key was held as the last one ended.
+    #[test]
+    fn push_to_talk_follows_the_key_and_each_call_starts_closed() {
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        const PEER: &str = "fixture@s.whatsapp.net";
+        worker.call = Some(calls::CallRuntime::new(
+            crate::calls::Call::test_snapshot(PEER),
+            None,
+        ));
+        let open = |worker: &Worker| worker.call.as_ref().unwrap().call.mic_is_open();
+        assert!(open(&worker), "without push to talk the call is heard");
+        worker.set_call_input(None, true);
+        assert!(
+            !open(&worker),
+            "turning push to talk on closes the running call"
+        );
+        worker.set_call_talking(true);
+        assert!(open(&worker));
+        worker.set_call_talking(false);
+        assert!(!open(&worker));
+
+        worker.set_call_talking(true);
+        let mut next = crate::calls::Call::test_snapshot(PEER);
+        worker.prepare_input(&mut next, Vec::new());
+        assert!(!next.mic_is_open(), "a new call waits for the key");
+        assert!(!worker.call_input.talking);
+
+        worker.set_call_input(None, false);
+        assert!(open(&worker), "turning push to talk off opens it again");
+    }
+
     /// An album carries private thumbnails and paths, so it waits for the
     /// same authorized replay the rest of the archive content waits for.
     #[test]
@@ -16692,6 +16732,7 @@ mod receipt_tests {
             handle: None,
             call: None,
             call_devices: crate::calls::DeviceList::default(),
+            call_input: crate::calls::InputPreferences::default(),
             wa_sender,
             me_pn: Some(ME.to_owned()),
             me_lid: None,

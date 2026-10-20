@@ -166,6 +166,26 @@ name or description, in the interface language or in English.
   chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
   notifies. Settings for this account.
 
+**Calls and voice**
+
+- **Microphone**: the input device calls and voice messages use. **System
+  default** follows your system's choice. A picked microphone that is not
+  connected is named here, and calls and recordings use the system default
+  until it is back. The refresh button looks for devices again. Applies to
+  every account.
+- **Check your microphone**: listens to the picked microphone for up to 30
+  seconds and shows how loud it hears you. Nothing is recorded or sent, and
+  the check is not available during a call.
+- **Push to talk**: off by default. During calls the microphone stays silent
+  until you hold the push to talk key, or the talk button above the call
+  controls. The other side is not told, as it is with mute, and mute still
+  wins over a held key.
+- **Push to talk key**: Space by default. Click the button and press the key
+  to use; Escape cancels. The key works while ZapFast is the window in
+  front. On the call screen any key works; with the call screen put aside and
+  a message being typed, only the F keys and Insert do, so other keys still
+  type.
+
 **Privacy**
 
 - **Send read receipts**: the blue ticks others see, subject to the account

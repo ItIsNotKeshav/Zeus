@@ -475,6 +475,15 @@ pub enum Command {
     SetCallCameraDevice(Option<String>),
     /// Lists the microphones, speakers and cameras the call screen offers.
     RefreshCallDevices,
+    /// The microphone Settings picked for calls (`None` is the system
+    /// default) and whether push to talk keeps it silent between presses.
+    /// Process-wide, so every account's backend gets it.
+    SetCallInput {
+        microphone: Option<crate::settings::SavedDevice>,
+        push_to_talk: bool,
+    },
+    /// Whether the push to talk key is held, for the current call.
+    SetCallTalking(bool),
     /// Reads the account's call entries for the Calls page.
     LoadCallLog,
     /// Sends a played receipt for a voice message.

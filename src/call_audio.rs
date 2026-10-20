@@ -521,6 +521,10 @@ pub struct AudioInput {
     /// behind the engine's channel, from a reader that was restarted, and how it sees that a mute
     /// restarts nothing at all.
     pub opens: Arc<AtomicUsize>,
+    /// Whether the engine hears the microphone. Push to talk closes it; the
+    /// device keeps running behind it, so opening it again is instant and
+    /// tells the peer nothing.
+    open: Arc<AtomicBool>,
 }
 
 impl AudioInput {
@@ -535,21 +539,29 @@ impl AudioInput {
         // One per call, read by the test above and written by the pump below, so a reader that
         // survives a mute or a rebind is told from one that was started again.
         let opens = Arc::new(AtomicUsize::new(0));
+        let open = Arc::new(AtomicBool::new(true));
         tokio::spawn(mic_pump(
             out,
             swaps,
             fell,
             target.clone(),
             Arc::clone(&opens),
+            Arc::clone(&open),
         ));
         (
             Self {
                 swap: Some(swap),
                 fell_back,
                 opens,
+                open,
             },
             rx,
         )
+    }
+
+    /// Lets the engine hear the microphone, or feeds it silence instead.
+    pub fn set_open(&self, open: bool) {
+        self.open.store(open, Ordering::Relaxed);
     }
 
     /// Rebinds the microphone, keeping the engine's channel alive.
@@ -571,6 +583,7 @@ async fn mic_pump(
     fell: async_channel::Sender<()>,
     initial: Option<String>,
     opens: Arc<AtomicUsize>,
+    open: Arc<AtomicBool>,
 ) {
     let mut target = initial;
     loop {
@@ -604,7 +617,12 @@ async fn mic_pump(
             tokio::select! {
                 frame = reader.frames.recv() => {
                     match frame {
-                        Ok(frame) => {
+                        Ok(mut frame) => {
+                            // Closed, the engine is still fed whole frames, so its clock and
+                            // the peer's jitter buffer carry on as for a quiet room.
+                            if !open.load(Ordering::Relaxed) {
+                                frame.fill(0);
+                            }
                             if out.send(frame).await.is_err() {
                                 // The engine dropped its port: the call is over.
                                 return;
@@ -1603,6 +1621,51 @@ mod tests {
         assert!(
             got.iter().flatten().any(|sample| *sample != 0),
             "the frames carry what the microphone delivered"
+        );
+    }
+
+    /// Closed for push to talk, the engine gets whole frames of silence while the device keeps
+    /// running; opened again, it hears the microphone without the reader being restarted.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_closed_microphone_feeds_the_engine_silence_until_it_opens() {
+        let samples: Vec<f32> = (0..960)
+            .map(|sample| 0.1 + sample as f32 / 1_920.0)
+            .collect();
+        let (_devices, _speaker) = fake::install(samples, 1, 48_000, (48_000, 2));
+        let (input, frames) = AudioInput::spawn(None);
+        input.set_open(false);
+        let next = || async {
+            tokio::time::timeout(Duration::from_secs(5), frames.recv())
+                .await
+                .expect("a frame arrives")
+                .expect("the pump is running")
+        };
+        // Frames already queued before the gate closed may still carry sound.
+        for _ in 0..6 {
+            next().await;
+        }
+        for _ in 0..3 {
+            let frame = next().await;
+            assert_eq!(
+                frame.len(),
+                FRAME_SAMPLES,
+                "a closed gate keeps whole frames"
+            );
+            assert!(frame.iter().all(|sample| *sample == 0), "nothing is heard");
+        }
+        input.set_open(true);
+        let mut heard = false;
+        for _ in 0..10 {
+            if next().await.iter().any(|sample| *sample != 0) {
+                heard = true;
+                break;
+            }
+        }
+        assert!(heard, "an open gate lets the microphone through again");
+        assert_eq!(
+            input.opens.load(Ordering::Relaxed),
+            1,
+            "the reader was never restarted"
         );
     }
 
