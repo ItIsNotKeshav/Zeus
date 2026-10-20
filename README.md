@@ -25,10 +25,9 @@ written in Rust with [egui](https://www.egui.rs), with no browser engine
 inside. It links to your phone as a companion device, the way WhatsApp Web
 does, and keeps your chats in an encrypted archive on your own computer.
 
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/screenshot-light.png">
-  <img src="docs/screenshot.png" alt="Zeus showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview">
-</picture>
+<img src="docs/screenshot.png" alt="Zeus in dark mode, showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview">
+
+<img src="docs/screenshot-light.png" alt="The same conversation in Zeus's light mode">
 
 *The screenshots use made-up demo chats, never real conversations.*
 
