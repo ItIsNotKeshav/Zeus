@@ -1754,57 +1754,50 @@ fn motion_sample(app: &mut App, playing: bool) {
 /// one of them.
 fn media_replies_sample(app: &mut App) {
     let id = SAMPLES[0].id;
-    let now = crate::util::now();
-    let quote = || Quoted {
+    let conversation = app.conversations.entry(id.into()).or_default();
+    let last = conversation
+        .messages
+        .iter()
+        .map(|row| row.timestamp)
+        .max()
+        .unwrap_or_else(crate::util::now);
+    let mut alone = message(
+        id,
+        "demo-video-alone",
+        true,
+        last + 60,
+        Content::Video {
+            caption: None,
+            media: media("video/mp4", 820_000, Some(1280), Some(720)),
+            seconds: Some(11),
+            gif: false,
+            note: false,
+        },
+    );
+    let mut reply = message(
+        id,
+        "demo-photo-reply",
+        true,
+        last + 120,
+        Content::Image {
+            caption: None,
+            media: media("image/jpeg", 120_000, Some(1280), Some(720)),
+            motion: None,
+        },
+    );
+    reply.quoted = Some(Quoted {
         labelled: None,
         chat: None,
-        id: "demo-asked".into(),
+        id: "ada-photo".into(),
         sender: id.into(),
         sender_name: None,
-        summary: "Show me the engine running".into(),
+        summary: "The difference engine, finally assembled".into(),
         mentions: Vec::new(),
-    };
-    let video = |caption: Option<&str>| Content::Video {
-        caption: caption.map(str::to_owned),
-        media: media("video/mp4", 820_000, Some(1280), Some(720)),
-        seconds: Some(11),
-        gif: false,
-        note: false,
-    };
-    let mut rows = vec![
-        message(
-            id,
-            "demo-asked",
-            false,
-            now - 400,
-            Content::text("Show me the engine running"),
-        ),
-        message(id, "demo-video-alone", true, now - 300, video(None)),
-        message(
-            id,
-            "demo-photo-reply",
-            true,
-            now - 200,
-            Content::Image {
-                caption: None,
-                media: media("image/jpeg", 120_000, Some(1280), Some(720)),
-                motion: None,
-            },
-        ),
-        message(
-            id,
-            "demo-video-reply",
-            true,
-            now - 100,
-            video(Some("Here it is")),
-        ),
-    ];
-    for row in &mut rows[1..] {
+    });
+    for row in [&mut alone, &mut reply] {
         row.thumbnail = Some(stock::thumbnail(stock::LAUNCH));
     }
-    rows[2].quoted = Some(quote());
-    rows[3].quoted = Some(quote());
-    app.conversations.entry(id.into()).or_default().messages = rows;
+    conversation.messages.extend([alone, reply]);
     app.open_chat = Some(id.into());
 }
 
