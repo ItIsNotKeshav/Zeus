@@ -107,10 +107,21 @@ impl ChatTheme {
         self != Self::WhatsApp
     }
 
+    /// The looks a custom style starts from, with a mode and an accent of
+    /// your own.
+    pub const LOOKS: [ChatTheme; 3] = [Self::Zeus, Self::WhatsApp, Self::Messages];
+
+    /// Whether this is one of [`ChatTheme::LOOKS`] rather than a ready-made
+    /// theme.
+    pub fn is_look(self) -> bool {
+        Self::LOOKS.contains(&self)
+    }
+
     /// Whether an accent chosen in Settings applies. Messages keeps the
-    /// system blue its bubbles are drawn in.
+    /// system blue its bubbles are drawn in, and a ready-made theme its own
+    /// accent, since its colours were picked to go together.
     pub fn takes_accent(self) -> bool {
-        self != Self::Messages
+        matches!(self, Self::Zeus | Self::WhatsApp)
     }
 
     /// The theme's palette in the dark or light mode, with `accent` over its
@@ -139,6 +150,25 @@ impl ChatTheme {
         match accent.rgb() {
             Some(rgb) if self.takes_accent() => base.with_accent(rgb),
             _ => base,
+        }
+    }
+}
+
+/// How the colours are chosen: a look made your own with a mode and an
+/// accent, or a ready-made theme as its makers drew it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Style {
+    Custom,
+    Themes,
+}
+
+impl Style {
+    pub const ALL: [Style; 2] = [Self::Custom, Self::Themes];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Custom => "Custom",
+            Self::Themes => "Themes",
         }
     }
 }

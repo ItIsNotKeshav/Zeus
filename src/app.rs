@@ -400,6 +400,8 @@ pub struct App {
     applied_dark: Option<bool>,
     /// Reveals a new palette from the middle of the window outwards.
     theme_transition: fastframe_theme::Transition,
+    /// A chat theme picked in Settings, opening from its card.
+    theme_reveal: crate::theme_reveal::Reveal,
     /// Whether palette changes are revealed. Off in tests, whose frames send
     /// no screenshots and would hold the old palette.
     pub reveal_theme_changes: bool,
@@ -1303,6 +1305,7 @@ impl App {
             custom_themes: theme::Catalog::default(),
             applied_dark: None,
             theme_transition: fastframe_theme::Transition::default(),
+            theme_reveal: crate::theme_reveal::Reveal::default(),
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
             wallpaper_image: crate::wallpaper::CustomImage::default(),
@@ -5988,7 +5991,17 @@ impl App {
         // window's picture of it arrives.
         // A vibrant window's picture misses the desktop behind it, so changes
         // to or from one switch at once.
+        // A theme picked from its card opens from there, glass or not.
         if self.applied_dark.is_some()
+            && self.palette != palette
+            && self.reveal_theme_changes
+            && self.theme_reveal.wanted()
+        {
+            self.theme_reveal.begin(ctx);
+            if self.theme_reveal.holding(ctx) {
+                return;
+            }
+        } else if self.applied_dark.is_some()
             && self.palette != palette
             && self.reveal_theme_changes
             && !self.palette.vibrant()
@@ -8042,11 +8055,16 @@ impl App {
                 self.apply_theme(ctx);
             }
             Action::SetChatTheme(choice) => {
-                self.settings.chat_theme = choice;
-                self.settings.custom_theme = None;
-                self.settings.custom_theme_cache = None;
+                self.settings.choose_chat_theme(choice);
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
+            }
+            Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),
+            Action::SetStyle(style) => {
+                if self.settings.choose_style(style) {
+                    self.mark_settings_dirty();
+                    self.apply_theme(ctx);
+                }
             }
             Action::SetMode(mode) => {
                 self.settings.mode = mode;
@@ -9273,6 +9291,7 @@ impl App {
         self.apply_actions(ctx);
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
+        self.theme_reveal.paint(ctx);
         // Release the image caches of everything that scrolled away.
         crate::image_cache::sweep(ctx);
         // Only fading info toasts animate. Errors wait for the reader.

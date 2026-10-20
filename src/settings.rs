@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::chat_themes::{Accent, ChatTheme, Mode};
+use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use serde::{Deserialize, Serialize};
 
 /// Verifying the locked-chat code costs about 20 ms, paid once per distinct
@@ -482,9 +482,16 @@ pub struct Settings {
     pub mode: Mode,
     /// An accent over the theme's own.
     pub accent: Accent,
+    /// The look the Custom style last used, to return to from Themes.
+    pub last_look: ChatTheme,
+    /// The ready-made theme last used, to return to from Custom.
+    pub last_theme: ChatTheme,
     /// Frosted glass under the header and composer, and the desktop through
     /// the window where the platform offers it, for themes that draw glass.
     pub blur: bool,
+    /// Whether every bubble shows its time and ticks inside it. Zeus's own
+    /// look otherwise shows them below the bubble on a click.
+    pub always_show_time: bool,
     /// Whether a `"system"` theme is really Messages. The file says
     /// `"system"` for Messages, which releases before it read as Follow
     /// system instead of rejecting the whole file; this marks the rest.
@@ -625,7 +632,10 @@ impl Default for Settings {
             chat_theme: ChatTheme::WhatsApp,
             mode: Mode::Dark,
             accent: Accent::Theme,
+            last_look: ChatTheme::WhatsApp,
+            last_theme: ChatTheme::Catppuccin,
             blur: true,
+            always_show_time: false,
             messages_theme: false,
             font: FontChoice::GoogleSansFlex,
             interface_language: None,
@@ -739,7 +749,7 @@ impl Settings {
             ChatTheme::WhatsApp => ThemeChoice::Light,
             ChatTheme::Zeus if self.mode == Mode::System => ThemeChoice::System,
             _ if !dark => ThemeChoice::NothingLight,
-            _ => match self.accent {
+            ChatTheme::Zeus => match self.accent {
                 Accent::Red => ThemeChoice::Red,
                 Accent::Blue => ThemeChoice::Blue,
                 Accent::Green => ThemeChoice::Green,
@@ -748,7 +758,48 @@ impl Settings {
                 Accent::Yellow => ThemeChoice::Yellow,
                 _ => ThemeChoice::NothingDark,
             },
+            // A ready-made theme keeps its own accent.
+            _ => ThemeChoice::NothingDark,
         }
+    }
+
+    /// Whether the colours are a look made your own or a ready-made theme.
+    /// A theme file counts as a ready-made theme.
+    pub fn style(&self) -> Style {
+        if self.custom_theme.is_some() || !self.chat_theme.is_look() {
+            Style::Themes
+        } else {
+            Style::Custom
+        }
+    }
+
+    /// Draws the window in `choice`, leaving any theme file, and remembers
+    /// it for when its style is chosen again.
+    pub fn choose_chat_theme(&mut self, choice: ChatTheme) {
+        self.chat_theme = choice;
+        self.custom_theme = None;
+        self.custom_theme_cache = None;
+        if choice.is_look() {
+            self.last_look = choice;
+        } else {
+            self.last_theme = choice;
+        }
+    }
+
+    /// Switches to `style`, returning to the look or theme it last had.
+    /// Returns whether anything changed.
+    pub fn choose_style(&mut self, style: Style) -> bool {
+        if self.style() == style {
+            return false;
+        }
+        let choice = match style {
+            Style::Custom if self.last_look.is_look() => self.last_look,
+            Style::Custom => ChatTheme::WhatsApp,
+            Style::Themes if !self.last_theme.is_look() => self.last_theme,
+            Style::Themes => ChatTheme::Catppuccin,
+        };
+        self.choose_chat_theme(choice);
+        true
     }
 
     /// Whether the window's colours are light, dark, or the system's, for
@@ -1186,6 +1237,30 @@ mod tests {
     /// A file from before chat themes keeps its look: its one theme becomes
     /// a chat theme, a mode and an accent, and an older release reading the
     /// file back finds the nearest theme it knows.
+    #[test]
+    fn each_style_returns_to_the_look_or_theme_it_last_had() {
+        let mut settings = Settings {
+            accent: Accent::Red,
+            ..Settings::default()
+        };
+        assert_eq!(settings.style(), Style::Custom);
+        settings.choose_chat_theme(ChatTheme::Zeus);
+        assert!(settings.choose_style(Style::Themes));
+        assert_eq!(settings.chat_theme, ChatTheme::Catppuccin);
+        // A ready-made theme keeps its own accent; the chosen one waits.
+        assert_eq!(
+            settings.palette(true),
+            ChatTheme::Catppuccin.palette(true, Accent::Theme)
+        );
+        settings.choose_chat_theme(ChatTheme::Dracula);
+        assert!(!settings.choose_style(Style::Themes));
+        assert!(settings.choose_style(Style::Custom));
+        assert_eq!(settings.chat_theme, ChatTheme::Zeus);
+        assert_eq!(settings.accent, Accent::Red);
+        assert!(settings.choose_style(Style::Themes));
+        assert_eq!(settings.chat_theme, ChatTheme::Dracula);
+    }
+
     #[test]
     fn the_old_theme_menu_becomes_a_chat_theme_mode_and_accent() {
         let dir = tempfile::tempdir().unwrap();

@@ -7,7 +7,7 @@ use egui::{
 };
 
 use crate::app::App;
-use crate::chat_themes::{Accent, ChatTheme, Mode};
+use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
@@ -321,16 +321,6 @@ fn sections(app: &App) -> Vec<Section> {
     let palette = app.palette;
 
     let mut appearance = Section::new(translated(locale, "Appearance"));
-    let status = app
-        .custom_themes
-        .status(app.settings.custom_theme.as_deref());
-    let detail = if let Some(status) = status {
-        theme::theme_status(status).to_owned().into()
-    } else if app.custom_themes.follows_omarchy() {
-        translated(locale, "Follow system uses your Omarchy colours.")
-    } else {
-        Text::default()
-    };
     // The language first: it is what a reader who cannot read the rest
     // looks for.
     appearance.row(translated(locale, "Language"), "", language_picker);
@@ -339,22 +329,49 @@ fn sections(app: &App) -> Vec<Section> {
         chat_preview,
     );
     appearance.row(
-        translated(locale, "Mode"),
-        translated(locale, "Light, dark, or as the system is."),
-        mode_picker,
+        translated(locale, "Colours"),
+        translated(
+            locale,
+            "Make your own from a look, a mode and an accent, or pick a ready-made theme.",
+        ),
+        style_picker,
     );
-    appearance.block(
-        vec![
-            translated(locale, "Chat theme"),
-            translated(locale, "Theme"),
-            "Agent Orchestrator".into(),
-        ],
-        move |ui, app| theme_cards(ui, app, &detail),
-    );
-    appearance.block(
-        vec![translated(locale, "Accent"), translated(locale, "Colour")],
-        accent_picker,
-    );
+    match app.settings.style() {
+        Style::Custom => {
+            appearance.block(
+                vec![translated(locale, "Look"), translated(locale, "Theme")],
+                look_cards,
+            );
+            appearance.row(
+                translated(locale, "Mode"),
+                if app.custom_themes.follows_omarchy() {
+                    translated(locale, "Follow system uses your Omarchy colours.")
+                } else {
+                    translated(locale, "Light, dark, or as the system is.")
+                },
+                mode_picker,
+            );
+            appearance.block(
+                vec![translated(locale, "Accent"), translated(locale, "Colour")],
+                accent_picker,
+            );
+        }
+        Style::Themes => {
+            appearance.row(
+                translated(locale, "Mode"),
+                translated(locale, "Each theme comes in light and dark."),
+                mode_picker,
+            );
+            appearance.block(
+                vec![
+                    translated(locale, "Themes"),
+                    translated(locale, "Theme"),
+                    "Agent Orchestrator".into(),
+                ],
+                theme_cards,
+            );
+        }
+    }
     appearance.toggle(
         translated(locale, "Blur"),
         translated(
@@ -362,6 +379,14 @@ fn sections(app: &App) -> Vec<Section> {
             "Frosted glass under the chat header and the message field, and the desktop through the window where the system allows. Off keeps every surface solid.",
         ),
         |settings| &mut settings.blur,
+    );
+    appearance.toggle(
+        translated(locale, "Always show time"),
+        translated(
+            locale,
+            "The time and ticks inside every message, as WhatsApp shows them. Off, Zeus's look shows them below a message you click.",
+        ),
+        |settings| &mut settings.always_show_time,
     );
     appearance.row(
         translated(locale, "Font"),
@@ -1088,7 +1113,9 @@ fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description:
 }
 
 /// How tall the live preview of a conversation is.
-const PREVIEW_HEIGHT: f32 = 216.0;
+const PREVIEW_HEIGHT: f32 = 248.0;
+/// The room between the preview's edge and what is drawn in it.
+const PREVIEW_PAD: f32 = 20.0;
 
 /// A small conversation drawn in the colours on screen, so a change of
 /// theme, mode, accent or blur shows here as it does in the chats.
@@ -1103,11 +1130,11 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     }
     let text = |source: &'static str| crate::i18n::gettext(locale, source).into_owned();
     let painter = ui.painter_at(rect);
-    let radius = f32::from(theme::RADIUS) + 4.0;
+    let radius = f32::from(theme::RADIUS) + 12.0;
     painter.rect_filled(rect, radius, app.wallpaper().color);
     // The header, as the chat draws it: solid, or a veil over the messages
     // easing out under it.
-    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 46.0));
+    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 58.0));
     let header_fill = if palette.vibrant() {
         palette.vibrant_header(palette.chat)
     } else {
@@ -1123,7 +1150,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         },
         header_fill,
     );
-    let avatar = pos2(header.left() + 26.0, header.center().y);
+    let avatar = pos2(header.left() + PREVIEW_PAD + 14.0, header.center().y);
     painter.circle_filled(avatar, 14.0, palette.avatar(0.58));
     painter.text(
         avatar,
@@ -1152,11 +1179,11 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         let colours = palette.on_bubble(own);
         let galley = painter.layout_no_wrap(label, theme::regular(13.0), colours.text);
         let meta = if own { 30.0 } else { 0.0 };
-        let size = galley.size() + vec2(24.0 + meta, 14.0);
+        let size = galley.size() + vec2(28.0 + meta, 18.0);
         let left = if own {
-            rect.right() - 16.0 - size.x
+            rect.right() - PREVIEW_PAD - size.x
         } else {
-            rect.left() + 16.0
+            rect.left() + PREVIEW_PAD
         };
         let shape = Rect::from_min_size(pos2(left, top), size);
         let fill = if own {
@@ -1164,8 +1191,8 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         } else {
             palette.bubble_in
         };
-        painter.rect_filled(shape, 12.0, fill);
-        painter.galley(shape.min + vec2(12.0, 7.0), galley, colours.text);
+        painter.rect_filled(shape, 14.0, fill);
+        painter.galley(shape.min + vec2(14.0, 9.0), galley, colours.text);
         if own {
             let ticks = Rect::from_center_size(
                 pos2(shape.right() - 22.0, shape.center().y),
@@ -1181,15 +1208,21 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         }
         shape.bottom()
     };
-    let mut y = header.bottom() + 12.0;
+    let mut y = header.bottom() + 16.0;
     y = bubble(y, text("Did you see the new themes?"), false) + 6.0;
     y = bubble(y, text("Trying them all right now"), true) + 6.0;
     bubble(y, text("Pick one with a light mode too"), false);
 
     // The message field, on glass or a solid pill.
     let field = Rect::from_min_max(
-        pos2(rect.left() + 12.0, rect.bottom() - 40.0),
-        pos2(rect.right() - 52.0, rect.bottom() - 10.0),
+        pos2(
+            rect.left() + PREVIEW_PAD - 4.0,
+            rect.bottom() - PREVIEW_PAD - 30.0,
+        ),
+        pos2(
+            rect.right() - PREVIEW_PAD - 40.0,
+            rect.bottom() - PREVIEW_PAD + 2.0,
+        ),
     );
     let field_fill = if palette.vibrant() {
         palette.glass()
@@ -1198,14 +1231,14 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     };
     painter.rect_filled(field, field.height() / 2.0, field_fill);
     painter.text(
-        pos2(field.left() + 14.0, field.center().y),
+        pos2(field.left() + 16.0, field.center().y),
         egui::Align2::LEFT_CENTER,
         text("Message"),
         theme::regular(13.0),
         palette.dim,
     );
-    let send = pos2(rect.right() - 28.0, field.center().y);
-    painter.circle_filled(send, 15.0, palette.accent);
+    let send = pos2(rect.right() - PREVIEW_PAD - 14.0, field.center().y);
+    painter.circle_filled(send, 16.0, palette.accent);
     theme::paint_icon(
         ui,
         Icon::Send,
@@ -1221,27 +1254,33 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     );
 }
 
-/// Light, dark or system, as three segments of one control.
-fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let custom = app.settings.custom_theme.is_some();
-    let selected = (!custom).then_some(app.settings.mode);
-    let segment = vec2(72.0, 30.0);
+/// Options as segments of one pill, the selected one filled with the
+/// accent. Returns the option clicked.
+fn segmented<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    salt: &str,
+    options: &[(T, std::borrow::Cow<'_, str>)],
+    selected: Option<T>,
+    width: f32,
+) -> Option<T> {
+    let segment = vec2(width, 30.0);
     let (outer, _) = ui.allocate_exact_size(
-        vec2(segment.x * Mode::ALL.len() as f32 + 6.0, segment.y + 6.0),
+        vec2(segment.x * options.len() as f32 + 6.0, segment.y + 6.0),
         Sense::hover(),
     );
     ui.painter()
         .rect_filled(outer, outer.height() / 2.0, palette.surface);
-    for (index, mode) in Mode::ALL.into_iter().enumerate() {
+    let mut clicked = None;
+    for (index, (value, label)) in options.iter().enumerate() {
         let rect = Rect::from_min_size(
             outer.min + vec2(3.0 + segment.x * index as f32, 3.0),
             segment,
         );
-        let response = ui.interact(rect, ui.id().with(("mode", index)), Sense::click());
+        let response = ui.interact(rect, ui.id().with((salt, index)), Sense::click());
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
-        let on = selected == Some(mode);
+        let on = selected == Some(*value);
         let color = if on {
             palette.on_accent
         } else if response.hovered() {
@@ -1256,7 +1295,6 @@ fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
             ui.painter()
                 .rect_filled(rect, rect.height() / 2.0, palette.surface_hover);
         }
-        let label = crate::i18n::gettext(app.locale, mode.label());
         ui.painter().text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
@@ -1276,13 +1314,47 @@ fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
-            app.actions.push(Action::SetMode(mode));
-            if custom {
-                // A theme file has one mode of its own: leave it for the
-                // chat theme it replaced, in the mode asked for.
-                app.actions
-                    .push(Action::SetChatTheme(app.settings.chat_theme));
-            }
+            clicked = Some(*value);
+        }
+    }
+    clicked
+}
+
+/// Custom or Themes: a look made your own, or a ready-made theme.
+fn style_picker(ui: &mut egui::Ui, app: &mut App) {
+    let options: Vec<_> = Style::ALL
+        .into_iter()
+        .map(|style| (style, crate::i18n::gettext(app.locale, style.label())))
+        .collect();
+    let selected = Some(app.settings.style());
+    if let Some(style) = segmented(ui, &app.palette, "style", &options, selected, 88.0) {
+        if let Some(origin) = ui.ctx().pointer_interact_pos() {
+            app.actions.push(Action::RevealThemeFrom(origin));
+        }
+        app.actions.push(Action::SetStyle(style));
+    }
+}
+
+/// Light, dark or system, as three segments of one control.
+fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
+    let custom = app.settings.custom_theme.is_some();
+    let selected = (!custom).then_some(app.settings.mode);
+    let options: Vec<_> = Mode::ALL
+        .into_iter()
+        .map(|mode| (mode, crate::i18n::gettext(app.locale, mode.label())))
+        .collect();
+    if let Some(mode) = segmented(ui, &app.palette, "mode", &options, selected, 72.0) {
+        app.actions.push(Action::SetMode(mode));
+        if custom {
+            // A theme file has one mode of its own: leave it for the
+            // ready-made theme last used, in the mode asked for.
+            let theme = app.settings.chat_theme;
+            let theme = if theme.is_look() {
+                app.settings.last_theme
+            } else {
+                theme
+            };
+            app.actions.push(Action::SetChatTheme(theme));
         }
     }
 }
@@ -1296,9 +1368,7 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
     let locale = app.locale;
     let chat_theme = app.settings.chat_theme;
     let custom = app.settings.custom_theme.is_some();
-    let description = if custom {
-        crate::i18n::gettext(locale, "Theme files keep their own accent.")
-    } else if !chat_theme.takes_accent() {
+    let description = if !chat_theme.takes_accent() {
         crate::i18n::gettext(locale, "Messages keeps the system blue.")
     } else {
         crate::i18n::gettext(
@@ -1398,93 +1468,61 @@ const CARD_LABEL: f32 = 30.0;
 /// The space between cards.
 const CARD_GAP: f32 = 10.0;
 
-/// The chat themes as cards, each in the mode on screen, then the theme
-/// files and their folder.
-fn theme_cards(ui: &mut egui::Ui, app: &mut App, detail: &Text) {
+/// The chat theme cards for `choices`, each in the mode on screen with the
+/// accent it would take.
+fn chat_theme_cards(ui: &mut egui::Ui, app: &mut App, salt: &str, choices: &[ChatTheme]) {
     let palette = app.palette;
-    let locale = app.locale;
-    // The name, with the themes folder and its guide at the far end.
-    ui.horizontal(|ui| {
-        widgets::rich_text(
-            ui,
-            &crate::i18n::gettext(locale, "Chat theme"),
-            theme::medium(14.0),
-            palette.text,
-        );
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if theme::soft_button(
-                ui,
-                &palette,
-                Some(Icon::ExternalLink),
-                &crate::i18n::gettext(locale, "How to make a theme"),
-                false,
-            )
-            .clicked()
-            {
-                app.actions.push(Action::OpenUrl(THEMES_GUIDE.to_owned()));
-            }
-            if theme::soft_button(
-                ui,
-                &palette,
-                Some(Icon::ExternalLink),
-                &crate::i18n::gettext(locale, "Open themes folder"),
-                false,
-            )
-            .clicked()
-            {
-                app.actions.push(Action::OpenThemesFolder);
-            }
-        });
-    });
-    block_heading(
-        ui,
-        &palette,
-        "",
-        &crate::i18n::gettext(
-            locale,
-            "Zeus, WhatsApp and Messages, and the themes of Agent Orchestrator, each in light and dark.",
-        ),
-    );
-    ui.add_space(12.0);
-    let custom = app.settings.custom_theme.clone();
-    let cards: Vec<(String, Palette, bool, Action)> = ChatTheme::ALL
-        .into_iter()
-        .map(|choice| {
+    let custom = app.settings.custom_theme.is_some();
+    let cards: Vec<(String, Palette, bool, Action)> = choices
+        .iter()
+        .map(|&choice| {
             (
                 choice.label().to_owned(),
                 choice.palette(palette.dark, app.settings.accent),
-                custom.is_none() && app.settings.chat_theme == choice,
+                !custom && app.settings.chat_theme == choice,
                 Action::SetChatTheme(choice),
             )
         })
         .collect();
-    card_grid(ui, app, "chat-theme", cards);
+    card_grid(ui, app, salt, cards);
+}
 
-    let files: Vec<(String, Palette, bool, Action)> = app
-        .custom_themes
-        .picker_themes()
-        .map(|file| {
-            (
-                fastframe_theme::display_name(&file.filename).to_owned(),
-                file.palette,
-                custom.as_deref() == Some(file.filename.as_str()),
-                Action::SetCustomTheme(file.filename.clone()),
-            )
-        })
+/// The looks the Custom style starts from.
+fn look_cards(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    block_heading(
+        ui,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Look"),
+        &crate::i18n::gettext(
+            app.locale,
+            "Zeus's monochrome glass, WhatsApp's greens, or the bubbles of Messages.",
+        ),
+    );
+    ui.add_space(2.0);
+    chat_theme_cards(ui, app, "look", &ChatTheme::LOOKS);
+    ui.add_space(4.0);
+}
+
+/// The ready-made themes as cards, each in the mode on screen.
+fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    block_heading(
+        ui,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Themes"),
+        &crate::i18n::gettext(
+            app.locale,
+            "Ported from Agent Orchestrator, each with its own accent.",
+        ),
+    );
+    ui.add_space(2.0);
+    let themes: Vec<ChatTheme> = ChatTheme::ALL
+        .into_iter()
+        .filter(|choice| !choice.is_look())
         .collect();
-    if !files.is_empty() {
-        ui.add_space(6.0);
-        block_heading(
-            ui,
-            &palette,
-            &crate::i18n::gettext(locale, "Theme files"),
-            &detail.shown,
-        );
-        card_grid(ui, app, "theme-file", files);
-    } else if !detail.shown.is_empty() {
-        block_heading(ui, &palette, "", &detail.shown);
-    }
-    ui.add_space(16.0);
+    chat_theme_cards(ui, app, "chat-theme", &themes);
+    ui.add_space(4.0);
 }
 
 /// Theme cards in as many columns as fit, widened to fill the row.
@@ -1495,7 +1533,10 @@ fn card_grid(
     cards: Vec<(String, Palette, bool, Action)>,
 ) {
     let width = ui.available_width();
-    let columns = (((width + CARD_GAP) / (CARD_WIDTH + CARD_GAP)).floor() as usize).max(1);
+    // A short row, like the three looks, widens to fill the line.
+    let columns = (((width + CARD_GAP) / (CARD_WIDTH + CARD_GAP)).floor() as usize)
+        .min(cards.len())
+        .max(1);
     let card = vec2(
         (width - CARD_GAP * (columns - 1) as f32) / columns as f32,
         CARD_PREVIEW + CARD_LABEL,
@@ -1544,6 +1585,7 @@ fn card_grid(
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
+            app.actions.push(Action::RevealThemeFrom(rect.center()));
             app.actions.push(action);
         }
     }
@@ -1626,9 +1668,6 @@ fn theme_card(
     };
     painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Outside);
 }
-
-/// The website's page on writing a theme.
-const THEMES_GUIDE: &str = "https://zapfast.rocks/themes/";
 
 /// The interface language menu.
 fn font_picker(ui: &mut egui::Ui, app: &mut App) {
@@ -2326,9 +2365,8 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         }
     });
     ui.add_space(14.0);
-    if widgets::credit(ui, &palette, app.locale) {
-        app.actions
-            .push(Action::OpenUrl(widgets::AUTHOR_URL.to_owned()));
+    if let Some(url) = widgets::credit(ui, &palette, app.locale) {
+        app.actions.push(Action::OpenUrl(url.to_owned()));
     }
 }
 

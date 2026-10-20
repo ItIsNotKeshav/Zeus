@@ -3043,6 +3043,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "mode-light" => app.settings.mode = crate::chat_themes::Mode::Light,
             "mode-dark" => app.settings.mode = crate::chat_themes::Mode::Dark,
             "noblur" => app.settings.blur = false,
+            "always-time" => app.settings.always_show_time = true,
             // A chat theme by its stored name, or an accent.
             part if let Ok(theme) =
                 serde_json::from_value::<crate::chat_themes::ChatTheme>(part.into()) =>
@@ -14882,65 +14883,32 @@ mod tests {
         }
     }
 
-    /// The theme row links to the website's guide to writing a theme.
+    /// Zeus lists its own ready-made themes, not theme files or the
+    /// guide to writing one.
     #[test]
-    fn the_theme_row_opens_the_guide_to_making_a_theme() {
+    fn the_themes_list_has_no_theme_files() {
         let mut app = app();
         app.page = crate::model::Page::Settings;
+        app.custom_themes =
+            crate::theme::Catalog::preview(crate::theme::presets().collect(), false);
+        app.settings.choose_style(crate::chat_themes::Style::Themes);
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         app.attach(&ctx);
         render(&mut app, &ctx);
-        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
-        let pos = nodes
+        let labels: Vec<String> = accessible_nodes(&mut app, &ctx, Vec::new())
             .into_iter()
-            .find(|(label, role, _)| {
-                label == "How to make a theme" && *role == egui::accesskit::Role::Button
-            })
-            .map(|(_, _, centre)| centre)
-            .expect("the guide button is on the Settings page");
-        let mut opened = Vec::new();
-        for pressed in [true, false] {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(1180.0, 780.0),
-                    )),
-                    events: vec![
-                        egui::Event::PointerMoved(pos),
-                        egui::Event::PointerButton {
-                            pos,
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                    ..Default::default()
-                },
-                |ui| {
-                    let ctx = ui.ctx().clone();
-                    app.background_frame(&ctx);
-                    app.frame_ui(ui);
-                },
-            );
-            output.textures_delta.clear();
-            opened.extend(
-                output
-                    .platform_output
-                    .commands
-                    .into_iter()
-                    .filter_map(|command| match command {
-                        egui::OutputCommand::OpenUrl(open) => Some(open.url),
-                        _ => None,
-                    }),
-            );
+            .map(|(label, _, _)| label)
+            .collect();
+        assert!(
+            labels.iter().any(|label| label == "Orchestrate"),
+            "{labels:?}"
+        );
+        for gone in ["How to make a theme", "Open themes folder", "Ristretto"] {
+            assert!(!labels.iter().any(|label| label == gone), "{gone}");
         }
-        assert_eq!(opened, ["https://zapfast.rocks/themes/"]);
     }
 
-    /// The chat list is one clickable surface: each row starts where the one
-    /// above ends, with no gap or rule between them.
     #[test]
     fn chat_rows_touch_with_no_gap_between_them() {
         let mut app = app();

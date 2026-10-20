@@ -891,27 +891,63 @@ fn switch_knob(palette: &Palette) -> Color32 {
 /// Least contrast a white knob needs against the accent track to stay.
 const SWITCH_KNOB_CONTRAST: f32 = 2.0;
 
-/// The author's website, linked from the credit line.
+/// Zeus's builder, linked from the credit line.
+pub const BUILDER_URL: &str = "https://github.com/ItIsNotKeshav";
+/// ZapFast, which Zeus is forked from.
+pub const ZAPFAST_URL: &str = "https://github.com/crmne/zapfast";
+/// ZapFast's author's website.
 pub const AUTHOR_URL: &str = "https://paolino.me";
 
-/// "Built with love by Carmine Paolino", with the name linking to
-/// [`AUTHOR_URL`]. Returns whether the name was clicked.
-pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> bool {
+/// "Built with love by Keshav", then "Forked from ZapFast by Carmine
+/// Paolino", each name a link. Returns the address of a clicked link.
+pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Option<&'static str> {
+    let mut clicked = None;
     // Translators: {name} is replaced by the author's name, shown as a link.
-    let sentence = crate::i18n::gettext(locale, "Built with love by {name}");
-    let (before, after) = sentence.split_once("{name}").unwrap_or((&sentence, ""));
-    let mut clicked = false;
-    ui.horizontal_wrapped(|ui| {
+    let built = crate::i18n::gettext(locale, "Built with love by {name}");
+    // Translators: {app} and {name} are replaced by ZapFast and its author's
+    // name, each shown as a link.
+    let forked = crate::i18n::gettext(locale, "Forked from {app} by {name}");
+    let mut sentence = |ui: &mut Ui, text: &str, links: &[(&str, &str, &'static str)]| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            let mut rest = text;
+            loop {
+                let next = links
+                    .iter()
+                    .filter_map(|link| rest.find(link.0).map(|at| (at, link)))
+                    .min_by_key(|(at, _)| *at);
+                let Some((at, &(placeholder, name, url))) = next else {
+                    break;
+                };
+                if at > 0 {
+                    theme::text(ui, &rest[..at], theme::regular(13.0), palette.secondary);
+                }
+                if theme::link(ui, name, theme::medium(13.0), palette.link)
+                    .on_hover_text(url)
+                    .clicked()
+                {
+                    clicked = Some(url);
+                }
+                rest = &rest[at + placeholder.len()..];
+            }
+            if !rest.is_empty() {
+                theme::text(ui, rest, theme::regular(13.0), palette.secondary);
+            }
+        });
+    };
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         theme::text(ui, "\u{2665}  ", theme::regular(13.0), palette.danger);
-        theme::text(ui, before, theme::regular(13.0), palette.secondary);
-        clicked = theme::link(ui, "Carmine Paolino", theme::medium(13.0), palette.link)
-            .on_hover_text(AUTHOR_URL)
-            .clicked();
-        if !after.is_empty() {
-            theme::text(ui, after, theme::regular(13.0), palette.secondary);
-        }
+        sentence(ui, &built, &[("{name}", "Keshav", BUILDER_URL)]);
     });
+    sentence(
+        ui,
+        &forked,
+        &[
+            ("{app}", "ZapFast", ZAPFAST_URL),
+            ("{name}", "Carmine Paolino", AUTHOR_URL),
+        ],
+    );
     clicked
 }
 

@@ -4,6 +4,10 @@ description: Write a JSON palette to colour ZapFast your way.
 nav_order: 5
 ---
 
+Zeus does not list theme files: its **Settings → Appearance → Colours**
+offers its own looks and ready-made themes instead. This page describes
+ZapFast's theme files.
+
 ## Where themes live
 
 A theme is a small JSON file in the `themes` folder beside `settings.json`:
