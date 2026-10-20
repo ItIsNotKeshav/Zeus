@@ -33,18 +33,22 @@ does, and keeps your chats in an encrypted archive on your own computer.
 
 ## What Zeus is
 
-Zeus follows ZapFast closely and pulls in its fixes and features as they
-arrive. On top of that it adds its own name, icon, and Windows installer, and
-some interface work: a frosted composer and bars, a sending animation, and a
-left-hand navigation rail. It installs beside ZapFast without touching it, with
-its own folders, settings, and linked devices.
+Zeus is ZapFast, tuned for everyday use. It already ships ZapFast's new voice
+and video calls, and adds its own touches on top:
 
-Everything ZapFast does, Zeus does: text with formatting, replies, edits,
-reactions, forwards, media, stickers, GIFs, polls, voice messages, voice and
-video calls, several linked numbers in one window, locked chats and an app
-lock, and desktop notifications with a tray icon. The interface is in English,
-Chinese, French, German, Indonesian, Italian, Portuguese, Russian, Spanish,
-and Turkish.
+- **Better calls.** Pick your microphone once in Settings, and hold a key to
+  talk when the room is noisy.
+- **Your colours.** 20 ready-made themes, each in light and dark, or your own
+  mix of look, mode and accent. Frosted bars, with blur you can switch off.
+- **Clearer chats.** Photos and files show a preview and progress while they
+  send, times can stay on every message, and sent messages fly in from the
+  composer.
+- **Beside ZapFast, not over it.** Its own Windows installer, folders,
+  settings and linked devices, so both can run.
+
+Everything else comes from ZapFast: formatting, replies, edits, reactions,
+media, stickers, GIFs, polls, voice messages, several numbers in one window,
+locked chats, an app lock, and tray notifications, in ten languages.
 
 ## Install
 
