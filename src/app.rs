@@ -2038,9 +2038,10 @@ impl App {
         }
         let reading = !self.events_hidden
             && !self.window_hidden
-            && self.window_focused
             && self.chat_view()
             && self.open_chat.as_deref() == Some(chat_id);
+        // An open, visible chat is on screen even when another window has the
+        // focus: its message is already there to see, so nothing pops up.
         if reading {
             return;
         }
@@ -21378,6 +21379,15 @@ mod app_lock_tests {
 
         app.open_chat(CHAT.into());
         app.chats[0].unread = 1;
+        // Read in a visible window, a message has nothing to announce.
+        app.window_hidden = false;
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(
+            app.notifications.shown.len(),
+            1,
+            "the open chat is on screen"
+        );
+        app.window_hidden = true;
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 2, "opening reset the wait");
         app.maybe_notify(CHAT, &message);

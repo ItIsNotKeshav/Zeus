@@ -107,15 +107,16 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 |ui| {
                     let glass = ui.painter().add(egui::Shape::Noop);
                     composer(app, ui, &chat);
-                    // Only the strip around the field: from a little above it
-                    // to the bottom, as wide as the chat.
+                    // From a little above the field, or the reply, edit or voice
+                    // strip over it, to the bottom, as wide as the chat.
                     let pill = ui
                         .ctx()
                         .data(|data| data.get_temp::<Rect>(composer_pill_id()))
                         .unwrap_or(area);
+                    let top = pill.top().min(ui.min_rect().top());
                     let foot = Rect::from_x_y_ranges(
                         area.x_range(),
-                        (pill.top() - 12.0).max(area.top())..=area.bottom(),
+                        (top - 12.0).max(area.top())..=area.bottom(),
                     );
                     // Strongest at the bottom, easing off towards its top.
                     ui.painter().set(
@@ -127,8 +128,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             )
             .inner;
         let list = area.with_min_y(bar.top());
+        // A strip opening over the field slides the messages up with it, so
+        // the last one is never left behind it.
+        let over =
+            ui.ctx()
+                .animate_value_with_time(ui.id().with("composer-over"), foot.height(), 0.15);
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-            messages(app, ui, &chat, bar.height(), foot.height());
+            messages(app, ui, &chat, bar.height(), over);
         });
         // A vibrant window is flat, as Messages is: no shadows over the chat.
         return;
@@ -1880,10 +1886,18 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             chat: chat.id.clone(),
                             from,
                             sent: ui.input(|input| input.time),
+                            wall: crate::util::now(),
                             message: None,
                         };
-                        ui.ctx()
-                            .data_mut(|data| data.insert_temp(send_flight_id(), flight));
+                        // Fast sends queue: each keeps its own flight.
+                        let now = flight.sent;
+                        ui.ctx().data_mut(|data| {
+                            let flights = data.get_temp_mut_or_default::<Vec<SendFlight>>(
+                                send_flight_id(),
+                            );
+                            flights.retain(|old| now - old.sent < 3.0);
+                            flights.push(flight);
+                        });
                     }
                     app.actions.push(Action::SendText {
                         chat: chat.id.clone(),
@@ -2525,8 +2539,11 @@ fn glide_new_message<R>(
         && at_bottom
         && height > before.height
     {
+        // A message arriving mid-glide adds to what is left of it, so fast
+        // sends do not snap the list back to its old place.
+        glide.distance =
+            (before.shift(now) + (height - before.height)).min(output.inner_rect.height());
         glide.start = now;
-        glide.distance = (height - before.height).min(output.inner_rect.height());
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(id, glide.clone()));
@@ -2775,8 +2792,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .messages
         .last()
         .map(|message| message.id.clone());
+    // The messages scroll on under the frosted header and composer; the
+    // scroll bar keeps to the clear stretch between them.
+    let clear = ui.available_rect_before_wrap();
+    let bar_rect = Rect::from_x_y_ranges(
+        clear.x_range(),
+        (clear.top() + under)..=(clear.bottom() - over).max(clear.top() + under),
+    );
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
+        .scroll_bar_rect(bar_rect)
         .auto_shrink([false, false])
         .stick_to_bottom(view.reaction.is_none())
         .scroll_source(if view.reaction.is_some() {
@@ -3983,14 +4008,16 @@ struct SendFlight {
     chat: String,
     from: Rect,
     sent: f64,
+    /// Unix seconds at the send, to tell its message from older fresh ones.
+    wall: i64,
     message: Option<(String, f64)>,
 }
 
 /// The message a sent text is flying to, once its row has been drawn.
 #[cfg(test)]
 pub(crate) fn flying_to(ctx: &egui::Context) -> Option<String> {
-    ctx.data(|data| data.get_temp::<SendFlight>(send_flight_id()))
-        .and_then(|flight| flight.message)
+    ctx.data(|data| data.get_temp::<Vec<SendFlight>>(send_flight_id()))
+        .and_then(|flights| flights.into_iter().find_map(|flight| flight.message))
         .map(|(id, _)| id)
 }
 
@@ -4034,22 +4061,31 @@ fn bubble(
             .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
     });
     if message.from_me {
-        let mut flight = ui
-            .ctx()
-            .data(|data| data.get_temp::<SendFlight>(send_flight_id()))
-            .filter(|flight| flight.chat == view.chat.id);
-        if let Some(flight) = &mut flight
-            && flight.message.is_none()
-            && now - flight.sent < 2.0
-        {
-            flight.message = Some((message.id.clone(), now));
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(send_flight_id(), flight.clone()));
-        }
+        // Rows draw oldest first and flights queue oldest first, so each
+        // unclaimed flight takes the next of our messages sent since it.
+        let flight = ui.ctx().data_mut(|data| {
+            let flights = data.get_temp_mut_or_default::<Vec<SendFlight>>(send_flight_id());
+            let claimed = |flights: &[SendFlight]| {
+                flights
+                    .iter()
+                    .position(|f| f.message.as_ref().is_some_and(|(id, _)| *id == message.id))
+            };
+            if claimed(flights).is_none()
+                && let Some(free) = flights.iter_mut().find(|f| {
+                    f.chat == view.chat.id
+                        && f.message.is_none()
+                        && now - f.sent < 2.0
+                        && message.timestamp >= f.wall - 1
+                })
+            {
+                free.message = Some((message.id.clone(), now));
+            }
+            claimed(flights).map(|index| flights[index].clone())
+        });
         let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
         let Some((from, landed)) = flight.and_then(|flight| {
-            let (id, at) = flight.message?;
-            (id == message.id).then_some((flight.from, at))
+            let (_, at) = flight.message?;
+            Some((flight.from, at))
         }) else {
             return response;
         };
