@@ -12,12 +12,20 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     };
     let palette = app.palette;
     let frame = Frame::new()
-        .fill(palette.overlay)
+        .fill(palette.menu_glass())
         .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+        .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
         .inner_margin(Margin::same(22))
         .shadow(palette.modal_shadow());
-    let response = egui::Modal::new(egui::Id::new("dialog"))
+    let id = egui::Id::new("dialog");
+    // Under the backdrop and the dialog, the window behind it frosted.
+    let frost = super::widgets::Frost::reserve(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, id),
+        theme::RADIUS_DIALOG,
+    );
+    let mut content = None;
+    let response = egui::Modal::new(id)
         .frame(frame)
         .backdrop_color(palette.shadow)
         .show(ctx, |ui| {
@@ -102,7 +110,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     super::message_info::show(app, ui, &chat, &message)
                 }
             }
+            content = Some(ui.min_rect());
         });
+    if let Some(content) = content {
+        frost.place(frame.widget_rect(content));
+    }
     if response.should_close() {
         app.actions.push(Action::CloseDialog);
     }

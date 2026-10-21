@@ -263,7 +263,7 @@ fn live(
             inner + vec2(28.0, 12.0),
         );
         ui.painter()
-            .rect_filled(plate, CornerRadius::same(14), VIDEO_SCRIM);
+            .rect_filled(plate, CornerRadius::same(theme::RADIUS_CARD), VIDEO_SCRIM);
         let top = plate.top() + 6.0;
         ui.painter().galley(
             egui::pos2(plate.center().x - name.size().x / 2.0, top),
@@ -353,11 +353,11 @@ fn own_preview(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Pa
             &image,
         );
         egui::Image::new((texture, size))
-            .corner_radius(CornerRadius::same(12))
+            .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
             .paint_at(ui, at);
         ui.painter().rect_stroke(
             at,
-            CornerRadius::same(12),
+            CornerRadius::same(theme::RADIUS_CARD),
             egui::Stroke::new(1.0, palette.outline),
             egui::StrokeKind::Outside,
         );
@@ -1135,8 +1135,11 @@ fn group_live(
                 }
             }
             Tile::More(rest) => {
-                ui.painter()
-                    .rect_filled(rect, CornerRadius::same(14), tile_fill(palette));
+                ui.painter().rect_filled(
+                    rect,
+                    CornerRadius::same(theme::RADIUS_CARD),
+                    tile_fill(palette),
+                );
                 ui.painter().text(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -1203,7 +1206,7 @@ fn notes_height(call: &CallUpdate) -> f32 {
 fn video_tile(ui: &mut egui::Ui, name: &str, texture: egui::TextureId, size: Vec2, rect: Rect) {
     egui::Image::new((texture, rect.size()))
         .uv(cover_uv(size, rect.size()))
-        .corner_radius(CornerRadius::same(14))
+        .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
         .paint_at(ui, rect);
     let label = ui
         .painter()
@@ -1217,7 +1220,7 @@ fn video_tile(ui: &mut egui::Ui, name: &str, texture: egui::TextureId, size: Vec
         vec2(width + 16.0, label.size().y + 8.0),
     );
     ui.painter()
-        .rect_filled(plate, CornerRadius::same(8), VIDEO_SCRIM);
+        .rect_filled(plate, CornerRadius::same(theme::RADIUS), VIDEO_SCRIM);
     let clip = ui.painter().with_clip_rect(plate.shrink2(vec2(8.0, 0.0)));
     clip.galley(
         egui::pos2(plate.left() + 8.0, plate.top() + 4.0),
@@ -1258,8 +1261,11 @@ fn person_tile(
     person: &CallPerson,
     rect: Rect,
 ) {
-    ui.painter()
-        .rect_filled(rect, CornerRadius::same(14), tile_fill(palette));
+    ui.painter().rect_filled(
+        rect,
+        CornerRadius::same(theme::RADIUS_CARD),
+        tile_fill(palette),
+    );
     let label_height = if person.joined { 22.0 } else { 40.0 };
     let size = (rect.height() - label_height - 24.0)
         .min(rect.width() * 0.5)

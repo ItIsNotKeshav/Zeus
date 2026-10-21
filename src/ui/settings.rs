@@ -1508,7 +1508,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     }
     let text = |source: &'static str| crate::i18n::gettext(locale, source).into_owned();
     let painter = ui.painter_at(rect);
-    let radius = f32::from(theme::RADIUS) + 12.0;
+    let radius = f32::from(super::chats::CARD_RADIUS);
     painter.rect_filled(rect, radius, app.wallpaper().color);
     // The header, as the chat draws it: solid, or a veil over the messages
     // easing out under it.
@@ -1569,7 +1569,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         } else {
             palette.bubble_in
         };
-        painter.rect_filled(shape, 14.0, fill);
+        painter.rect_filled(shape, super::widgets::BUBBLE_RADIUS, fill);
         painter.galley(shape.min + vec2(14.0, 9.0), galley, colours.text);
         if own {
             let ticks = Rect::from_center_size(
@@ -1939,7 +1939,7 @@ fn card_grid(
         );
         let response = ui.interact(rect, ui.id().with((salt, index)), Sense::click());
         theme::reveal_focus(&response);
-        theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS) + 2.0);
+        theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS_CARD));
         if ui.is_rect_visible(rect) {
             theme_card(
                 ui,
@@ -1981,7 +1981,7 @@ fn theme_card(
     hovered: bool,
 ) {
     let painter = ui.painter_at(rect.expand(3.0));
-    let radius = f32::from(theme::RADIUS) + 2.0;
+    let radius = f32::from(theme::RADIUS_CARD);
     let r = radius as u8;
     let preview = Rect::from_min_size(rect.min, vec2(rect.width(), CARD_PREVIEW));
     let footer = Rect::from_min_max(pos2(rect.left(), preview.bottom()), rect.max);
@@ -2489,7 +2489,7 @@ fn section(
         Frame::new()
             .fill(theme::blend(palette.panel, palette.surface, 0.5))
             .stroke(Stroke::new(1.0, palette.outline))
-            .corner_radius(CornerRadius::same(theme::RADIUS + 2))
+            .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
             // Every row ends with its own gap, so the bottom margin is smaller.
             .inner_margin(Margin {
                 left: 20,

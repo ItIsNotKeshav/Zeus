@@ -9,6 +9,7 @@ use egui::{
     pos2, vec2,
 };
 
+use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::i18n::gettext;
 use crate::model::{Action, Dialog, PickerTab, StickerPack, StickerShelf};
@@ -57,14 +58,20 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .left()
         .clamp(screen.left() + 8.0, (screen.right() - WIDTH - 8.0).max(8.0));
     let y = (anchor.top() - HEIGHT - 10.0).max(screen.top() + 8.0);
-    let area = egui::Area::new(egui::Id::new("picker"))
+    let id = egui::Id::new("picker");
+    let frost = widgets::Frost::reserve(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, id),
+        theme::RADIUS_DIALOG,
+    );
+    let area = egui::Area::new(id)
         .fixed_pos(pos2(x, y))
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
             Frame::new()
-                .fill(palette.overlay)
+                .fill(palette.menu_glass())
                 .stroke(Stroke::new(1.0, palette.outline))
-                .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+                .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
                 .inner_margin(Margin::same(10))
                 .shadow(palette.float_shadow())
                 .show(ui, |ui| {
@@ -87,6 +94,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     });
                 });
         });
+    frost.place(area.response.rect);
     // Close on outside clicks, except on the toggle button, a sticker menu, or
     // a dialog the picker opened.
     let rect = area.response.rect;
@@ -417,7 +425,13 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                 message.content.summary_in(app.locale),
             )
         });
-    let area = egui::Area::new(egui::Id::new("reaction-picker"))
+    let id = egui::Id::new("reaction-picker");
+    let frost = widgets::Frost::reserve(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, id),
+        theme::RADIUS_DIALOG,
+    );
+    let area = egui::Area::new(id)
         .fixed_pos(pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
@@ -427,9 +441,9 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                 Layout::top_down(Align::Min),
                 |ui| {
                     Frame::new()
-                        .fill(palette.overlay)
+                        .fill(palette.menu_glass())
                         .stroke(Stroke::new(1.0, palette.outline))
-                        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+                        .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
                         .inner_margin(Margin::same(FRAME_MARGIN))
                         .shadow(palette.float_shadow())
                         .show(ui, |ui| {
@@ -518,6 +532,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                 },
             );
         });
+    frost.place(area.response.rect);
     let rect = area.response.rect;
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
     let clicked_outside = ctx.input(|input| {
@@ -565,8 +580,11 @@ fn category_tabs(
                             palette.accent.gamma_multiply(0.22),
                         );
                     } else if response.hovered() {
-                        ui.painter()
-                            .rect_filled(rect.shrink(2.0), 6.0, palette.surface_hover);
+                        ui.painter().rect_filled(
+                            rect.shrink(2.0),
+                            theme::RADIUS_SMALL,
+                            palette.surface_hover,
+                        );
                     }
                     let line =
                         widgets::line(ui, glyph, theme::regular(16.0), palette.text, cell, 1);
@@ -1048,11 +1066,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         let size = vec2(tile_width, (tile_width * ratio).min(150.0));
                         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
                         if ui.is_rect_visible(rect) {
-                            ui.painter().rect_filled(rect, 6.0, palette.surface);
+                            ui.painter()
+                                .rect_filled(rect, theme::RADIUS_SMALL, palette.surface);
                             if let Some(still) = &gif.still {
                                 widgets::file_image(ui, still)
                                     .fit_to_exact_size(size)
-                                    .corner_radius(6.0)
+                                    .corner_radius(theme::RADIUS_SMALL)
                                     .paint_at(ui, rect);
                             }
                             if response.hovered() {
@@ -1162,8 +1181,11 @@ fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                                 palette.accent.gamma_multiply(0.22),
                             );
                         } else if response.hovered() {
-                            ui.painter()
-                                .rect_filled(rect.shrink(1.0), 6.0, palette.surface_hover);
+                            ui.painter().rect_filled(
+                                rect.shrink(1.0),
+                                theme::RADIUS_SMALL,
+                                palette.surface_hover,
+                            );
                         }
                         let icon = match &shelf {
                             StickerShelf::Recent => Some(Icon::Clock),
@@ -1649,7 +1671,7 @@ fn sticker_grid(
                 egui::Popup::context_menu(&response)
                     .width(menu_width)
                     .frame(widgets::menu_frame(palette))
-                    .show(|ui| {
+                    .show_frosted(ui.ctx(), |ui| {
                         if shelf == Shelf::Favorites {
                             if widgets::menu_item(ui, palette, Some(Icon::StarOff), &remove_label) {
                                 choices.forget = Some(path.clone());
@@ -1702,7 +1724,8 @@ fn paint_tile(
         return;
     }
     if hovered {
-        ui.painter().rect_filled(rect, 8.0, palette.surface_hover);
+        ui.painter()
+            .rect_filled(rect, theme::RADIUS, palette.surface_hover);
     }
     let shown = rect.shrink(4.0);
     let animated = moves(ui.ctx(), path);
@@ -1724,7 +1747,8 @@ fn paint_tile(
         };
     if !played {
         if animated {
-            ui.painter().rect_filled(shown, 6.0, palette.surface);
+            ui.painter()
+                .rect_filled(shown, theme::RADIUS_SMALL, palette.surface);
             theme::paint_icon(ui, Icon::Sticker, shown, 24.0, palette.secondary);
         } else {
             sticker_picture(ui, path, shown);

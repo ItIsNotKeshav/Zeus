@@ -8,6 +8,7 @@
 use egui::{Align, Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Stroke, Vec2};
 use egui::{pos2, vec2};
 
+use super::widgets::FrostedPopup;
 use crate::app::{App, InfoFocus};
 use crate::model::{Action, ChatMedia, Content, Dialog, InfoView, MediaTab, Message};
 use crate::theme::{self, Icon};
@@ -725,7 +726,8 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) 
                 });
                 if ui.is_rect_visible(rect) {
                     if response.hovered() {
-                        ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
+                        ui.painter()
+                            .rect_filled(rect, theme::RADIUS, palette.surface_hover);
                     }
                     let picture = app.avatar(member);
                     let avatar = egui::Rect::from_center_size(
@@ -1066,7 +1068,8 @@ fn media_cell(
     });
     if ui.is_rect_visible(rect) {
         if !thumbnail(ui, &palette, rect, message, uri) {
-            ui.painter().rect_filled(rect, 6.0, palette.surface);
+            ui.painter()
+                .rect_filled(rect, theme::RADIUS_SMALL, palette.surface);
             let icon = if video { Icon::Video } else { Icon::Image };
             theme::paint_icon(ui, icon, rect, 22.0, palette.dim);
         }
@@ -1093,7 +1096,7 @@ fn media_cell(
         }
         if response.hovered() {
             ui.painter()
-                .rect_filled(rect, 6.0, Color32::from_white_alpha(24));
+                .rect_filled(rect, theme::RADIUS_SMALL, Color32::from_white_alpha(24));
         }
     }
     if response
@@ -1142,7 +1145,8 @@ fn thumbnail(
     // is a plain surface rather than a stretched placeholder.
     let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), rect.size())
     else {
-        ui.painter().rect_filled(rect, 6.0, palette.surface);
+        ui.painter()
+            .rect_filled(rect, theme::RADIUS_SMALL, palette.surface);
         return true;
     };
     // Cover the square: the longer side is cropped at both ends.
@@ -1154,7 +1158,10 @@ fn thumbnail(
         let cut = (1.0 - width / height) / 2.0;
         Rect::from_min_max(pos2(0.0, cut), pos2(1.0, 1.0 - cut))
     };
-    image.uv(uv).corner_radius(6.0).paint_at(ui, rect);
+    image
+        .uv(uv)
+        .corner_radius(theme::RADIUS_SMALL)
+        .paint_at(ui, rect);
     true
 }
 
@@ -1356,7 +1363,7 @@ fn group_photo(
     egui::Popup::menu(&response)
         .width(width)
         .frame(widgets::menu_frame(&palette))
-        .show(|ui| {
+        .show_frosted(ui.ctx(), |ui| {
             if widgets::menu_item(ui, &palette, Some(Icon::Image), &change) {
                 chosen = Some(Action::PickGroupPicture(id.to_owned()));
                 ui.close();

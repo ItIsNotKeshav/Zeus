@@ -8,6 +8,7 @@ use egui::{
 
 use std::path::Path;
 
+use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::image_preview::PreviewState;
 use crate::model::MediaItem;
@@ -597,7 +598,7 @@ fn still(
                             egui::Popup::context_menu(&image_response)
                                 .width(menu_width)
                                 .frame(crate::ui::widgets::menu_frame(&palette))
-                                .show(|ui| {
+                                .show_frosted(ui.ctx(), |ui| {
                                     if crate::ui::widgets::menu_item(
                                         ui,
                                         &palette,
@@ -729,7 +730,7 @@ fn pending(
     if let Some(bytes) = thumbnail {
         egui::Image::new(thumbnail_uri(ui.ctx(), chat, message, bytes))
             .fit_to_exact_size(disc.size())
-            .corner_radius(8.0)
+            .corner_radius(theme::RADIUS)
             .paint_at(ui, disc);
     } else {
         theme::paint_icon(
@@ -767,7 +768,8 @@ fn pending(
             Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-    ui.painter().rect_filled(button, 6.0, palette.surface_hover);
+    ui.painter()
+        .rect_filled(button, theme::RADIUS_CONTROL, palette.surface_hover);
     ui.painter().text(
         button.center(),
         egui::Align2::CENTER_CENTER,
@@ -839,7 +841,7 @@ fn video(
             if let Some(bytes) = thumbnail {
                 egui::Image::new(thumbnail_uri(ui.ctx(), chat, message, bytes))
                     .fit_to_exact_size(media.size())
-                    .corner_radius(8.0)
+                    .corner_radius(theme::RADIUS)
                     .paint_at(ui, media);
             }
         }
@@ -1105,7 +1107,8 @@ fn thumb(
     rect: Rect,
     current: bool,
 ) {
-    ui.painter().rect_filled(rect, 6.0, palette.surface_hover);
+    ui.painter()
+        .rect_filled(rect, theme::RADIUS_SMALL, palette.surface_hover);
     match (tile_of(item), item.thumbnail.as_deref()) {
         // A message id is only unique inside its chat, and the image cache
         // keeps the first bytes for a URI, so the chat has to be part of it.
@@ -1118,7 +1121,7 @@ fn thumb(
             };
             egui::Image::new(thumbnail_uri(ui.ctx(), chat, &key, bytes))
                 .fit_to_exact_size(rect.size())
-                .corner_radius(6.0)
+                .corner_radius(theme::RADIUS_SMALL)
                 .paint_at(ui, rect);
         }
         _ => {
@@ -1141,7 +1144,7 @@ fn thumb(
     if current {
         ui.painter().rect_stroke(
             rect,
-            CornerRadius::same(6),
+            CornerRadius::same(theme::RADIUS_SMALL),
             Stroke::new(2.0, palette.accent),
             egui::StrokeKind::Inside,
         );
@@ -1234,7 +1237,7 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
     let card = Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+        .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
         .inner_margin(Margin::same(20))
         .shadow(palette.modal_shadow());
     let response = egui::Modal::new(egui::Id::new("sticker-preview"))

@@ -562,8 +562,11 @@ pub fn submenu<R>(
     );
     if ui.is_rect_visible(rect) {
         if response.hovered() || open {
-            ui.painter()
-                .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
         }
         let icon_rect =
             Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
@@ -627,8 +630,11 @@ pub fn menu_item_enabled(
     });
     if ui.is_rect_visible(rect) {
         if response.hovered() && enabled {
-            ui.painter()
-                .rect_filled(rect, CornerRadius::same(6), palette.surface_hover);
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
         }
         let color = if enabled { palette.text } else { palette.dim };
         let mut x = rect.left() + 10.0;
@@ -710,12 +716,76 @@ pub fn raised<R>(
     shown
 }
 
-/// Shared popup-menu frame.
+/// Frosted glass at the bottom of a layer, reserved before anything in it
+/// paints and placed once the surface over it knows where it is: what lies
+/// under a menu or dialog is blurred, within its rounded corners, under its
+/// see-through fill.
+pub struct Frost {
+    painter: egui::Painter,
+    at: egui::layers::ShapeIdx,
+    radius: u8,
+}
+
+impl Frost {
+    /// Reserves the glass at the bottom of `layer`, for a surface whose
+    /// corners are rounded by `radius`.
+    pub fn reserve(ctx: &egui::Context, layer: egui::LayerId, radius: u8) -> Self {
+        let painter = ctx.layer_painter(layer);
+        let at = painter.add(egui::Shape::Noop);
+        Self {
+            painter,
+            at,
+            radius,
+        }
+    }
+
+    /// Frosts `rect`, the surface's outline.
+    pub fn place(self, rect: Rect) {
+        self.painter
+            .set(self.at, super::glass::rounded(rect, f32::from(self.radius)));
+    }
+}
+
+/// Shows a popup menu over frosted glass.
+pub trait FrostedPopup {
+    /// [`egui::Popup::show`] over frosted glass. Its first frame only
+    /// measures the menu, unseen, so it is frosted from the second.
+    fn show_frosted<R>(
+        self,
+        ctx: &egui::Context,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>>;
+}
+
+impl FrostedPopup for egui::Popup<'_> {
+    fn show_frosted<R>(
+        self,
+        ctx: &egui::Context,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let id = self.get_id();
+        let measured = ctx.read_response(id).is_some();
+        let frost = Frost::reserve(
+            ctx,
+            egui::LayerId::new(egui::Order::Foreground, id),
+            theme::RADIUS_MENU,
+        );
+        let shown = self.show(add);
+        if let Some(shown) = &shown
+            && measured
+        {
+            frost.place(shown.response.rect);
+        }
+        shown
+    }
+}
+
+/// Shared popup-menu frame, see-through over [`show_frosted`]'s glass.
 pub fn menu_frame(palette: &Palette) -> egui::Frame {
     egui::Frame::new()
-        .fill(palette.overlay)
+        .fill(palette.menu_glass())
         .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .corner_radius(CornerRadius::same(theme::RADIUS_MENU))
         .inner_margin(egui::Margin::same(6))
         .shadow(palette.float_shadow())
 }
@@ -1003,7 +1073,7 @@ pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
 /// The card `row_highlight` paints, over `card` itself: the rail's lit and
 /// hovered plates look as the selected and hovered chat rows do.
 pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
-    let radius = CornerRadius::same(theme::RADIUS + 2);
+    let radius = CornerRadius::same(theme::RADIUS);
     // Over a vibrant window's material, a flat tint: the selected row
     // stronger than the one under the pointer.
     if palette.vibrant() {
@@ -1186,7 +1256,7 @@ pub enum Side {
 }
 
 /// Corner radius of a message bubble.
-pub const BUBBLE_RADIUS: u8 = 10;
+pub const BUBBLE_RADIUS: u8 = 18;
 /// How far a bubble's tail reaches out from its side, and down from its top.
 pub const TAIL_WIDTH: f32 = 8.0;
 const TAIL_HEIGHT: f32 = 11.0;
@@ -1285,6 +1355,12 @@ pub fn bubble_shape(
     egui::Shape::Vec(shapes)
 }
 
+/// How round a Nothing balloon is.
+pub const NOTHING_BUBBLE_RADIUS: u8 = 22;
+/// How round a Nothing balloon's corners are where it meets the next one in
+/// the same sender's run.
+const NOTHING_BUBBLE_JOIN: u8 = 8;
+
 /// Translucent grouped balloons used by the Nothing palettes. The two corners
 /// that face the next balloon tighten so each sender's run reads as a stack.
 pub fn grouped_bubble_shape(
@@ -1294,8 +1370,8 @@ pub fn grouped_bubble_shape(
     first: bool,
     last: bool,
 ) -> egui::Shape {
-    let full = 18;
-    let join = 4;
+    let full = NOTHING_BUBBLE_RADIUS;
+    let join = NOTHING_BUBBLE_JOIN;
     let corners = if own {
         egui::CornerRadius {
             nw: full,
@@ -2234,9 +2310,9 @@ mod tests {
         );
     }
 
-    /// WhatsApp's bubbles are drawn exactly as before the Messages balloon
-    /// was rebuilt: every shape, point and colour of a tailed and a tailless
-    /// bubble, in both palettes, hashes to the value recorded then.
+    /// WhatsApp's bubbles are drawn exactly as recorded: every shape, point
+    /// and colour of a tailed and a tailless bubble, in both palettes, hashes
+    /// to the value taken when their corners were rounded to 18.
     #[test]
     fn whatsapp_bubbles_are_unchanged() {
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
@@ -2257,7 +2333,7 @@ mod tests {
     }
 
     /// The fingerprint [`whatsapp_bubbles_are_unchanged`] recorded.
-    const WHATSAPP_BUBBLES: u64 = 0x179b_3424_7615_2b9a;
+    const WHATSAPP_BUBBLES: u64 = 0xc79d_437f_92f3_062a;
 
     /// Every shape-checking test below draws into this view.
     const SCREEN: egui::Rangef = egui::Rangef {

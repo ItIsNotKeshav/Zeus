@@ -537,7 +537,7 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
             Frame::new()
                 .fill(palette.overlay)
                 .stroke(Stroke::new(2.0, palette.accent))
-                .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+                .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
                 .inner_margin(Margin::symmetric(28, 20))
                 .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
