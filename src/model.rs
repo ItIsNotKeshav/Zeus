@@ -2964,6 +2964,8 @@ pub enum Action {
     Search(String),
     ShowUpdate,
     CloseUpdate,
+    /// Asks GitHub for a newer release now, from Settings.
+    CheckForUpdates,
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),

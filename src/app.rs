@@ -688,6 +688,8 @@ pub struct App {
     /// A newer release than this build, once GitHub has said so.
     pub update: Option<crate::updates::Release>,
     last_update_check: Option<Instant>,
+    /// The check the reader asked for from Settings, and what it found.
+    pub update_check: crate::updates::Check,
     pub show_update: bool,
     pub update_download: crate::updates::DownloadState,
     pub update_support: Option<Result<crate::updates::Installation, String>>,
@@ -1447,6 +1449,7 @@ impl App {
             events_hidden: false,
             update: None,
             last_update_check: None,
+            update_check: crate::updates::Check::default(),
             show_update: false,
             update_download: Default::default(),
             update_support: None,
@@ -4044,12 +4047,17 @@ impl App {
                     }
                 }
             }
-            Event::UpdateAvailable { version, url } => {
-                let notice = crate::updates::Release { version, url };
-                if self.update.as_ref() != Some(&notice) {
-                    self.toast(format!("Zeus {} is available", notice.version));
+            Event::UpdateChecked(result) => {
+                let asked = self.update_check == crate::updates::Check::Checking;
+                match result {
+                    Ok(Some(release)) => {
+                        self.update_check = crate::updates::Check::Idle;
+                        self.offer_update(release, asked);
+                    }
+                    Ok(None) if asked => self.update_check = crate::updates::Check::UpToDate,
+                    Err(error) if asked => self.update_check = crate::updates::Check::Failed(error),
+                    Ok(None) | Err(_) => {}
                 }
-                self.update = Some(notice);
             }
             Event::UpdateSupport(result) => {
                 self.update_support = Some(result);
@@ -5804,6 +5812,35 @@ impl App {
                     .any(|row| row.id == *id && row.expires_at > stamp)
             });
         }
+    }
+
+    /// Takes a newer release GitHub named. A release not offered before
+    /// opens the update window, as does any the reader asked for; during a
+    /// call, over another dialog, or from an account not on screen it waits
+    /// in the banner and a toast instead.
+    fn offer_update(&mut self, release: crate::updates::Release, asked: bool) {
+        let new = self.update.as_ref() != Some(&release);
+        let version = release.version.clone();
+        self.update = Some(release);
+        if asked || (new && !self.events_hidden && !self.call_live() && self.dialog.is_none()) {
+            self.show_update = true;
+            self.inspect_update();
+        } else if new {
+            self.toast(format!("Zeus {version} is available"));
+        }
+    }
+
+    /// A check the reader asked for, whatever the daily setting says.
+    fn check_for_updates_now(&mut self) {
+        if !crate::brand::UPDATES
+            || self.backend.is_offline()
+            || self.update_check == crate::updates::Check::Checking
+        {
+            return;
+        }
+        self.update_check = crate::updates::Check::Checking;
+        self.last_update_check = Some(Instant::now());
+        self.backend.send(Command::CheckForUpdates);
     }
 
     fn inspect_update(&mut self) {
@@ -8050,6 +8087,7 @@ impl App {
                 self.inspect_update();
             }
             Action::CloseUpdate => self.show_update = false,
+            Action::CheckForUpdates => self.check_for_updates_now(),
             Action::DownloadUpdate => self.download_update(),
             Action::InstallUpdate => {
                 if matches!(
@@ -15009,6 +15047,59 @@ mod tests {
             Palette::light(),
             "no picture came: applied anyway"
         );
+    }
+
+    #[test]
+    fn a_new_release_opens_the_update_window_once() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let release = crate::updates::Release {
+            version: "99.0.0".into(),
+            url: "https://github.com/ItIsNotKeshav/Zeus/releases/tag/v99.0.0".into(),
+        };
+        app.apply_backend_event(Event::UpdateChecked(Ok(Some(release.clone()))), true);
+        assert!(app.show_update, "a new release prompts");
+        assert!(matches!(commands.try_recv(), Ok(Command::InspectUpdate)));
+        app.show_update = false;
+        app.apply_backend_event(Event::UpdateChecked(Ok(Some(release.clone()))), true);
+        assert!(!app.show_update, "a dismissed release waits in the banner");
+        app.update = None;
+        app.dialog = Some(Dialog::Shortcuts);
+        app.apply_backend_event(Event::UpdateChecked(Ok(Some(release))), true);
+        assert!(!app.show_update, "another dialog is never covered");
+        assert!(app.update.is_some());
+    }
+
+    #[test]
+    fn checking_for_updates_says_what_it_found() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.settings.check_for_updates = false;
+        app.apply(Action::CheckForUpdates, &ctx);
+        assert_eq!(app.update_check, crate::updates::Check::Checking);
+        assert!(matches!(commands.try_recv(), Ok(Command::CheckForUpdates)));
+        app.apply(Action::CheckForUpdates, &ctx);
+        assert!(commands.try_recv().is_err(), "one check at a time");
+        app.apply_backend_event(Event::UpdateChecked(Ok(None)), true);
+        assert_eq!(app.update_check, crate::updates::Check::UpToDate);
+        app.apply(Action::CheckForUpdates, &ctx);
+        app.apply_backend_event(Event::UpdateChecked(Err("offline".into())), true);
+        assert_eq!(
+            app.update_check,
+            crate::updates::Check::Failed("offline".into())
+        );
+        app.apply(Action::CheckForUpdates, &ctx);
+        let release = crate::updates::Release {
+            version: "99.0.0".into(),
+            url: "https://github.com/ItIsNotKeshav/Zeus/releases/tag/v99.0.0".into(),
+        };
+        app.update = Some(release.clone());
+        app.apply_backend_event(Event::UpdateChecked(Ok(Some(release))), true);
+        assert_eq!(app.update_check, crate::updates::Check::Idle);
+        assert!(app.show_update, "a release asked for opens even when known");
     }
 
     #[test]

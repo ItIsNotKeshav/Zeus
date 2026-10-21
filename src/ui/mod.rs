@@ -565,9 +565,14 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
         ),
         LinkStatus::Connected if update.is_some() => {
             let update = update.as_ref().expect("checked above");
+            let ready = matches!(app.update_download, crate::updates::DownloadState::Ready(_));
             (
-                Icon::Info,
-                format!("Zeus {} is available", update.version),
+                if ready { Icon::Download } else { Icon::Info },
+                if ready {
+                    format!("Zeus {} is ready to install", update.version)
+                } else {
+                    format!("Zeus {} is available", update.version)
+                },
                 palette.accent,
                 false,
                 Some(update.url.clone()),

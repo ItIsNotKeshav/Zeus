@@ -7059,19 +7059,16 @@ impl Worker {
                 let events = self.events.clone();
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
-                    match crate::updates::updater().and_then(|updater| updater.check()) {
-                        Ok(Some(release)) => {
-                            let _ = events.send(Event::UpdateAvailable {
-                                version: release.version,
-                                url: release.url,
-                            });
-                            waker.wake();
-                        }
+                    let result = crate::updates::updater()
+                        .and_then(|updater| updater.check())
+                        .map_err(|error| format!("{error:#}"));
+                    match &result {
+                        Ok(Some(_)) => {}
                         Ok(None) => log::debug!("this is the newest release"),
-                        Err(error) => {
-                            log::debug!("could not check for a newer release: {error:#}")
-                        }
+                        Err(error) => log::debug!("could not check for a newer release: {error}"),
                     }
+                    let _ = events.send(Event::UpdateChecked(result));
+                    waker.wake();
                 });
             }
             Command::GifResults { query, results } => {

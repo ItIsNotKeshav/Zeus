@@ -1313,11 +1313,9 @@ pub enum Event {
     Info(String),
     /// A decoded image ready to be written to the clipboard on the interface thread.
     ClipboardImage(Result<crate::model::DecodedImage, String>),
-    /// A newer release than this build exists.
-    UpdateAvailable {
-        version: String,
-        url: String,
-    },
+    /// What GitHub said about releases: a newer one, none, or why it could
+    /// not be asked.
+    UpdateChecked(Result<Option<crate::updates::Release>, String>),
     UpdateSupport(Result<crate::updates::Installation, String>),
     UpdateProgress {
         received: u64,
