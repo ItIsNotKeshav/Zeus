@@ -1446,6 +1446,9 @@ pub fn keyboard_focus_id() -> egui::Id {
 pub struct FocusOutline {
     pub rect: egui::Rect,
     pub radius: f32,
+    /// Corners that differ from one another, such as a message bubble's,
+    /// in place of `radius`.
+    pub corners: Option<egui::CornerRadius>,
     pub clip: egui::Rect,
     pub frame: u64,
     pub fill: Color32,
@@ -1453,6 +1456,26 @@ pub struct FocusOutline {
 
 pub fn focus_outline(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, radius: f32) {
     focus_outline_on_fill(ui, id, rect, radius, Color32::TRANSPARENT);
+}
+
+/// [`focus_outline`] for a control whose corners differ, so the ring runs
+/// along its edge all the way round.
+pub fn focus_outline_corners(
+    ui: &egui::Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    corners: egui::CornerRadius,
+) {
+    let outline = FocusOutline {
+        rect,
+        radius: f32::from(corners.nw),
+        corners: Some(corners),
+        clip: ui.clip_rect(),
+        frame: ui.ctx().cumulative_frame_nr(),
+        fill: Color32::TRANSPARENT,
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("focus-outline"), outline));
 }
 
 fn focus_outline_on_fill(
@@ -1465,6 +1488,7 @@ fn focus_outline_on_fill(
     let outline = FocusOutline {
         rect,
         radius,
+        corners: None,
         clip: ui.clip_rect(),
         frame: ui.ctx().cumulative_frame_nr(),
         fill,

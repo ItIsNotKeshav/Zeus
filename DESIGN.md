@@ -285,7 +285,7 @@ Zeus rounds as generously as iOS 26's glass, and nests shapes the same way: a sh
 - **Card (20):** settings groups, call tiles, and previews.
 - **Panel (24):** the conversation card beside the list.
 - **Dialog (28):** dialogs, the emoji pickers, and other large surfaces that float over the window, over frosted glass.
-- Message bubbles: 18, and 22 for Nothing's grouped balloons (8 where two in a run meet); Messages keeps Apple's own balloon.
+- Message bubbles: 10, and 18 for Nothing's grouped balloons (4 where two in a run meet); Messages keeps Apple's own balloon. Bubbles stay tighter than panels on purpose.
 - **Pill:** tags, compact status chips, or genuinely pill-shaped controls only. Do not make all buttons pill-shaped by default.
 - **Circle:** avatars and circular icon controls where established by the product or platform.
 

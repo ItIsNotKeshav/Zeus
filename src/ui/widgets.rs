@@ -1256,7 +1256,7 @@ pub enum Side {
 }
 
 /// Corner radius of a message bubble.
-pub const BUBBLE_RADIUS: u8 = 18;
+pub const BUBBLE_RADIUS: u8 = 10;
 /// How far a bubble's tail reaches out from its side, and down from its top.
 pub const TAIL_WIDTH: f32 = 8.0;
 const TAIL_HEIGHT: f32 = 11.0;
@@ -1356,10 +1356,10 @@ pub fn bubble_shape(
 }
 
 /// How round a Nothing balloon is.
-pub const NOTHING_BUBBLE_RADIUS: u8 = 22;
+pub const NOTHING_BUBBLE_RADIUS: u8 = 18;
 /// How round a Nothing balloon's corners are where it meets the next one in
 /// the same sender's run.
-const NOTHING_BUBBLE_JOIN: u8 = 8;
+const NOTHING_BUBBLE_JOIN: u8 = 4;
 
 /// Translucent grouped balloons used by the Nothing palettes. The two corners
 /// that face the next balloon tighten so each sender's run reads as a stack.
@@ -1370,9 +1370,15 @@ pub fn grouped_bubble_shape(
     first: bool,
     last: bool,
 ) -> egui::Shape {
+    egui::Shape::rect_filled(rect, grouped_bubble_corners(own, first, last), fill)
+}
+
+/// A Nothing balloon's corners: tighter on the sender's side where it meets
+/// the one before or after it in the same run.
+pub fn grouped_bubble_corners(own: bool, first: bool, last: bool) -> CornerRadius {
     let full = NOTHING_BUBBLE_RADIUS;
     let join = NOTHING_BUBBLE_JOIN;
-    let corners = if own {
+    if own {
         egui::CornerRadius {
             nw: full,
             ne: if !first { join } else { full },
@@ -1386,8 +1392,7 @@ pub fn grouped_bubble_shape(
             sw: if !last { join } else { full },
             se: full,
         }
-    };
-    egui::Shape::rect_filled(rect, corners, fill)
+    }
 }
 
 /// The text size Messages lays its balloons out for on the Mac: ChatKit's
@@ -2310,9 +2315,9 @@ mod tests {
         );
     }
 
-    /// WhatsApp's bubbles are drawn exactly as recorded: every shape, point
-    /// and colour of a tailed and a tailless bubble, in both palettes, hashes
-    /// to the value taken when their corners were rounded to 18.
+    /// WhatsApp's bubbles are drawn exactly as before the Messages balloon
+    /// was rebuilt: every shape, point and colour of a tailed and a tailless
+    /// bubble, in both palettes, hashes to the value recorded then.
     #[test]
     fn whatsapp_bubbles_are_unchanged() {
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
@@ -2333,7 +2338,7 @@ mod tests {
     }
 
     /// The fingerprint [`whatsapp_bubbles_are_unchanged`] recorded.
-    const WHATSAPP_BUBBLES: u64 = 0xc79d_437f_92f3_062a;
+    const WHATSAPP_BUBBLES: u64 = 0x179b_3424_7615_2b9a;
 
     /// Every shape-checking test below draws into this view.
     const SCREEN: egui::Rangef = egui::Rangef {

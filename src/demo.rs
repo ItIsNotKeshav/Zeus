@@ -14047,6 +14047,26 @@ mod tests {
         assert_eq!(cursor, Some(app.composer.chars().count()));
     }
 
+    /// With nothing focused, say after clicking the empty chat background,
+    /// Arrow Up still edits the last message sent, and the composer takes it.
+    #[test]
+    fn arrow_up_with_nothing_focused_edits_the_previous_own_message() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        let expected = app.previous_own_editable().expect("an own text message");
+        ctx.memory_mut(|memory| memory.surrender_focus(egui::Id::new("composer-text")));
+        render(&mut app, &ctx);
+        assert!(ctx.memory(|memory| memory.focused().is_none()));
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![key(egui::Key::ArrowUp, egui::Modifiers::NONE)],
+        );
+        assert_eq!(app.editing.as_deref(), Some(expected.as_str()));
+    }
+
     #[test]
     fn arrow_up_leaves_a_non_empty_composer_alone() {
         let mut app = app();

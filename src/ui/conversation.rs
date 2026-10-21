@@ -91,8 +91,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.painter()
                     .set(glass, super::glass::shape(frosted, ease, radius));
                 ui.painter()
-                    .set(veil, header_veil(&app.palette, frosted, ease));
-                // The veil is square: the card's own corners go back over it.
+                    .set(veil, header_veil(&app.palette, frosted, ease, radius));
+                // Over messages scrolled up under the header's corners.
                 card_corners(ui, &app.palette, card, radius);
                 bar
             })
@@ -171,10 +171,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// Rounds off the corners of the conversation's `card` over what a layer
-/// above it paints square, such as a vibrant header's veil, where the
-/// sidebar's gutter around the card is opaque. Over a see-through window the
-/// glass beneath keeps to the corners itself.
+/// Rounds off the corners of the conversation's `card` over what is painted
+/// square beneath a vibrant header or composer, such as messages scrolled
+/// under them, where the sidebar's gutter around the card is opaque. The
+/// header's own glass and veil keep to the corners themselves.
 fn card_corners(ui: &egui::Ui, palette: &Palette, card: Rect, radius: f32) {
     let gutter = palette.rail();
     if radius > 0.0 && gutter.is_opaque() {
@@ -377,21 +377,32 @@ const VEIL_STEPS: usize = 8;
 
 /// The veil over a vibrant header's frost: the palette's at the top, then
 /// easing to nothing over the bottom `ease` points of `rect` along the same
-/// curve as the frost, so the messages under it never stop at a line.
-fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
+/// curve as the frost, so the messages under it never stop at a line. Its
+/// top corners follow the card's `radius`, so they stay round over a
+/// see-through window too.
+fn header_veil(palette: &Palette, rect: Rect, ease: f32, radius: f32) -> egui::Shape {
     let top = palette.vibrant_header(palette.chat);
     let start = rect.bottom() - ease;
+    let radius = radius.clamp(0.0, (rect.height() - ease).max(0.0));
     let mut mesh = egui::Mesh::default();
-    let mut row = |y: f32, color: Color32| {
-        mesh.colored_vertex(pos2(rect.left(), y), color);
-        mesh.colored_vertex(pos2(rect.right(), y), color);
+    let mut row = |y: f32, inset: f32, color: Color32| {
+        mesh.colored_vertex(pos2(rect.left() + inset, y), color);
+        mesh.colored_vertex(pos2(rect.right() - inset, y), color);
     };
-    row(rect.top(), top);
+    // Down each top corner's quarter circle, then straight.
+    if radius > 0.0 {
+        for step in 0..CORNER_STEPS {
+            let angle = std::f32::consts::FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
+            let y = rect.top() + radius - radius * angle.cos();
+            row(y, radius - radius * angle.sin(), top);
+        }
+    }
+    row(rect.top() + radius, 0.0, top);
     for step in 0..=VEIL_STEPS {
         let t = step as f32 / VEIL_STEPS as f32;
         // smoothstep, as the frost's shader eases.
         let strength = 1.0 - t * t * (3.0 - 2.0 * t);
-        row(start + ease * t, top.gamma_multiply(strength));
+        row(start + ease * t, 0.0, top.gamma_multiply(strength));
     }
     let rows = mesh.vertices.len() as u32 / 2;
     for row in 0..rows - 1 {
@@ -401,6 +412,9 @@ fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
     }
     egui::Shape::mesh(mesh)
 }
+
+/// Rows down each of the veil's rounded top corners.
+const CORNER_STEPS: usize = 8;
 
 /// How round the glass under a vibrant header's name is: straight-sided,
 /// leaving room around the text, rather than a capsule.
@@ -5187,7 +5201,16 @@ fn bubble_frame(
         return bubble;
     }
     theme::reveal_focus(&bubble);
-    theme::focus_outline(ui, bubble.id, inner.response.rect, 10.0);
+    let corners = bubble_outline_corners(
+        &palette,
+        message,
+        fill,
+        tail,
+        own,
+        first_in_run,
+        last_in_run,
+    );
+    theme::focus_outline_corners(ui, bubble.id, inner.response.rect, corners);
     if ui.ctx().data(|data| {
         data.get_temp::<bool>(theme::keyboard_focus_id())
             .unwrap_or(false)
@@ -5322,9 +5345,17 @@ fn bubble_frame(
     // Keep the target explicit for every menu action, not just the emoji
     // picker. Paint in the message layer so the menu itself remains above it.
     if egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
+        // Two points out, each corner two points rounder, so the ring runs
+        // parallel to the bubble's edge.
+        let widen = |radius: u8| if radius == 0 { 0 } else { radius + 2 };
         ui.painter().rect_stroke(
             inner.response.rect.expand(2.0),
-            12.0,
+            CornerRadius {
+                nw: widen(corners.nw),
+                ne: widen(corners.ne),
+                sw: widen(corners.sw),
+                se: widen(corners.se),
+            },
             Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.accent),
             egui::StrokeKind::Outside,
         );
@@ -5822,6 +5853,29 @@ fn bare_picture(palette: &Palette, message: &Message) -> bool {
         && time_over_picture(message)
         && message.quoted.is_none()
         && !message.forwarded
+}
+
+/// The corners of a message's bubble, as drawn, for the rings that mark it
+/// focused or under its menu.
+fn bubble_outline_corners(
+    palette: &Palette,
+    message: &Message,
+    fill: Color32,
+    tail: Option<widgets::Side>,
+    own: bool,
+    first_in_run: bool,
+    last_in_run: bool,
+) -> CornerRadius {
+    if fill == Color32::TRANSPARENT {
+        return CornerRadius::from(picture_radius(palette, message));
+    }
+    match palette.bubbles {
+        theme::BubbleStyle::Nothing => {
+            widgets::grouped_bubble_corners(own, first_in_run, last_in_run)
+        }
+        theme::BubbleStyle::Messages => CornerRadius::same(widgets::MESSAGES_BUBBLE_RADIUS),
+        _ => widgets::bubble_corners(tail),
+    }
 }
 
 /// How round a picture's corners are: a bubble's, when it has none.
@@ -6618,6 +6672,16 @@ fn context_menu(
         },
     );
     widgets::menu_separator(ui, &palette);
+    // Answering first: Reply and Edit, then passing the message on. Then
+    // what to do with its contents, keeping it, and its media, with the
+    // details, the deletions and the troubleshooting set apart below.
+    let age = view.now - message.timestamp;
+    let can_edit = message.from_me
+        && matches!(message.content, Content::Text { .. })
+        && age <= crate::app::EDIT_WINDOW.as_secs() as i64;
+    let can_revoke = message.from_me
+        && !matches!(message.content, Content::Revoked)
+        && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
     if !matches!(message.content, Content::Revoked)
         && widgets::menu_item(ui, &palette, Some(Icon::Reply), "Reply")
     {
@@ -6644,6 +6708,58 @@ fn context_menu(
             chat: chat.clone(),
             message: message.id.clone(),
         });
+    }
+    if can_edit && widgets::menu_item(ui, &palette, Some(Icon::Pencil), "Edit") {
+        if matches!(origin, MenuOrigin::List) {
+            actions.push(Action::OpenMessage {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            });
+        }
+        actions.push(Action::Edit(message.id.clone()));
+    }
+    if crate::app::can_select(&message.content)
+        && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
+    {
+        actions.push(Action::ShowDialog(Dialog::Forward {
+            chat: chat.clone(),
+            messages: vec![message.id.clone()],
+        }));
+    }
+    let text = match &message.content {
+        Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
+        Content::Image { caption, .. }
+        | Content::Video { caption, .. }
+        | Content::Document { caption, .. } => caption.clone(),
+        Content::Location {
+            latitude,
+            longitude,
+            ..
+        }
+        | Content::LiveLocation {
+            latitude,
+            longitude,
+            ..
+        } => Some(format!("{latitude},{longitude}")),
+        Content::Contact { vcard, .. } => Some(vcard.clone()),
+        _ => None,
+    };
+    if let Some(text) = text
+        && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy text")
+    {
+        let mentions = mentions_of(view, message);
+        actions.push(Action::CopyText(markup::plain(&text, &mentions)));
+    }
+    if crate::app::can_select(&message.content)
+        && widgets::menu_item(ui, &palette, Some(Icon::Check), "Select")
+    {
+        if matches!(origin, MenuOrigin::List) {
+            actions.push(Action::OpenMessage {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            });
+        }
+        actions.push(Action::SelectMessage(message.id.clone()));
     }
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let star_label = if starred {
@@ -6676,14 +6792,6 @@ fn context_menu(
             pinned: !pinned,
         });
     }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
-    {
-        actions.push(Action::ShowDialog(Dialog::Forward {
-            chat: chat.clone(),
-            messages: vec![message.id.clone()],
-        }));
-    }
     // A photo opens the viewer on its own click; a clip plays in its bubble
     // there, so this is how the album is reached from a chat that holds no
     // pictures.
@@ -6701,82 +6809,6 @@ fn context_menu(
             message: message.id.clone(),
             card: None,
         });
-    }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(ui, &palette, Some(Icon::Check), "Select")
-    {
-        if matches!(origin, MenuOrigin::List) {
-            actions.push(Action::OpenMessage {
-                chat: chat.clone(),
-                message: message.id.clone(),
-            });
-        }
-        actions.push(Action::SelectMessage(message.id.clone()));
-    }
-    let text = match &message.content {
-        Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
-        Content::Image { caption, .. }
-        | Content::Video { caption, .. }
-        | Content::Document { caption, .. } => caption.clone(),
-        Content::Location {
-            latitude,
-            longitude,
-            ..
-        }
-        | Content::LiveLocation {
-            latitude,
-            longitude,
-            ..
-        } => Some(format!("{latitude},{longitude}")),
-        Content::Contact { vcard, .. } => Some(vcard.clone()),
-        _ => None,
-    };
-    if let Some(text) = text
-        && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy text")
-    {
-        let mentions = mentions_of(view, message);
-        actions.push(Action::CopyText(markup::plain(&text, &mentions)));
-    }
-    let age = view.now - message.timestamp;
-    let can_edit = message.from_me
-        && matches!(message.content, Content::Text { .. })
-        && age <= crate::app::EDIT_WINDOW.as_secs() as i64;
-    let can_revoke = message.from_me
-        && !matches!(message.content, Content::Revoked)
-        && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
-    if can_edit && widgets::menu_item(ui, &palette, Some(Icon::Pencil), "Edit") {
-        if matches!(origin, MenuOrigin::List) {
-            actions.push(Action::OpenMessage {
-                chat: chat.clone(),
-                message: message.id.clone(),
-            });
-        }
-        actions.push(Action::Edit(message.id.clone()));
-    }
-    if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), "Delete for everyone") {
-        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
-            chat: view.chat.id.clone(),
-            message: message.id.clone(),
-            for_everyone: true,
-        }));
-    }
-    if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), "Delete for me") {
-        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
-            chat: view.chat.id.clone(),
-            message: message.id.clone(),
-            for_everyone: false,
-        }));
-    }
-    if let Content::Sticker { media, .. } = &message.content
-        && let Some(path) = &media.path
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Star),
-            &crate::i18n::gettext(view.locale, "Add to favorites"),
-        )
-    {
-        actions.push(Action::SaveSticker(path.clone()));
     }
     if let Some(media) = message.content.media() {
         match &media.path {
@@ -6839,6 +6871,17 @@ fn context_menu(
     {
         speed_menu_row(ui, view, message, actions);
     }
+    if let Content::Sticker { media, .. } = &message.content
+        && let Some(path) = &media.path
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Star),
+            &crate::i18n::gettext(view.locale, "Add to favorites"),
+        )
+    {
+        actions.push(Action::SaveSticker(path.clone()));
+    }
     widgets::menu_separator(ui, &palette);
     // The menu holds actions only. Sent, delivery, and read times, per member
     // in a group, live in "Message info".
@@ -6855,6 +6898,24 @@ fn context_menu(
             message: message.id.clone(),
         }));
     }
+    if has_message_info(message) {
+        widgets::menu_separator(ui, &palette);
+    }
+    if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), "Delete for everyone") {
+        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+            chat: view.chat.id.clone(),
+            message: message.id.clone(),
+            for_everyone: true,
+        }));
+    }
+    if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), "Delete for me") {
+        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+            chat: view.chat.id.clone(),
+            message: message.id.clone(),
+            for_everyone: false,
+        }));
+    }
+    widgets::menu_separator(ui, &palette);
     if widgets::menu_item_enabled(
         ui,
         &palette,
@@ -9993,8 +10054,7 @@ fn attachment_radius(palette: &Palette) -> f32 {
     if palette.bubbles == theme::BubbleStyle::Nothing {
         f32::from(widgets::NOTHING_BUBBLE_RADIUS) - f32::from(NOTHING_ATTACHMENT_RIM)
     } else {
-        // The bubble's corners less its six-point margin above the card.
-        f32::from(widgets::BUBBLE_RADIUS) - 6.0
+        8.0
     }
 }
 

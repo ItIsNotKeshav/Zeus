@@ -1413,7 +1413,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         } else {
             palette.bubble_in
         };
-        painter.rect_filled(shape, super::widgets::BUBBLE_RADIUS, fill);
+        painter.rect_filled(shape, theme::RADIUS, fill);
         painter.galley(shape.min + vec2(14.0, 9.0), galley, colours.text);
         if own {
             let ticks = Rect::from_center_size(
