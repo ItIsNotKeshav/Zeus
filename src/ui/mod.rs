@@ -360,6 +360,9 @@ fn central_background(app: &App) -> egui::Color32 {
         egui::Color32::TRANSPARENT
     } else if conversation {
         app.settings.wallpaper_background(&app.palette)
+    } else if app.page == Page::Settings && app.palette.vibrant() {
+        // Settings sits on the same frosted glass as a conversation.
+        app.palette.vibrant_chat(app.palette.panel)
     } else {
         app.palette.panel
     }
