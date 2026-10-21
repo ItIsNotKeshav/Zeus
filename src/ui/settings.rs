@@ -191,8 +191,13 @@ impl Section {
         }
         let palette = app.palette;
         let title = if titled { title.shown } else { "".into() };
+        // Room between settings, more on the open page than on a card.
+        let gap = if titled { ROW_GAP } else { PAGE_ROW_GAP };
         section(ui, &palette, &title, |ui| {
-            for (row, control) in entries {
+            for (index, (row, control)) in entries.into_iter().enumerate() {
+                if index > 0 {
+                    ui.add_space(gap);
+                }
                 match control {
                     Control::Row(control) => widgets::setting_row(
                         ui,
@@ -426,6 +431,11 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
             });
     });
 }
+
+/// Extra room between settings on a card.
+const ROW_GAP: f32 = 8.0;
+/// Extra room between settings on the page beside the list of categories.
+const PAGE_ROW_GAP: f32 = 18.0;
 
 /// Widest the settings column grows.
 const COLUMN_WIDTH: f32 = 640.0;
