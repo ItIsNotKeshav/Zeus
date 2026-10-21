@@ -11,12 +11,14 @@ pub use fastframe_update::{
 };
 use fastframe_update::{ReqwestTransport, UpdateConfig};
 
-/// Zeus's releases, on the fork's GitHub page and signed with Zeus's own key,
-/// so a Zeus copy never takes a ZapFast release or the other way round.
+/// Zeus's releases, signed with Zeus's own key, so a Zeus copy never takes a
+/// ZapFast release or the other way round. The repository is its name as
+/// GitHub has it now: download links must match it exactly, so a rename
+/// leaves installed copies unable to update until they get it.
 pub const CONFIG: UpdateConfig = UpdateConfig {
     publisher_key: Some(include_str!("../assets/zeus-update-public-key.hex")),
     ..UpdateConfig::new(
-        "ItIsNotKeshav/zapfast",
+        "ItIsNotKeshav/Zeus",
         crate::brand::NAME,
         crate::brand::ID,
         env!("CARGO_PKG_VERSION"),

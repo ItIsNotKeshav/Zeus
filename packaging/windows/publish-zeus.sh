@@ -33,6 +33,6 @@ public=$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1
     openssl pkeyutl -sign -inkey "$key" -rawin -in checksums.txt -out checksums.txt.sig
 )
 
-gh release create "v$version" --repo ItIsNotKeshav/zapfast --target "$commit" \
+gh release create "v$version" --repo ItIsNotKeshav/Zeus --target "$commit" \
     --title "Zeus $version" --generate-notes --latest \
     "dist/$setup" dist/checksums.txt dist/checksums.txt.sig
