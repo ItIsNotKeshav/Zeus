@@ -2717,6 +2717,8 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             if theme::soft_button(ui, &palette, Some(Icon::Download), &label, false).clicked() {
                 app.actions.push(Action::ShowUpdate);
             }
+        } else if crate::brand::UPDATES {
+            check_for_updates(app, ui);
         }
         if theme::soft_button(
             ui,
@@ -2753,9 +2755,54 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
                 .push(Action::OpenUrl(env!("CARGO_PKG_REPOSITORY").to_owned()));
         }
     });
+    if app.update.is_none() {
+        let status = match &app.update_check {
+            crate::updates::Check::UpToDate => Some((
+                crate::i18n::gettext(app.locale, "Zeus is up to date.").to_string(),
+                palette.secondary,
+            )),
+            crate::updates::Check::Failed(error) => Some((
+                crate::i18n::gettext(app.locale, "Could not check for updates: {error}")
+                    .replace("{error}", error),
+                palette.danger,
+            )),
+            crate::updates::Check::Idle | crate::updates::Check::Checking => None,
+        };
+        if let Some((text, color)) = status {
+            ui.add_space(10.0);
+            theme::paragraph(ui, text, theme::regular(13.0), color);
+        }
+    }
     ui.add_space(14.0);
     if let Some(url) = widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
+    }
+}
+
+/// Asks GitHub for a newer release now; a newer one opens the update window.
+fn check_for_updates(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    if app.update_check == crate::updates::Check::Checking {
+        ui.horizontal(|ui| {
+            ui.set_min_height(30.0);
+            theme::spinner(ui, 15.0, palette.accent);
+            theme::text(
+                ui,
+                crate::i18n::gettext(app.locale, "Checking for updates…"),
+                theme::medium(13.0),
+                palette.secondary,
+            );
+        });
+    } else if theme::soft_button(
+        ui,
+        &palette,
+        Some(Icon::Refresh),
+        &crate::i18n::gettext(app.locale, "Check for updates"),
+        false,
+    )
+    .clicked()
+    {
+        app.actions.push(Action::CheckForUpdates);
     }
 }
 

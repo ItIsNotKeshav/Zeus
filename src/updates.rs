@@ -25,6 +25,17 @@ pub const CONFIG: UpdateConfig = UpdateConfig {
     )
 };
 
+/// Where a check the reader asked for stands, for Settings to say. Daily
+/// checks run without it and stay quiet when they fail.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Check {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    Failed(String),
+}
+
 /// An updater on the proxy-aware reqwest client.
 pub fn updater() -> anyhow::Result<Updater> {
     let mut builder = reqwest::blocking::Client::builder();
