@@ -9,13 +9,19 @@ pub use fastframe_update::{
     CHECK_INTERVAL, DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported,
     Updater,
 };
-use fastframe_update::{ReqwestTransport, UpdateConfig};
+use fastframe_update::{MacConfig, ReqwestTransport, UpdateConfig};
 
 /// Zeus's releases, signed with Zeus's own key, so a Zeus copy never takes a
 /// ZapFast release or the other way round. The repository is its name as
 /// GitHub has it now: download links must match it exactly, so a rename
 /// leaves installed copies unable to update until they get it.
 pub const CONFIG: UpdateConfig = UpdateConfig {
+    // The bundle packaging/macos/bundle-zeus.sh makes.
+    macos: MacConfig {
+        bundle_ids: &["app.zeus.Zeus"],
+        executable_names: &[],
+        legacy_bundle_names: &[],
+    },
     publisher_key: Some(include_str!("../assets/zeus-update-public-key.hex")),
     ..UpdateConfig::new(
         "ItIsNotKeshav/Zeus",
