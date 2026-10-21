@@ -589,6 +589,9 @@ release branches speculatively.
 
 ## Releasing
 
+This section is upstream ZapFast's. In this fork, release Zeus as
+[Releasing Zeus](#releasing-zeus) says, and leave the steps below alone.
+
 Never use em dashes in user-facing writing, including release titles, release
 notes, and agent responses. Use commas, colons, parentheses, or full stops.
 
@@ -709,22 +712,56 @@ maintainer's Windows machine:
   needs the running `.exe` renamed first; Windows locks it.
 - Share `dist/zeus-v<version>-x86_64-pc-windows-msvc-setup.exe`. It installs
   per user without administrator rights, under its own AppId, folder and
-  uninstall entry, so it never replaces ZapFast. Never reuse ZapFast's AppId or edit
-  `packaging/windows/zapfast.iss` for Zeus. The installer is unsigned, so
+  uninstall entry, so it never replaces ZapFast. Never reuse ZapFast's AppId
+  or edit `packaging/windows/zapfast.iss` for Zeus. The installer is unsigned, so
   SmartScreen warns once.
-- Zeus updates itself from this fork's GitHub releases (`updates::CONFIG`),
-  verified against its own key (`assets/zeus-update-public-key.hex`), never
-  ZapFast's. To ship one: bump `version` in `Cargo.toml` and `Cargo.lock`,
-  commit and push `main`, then run `packaging\windows\build-zeus.cmd publish`.
-  `publish-zeus.sh` signs `checksums.txt` with the private key in
-  `~/.zeus/update-signing-key.pem` and creates release `v<version>`; installed
-  copies offer it within a day and install it on **Restart to update**. Keep a
-  backup of that key: without it no installed copy accepts another update.
-  ZapFast's `release.yml` skips the fork, so the `v*` tag builds nothing.
-  Copies from before 0.19.1 have updates switched off and need the installer
-  once by hand.
 - More machine notes, including timings and microphone tests, are in
   `notes/NOTES.md`; where the work stands is in `notes/HANDOFF.md`.
+
+### Releasing Zeus
+
+Zeus updates itself from this fork's GitHub releases (`updates::CONFIG`,
+repository `ItIsNotKeshav/Zeus`), verified against its own key
+(`assets/zeus-update-public-key.hex`), never ZapFast's. Installed copies
+check once a day, offer the newest release, and install it on **Restart to
+update**. Copies older than 0.19.1 have updates switched off and need the
+installer once by hand.
+
+Release only when the maintainer asks ("release it", "ship an update", "send
+it to my friends"). Changes still go to `main` one commit at a time as usual;
+a release bundles whatever is there. When asked:
+
+1. Bump `version` in `Cargo.toml`, and the `name = "zeus"` entry in
+   `Cargo.lock` to the same number (the build runs `--locked`). It must be
+   above the latest release (`gh release list --repo ItIsNotKeshav/Zeus`), or
+   installed copies ignore it: the patch number for fixes (0.19.1 to
+   0.19.2), the minor one for new features (0.19.2 to 0.20.0). A merge from
+   upstream may move the version; keep it above Zeus's latest release all the
+   same. Leave ZapFast's Flatpak metainfo, docs site and AUR files alone.
+2. Write `packaging/release-notes/zeus-v<version>.md`. It becomes the release
+   page that the app's **Release notes** link opens, so write it for the
+   people using Zeus: a sentence or two of summary, then **New** and
+   **Fixed** lists of what they will notice, in plain words, taken from
+   `git log v<previous>..HEAD`. Leave out internal changes. No em dashes.
+   Publishing refuses to run without it.
+3. Commit both as "Release Zeus <version>" and push `main`.
+4. Run `packaging\windows\build-zeus.cmd publish` from PowerShell or cmd,
+   never Git Bash. Claude's tool sandbox breaks the C build there
+   (`C1356: unable to find mspdbcore.dll`), so run it with the sandbox off.
+   It builds the installer, checks the tree is clean, the commit is on
+   `origin/main` and the signing key is the one Zeus trusts, signs
+   `checksums.txt` with `~/.zeus/update-signing-key.pem`, and creates release
+   `v<version>` with the installer, `checksums.txt` and `checksums.txt.sig`.
+5. Check it: `gh release view v<version> --repo ItIsNotKeshav/Zeus` must list
+   those three files and not be a prerelease. Give the maintainer the
+   release's URL, and say what was not tried (an update is only seen
+   working once the next release reaches an installed copy).
+
+Keep a backup of the signing key: without it no installed copy accepts
+another update. Renaming the repository also stops updates, since download
+links must match `updates::CONFIG` exactly. ZapFast's `release.yml` skips the
+fork, so the `v*` tag builds nothing; `zeus-build.yml`'s `zeus-v*` tags are
+separate prerelease builds that the updater never reads.
 
 ## Disk use
 

@@ -12,7 +12,12 @@ cd "$(dirname "$0")/../.."
 key="${ZEUS_UPDATE_SIGNING_KEY:-$HOME/.zeus/update-signing-key.pem}"
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
 setup="zeus-v$version-x86_64-pc-windows-msvc-setup.exe"
+notes="packaging/release-notes/zeus-v$version.md"
 commit=$(git rev-parse HEAD)
+
+# The app's Release notes link opens this page; GitHub's own notes for direct
+# commits say nothing but "Full Changelog".
+[ -f "$notes" ] || { echo "Write $notes first." >&2; exit 1; }
 
 # The tag names the commit the installer was built from, so that commit must
 # be the whole of what was built, and already on main.
@@ -34,5 +39,5 @@ public=$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1
 )
 
 gh release create "v$version" --repo ItIsNotKeshav/Zeus --target "$commit" \
-    --title "Zeus $version" --generate-notes --latest \
+    --title "Zeus $version" --notes-file "$notes" --latest \
     "dist/$setup" dist/checksums.txt dist/checksums.txt.sig
