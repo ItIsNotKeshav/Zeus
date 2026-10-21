@@ -2456,33 +2456,42 @@ fn storage_bar_row(
     ui.add_space(8.0);
 }
 
-/// A titled group of settings on a rounded card.
+/// A titled group of settings on a rounded card, or untitled on the page.
 fn section(
     ui: &mut egui::Ui,
     palette: &Palette,
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    if !title.is_empty() {
+    // A section alone under its own name, beside the list of them, needs
+    // no card to set it apart: its rows sit straight on the page.
+    let frame = if title.is_empty() {
+        Frame::new().inner_margin(Margin {
+            left: 0,
+            right: 0,
+            top: 8,
+            bottom: 6,
+        })
+    } else {
         ui.add_space(12.0);
         theme::text(ui, title, theme::bold(18.0), palette.text);
         ui.add_space(8.0);
-    }
-    Frame::new()
-        .fill(theme::blend(palette.panel, palette.surface, 0.5))
-        .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS + 2))
-        // Every row ends with its own gap, so the bottom margin is smaller.
-        .inner_margin(Margin {
-            left: 20,
-            right: 20,
-            top: 16,
-            bottom: 6,
-        })
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add_contents(ui);
-        });
+        Frame::new()
+            .fill(theme::blend(palette.panel, palette.surface, 0.5))
+            .stroke(Stroke::new(1.0, palette.outline))
+            .corner_radius(CornerRadius::same(theme::RADIUS + 2))
+            // Every row ends with its own gap, so the bottom margin is smaller.
+            .inner_margin(Margin {
+                left: 20,
+                right: 20,
+                top: 16,
+                bottom: 6,
+            })
+    };
+    frame.show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        add_contents(ui);
+    });
     ui.add_space(8.0);
 }
 
