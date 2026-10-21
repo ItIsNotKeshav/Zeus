@@ -3,9 +3,12 @@ rem Builds Zeus's release binary and its Windows installer, as the maintainer's
 rem machine does. Needs the Visual Studio 2019 Build Tools, Scoop's perl (Git
 rem Bash's perl lacks modules OpenSSL's configure needs) and Inno Setup 6.
 rem
-rem   packaging\windows\build-zeus.cmd
+rem   packaging\windows\build-zeus.cmd [publish]
 rem
-rem Leaves target-nmake\release\zeus.exe and dist\zeus-<version>-x86_64-setup.exe.
+rem Leaves target-nmake\release\zeus.exe and
+rem dist\zeus-v<version>-x86_64-pc-windows-msvc-setup.exe. With publish, it then
+rem releases the installer on GitHub for installed copies to update from
+rem (publish-zeus.sh): bump the version and push main first.
 setlocal
 cd /d "%~dp0..\.."
 
@@ -24,4 +27,5 @@ for /f "tokens=3" %%v in ('findstr /b /c:"version = " Cargo.toml') do (
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DVersion=%VERSION% /DArch=x86_64 ^
   "/DBinary=%CARGO_TARGET_DIR%\release\zeus.exe" "/DOutputDir=%CD%\dist" ^
   packaging\windows\zeus.iss || exit /b 1
-echo Built dist\zeus-%VERSION%-x86_64-setup.exe
+echo Built dist\zeus-v%VERSION%-x86_64-pc-windows-msvc-setup.exe
+if /i "%~1"=="publish" "%ProgramFiles%\Git\bin\bash.exe" packaging/windows/publish-zeus.sh || exit /b 1

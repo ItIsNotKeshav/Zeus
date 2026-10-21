@@ -686,7 +686,8 @@ maintainer's Windows machine:
   OpenSSL, so never run a release build from Git Bash), builds into
   `target-nmake` with NMake, and runs Inno Setup on
   `packaging/windows/zeus.iss`. Out come `target-nmake/release/zeus.exe` and
-  `dist/zeus-<version>-x86_64-setup.exe`. A warm release build takes about
+  `dist/zeus-v<version>-x86_64-pc-windows-msvc-setup.exe` (the name the
+  updater asks a release for). A warm release build takes about
   5 minutes; a cold one about 15.
 - Debug builds, tests and previews run from Git Bash with plain `cargo`: a
   local, untracked `.cargo/config.toml` sets `target-nmake` and NMake.
@@ -706,13 +707,22 @@ maintainer's Windows machine:
   `%LOCALAPPDATA%\paolino\zeus\data\zeus.log` says `link: connected`. Never
   read chats out of its archive. Running a debug build over a running one
   needs the running `.exe` renamed first; Windows locks it.
-- Share `dist/zeus-<version>-x86_64-setup.exe`. It installs per user without
-  administrator rights, under its own AppId, folder and uninstall entry, so it
-  never replaces ZapFast. Never reuse ZapFast's AppId or edit
+- Share `dist/zeus-v<version>-x86_64-pc-windows-msvc-setup.exe`. It installs
+  per user without administrator rights, under its own AppId, folder and
+  uninstall entry, so it never replaces ZapFast. Never reuse ZapFast's AppId or edit
   `packaging/windows/zapfast.iss` for Zeus. The installer is unsigned, so
   SmartScreen warns once.
-- Zeus has no update feed (`brand::UPDATES` is false); a new version reaches
-  people as a new installer.
+- Zeus updates itself from this fork's GitHub releases (`updates::CONFIG`),
+  verified against its own key (`assets/zeus-update-public-key.hex`), never
+  ZapFast's. To ship one: bump `version` in `Cargo.toml` and `Cargo.lock`,
+  commit and push `main`, then run `packaging\windows\build-zeus.cmd publish`.
+  `publish-zeus.sh` signs `checksums.txt` with the private key in
+  `~/.zeus/update-signing-key.pem` and creates release `v<version>`; installed
+  copies offer it within a day and install it on **Restart to update**. Keep a
+  backup of that key: without it no installed copy accepts another update.
+  ZapFast's `release.yml` skips the fork, so the `v*` tag builds nothing.
+  Copies from before 0.19.1 have updates switched off and need the installer
+  once by hand.
 - More machine notes, including timings and microphone tests, are in
   `notes/NOTES.md`; where the work stands is in `notes/HANDOFF.md`.
 

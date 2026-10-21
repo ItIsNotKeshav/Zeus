@@ -16,6 +16,9 @@ env:
 jobs:
   release-source:
     name: tag is on main
+    # ZapFast's releases only: Zeus's v* tags come from publish-zeus.sh, and
+    # every other job here waits on this one.
+    if: github.repository == 'crmne/zapfast'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

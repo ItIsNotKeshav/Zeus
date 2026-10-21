@@ -54,7 +54,7 @@ locked chats, an app lock, and tray notifications, in ten languages.
 
 | Platform | How |
 |---|---|
-| **Windows** | Download `zeus-<version>-x86_64-setup.exe` from [Releases](https://github.com/ItIsNotKeshav/zapfast/releases/latest). It installs for your user without administrator rights. It is not code-signed, so Windows SmartScreen warns once: choose **More info**, then **Run anyway**. |
+| **Windows** | Download `zeus-v<version>-x86_64-pc-windows-msvc-setup.exe` from [Releases](https://github.com/ItIsNotKeshav/zapfast/releases/latest). It installs for your user without administrator rights and updates itself from then on. It is not code-signed, so Windows SmartScreen warns once: choose **More info**, then **Run anyway**. |
 | **macOS** | Download the `.tar.gz` for your Mac (Apple Silicon is `aarch64`, Intel is `x86_64`) and run the `zeus` binary. There is no `.app` bundle yet, and the binary is unsigned. |
 | **Linux** | Download the `.tar.gz`, unpack it, and run `zeus`. It includes a desktop entry and icon you can copy into place. |
 | **From source** | Install Rust, then run `cargo build --release --locked`. Linux needs ALSA, PipeWire, and clang headers, and every platform needs cmake. |

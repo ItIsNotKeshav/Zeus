@@ -706,7 +706,7 @@ fn sections(app: &App) -> Vec<Section> {
             },
         );
     }
-    // Without a release feed of its own there is nothing to check.
+    // Only a build with a release feed of its own has anything to check.
     if crate::brand::UPDATES {
         system.toggle(
             translated(locale, "Check for updates"),

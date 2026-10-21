@@ -52,7 +52,8 @@ ArchitecturesInstallIn64BitMode={#InnoArch}
 MinVersion=10.0
 LicenseFile=..\..\LICENSE
 OutputDir={#OutputDir}
-OutputBaseFilename=zeus-{#Version}-{#Arch}-setup
+; The name the updater asks a release for.
+OutputBaseFilename=zeus-v{#Version}-{#Arch}-pc-windows-msvc-setup
 SetupIconFile=zeus.ico
 Compression=lzma2/max
 SolidCompression=yes
@@ -72,6 +73,13 @@ Source: "..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; The fonts built into the program travel with their licences.
 Source: "..\..\assets\fonts\*-OFL.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
 Source: "..\..\assets\fonts\*-LICENSE.txt"; DestDir: "{app}\licenses"; Flags: ignoreversion
+; Tells the updater this copy came from the installer, which it runs again
+; silently to update it.
+Source: "zeus-installer.txt"; DestDir: "{app}"; Flags: ignoreversion
+
+[UninstallDelete]
+; The updater's staging folders, left beside the app after an update.
+Type: filesandordirs; Name: "{app}\.zeus-update-*"
 
 [Icons]
 Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#AppExeName}"; AppUserModelID: "app.zeus.Zeus"

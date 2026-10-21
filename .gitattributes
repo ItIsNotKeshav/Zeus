@@ -1,1 +1,3 @@
 .github/workflows/*.lock.yml linguist-generated=true
+# Run by Git Bash on Windows, where autocrlf would otherwise break it.
+packaging/windows/publish-zeus.sh text eol=lf

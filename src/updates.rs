@@ -3,33 +3,22 @@
 //! The crate checks for a newer release, refuses package-managed copies,
 //! downloads and verifies the update against the publisher signature, and
 //! hands it to a helper that installs it and rolls back if it does not start.
-//! ZapFast keeps its names, its key, its proxy and its interface.
+//! Zeus keeps its names, its key, its proxy and its interface.
 
 pub use fastframe_update::{
     CHECK_INTERVAL, DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported,
     Updater,
 };
-use fastframe_update::{MacConfig, ReqwestTransport, UpdateConfig};
+use fastframe_update::{ReqwestTransport, UpdateConfig};
 
-/// ZapFast's releases and the names its installations have had.
+/// Zeus's releases, on the fork's GitHub page and signed with Zeus's own key,
+/// so a Zeus copy never takes a ZapFast release or the other way round.
 pub const CONFIG: UpdateConfig = UpdateConfig {
-    // Cask and bundle names from before the rename. This also accepts
-    // fastsapp-* marker files and `fastsapp <version>` answers, which no
-    // release produces.
-    legacy_names: &["fastsapp"],
-    macos: MacConfig {
-        bundle_ids: &["me.paolino.fastsapp"],
-        executable_names: &[],
-        legacy_bundle_names: &["FastsApp.app"],
-    },
-    publisher_key: Some(include_str!("../assets/update-public-key.hex")),
-    // The next release key, backed up outside GitHub. Releases stay signed
-    // with the current key until installs trust this one too.
-    additional_publisher_keys: &[include_str!("../assets/update-public-key-next.hex")],
+    publisher_key: Some(include_str!("../assets/zeus-update-public-key.hex")),
     ..UpdateConfig::new(
-        "crmne/zapfast",
-        "Zeus",
-        "zapfast",
+        "ItIsNotKeshav/zapfast",
+        crate::brand::NAME,
+        crate::brand::ID,
         env!("CARGO_PKG_VERSION"),
     )
 };
@@ -51,7 +40,7 @@ mod tests {
     fn update_config_is_valid() {
         CONFIG.validate().unwrap();
         assert_eq!(CONFIG.current_version, env!("CARGO_PKG_VERSION"));
-        assert_eq!(CONFIG.slug, "zapfast");
+        assert_eq!(CONFIG.slug, "zeus");
     }
 
     #[test]
