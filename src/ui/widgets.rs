@@ -780,7 +780,7 @@ impl FrostedPopup for egui::Popup<'_> {
     }
 }
 
-/// Shared popup-menu frame, see-through over [`show_frosted`]'s glass.
+/// Shared popup-menu frame, see-through over [`FrostedPopup::show_frosted`]'s glass.
 pub fn menu_frame(palette: &Palette) -> egui::Frame {
     egui::Frame::new()
         .fill(palette.menu_glass())
