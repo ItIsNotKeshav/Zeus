@@ -752,10 +752,23 @@ a release bundles whatever is there. When asked:
    `origin/main` and the signing key is the one Zeus trusts, signs
    `checksums.txt` with `~/.zeus/update-signing-key.pem`, and creates release
    `v<version>` with the installer, `checksums.txt` and `checksums.txt.sig`.
-5. Check it: `gh release view v<version> --repo ItIsNotKeshav/Zeus` must list
-   those three files and not be a prerelease. Give the maintainer the
-   release's URL, and say what was not tried (an update is only seen
-   working once the next release reaches an installed copy).
+5. Publishing starts `.github/workflows/zeus-release.yml` (about 30 to 45
+   minutes), which builds Linux (x86_64 and aarch64: `.tar.gz`, `.deb`,
+   `.rpm` for Fedora and openSUSE, `.AppImage`) and macOS (universal `.dmg`,
+   ad-hoc signed, so Gatekeeper wants right-click, Open once) on GitHub's
+   machines and attaches them to the same release, with
+   `packaging-checksums.txt`. Its packages come from
+   `zeus.native-packages.yaml`, apart from ZapFast's `native-packages.yaml`.
+   If the repository secret `ZEUS_UPDATE_SIGNING_KEY` is set (the contents of
+   `~/.zeus/update-signing-key.pem`), it also re-signs `checksums.txt` to
+   cover the tarballs and DMG; without it only Windows copies self-update.
+   A release made before this workflow existed cannot be rebuilt by it.
+6. Check it: `gh release view v<version> --repo ItIsNotKeshav/Zeus` must list
+   the Windows files, and once the workflow is green the Linux and macOS
+   ones, and not be a prerelease. Give the maintainer the release's URL, and
+   say what was not tried (an update is only seen working once the next
+   release reaches an installed copy; the Linux and macOS builds have never
+   been run by us).
 
 Keep a backup of the signing key: without it no installed copy accepts
 another update. Renaming the repository also stops updates, since download

@@ -8,6 +8,7 @@ require "tmpdir"
 payload, output = ARGV
 abort "usage: dmg.rb PAYLOAD OUTPUT.dmg" unless payload && output
 abort "output already exists: #{output}" if File.exist?(output)
+volume = File.basename(Dir.glob(File.join(payload, "*.app")).first || "ZapFast.app", ".app")
 Dir.mktmpdir("zapfast-dmg-") do |directory|
   FileUtils.cp_r(File.join(payload, "."), directory, preserve: true)
   File.symlink("/Applications", File.join(directory, "Applications"))
@@ -19,7 +20,7 @@ Dir.mktmpdir("zapfast-dmg-") do |directory|
   created = 3.times.any? do |attempt|
     FileUtils.rm_f(output)
     sleep(5 * attempt)
-    system("hdiutil", "create", "-volname", "ZapFast", "-srcfolder", directory,
+    system("hdiutil", "create", "-volname", volume, "-srcfolder", directory,
       "-size", "#{megabytes}m", "-format", "UDZO", output)
   end
   unless created

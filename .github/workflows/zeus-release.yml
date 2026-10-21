@@ -1,0 +1,221 @@
+name: Zeus release
+
+# Adds Linux and macOS builds to a Zeus release. The release itself, with the
+# Windows installer, is made on the maintainer's PC by
+# `packaging\windows\build-zeus.cmd publish`; publishing it starts this
+# workflow, which builds on GitHub's machines and attaches, as ZapFast's
+# release does:
+#   Linux x86_64 and aarch64: .tar.gz, .deb, .rpm (Fedora, openSUSE), .AppImage
+#   macOS (Apple silicon and Intel): .dmg
+# Run it by hand from the Actions tab (with the release's tag) to redo one.
+# The tag must carry this workflow and zeus.native-packages.yaml: releases
+# before the one that added them cannot be rebuilt this way.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Zeus release tag, such as v0.20.1
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zeus-release-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  CONFIG: zeus.native-packages.yaml
+
+jobs:
+  check:
+    name: tag matches the version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          test "$TAG" = "v$version" || { echo "::error::$TAG is not v$version"; exit 1; }
+          test -f "$CONFIG" || { echo "::error::$TAG has no $CONFIG; release a newer version"; exit 1; }
+
+  linux:
+    name: build (${{ matrix.target }})
+    needs: check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The oldest supported Ubuntu: the binary needs the glibc it was
+          # built against or newer (2.39), so the packages install on
+          # Ubuntu 24.04, Debian 13 and Fedora 41 and newer.
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          # A native arm64 runner, so the GUI's system libraries need no
+          # cross-compilation sysroot.
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: rustup target add ${{ matrix.target }}
+      - name: GUI build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package
+        run: |
+          name="zeus-${TAG}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp "target/${{ matrix.target }}/release/zeus" README.md LICENSE THIRD-PARTY-NOTICES.md "dist/$name/"
+          cp --parents packaging/applications/zeus.desktop packaging/icons/zeus.svg "dist/$name/"
+          tar czf "dist/$name.tar.gz" -C dist "$name"
+          rm -rf "dist/$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.target }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # .deb, .rpm and .AppImage from the two tarballs above, as ZapFast's
+  # packaging does (zeus.native-packages.yaml).
+  linux-packages:
+    name: Linux packages
+    needs: linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: linux-*
+          path: dist
+          merge-multiple: true
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+      - name: Packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools binutils xz-utils squashfs-tools zsync
+          gem install native-packages --version 0.10.0 --no-document
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+      - name: Build the packages
+        run: |
+          native-packages --config "$CONFIG" validate
+          native-packages --config "$CONFIG" build --version "${TAG#v}" \
+            --target linux-amd64 --target linux-arm64 --output dist/native-packages
+      - name: Gather
+        run: |
+          mkdir out
+          cp dist/native-packages/packages/*/{deb/*.deb,rpm/*.rpm,appimage/*.AppImage} out/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-packages
+          path: out/*
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal app
+    needs: check
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+      - name: Universal binary
+        run: |
+          mkdir -p universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/zeus \
+            target/x86_64-apple-darwin/release/zeus \
+            -output universal/zeus
+          # The two release builds fill most of the runner's disk; the DMG
+          # needs room of its own.
+          rm -rf target
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '4.0'
+      - run: gem install native-packages --version 0.10.0 --no-document
+      - name: App bundle and DMG
+        run: |
+          mkdir -p dist/macos-input
+          bash packaging/macos/bundle-zeus.sh universal/zeus dist/macos-input/Zeus.app "${TAG#v}"
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/macos-input/
+          native-packages --config "$CONFIG" build --version "${TAG#v}" \
+            --target macos-universal --defer-recipes --output "$RUNNER_TEMP/macos-packages"
+          cp "$RUNNER_TEMP/macos-packages/packages/macos-universal/dmg/"*.dmg dist/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-universal
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  publish:
+    name: Attach to the release
+    needs: [linux, linux-packages, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Optional. With it, checksums.txt is re-signed to cover the Linux
+      # tarballs and the DMG, so those copies can update themselves. Without
+      # it the files are attached with unsigned packaging-checksums.txt only.
+      ZEUS_UPDATE_SIGNING_KEY: ${{ secrets.ZEUS_UPDATE_SIGNING_KEY }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.dmg *.deb *.rpm *.AppImage > packaging-checksums.txt
+          cat packaging-checksums.txt
+      - name: Re-sign checksums.txt
+        if: env.ZEUS_UPDATE_SIGNING_KEY != ''
+        run: |
+          set +x
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt --dir signed
+          key="$RUNNER_TEMP/update-signing-key.pem"
+          (umask 077; printf '%s\n' "$ZEUS_UPDATE_SIGNING_KEY" > "$key")
+          # Any other key would publish an update every installed copy refuses.
+          public=$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')
+          test "$public" = "$(tr -d '[:space:]' < assets/zeus-update-public-key.hex)" \
+            || { echo "::error::ZEUS_UPDATE_SIGNING_KEY is not the key Zeus trusts"; exit 1; }
+          cd signed
+          # The Windows line stays as the maintainer's PC signed it; ours are
+          # replaced, so a re-run does not repeat them.
+          grep -v -E '\.(tar\.gz|dmg)$' checksums.txt > keep.txt || true
+          (cd ../dist && sha256sum *.tar.gz *.dmg) | cat keep.txt - > ../dist/checksums.txt
+          openssl pkeyutl -sign -inkey "$key" -rawin -in ../dist/checksums.txt -out ../dist/checksums.txt.sig
+          rm -f "$key"
+      - name: Upload
+        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*

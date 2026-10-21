@@ -1,0 +1,117 @@
+# Zeus's packages, built by .github/workflows/zeus-release.yml:
+#   native-packages --config zeus.native-packages.yaml build --version X.Y.Z
+# ZapFast's own configuration stays in native-packages.yaml, untouched.
+---
+schema: 1
+tool:
+  version: 0.10.0
+  nfpm: 2.47.0
+# Ubuntu 24.04 and Debian 13 use the t64 package names; older releases the
+# plain ones. Sound goes to PipeWire itself, else PulseAudio, else ALSA.
+libraries:
+  libasound.so.2:
+    deb: libasound2t64 | libasound2
+    rpm: alsa-lib
+  libpipewire-0.3.so.0:
+    deb: libpipewire-0.3-0t64 | libpipewire-0.3-0
+    rpm: pipewire-libs
+nfpm:
+  name: zeus
+  maintainer: Keshav <ItIsNotKeshav@users.noreply.github.com>
+  homepage: https://github.com/ItIsNotKeshav/Zeus
+  description: Fast native WhatsApp client
+  license: MIT
+  contents:
+  - src: "@PAYLOAD@/zeus-v@VERSION@-@TARGET@/zeus"
+    dst: "/usr/bin/zeus"
+    file_info:
+      mode: 493
+  - src: "@PAYLOAD@/zeus-v@VERSION@-@TARGET@/LICENSE"
+    dst: "/usr/share/licenses/zeus/LICENSE"
+    file_info:
+      mode: 420
+  - src: "@PAYLOAD@/zeus-v@VERSION@-@TARGET@/README.md"
+    dst: "/usr/share/doc/zeus/README.md"
+    file_info:
+      mode: 420
+  - src: "@PAYLOAD@/zeus-v@VERSION@-@TARGET@/packaging/applications/zeus.desktop"
+    dst: "/usr/share/applications/zeus.desktop"
+    file_info:
+      mode: 420
+  - src: "@PAYLOAD@/zeus-v@VERSION@-@TARGET@/packaging/icons/zeus.svg"
+    dst: "/usr/share/icons/hicolor/scalable/apps/zeus.svg"
+    file_info:
+      mode: 420
+  # native-packages adds the C library (libc6, glibc) at the version the
+  # binary needs: 2.39, as the release builds run on Ubuntu 24.04.
+  overrides:
+    deb:
+      depends:
+      - libgl1
+      - libegl1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libwayland-client0
+      - libwayland-cursor0
+      - libwayland-egl1
+      - libx11-6
+      - libx11-xcb1
+      - libxcursor1
+      - libxi6
+      - libxrandr2
+      - libasound2t64 | libasound2
+      - libpipewire-0.3-0t64 | libpipewire-0.3-0
+      - libgcc-s1
+      - libstdc++6
+    rpm:
+      depends:
+      - libglvnd-glx
+      - libglvnd-egl
+      - libxkbcommon
+      - libxkbcommon-x11
+      - libwayland-client
+      - libwayland-cursor
+      - libwayland-egl
+      - libX11
+      - libX11-xcb
+      - libXcursor
+      - libXi
+      - libXrandr
+      - alsa-lib
+      - pipewire-libs
+      - libgcc
+      - libstdc++
+  rpm:
+    buildhost: github-actions
+targets:
+  macos-universal:
+    platform: macos
+    arch: universal
+    formats: [dmg]
+    input:
+      kind: directory
+      local: dist/macos-input
+    native:
+      command: [ruby, packaging/macos/dmg.rb, '@PAYLOAD@', '@PACKAGE@']
+      output: 'zeus-@TAG@-macos-universal.dmg'
+  linux-amd64:
+    platform: linux
+    arch: amd64
+    libc: glibc
+    compiler_target: x86_64-unknown-linux-gnu
+    formats: [deb, rpm, appimage]
+    input:
+      local: dist/zeus-v@VERSION@-x86_64-unknown-linux-gnu.tar.gz
+  linux-arm64:
+    platform: linux
+    arch: arm64
+    libc: glibc
+    compiler_target: aarch64-unknown-linux-gnu
+    formats: [deb, rpm, appimage]
+    input:
+      local: dist/zeus-v@VERSION@-aarch64-unknown-linux-gnu.tar.gz
+release:
+  repository: ItIsNotKeshav/Zeus
+  checksums: checksums.txt
+  prereleases: true
+version_file: Cargo.toml

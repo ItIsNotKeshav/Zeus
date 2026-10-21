@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key><string>Zeus</string>
+    <key>CFBundleDisplayName</key><string>Zeus</string>
+    <key>CFBundleIdentifier</key><string>app.zeus.Zeus</string>
+    <key>CFBundleExecutable</key><string>zeus</string>
+    <key>CFBundleIconFile</key><string>zeus</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+    <key>CFBundleVersion</key><string>__VERSION__</string>
+    <key>LSMinimumSystemVersion</key><string>11.0</string>
+    <key>LSApplicationCategoryType</key><string>public.app-category.social-networking</string>
+    <key>NSHighResolutionCapable</key><true/>
+    <key>NSMicrophoneUsageDescription</key><string>Zeus uses the microphone for calls and for the voice messages you choose to send.</string>
+    <key>NSCameraUsageDescription</key><string>Zeus uses the camera for the video calls you make and answer.</string>
+    <key>NSHumanReadableCopyright</key><string>Not affiliated with WhatsApp or Meta.</string>
+</dict>
+</plist>
