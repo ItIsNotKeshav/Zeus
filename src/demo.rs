@@ -2076,6 +2076,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "phone-menu" => phone_menu_sample(app),
             "short-chat" => short_chat_sample(app),
             "chat-menu" => app.open_chat_menu = Some(app.chats[0].id.clone()),
+            // The message picked up and carried to where `--demo-hover` rests.
+            part if part.starts_with("carry=") => {
+                app.demo_carry = Some(part["carry=".len()..].to_owned());
+            }
             "chat-header-menu" => app.open_header_menu = app.open_chat.clone(),
             "interactive-actions" => interactive_actions_sample(app),
             "interactive-list" => interactive_list_sample(app),

@@ -533,6 +533,10 @@ pub struct App {
     /// Demo/test: keep this chat row's context menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_chat_menu: Option<ChatId>,
+    /// Demo/test: hold this message of the open chat lifted, carried to
+    /// wherever the pointer rests.
+    #[cfg(any(test, feature = "demo"))]
+    pub demo_carry: Option<String>,
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
@@ -1377,6 +1381,8 @@ impl App {
             open_message_menu: None,
             #[cfg(any(test, feature = "demo"))]
             open_chat_menu: None,
+            #[cfg(any(test, feature = "demo"))]
+            demo_carry: None,
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
             #[cfg(any(test, feature = "demo"))]
@@ -6907,6 +6913,41 @@ impl App {
                 self.forward_reviewing = false;
                 self.selection = None;
             }
+            Action::ForwardDropped {
+                from_chat,
+                messages,
+                to_chat,
+            } => {
+                let Some(title) = self
+                    .chat(&to_chat)
+                    .filter(|chat| chat.can_send())
+                    .map(|chat| self.chat_title(chat))
+                else {
+                    self.toast_error(
+                        crate::i18n::gettext(self.locale, "A selected chat is no longer writable")
+                            .into_owned(),
+                    );
+                    return;
+                };
+                if messages.is_empty() || from_chat == to_chat {
+                    return;
+                }
+                // A carried selection has gone where it was going.
+                if self
+                    .selection
+                    .as_ref()
+                    .is_some_and(|(chat, _)| *chat == from_chat)
+                {
+                    self.selection = None;
+                }
+                self.backend.send(Command::Forward {
+                    from_chat,
+                    messages,
+                    to_chats: vec![to_chat],
+                });
+                self.follow_sent_chat();
+                self.toast(format!("Forwarded to {title}"));
+            }
             Action::StartSelection => {
                 // Choosing it again keeps what is already ticked.
                 if let Some(chat) = self.open_chat.clone()
@@ -10865,6 +10906,41 @@ mod tests {
             )]
         );
         assert!(app.dialog.is_none());
+    }
+
+    #[test]
+    /// A message dropped on a chat in the list goes there at once; one
+    /// dropped on a chat that cannot take it, or back on its own, does not.
+    fn dropping_carried_messages_on_a_chat_forwards_them_there() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        app.chats.push(Chat::new("target".into(), "Target".into()));
+        let mut locked = Chat::new("locked".into(), "Locked".into());
+        locked.left = true;
+        app.chats.push(locked);
+        app.selection = Some(("source".into(), vec!["a".into(), "b".into()]));
+        let drop = |to: &str| Action::ForwardDropped {
+            from_chat: "source".into(),
+            messages: vec!["a".into(), "b".into()],
+            to_chat: to.into(),
+        };
+        app.apply(drop("locked"), &ctx);
+        app.apply(drop("source"), &ctx);
+        assert!(sent_forwards(&mut commands).is_empty());
+        assert!(app.selection.is_some());
+        app.apply(drop("target"), &ctx);
+        assert_eq!(
+            sent_forwards(&mut commands),
+            [(
+                "source".to_owned(),
+                vec!["a".to_owned(), "b".to_owned()],
+                vec!["target".to_owned()]
+            )]
+        );
+        assert!(app.selection.is_none(), "the carried selection is done");
+        assert!(app.toasts.iter().any(|toast| toast.message == "Forwarded to Target"));
     }
 
     #[test]

@@ -794,6 +794,9 @@ impl Shell {
         };
         fastframe_titlebar::align_traffic_lights(frame, ctx, title_bar);
         zeus::backdrop::apply(frame, &app.palette, self.transparent);
+        // A message carried out of the window last frame: its files go on
+        // to the system's drag and drop.
+        zeus::drag_out::perform(frame);
         #[cfg(feature = "demo")]
         {
             // Keep requesting the configured screenshot size until it is applied.

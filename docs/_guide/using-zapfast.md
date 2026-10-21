@@ -45,6 +45,16 @@ returns to the picker without losing the selection. If a destination becomes
 locked or read-only, ZapFast returns to selection instead of sending a partial
 batch. Switching accounts discards the open forwarding selection.
 
+You can also drag a message onto a chat in the list, or onto its avatar when
+the list is folded, to forward it there at once. Drag it by a photo, video,
+sticker or file card, or by the bubble's edge; on text, hold the pointer still
+for a moment first, since a drag on text selects it. A message that is part of
+a selection carries the whole selection. The chat under the pointer lights up
+and names itself, a chat you cannot send to refuses the drop, and letting go
+anywhere else, or pressing Escape, puts the message back. On Windows, dragging
+a downloaded photo, video or file out of the window hands it to Explorer or
+whichever app you drop it on.
+
 Right-click a group message and choose **Reply privately** to open a direct
 conversation with its sender while quoting the group message. The quote
 survives closing the recipient chat or switching accounts. Locked or

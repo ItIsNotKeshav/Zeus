@@ -2740,6 +2740,12 @@ pub enum Action {
     /// Forwards to the chosen recipients: one at once, several after
     /// their confirmation.
     ConfirmForward,
+    /// Forwards messages carried out of a chat and dropped on another one.
+    ForwardDropped {
+        from_chat: ChatId,
+        messages: Vec<String>,
+        to_chat: ChatId,
+    },
     /// Starts selecting messages in the open chat, beginning with this one.
     SelectMessage(String),
     /// Adds a message to the selection or removes it.
