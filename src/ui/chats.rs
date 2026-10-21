@@ -1625,6 +1625,15 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
     }
+    if super::carry::carrying(ui.ctx()) {
+        super::carry::target(
+            ui,
+            rect,
+            chat,
+            &title,
+            pos2(rect.left() + 38.0, rect.center().y),
+        );
+    }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if let Some((area, prefix, full)) = full_preview {
         full_preview_tooltip(app, ui, &chat.id, area, &prefix, &full);
@@ -1973,6 +1982,9 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(compact_chat_id(&chat.id), response.rect));
+    if super::carry::carrying(ui.ctx()) {
+        super::carry::target(ui, rect, chat, &title, rect.center());
+    }
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(title);

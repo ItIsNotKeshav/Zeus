@@ -2280,6 +2280,8 @@ struct View<'a> {
     interactive_pending: &'a HashSet<(ChatId, String)>,
     /// Whether this chat is selecting whole messages.
     selecting: bool,
+    /// The ids of the selected messages, when selecting.
+    selected: &'a [String],
     anchor: Option<&'a str>,
     /// Demo/test: keep this message's context menu open.
     open_menu: Option<&'a str>,
@@ -2658,6 +2660,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .selection
             .as_ref()
             .is_some_and(|(selected_chat, _)| *selected_chat == chat.id),
+        selected: app
+            .selection
+            .as_ref()
+            .filter(|(selected_chat, _)| *selected_chat == chat.id)
+            .map_or(&[][..], |(_, ids)| ids.as_slice()),
         anchor: if conversation.loading_older || conversation.fetching_phone {
             None
         } else {
@@ -4086,9 +4093,61 @@ fn ease_out(t: f32) -> f32 {
 }
 
 /// Draws a message row and returns its bubble response for scrolling. A
-/// message just sent flies there from the composer, carrying the text out
-/// of the field; one just received fades in and grows a little from its side.
+/// bubble whose card is being carried to another chat stays behind faintly,
+/// and a press on one may pick it up (`carry`).
 fn bubble(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    album: Option<&[Message]>,
+    place: RunPlace,
+    reduce_motion: bool,
+    actions: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let layer = ui.layer_id();
+    let start = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let response = match super::carry::ghost(ui.ctx(), &view.chat.id, &message.id) {
+        Some(opacity) => {
+            ui.scope(|ui| {
+                ui.multiply_opacity(opacity);
+                bubble_arriving(ui, view, message, album, place, reduce_motion, actions)
+            })
+            .inner
+        }
+        None => bubble_arriving(ui, view, message, album, place, reduce_motion, actions),
+    };
+    if !view.selecting || view.selected.contains(&message.id) {
+        let rect = ui
+            .ctx()
+            .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")));
+        if let Some(rect) = rect {
+            let fill = if message.from_me {
+                view.palette.bubble_out
+            } else {
+                view.palette.bubble_in
+            };
+            super::carry::watch(
+                ui,
+                &view.chat.id,
+                album.unwrap_or(std::slice::from_ref(message)),
+                view.selected,
+                start,
+                rect,
+                fill,
+            );
+        }
+    }
+    response
+}
+
+/// Draws a message row. A message just sent flies there from the composer,
+/// carrying the text out of the field; one just received fades in and grows
+/// a little from its side.
+fn bubble_arriving(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
@@ -4287,7 +4346,10 @@ fn bubble_row(
         if strip.clicked() {
             actions.push(Action::FocusComposer);
         }
-        if strip.drag_started() {
+        // A drag from the bubble's own padding or media, under which this
+        // strip runs too, picks the message up instead.
+        if strip.drag_started() && !super::carry::lift_on_drag(ui.ctx(), &view.chat.id, &message.id)
+        {
             actions.push(Action::SweepMessages {
                 anchor: message.id.clone(),
                 to: message.id.clone(),
@@ -4580,6 +4642,15 @@ impl egui::plugin::Plugin for SelectionLeash {
     }
 
     fn input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        // A message carried to another chat, or out of the window, goes
+        // wherever the pointer does; leaving the window does not drop it.
+        if super::carry::lifted() {
+            self.holding = false;
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::PointerGone));
+            return;
+        }
         let Some(view) = *self.view.lock().unwrap_or_else(|p| p.into_inner()) else {
             self.holding = false;
             return;
@@ -6474,6 +6545,7 @@ pub(crate) fn list_menu(
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
         selecting: false,
+        selected: &[],
         motion_playing: None,
         starred: marks.starred.then_some(&stars),
         pins: app.pins.get(&message.chat),
@@ -11846,6 +11918,7 @@ mod tests {
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
             selecting: false,
+            selected: &[],
             motion_playing: None,
             starred: None,
             pins: None,

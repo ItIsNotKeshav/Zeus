@@ -23,6 +23,7 @@ pub mod chat_themes;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;
 pub mod diagnostics;
+pub mod drag_out;
 pub mod emoji;
 pub mod geo;
 pub mod i18n;

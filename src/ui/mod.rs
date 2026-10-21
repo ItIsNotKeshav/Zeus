@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod call;
 pub mod calls;
+pub(crate) mod carry;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;
@@ -46,6 +47,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         announce(app, ctx);
         return;
     }
+    carry::begin(ctx);
     keys::handle(app, ctx);
     history_buttons(app, ctx);
     let main_navigation = app.is_linked()
@@ -112,6 +114,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     drop_target(app, ctx);
     banner(app, ctx, floor);
     toasts(app, ctx);
+    carry::show(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
 }
