@@ -206,7 +206,8 @@ pub fn ballot(
                 let active = enabled && state.can_vote && !pending;
                 if ui.is_rect_visible(rect) {
                     if active && response.hovered() {
-                        ui.painter().rect_filled(rect, 5.0, palette.surface_hover);
+                        ui.painter()
+                            .rect_filled(rect, theme::RADIUS, palette.surface_hover);
                     }
                     let center = pos2(rect.left() + 10.0, rect.top() + 16.0);
                     if selected {

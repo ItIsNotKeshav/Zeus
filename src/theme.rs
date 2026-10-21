@@ -456,6 +456,24 @@ impl Palette {
         self.vibrant_pill(self.chat)
     }
 
+    /// The fill of a menu or dialog over frosted glass: see-through enough
+    /// that the colours under it show, as iOS's menus let them; solid while
+    /// Settings' Blur is off.
+    pub fn menu_glass(&self) -> Color32 {
+        self.frosted(self.overlay)
+    }
+
+    /// `color` thinned for a surface over frosted glass, or as it is while
+    /// Settings' Blur is off.
+    pub fn frosted(&self, color: Color32) -> Color32 {
+        if !crate::backdrop::blur() {
+            return color;
+        }
+        // White glass reads as an opaque box well before dark glass does,
+        // so the light palettes keep more of their fill.
+        translucent(color, if self.dark { 176 } else { 200 })
+    }
+
     /// The faint edge around glass.
     pub fn glass_edge(&self) -> Stroke {
         Stroke::new(1.0, self.text.gamma_multiply(0.08))
@@ -751,8 +769,21 @@ fn hsl(hue: f32, saturation: f32, lightness: f32) -> Color32 {
     Color32::from_rgb(channel(r), channel(g), channel(b))
 }
 
-pub const RADIUS: u8 = 8;
-pub const RADIUS_SMALL: u8 = 4;
+// Corner radii, as round as iOS 26's glass and nested the same way: a
+// shape inside a rounded surface takes the surface's radius less the room
+// between them, so the two curves run together.
+/// Badges, thumbnails, swatches and other small tiles.
+pub const RADIUS_SMALL: u8 = 8;
+/// Buttons, and egui's own widgets.
+pub const RADIUS_CONTROL: u8 = 12;
+/// Fields, rows, toasts, and items within a menu.
+pub const RADIUS: u8 = 14;
+/// Menus and popovers: [`RADIUS`] around a menu item, plus the menu's margin.
+pub const RADIUS_MENU: u8 = 20;
+/// Cards: settings groups, call tiles, previews.
+pub const RADIUS_CARD: u8 = 20;
+/// Dialogs and the larger surfaces that float over the window.
+pub const RADIUS_DIALOG: u8 = 28;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
@@ -830,11 +861,11 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.selection.bg_fill = palette.accent.gamma_multiply(0.35);
     visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.accent);
     visuals.window_stroke = Stroke::new(1.0, palette.outline);
-    visuals.window_corner_radius = CornerRadius::same(RADIUS + 2);
-    visuals.menu_corner_radius = CornerRadius::same(RADIUS);
+    visuals.window_corner_radius = CornerRadius::same(RADIUS_DIALOG);
+    visuals.menu_corner_radius = CornerRadius::same(RADIUS_MENU);
     visuals.window_shadow = palette.modal_shadow();
     visuals.popup_shadow = palette.float_shadow();
-    let corner = CornerRadius::same(RADIUS_SMALL + 2);
+    let corner = CornerRadius::same(RADIUS_CONTROL);
     for widget in [
         &mut visuals.widgets.inactive,
         &mut visuals.widgets.hovered,

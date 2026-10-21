@@ -84,12 +84,13 @@ typography:
     lineHeight: 1.3
 rounded:
   none: 0px
-  subtle: 3px
-  small: 4px
-  control: 6px
-  medium: 8px
-  large: 12px
-  dialog: 14px
+  small: 8px
+  control: 12px
+  medium: 14px
+  menu: 20px
+  card: 20px
+  panel: 24px
+  dialog: 28px
   pill: 999px
 spacing:
   none: 0px
@@ -275,11 +276,16 @@ Corner radii create a visual vocabulary. They should indicate component role, no
 
 ### Shape rules
 
-- **Subtle / small (3–4):** compact badges, small icon surfaces, and small, tightly bounded controls when appropriate.
-- **Control (6):** ordinary buttons, inputs, menus, and compact interactive surfaces.
-- **Medium (8):** selectable rows, small containers, and surfaces that need gentle separation.
-- **Large (12):** larger content surfaces or grouped panels when the visual design benefits from them.
-- **Dialog (14):** larger modal surfaces where a distinct container is useful.
+Zeus rounds as generously as iOS 26's glass, and nests shapes the same way: a shape inside a rounded surface takes the surface's radius less the room between them, so the two curves run together (a menu item's 14 inside a menu's 20 with its 6-point margin). The values live in `src/theme.rs` (`RADIUS_SMALL`, `RADIUS_CONTROL`, `RADIUS`, `RADIUS_MENU`, `RADIUS_CARD`, `RADIUS_DIALOG`) and `chats::CARD_RADIUS`.
+
+- **Small (8):** badges, thumbnails, swatches, and small tiles.
+- **Control (12):** buttons and egui's own widgets.
+- **Medium (14):** fields, selectable rows, toasts, and items within a menu.
+- **Menu (20):** menus and popovers, over frosted glass.
+- **Card (20):** settings groups, call tiles, and previews.
+- **Panel (24):** the conversation card beside the list.
+- **Dialog (28):** dialogs, the emoji pickers, and other large surfaces that float over the window, over frosted glass.
+- Message bubbles: 18, and 22 for Nothing's grouped balloons (8 where two in a run meet); Messages keeps Apple's own balloon.
 - **Pill:** tags, compact status chips, or genuinely pill-shaped controls only. Do not make all buttons pill-shaped by default.
 - **Circle:** avatars and circular icon controls where established by the product or platform.
 
@@ -430,7 +436,7 @@ ZapFast is a native Rust/egui application, not a browser-based application. Impl
 - Blindly replace every numeric padding, margin, or radius value with one token.
 - Give every control, row, panel, bubble, and dialog the same corner radius.
 - Put every section into a rounded card or add shadows/borders by default.
-- Add gradients, glow, blur, glass effects, or accent-colored containers without a product reason.
+- Add gradients, glow, blur, glass effects, or accent-colored containers without a product reason. Menus, dialogs and pickers float over frosted glass (`ui::glass`), and Settings' Blur turns it off.
 - Change brand colors, fonts, or global theme behavior during a narrow layout fix.
 - sacrifice readability or useful message density to make a screenshot look spacious.
 - Remove keyboard behavior, text selection, accessibility, or platform conventions for visual reasons.

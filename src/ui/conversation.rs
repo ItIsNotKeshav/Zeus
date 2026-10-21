@@ -9,6 +9,7 @@ use egui::{
     Rect, Sense, Stroke, Vec2, pos2, vec2,
 };
 
+use super::widgets::FrostedPopup;
 use crate::animation;
 use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
 use crate::geo::Spot;
@@ -70,6 +71,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         f32::from(super::chats::CARD_RADIUS)
     };
     wallpaper::paint(ui, &app.wallpaper(), radius);
+    let card = ui.max_rect();
     // On a vibrant window the messages scroll on under the header, as in
     // Messages: the header goes on a layer above them.
     if app.palette.vibrant() {
@@ -86,9 +88,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 // a little below it, so where they start never shows.
                 let frosted = bar.with_max_y(bar.bottom() + HEADER_TAIL);
                 let ease = HEADER_TAIL + bar.height() * HEADER_EASE;
-                ui.painter().set(glass, super::glass::shape(frosted, ease));
+                ui.painter()
+                    .set(glass, super::glass::shape(frosted, ease, radius));
                 ui.painter()
                     .set(veil, header_veil(&app.palette, frosted, ease));
+                // The veil is square: the card's own corners go back over it.
+                card_corners(ui, &app.palette, card, radius);
                 bar
             })
             .inner;
@@ -121,8 +126,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     // Strongest at the bottom, easing off towards its top.
                     ui.painter().set(
                         glass,
-                        super::glass::shape(foot, -foot.height() * HEADER_EASE),
+                        super::glass::shape(foot, -foot.height() * HEADER_EASE, radius),
                     );
+                    card_corners(ui, &app.palette, card, radius);
                     foot
                 },
             )
@@ -162,6 +168,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             header.bottom(),
             ui.max_rect().bottom(),
         );
+    }
+}
+
+/// Rounds off the corners of the conversation's `card` over what a layer
+/// above it paints square, such as a vibrant header's veil, where the
+/// sidebar's gutter around the card is opaque. Over a see-through window the
+/// glass beneath keeps to the corners itself.
+fn card_corners(ui: &egui::Ui, palette: &Palette, card: Rect, radius: f32) {
+    let gutter = palette.rail();
+    if radius > 0.0 && gutter.is_opaque() {
+        ui.painter()
+            .add(widgets::card_corners(card, radius, gutter));
     }
 }
 
@@ -386,7 +404,7 @@ fn header_veil(palette: &Palette, rect: Rect, ease: f32) -> egui::Shape {
 
 /// How round the glass under a vibrant header's name is: straight-sided,
 /// leaving room around the text, rather than a capsule.
-const NAME_GLASS_RADIUS: f32 = 12.0;
+const NAME_GLASS_RADIUS: f32 = 18.0;
 /// The room around the name and status on their glass: wide at the sides,
 /// and little above, so the glass keeps clear of the window's top edge.
 const NAME_GLASS_PADDING: Vec2 = vec2(14.0, 3.5);
@@ -688,7 +706,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     egui::Popup::menu(&more)
                         .width(width)
                         .frame(widgets::menu_frame(&palette))
-                        .show(|ui| {
+                        .show_frosted(ui.ctx(), |ui| {
                             if widgets::menu_item(ui, &palette, Some(Icon::Info), "Info") {
                                 app.actions.push(Action::OpenInfo(chat.id.clone()));
                             }
@@ -2046,7 +2064,7 @@ fn composer_tools_menu(app: &mut App, chat: &Chat, plus: &egui::Response) {
             .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
             .width(190.0)
             .frame(widgets::menu_frame(&app.palette))
-            .show(|ui| {
+            .show_frosted(&plus.ctx, |ui| {
                 let send_files = crate::i18n::gettext(app.locale, "Send files");
                 if widgets::menu_item(ui, &app.palette, Some(Icon::Paperclip), &send_files) {
                     app.actions.push(Action::Attach { documents: false });
@@ -2086,7 +2104,7 @@ fn strip_gap(ui: &mut egui::Ui) {
 
 /// Corner radius of the strips above the composer and of its suggestion
 /// lists: rounder than a bubble, closer to the composer's own ends.
-const STRIP_RADIUS: u8 = 16;
+const STRIP_RADIUS: u8 = 22;
 
 /// The frame of a strip above the composer (reply, edit, unsent voice).
 /// Like the composer it takes the incoming bubble's colour, which in the
@@ -3323,7 +3341,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                             } else {
                                 popup.at_pointer_fixed()
                             };
-                            popup.show(|ui| {
+                            popup.show_frosted(ui.ctx(), |ui| {
                                 selection_menu(
                                     ui,
                                     &view,
@@ -5294,7 +5312,7 @@ fn bubble_frame(
     } else {
         popup.at_pointer_fixed()
     };
-    let menu = popup.show(|ui| {
+    let menu = popup.show_frosted(ui.ctx(), |ui| {
         context_menu(ui, view, menu_target, MenuOrigin::Chat, actions);
     });
     if let Some(menu) = menu {
@@ -5417,7 +5435,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
 /// Width of a quote's accent bar.
 const QUOTE_BAR: f32 = 4.0;
 /// Corner radius of a quote.
-const QUOTE_RADIUS: u8 = 6;
+const QUOTE_RADIUS: u8 = 12;
 /// The even ring a Nothing bubble keeps around a card at its edge.
 const CARD_RING: i8 = 6;
 
@@ -5444,7 +5462,7 @@ fn edge_card(ui: &egui::Ui, palette: &Palette, radius: u8) -> (Margin, u8) {
             top,
             bottom: 0,
         },
-        18 - CARD_RING as u8,
+        widgets::NOTHING_BUBBLE_RADIUS - CARD_RING as u8,
     )
 }
 
@@ -5825,9 +5843,10 @@ fn picture_radius(palette: &Palette, message: &Message) -> f32 {
                 }
             ))
     {
-        12.0
+        f32::from(widgets::NOTHING_BUBBLE_RADIUS) - f32::from(CARD_RING)
     } else {
-        6.0
+        // The bubble's own corners less the few points around the picture.
+        f32::from(widgets::BUBBLE_RADIUS) - 4.0
     }
 }
 
@@ -8710,7 +8729,7 @@ fn rich_body(
                 .width(widgets::menu_width(ui, &menu_labels, true))
                 .frame(widgets::menu_frame(&view.palette))
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-                .show(|ui| {
+                .show_frosted(ui.ctx(), |ui| {
                     #[cfg(test)]
                     let message_rect =
                         Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 28.0));
@@ -9972,9 +9991,10 @@ fn attachment_insets(palette: &Palette) -> (Vec2, Vec2) {
 /// corners less the rim, so the two curves run together.
 fn attachment_radius(palette: &Palette) -> f32 {
     if palette.bubbles == theme::BubbleStyle::Nothing {
-        12.0
+        f32::from(widgets::NOTHING_BUBBLE_RADIUS) - f32::from(NOTHING_ATTACHMENT_RIM)
     } else {
-        8.0
+        // The bubble's corners less its six-point margin above the card.
+        f32::from(widgets::BUBBLE_RADIUS) - 6.0
     }
 }
 
@@ -10570,7 +10590,7 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
             egui::Popup::menu(&delete)
                 .width(width)
                 .frame(widgets::menu_frame(&palette))
-                .show(|ui| {
+                .show_frosted(ui.ctx(), |ui| {
                     selection_delete_items(ui, &palette, chat, can_revoke, selected, &mut actions);
                 });
             app.actions.extend(actions);
@@ -10671,7 +10691,7 @@ fn upload_bubble(ui: &mut egui::Ui, palette: &Palette, size: Vec2, eased: f32) -
             .add(widgets::grouped_bubble_shape(rect, fill, true, true, true));
     } else {
         ui.painter()
-            .rect_filled(rect, f32::from(theme::RADIUS) + 2.0, fill);
+            .rect_filled(rect, f32::from(widgets::BUBBLE_RADIUS), fill);
     }
     (rect, eased)
 }
@@ -12168,7 +12188,10 @@ mod reaction_tests {
         assert!(bare_picture(&Palette::messages_light(), &photo(None)));
         // WhatsApp's bubbles keep their frame around every picture.
         assert!(!bare_picture(&Palette::dark(), &photo(None)));
-        assert_eq!(picture_radius(&Palette::dark(), &photo(None)), 6.0);
+        assert_eq!(
+            picture_radius(&Palette::dark(), &photo(None)),
+            f32::from(widgets::BUBBLE_RADIUS) - 4.0
+        );
         // A caption, a quote or the forwarded label keep the bubble.
         assert!(!bare_picture(&messages, &photo(Some("Look"))));
         let mut forwarded = photo(None);
@@ -12328,14 +12351,14 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                         let fitted = vec2(*width as f32 * scale, *height as f32 * scale);
                         let inner = Rect::from_center_size(rect.center(), fitted);
                         egui::Image::from_texture((handle.id(), fitted))
-                            .corner_radius(6.0)
+                            .corner_radius(theme::RADIUS_SMALL)
                             .paint_at(ui, inner);
                     }
                     crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
                         if !document && crate::app::Pending::is_picture_file(path) {
                             widgets::file_image(ui, path)
                                 .fit_to_exact_size(Vec2::splat(tile - 8.0))
-                                .corner_radius(6.0)
+                                .corner_radius(theme::RADIUS_SMALL)
                                 .paint_at(ui, rect.shrink(4.0));
                         } else {
                             let icon = Rect::from_center_size(

@@ -18,7 +18,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let frame = Frame::new()
         .fill(palette.overlay)
         .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS + 4))
+        .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
         .inner_margin(Margin::same(22))
         .shadow(palette.modal_shadow());
     egui::Window::new("Update Zeus")

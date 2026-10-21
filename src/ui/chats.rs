@@ -2,6 +2,7 @@
 
 use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
+use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::backend::LinkStatus;
 use crate::model::{Action, Chat, ChatFilter, Contact, Dialog, Message, Page};
@@ -66,7 +67,7 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
 /// The gutter between the window's edges and the floating conversation card.
 pub(crate) const CARD_GAP: f32 = 8.0;
 /// How round the conversation card is.
-pub(crate) const CARD_RADIUS: u8 = 16;
+pub(crate) const CARD_RADIUS: u8 = 24;
 /// How far the list sets its header below the top of its column. The chat
 /// header in the card beside it moves down as far, so the chat's name,
 /// picture and buttons sit on the same line as the list's title.
@@ -768,8 +769,11 @@ fn starred_row(
         return;
     }
     if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, 6.0, palette.surface_hover.gamma_multiply(0.5));
+        ui.painter().rect_filled(
+            rect,
+            theme::RADIUS,
+            palette.surface_hover.gamma_multiply(0.5),
+        );
     }
     let when = crate::util::moment_stamp(app.locale, marked_at);
     let name_line = widgets::line(
@@ -877,7 +881,7 @@ fn starred_row(
     } else {
         popup.at_pointer_fixed()
     };
-    popup.show(|ui| {
+    popup.show_frosted(ui.ctx(), |ui| {
         let chat = app
             .chat(&message.chat)
             .cloned()
@@ -1678,7 +1682,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     } else {
         popup
     };
-    popup.show(|ui| context_menu(app, ui, chat, &menu_palette));
+    popup.show_frosted(ui.ctx(), |ui| context_menu(app, ui, chat, &menu_palette));
     response
 }
 

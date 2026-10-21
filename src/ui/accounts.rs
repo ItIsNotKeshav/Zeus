@@ -4,6 +4,7 @@
 
 use egui::{Align2, CornerRadius, Rect, Sense, Vec2, pos2, vec2};
 
+use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::i18n::gettext;
 use crate::model::{AccountId, Action};
@@ -108,7 +109,7 @@ fn menu(app: &mut App, button: &egui::Response) {
         .id(popup_id)
         .width(MENU_WIDTH)
         .frame(widgets::menu_frame(&palette))
-        .show(|ui| {
+        .show_frosted(&button.ctx, |ui| {
             for entry in &entries {
                 if account_row(app, ui, entry) && !entry.current {
                     app.actions.push(Action::SwitchAccount(entry.id.clone()));
@@ -149,7 +150,8 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> bool {
             } else {
                 palette.surface_hover
             };
-            ui.painter().rect_filled(rect, CornerRadius::same(6), fill);
+            ui.painter()
+                .rect_filled(rect, CornerRadius::same(theme::RADIUS), fill);
         }
         let avatar = Rect::from_center_size(
             pos2(rect.left() + 8.0 + ROW_AVATAR / 2.0, rect.center().y),

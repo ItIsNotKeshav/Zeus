@@ -83,7 +83,7 @@ pub(super) fn card(
             let shown = Frame::new()
                 .fill(palette.panel)
                 .stroke(Stroke::new(1.0, palette.outline))
-                .corner_radius(CornerRadius::same(theme::RADIUS + 8))
+                .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
                 .inner_margin(Margin::same(32))
                 .shadow(egui::epaint::Shadow {
                     offset: [0, 16],
@@ -225,7 +225,8 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
     match Qr::encode(code) {
         Some(qr) => qr.paint(ui, rect, egui::Color32::BLACK, egui::Color32::WHITE),
         None => {
-            ui.painter().rect_filled(rect, 8.0, palette.surface);
+            ui.painter()
+                .rect_filled(rect, theme::RADIUS, palette.surface);
             theme::paint_icon(ui, Icon::CircleAlert, rect, 32.0, palette.danger);
         }
     }

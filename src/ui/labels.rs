@@ -348,7 +348,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             });
             ui.painter().rect_filled(
                 swatch_rect,
-                CornerRadius::same(4),
+                CornerRadius::same(theme::RADIUS_SMALL),
                 color_of(palette, &label.color_hex),
             );
             let typed = draft.1.trim().to_owned();
@@ -375,7 +375,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             Rect::from_min_size(rect.left_center() + vec2(0.0, -7.0), vec2(14.0, 14.0));
         ui.painter().rect_filled(
             swatch_rect,
-            CornerRadius::same(4),
+            CornerRadius::same(theme::RADIUS_SMALL),
             color_of(palette, &label.color_hex),
         );
         let name = widgets::line(
@@ -515,12 +515,15 @@ fn swatches(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::reveal_focus(&response);
             ui.ctx()
                 .data_mut(|data| data.insert_temp(swatch_id(hex), rect));
-            ui.painter()
-                .rect_filled(rect, CornerRadius::same(4), color_of(palette, hex));
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(theme::RADIUS_SMALL),
+                color_of(palette, hex),
+            );
             if selected || response.has_focus() {
                 ui.painter().rect_stroke(
                     rect.expand(1.5),
-                    CornerRadius::same(5),
+                    CornerRadius::same(theme::RADIUS_SMALL + 1),
                     Stroke::new(1.5, palette.text),
                     egui::StrokeKind::Outside,
                 );
