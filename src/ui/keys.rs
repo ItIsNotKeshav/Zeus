@@ -328,11 +328,13 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         }
     }
-    // Arrow Up in an empty, focused composer edits the user's most recent
-    // message, as WhatsApp does. The key keeps its normal meaning everywhere
-    // else: it navigates open overlays and moves the cursor in a non-empty
-    // field.
-    let edit_previous = composer_focused
+    // Arrow Up in an empty composer edits the user's most recent message, as
+    // WhatsApp does: when the composer is focused, or nothing is, as after a
+    // click on the chat's background. The key keeps its normal meaning
+    // everywhere else: it navigates open overlays, focused messages and
+    // lists, and moves the cursor in a non-empty field.
+    let nothing_focused = ctx.memory(|memory| memory.focused().is_none());
+    let edit_previous = (composer_focused || nothing_focused)
         && app.chat_view()
         && app.open_chat.is_some()
         && app
