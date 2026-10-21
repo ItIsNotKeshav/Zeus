@@ -5,6 +5,25 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+/// Most one file of a pack may hold once unpacked. A sticker is a few hundred
+/// KB; a zip bomb is a tiny archive that inflates to gigabytes.
+const MAX_ENTRY_BYTES: u64 = 2 * 1024 * 1024;
+/// Most a whole pack may hold once unpacked.
+const MAX_PACK_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Reads one zip entry, refusing one over the per-file cap or the pack's
+/// remaining `budget`, so a hostile archive cannot exhaust memory.
+fn read_capped(entry: impl Read, budget: &mut u64) -> Option<Vec<u8>> {
+    let limit = MAX_ENTRY_BYTES.min(*budget);
+    let mut bytes = Vec::new();
+    entry.take(limit + 1).read_to_end(&mut bytes).ok()?;
+    let len = bytes.len() as u64;
+    (len <= limit).then(|| {
+        *budget -= len;
+        bytes
+    })
+}
+
 /// Parses a pack id and key from a signal.art URL or parameter string.
 pub fn parse_signal_url(url: &str) -> Result<(String, [u8; 32]), String> {
     let tail = url.rsplit('#').next().unwrap_or(url);
@@ -289,6 +308,7 @@ pub fn import_archive(path: &Path, packs: &Path) -> Result<String, String> {
         .map_err(|error| format!("This file is not a sticker archive: {error}"))?;
     let mut title: Option<String> = None;
     let mut pictures: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut budget = MAX_PACK_BYTES;
     for index in 0..archive.len() {
         let Ok(mut entry) = archive.by_index(index) else {
             continue;
@@ -296,22 +316,23 @@ pub fn import_archive(path: &Path, packs: &Path) -> Result<String, String> {
         let Ok(name) = entry.name().map(|name| name.to_lowercase()) else {
             continue;
         };
-        let mut bytes = Vec::new();
-        if entry.read_to_end(&mut bytes).is_err() {
+        let is_title = name.ends_with("title.txt");
+        let picture = [".webp", ".png", ".jpg", ".jpeg"]
+            .iter()
+            .any(|extension| name.ends_with(extension));
+        // Exclude the pack thumbnail, and read nothing else.
+        if !is_title && !(picture && !name.contains("tray")) {
             continue;
         }
-        if name.ends_with("title.txt") {
+        let Some(bytes) = read_capped(&mut entry, &mut budget) else {
+            return Err("This sticker archive is too large".to_owned());
+        };
+        if is_title {
             let text = String::from_utf8_lossy(&bytes).trim().to_owned();
             if !text.is_empty() {
                 title = Some(text);
             }
-            continue;
-        }
-        let picture = [".webp", ".png", ".jpg", ".jpeg"]
-            .iter()
-            .any(|extension| name.ends_with(extension));
-        // Exclude the pack thumbnail.
-        if picture && !name.contains("tray") {
+        } else {
             pictures.push((name, bytes));
         }
     }
@@ -342,6 +363,7 @@ pub fn extract_whatsapp_pack(
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip))
         .map_err(|error| format!("This is not a sticker pack: {error}"))?;
     let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut budget = MAX_PACK_BYTES;
     for index in 0..archive.len() {
         let Ok(mut entry) = archive.by_index(index) else {
             continue;
@@ -352,10 +374,10 @@ pub fn extract_whatsapp_pack(
         if Some(file.as_str()) == tray || !file.to_lowercase().ends_with(".webp") {
             continue;
         }
-        let mut bytes = Vec::new();
-        if entry.read_to_end(&mut bytes).is_ok() {
-            files.push((file, bytes));
-        }
+        let Some(bytes) = read_capped(&mut entry, &mut budget) else {
+            return Err("This sticker pack is too large".to_owned());
+        };
+        files.push((file, bytes));
     }
     // The message's order first; files it does not list follow.
     let rank = |file: &str| {
@@ -579,6 +601,16 @@ pub(super) fn unique_pack_dir(root: &Path, title: &str) -> Result<PathBuf, Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_oversized_entry_is_refused_not_read_whole() {
+        let big = vec![0u8; (MAX_ENTRY_BYTES + 1) as usize];
+        let mut budget = MAX_PACK_BYTES;
+        assert!(read_capped(&big[..], &mut budget).is_none());
+        let ok = vec![0u8; 10];
+        assert_eq!(read_capped(&ok[..], &mut budget).map(|b| b.len()), Some(10));
+        assert_eq!(budget, MAX_PACK_BYTES - 10);
+    }
 
     #[test]
     fn a_signal_link_gives_up_its_id_and_key() {
