@@ -150,13 +150,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // step aside while the panel is open. The Calls tab's history needs the
     // full list pane: only the chats collapse into the rail's avatars.
     let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
-    let mut list_width = rail::PANE_WIDTH;
-    if full_list {
-        list_width += app.settings.sidebar_width;
-    }
-    let crowded = app.info_visible()
-        && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
-    if !narrow(ui.ctx()) && !crowded {
+    if !narrow(ui.ctx()) {
         ui.ctx()
             .data_mut(|data| data.insert_temp(side_columns_id(), full_list));
         rail::show(app, ui, !full_list);
@@ -231,6 +225,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     if let Some(region) = info_overlay {
         info::show_overlay(app, ui.ctx(), region);
     }
+    info::show_popup(app, ui.ctx());
 }
 
 /// The open chat or page in the central area.

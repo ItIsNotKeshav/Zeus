@@ -443,6 +443,35 @@ pub fn populate(app: &mut App) {
             },
         );
     }
+    // The rest of Rust Berlin: enough members that its list needs a search.
+    let more_members = [
+        "Ada Okafor",
+        "Bruno Silva",
+        "Chloe Martin",
+        "Dmitri Volkov",
+        "Elif Demir",
+        "Farah Khan",
+        "Grace Liu",
+        "Hiro Tanaka",
+        "Ines Costa",
+    ];
+    let more_ids: Vec<String> = more_members
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            let id = format!("49170444{index:04}@s.whatsapp.net");
+            app.contacts.insert(
+                id.clone(),
+                Contact {
+                    id: id.clone(),
+                    full_name: Some((*name).to_owned()),
+                    first_name: None,
+                    push_name: None,
+                },
+            );
+            id
+        })
+        .collect();
     // Include a contact without a chat for search results.
     app.contacts.insert(
         "12025550137@s.whatsapp.net".to_owned(),
@@ -511,6 +540,12 @@ pub fn populate(app: &mut App) {
                 .iter()
                 .map(|(id, _)| (*id).to_owned())
                 .chain(std::iter::once(ME.to_owned()))
+                .chain(
+                    more_ids
+                        .iter()
+                        .filter(|_| sample.name == "Rust Berlin")
+                        .cloned(),
+                )
                 .collect();
             chat.read_only = sample.name == "Section 8 Berlin";
             // Rust Berlin lets every member edit its info, Family is locked
@@ -6901,7 +6936,7 @@ mod tests {
             assert_eq!(
                 ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id())),
                 Some(true),
-                "{page}: the panel is drawn beside the chat"
+                "{page}: the panel is drawn as a popup over the chat"
             );
         }
         // The group has media of its own to show.
