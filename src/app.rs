@@ -10985,7 +10985,11 @@ mod tests {
             )]
         );
         assert!(app.selection.is_none(), "the carried selection is done");
-        assert!(app.toasts.iter().any(|toast| toast.message == "Forwarded to Target"));
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message == "Forwarded to Target")
+        );
     }
 
     #[test]
