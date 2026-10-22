@@ -11657,7 +11657,7 @@ mod tests {
         app.chat_pins.insert(chat.id.clone(), vec![row]);
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            pin_banner(&mut app, ui, &chat);
+            pin_banner(&mut app, ui, &chat, false);
         });
         output.textures_delta.clear();
         let delay = output
@@ -11755,7 +11755,7 @@ mod tests {
                     events,
                     ..Default::default()
                 },
-                |ui| pin_banner(app, ui, &chat),
+                |ui| pin_banner(app, ui, &chat, false),
             );
             output.textures_delta.clear();
         };
