@@ -18,7 +18,7 @@ use super::pane;
 use super::widgets;
 
 /// The panel's side margin.
-const MARGIN: f32 = 18.0;
+const MARGIN: f32 = 22.0;
 /// Space between the cells of the picture grid and strip.
 const GAP: f32 = 4.0;
 /// A document or link row.
@@ -298,10 +298,10 @@ fn header(
     let palette = app.palette;
     let margin = if popup {
         Margin {
-            left: MARGIN as i8,
-            right: MARGIN as i8,
-            top: 20,
-            bottom: 8,
+            left: 26,
+            right: 22,
+            top: 26,
+            bottom: 14,
         }
     } else {
         pane::header_margin(ui.ctx())
@@ -383,10 +383,10 @@ fn card<R>(ui: &mut egui::Ui, palette: &theme::Palette, add: impl FnOnce(&mut eg
     Frame::new()
         .fill(palette.surface)
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(Margin::same(14))
+        .inner_margin(Margin::same(20))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.spacing_mut().item_spacing.y = 12.0;
             add(ui)
         })
         .inner
@@ -487,9 +487,9 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool, popup: bo
         .max_height(ui.available_height())
         .show(ui, |ui| {
             Frame::new()
-                .inner_margin(Margin::symmetric(MARGIN as i8, if popup { 16 } else { 12 }))
+                .inner_margin(Margin::symmetric(MARGIN as i8, if popup { 20 } else { 12 }))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = if popup { 18.0 } else { 8.0 };
+                    ui.spacing_mut().item_spacing.y = if popup { 22.0 } else { 8.0 };
                     identity(app, ui, &shown, overlay, popup);
                 });
         });

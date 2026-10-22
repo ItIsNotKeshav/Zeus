@@ -785,7 +785,7 @@ pub const RADIUS_CARD: u8 = 20;
 /// Dialogs and the larger surfaces that float over the window.
 pub const RADIUS_DIALOG: u8 = 28;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
-pub const ROW_HEIGHT: f32 = 68.0;
+pub const ROW_HEIGHT: f32 = 72.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
 
 pub fn regular(size: f32) -> egui::FontId {
