@@ -83,7 +83,7 @@ traffic lights on the chat header through `fastframe-titlebar`.
 `src/theme.rs` owns palettes, fonts and icons; `src/ui/widgets.rs` the shared
 controls. Built-in choices (`settings::ThemeChoice`): System, Light, Dark,
 Messages, Nothing Dark, Nothing Light, plus custom JSON palettes. Fonts
-(`settings::FontChoice`): System, Inter, Geist, Google Sans Flex. Tests always
+(`settings::FontChoice`): System, Inter, Geist, Google Sans Flex, Figtree, Plus Jakarta Sans, Manrope, DM Sans. Tests always
 lay out in Inter.
 
 ## Calls

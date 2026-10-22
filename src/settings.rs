@@ -122,10 +122,27 @@ pub enum FontChoice {
     /// Bundled Google Sans Flex, used by the Nothing inspired appearance.
     #[default]
     GoogleSansFlex,
+    /// Figtree, a friendly geometric sans.
+    Figtree,
+    /// Plus Jakarta Sans, a soft modern sans.
+    PlusJakartaSans,
+    /// Manrope, a clean semi-condensed sans.
+    Manrope,
+    /// DM Sans, a low contrast geometric sans.
+    DmSans,
 }
 
 impl FontChoice {
-    pub const ALL: [FontChoice; 4] = [Self::System, Self::Inter, Self::Geist, Self::GoogleSansFlex];
+    pub const ALL: [FontChoice; 8] = [
+        Self::System,
+        Self::Inter,
+        Self::Geist,
+        Self::GoogleSansFlex,
+        Self::Figtree,
+        Self::PlusJakartaSans,
+        Self::Manrope,
+        Self::DmSans,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -133,6 +150,10 @@ impl FontChoice {
             Self::Inter => "Inter",
             Self::Geist => "Geist",
             Self::GoogleSansFlex => "Google Sans Flex",
+            Self::Figtree => "Figtree",
+            Self::PlusJakartaSans => "Plus Jakarta Sans",
+            Self::Manrope => "Manrope",
+            Self::DmSans => "DM Sans",
         }
     }
 }
@@ -1225,6 +1246,19 @@ mod tests {
 
     /// Settings written before the font could be chosen use the current
     /// default; explicit choices are saved by name.
+    #[test]
+    fn every_font_is_saved_by_a_name_it_reads_back() {
+        for font in FontChoice::ALL {
+            let saved = serde_json::to_value(Settings {
+                font,
+                ..Settings::default()
+            })
+            .unwrap();
+            let read: Settings = serde_json::from_value(saved).unwrap();
+            assert_eq!(read.font, font, "{}", font.label());
+        }
+    }
+
     #[test]
     fn the_font_defaults_to_google_sans_flex_and_is_saved_by_name() {
         let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();

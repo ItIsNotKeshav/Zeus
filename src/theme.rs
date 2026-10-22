@@ -931,19 +931,29 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     ctx.set_global_style(style);
 }
 
-/// Whether the interface is drawn in the bundled Inter instead of the
-/// platform's font (Settings, Appearance, Font).
-static FONT_CHOICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(2);
+/// The chosen [`FontChoice`](crate::settings::FontChoice), as its position in
+/// `FontChoice::ALL` (Settings, Appearance, Font).
+static FONT_CHOICE: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(3);
+
+fn choice_index(font: crate::settings::FontChoice) -> u8 {
+    crate::settings::FontChoice::ALL
+        .iter()
+        .position(|&candidate| candidate == font)
+        .unwrap_or(0) as u8
+}
+
+fn chosen_font() -> crate::settings::FontChoice {
+    let index = FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) as usize;
+    crate::settings::FontChoice::ALL
+        .get(index)
+        .copied()
+        .unwrap_or_default()
+}
 
 /// Chooses the interface's typeface and installs it. Call it before
 /// [`install`] with the saved choice, and again when the choice changes.
 pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
-    let choice = match font {
-        crate::settings::FontChoice::System => 0,
-        crate::settings::FontChoice::Inter => 1,
-        crate::settings::FontChoice::GoogleSansFlex => 2,
-        crate::settings::FontChoice::Geist => 3,
-    };
+    let choice = choice_index(font);
     if FONT_CHOICE.swap(choice, std::sync::atomic::Ordering::AcqRel) != choice {
         install_fonts(ctx);
     }
@@ -952,13 +962,13 @@ pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
 /// Whether Inter is the chosen typeface.
 #[cfg(test)]
 pub fn inter_chosen() -> bool {
-    FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 1
+    chosen_font() == crate::settings::FontChoice::Inter
 }
 
 /// The typeface the interface is asked to draw with: the setting's, and
 /// always Inter in tests, so layouts do not depend on the machine.
 fn primary_font() -> fastframe_fonts::Primary {
-    if cfg!(test) || FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 1 {
+    if cfg!(test) || chosen_font() == crate::settings::FontChoice::Inter {
         fastframe_fonts::Primary::Inter
     } else {
         fastframe_fonts::Primary::System
@@ -970,53 +980,78 @@ fn primary_font() -> fastframe_fonts::Primary {
 /// for the scripts it lacks, hinted as the desktop asks. Inter also draws
 /// the [`tabular`] timers.
 fn install_fonts(ctx: &egui::Context) {
+    use crate::settings::FontChoice;
     let primary = primary_font();
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
-    if !cfg!(test) && FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 2 {
-        add_google_sans_flex(&mut fonts);
-    }
-    if !cfg!(test) && FONT_CHOICE.load(std::sync::atomic::Ordering::Acquire) == 3 {
-        add_geist(&mut fonts);
+    if !cfg!(test) {
+        match chosen_font() {
+            FontChoice::System | FontChoice::Inter => {}
+            FontChoice::Geist => add_variable(
+                &mut fonts,
+                "geist",
+                include_bytes!("../assets/fonts/Geist.ttf"),
+                &[],
+            ),
+            FontChoice::GoogleSansFlex => add_variable(
+                &mut fonts,
+                "google-sans-flex",
+                include_bytes!("../assets/fonts/GoogleSansFlex.ttf"),
+                &[(b"opsz", 14.0), (b"wdth", 100.0)],
+            ),
+            FontChoice::Figtree => add_variable(
+                &mut fonts,
+                "figtree",
+                include_bytes!("../assets/fonts/Figtree.ttf"),
+                &[],
+            ),
+            FontChoice::PlusJakartaSans => add_variable(
+                &mut fonts,
+                "plus-jakarta-sans",
+                include_bytes!("../assets/fonts/PlusJakartaSans.ttf"),
+                &[],
+            ),
+            FontChoice::Manrope => add_variable(
+                &mut fonts,
+                "manrope",
+                include_bytes!("../assets/fonts/Manrope.ttf"),
+                &[],
+            ),
+            FontChoice::DmSans => add_variable(
+                &mut fonts,
+                "dm-sans",
+                include_bytes!("../assets/fonts/DMSans.ttf"),
+                &[(b"opsz", 14.0)],
+            ),
+        }
     }
     add_tabular(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
 }
 
-fn add_geist(fonts: &mut egui::FontDefinitions) {
+/// Puts a bundled variable font in front of each interface weight, with the
+/// weight axis set per weight and `axes` held fixed.
+fn add_variable(
+    fonts: &mut egui::FontDefinitions,
+    key: &str,
+    bytes: &'static [u8],
+    axes: &[(&[u8; 4], f32)],
+) {
     use fastframe_fonts::Weight;
+    let prefix = format!("zapfast-{key}-");
     for weight in Weight::ALL {
-        let name = format!("zapfast-geist-{}", weight.name());
-        let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/Geist.ttf"));
-        data.tweak.coords =
-            egui::epaint::text::VariationCoords::new([(b"wght", lighter_variable_weight(weight))]);
+        let name = format!("{prefix}{}", weight.name());
+        let mut data = egui::FontData::from_static(bytes);
+        let mut coords = vec![(b"wght", lighter_variable_weight(weight))];
+        coords.extend(axes.iter().map(|&(tag, value)| (tag, value)));
+        data.tweak.coords = egui::epaint::text::VariationCoords::new(coords);
         fonts
             .font_data
             .insert(name.clone(), std::sync::Arc::new(data));
         let family = fonts.families.entry(weight.family()).or_default();
-        family.retain(|font| !font.starts_with("zapfast-geist-"));
-        family.insert(0, name);
-    }
-}
-
-fn add_google_sans_flex(fonts: &mut egui::FontDefinitions) {
-    use fastframe_fonts::Weight;
-    for weight in Weight::ALL {
-        let name = format!("zapfast-google-sans-flex-{}", weight.name());
-        let mut data =
-            egui::FontData::from_static(include_bytes!("../assets/fonts/GoogleSansFlex.ttf"));
-        data.tweak.coords = egui::epaint::text::VariationCoords::new([
-            (b"wght", lighter_variable_weight(weight)),
-            (b"opsz", 14.0),
-            (b"wdth", 100.0),
-        ]);
-        fonts
-            .font_data
-            .insert(name.clone(), std::sync::Arc::new(data));
-        let family = fonts.families.entry(weight.family()).or_default();
-        family.retain(|font| !font.starts_with("zapfast-google-sans-flex-"));
+        family.retain(|font| !font.starts_with(&prefix));
         family.insert(0, name);
     }
 }
