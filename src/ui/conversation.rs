@@ -100,10 +100,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // The pinned line hangs under the header on a layer of its own, over
         // frosted messages that scroll under it, and they start below it.
         let pins = has_live_pins(app, &chat);
-        let pin_bar = if pins {
+        let below_pins = if pins {
+            // A pill floating clear of the panel's edges, as the header's own
+            // buttons do.
             let rect = Rect::from_min_size(
-                pos2(bar.left(), bar.bottom()),
-                vec2(bar.width(), PIN_ROW_HEIGHT),
+                pos2(
+                    bar.left() + PIN_FLOAT_GAP,
+                    bar.bottom() + PIN_FLOAT_GAP / 2.0,
+                ),
+                vec2(bar.width() - PIN_FLOAT_GAP * 2.0, PIN_ROW_HEIGHT),
             );
             let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-pins"));
             ui.scope_builder(
@@ -111,14 +116,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 |ui| {
                     let glass = ui.painter().add(egui::Shape::Noop);
                     pin_banner(app, ui, &chat, true);
-                    ui.painter().set(glass, super::glass::shape(rect, 0.0, 0.0));
+                    ui.painter()
+                        .set(glass, super::glass::rounded(rect, PIN_ROW_HEIGHT / 2.0));
                 },
             );
-            rect
+            rect.bottom() + PIN_FLOAT_GAP / 2.0
         } else {
-            bar.with_max_y(bar.bottom())
+            bar.bottom()
         };
-        let bar = bar.with_max_y(pin_bar.bottom());
+        let bar = bar.with_max_y(below_pins);
         // The composer too floats on its own layer, over frosted messages
         // that scroll on under it, as under the header.
         let area = ui.available_rect_before_wrap();
@@ -211,6 +217,8 @@ const PIN_ROW_HEIGHT: f32 = 44.0;
 /// Gap between the banner edge and the pin count bar, and the icon's own box.
 const PIN_ROW_INSET: f32 = 12.0;
 const PIN_ICON: f32 = 16.0;
+/// Room around the floating pin pill, beside it and above and below it.
+const PIN_FLOAT_GAP: f32 = 12.0;
 /// The bar at the line's left edge: one segment per pin, the shown one lit.
 const PIN_BAR_WIDTH: f32 = 3.0;
 const PIN_BAR_GAP: f32 = 2.0;
@@ -277,9 +285,10 @@ fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat, floating: bool) {
     let (bar, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), PIN_ROW_HEIGHT), Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let radius = if floating { PIN_ROW_HEIGHT / 2.0 } else { 0.0 };
     ui.painter().rect_filled(
         bar,
-        0.0,
+        radius,
         if response.hovered() {
             palette.surface_hover
         } else if floating {
@@ -290,7 +299,7 @@ fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat, floating: bool) {
     );
     // Newest pin at the bottom, so the bar fills upward as pins are added.
     let segments = pin_bar_segments(bar.top() + 8.0, bar.height() - 16.0, rows.len());
-    let left = bar.left() + PIN_ROW_INSET;
+    let left = bar.left() + PIN_ROW_INSET + if floating { 8.0 } else { 0.0 };
     for (index, (top, bottom)) in segments.iter().enumerate() {
         let pin = rows.len() - 1 - index;
         let colour = if pin == shown {
@@ -311,7 +320,8 @@ fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat, floating: bool) {
     );
     theme::paint_icon(ui, Icon::Pin, icon, 14.0, palette.accent);
     let text_left = icon_left + PIN_ICON + 8.0;
-    let text_width = (bar.right() - PIN_ROW_INSET - text_left).max(1.0);
+    let text_width =
+        (bar.right() - PIN_ROW_INSET - if floating { 8.0 } else { 0.0 } - text_left).max(1.0);
     let label = widgets::line(
         ui,
         &crate::markup::plain(&app.resolve_mention_tokens(&row.text), &[]),
