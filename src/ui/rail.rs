@@ -365,11 +365,19 @@ fn destination_button(
     if ui.is_rect_visible(plate) {
         let hovered = response.hovered() || response.has_focus();
         if lit {
+            // The selected destination is tinted with the accent.
             widgets::highlight_card(ui, palette, plate, palette.surface_active);
+            ui.painter().rect_filled(
+                plate,
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.accent.gamma_multiply(0.18),
+            );
         } else if hovered {
             widgets::highlight_card(ui, palette, plate, palette.surface_hover);
         }
-        let tint = if lit || hovered {
+        let tint = if lit {
+            palette.accent
+        } else if hovered {
             palette.text
         } else {
             palette.secondary

@@ -1876,6 +1876,7 @@ impl App {
             // Messages draws its conversations on a plain background.
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
+            style: self.settings.doodle_style,
             image: self
                 .account()
                 .settings
@@ -8214,6 +8215,11 @@ impl App {
                 self.settings.show_wallpaper = show;
                 self.mark_settings_dirty();
             }
+            Action::SetDoodleStyle(style) => {
+                self.settings.doodle_style = style;
+                self.settings.show_wallpaper = true;
+                self.mark_settings_dirty();
+            }
             Action::PickWallpaperImage => self.backend.send(Command::PickWallpaperImage),
             Action::RemoveWallpaperImage => {
                 if self.account_mut().settings.wallpaper_image.take().is_some() {
@@ -10985,7 +10991,11 @@ mod tests {
             )]
         );
         assert!(app.selection.is_none(), "the carried selection is done");
-        assert!(app.toasts.iter().any(|toast| toast.message == "Forwarded to Target"));
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message == "Forwarded to Target")
+        );
     }
 
     #[test]

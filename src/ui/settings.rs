@@ -11,7 +11,7 @@ use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{Settings, WallpaperColor};
+use crate::settings::{DoodleStyle, Settings, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -558,10 +558,18 @@ fn sections(app: &App) -> Vec<Section> {
             } else {
                 wallpaper_label(app.locale, app.settings.wallpaper_color_for(palette.dark))
             };
-            if theme::soft_button(ui, &palette, Some(Icon::ChevronRight), &label, false).clicked() {
+            // What is chosen shows in the accent, as a selected chip does.
+            if theme::soft_button(ui, &palette, Some(Icon::ChevronRight), &label, true).clicked() {
                 app.actions.push(Action::Open(Page::Wallpaper));
             }
         },
+    );
+    appearance.block(
+        vec![
+            translated(locale, "Doodles"),
+            translated(locale, "Wallpaper"),
+        ],
+        doodle_cards,
     );
     appearance.row(
         translated(locale, "Zoom"),
@@ -2158,54 +2166,64 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                 .id_salt("wallpaper-palette")
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {
-                                    ui.allocate_ui_with_layout(
-                                        vec2(palette_width, 28.0),
-                                        Layout::top_down(Align::Center),
-                                        |ui| {
-                                            let mut doodles = app.settings.show_wallpaper;
-                                            let checkbox = ui.checkbox(
-                                                &mut doodles,
-                                                crate::i18n::gettext(app.locale, "Add doodles"),
-                                            );
-                                            checkbox.on_hover_text(crate::i18n::gettext(
-                                                app.locale,
-                                                "Show the default doodles over the selected colour.",
-                                            ));
-                                            if doodles != app.settings.show_wallpaper {
-                                                app.actions.push(Action::SetWallpaperDoodles(doodles));
-                                            }
-                                        },
+                                    block_heading(
+                                        ui,
+                                        &palette,
+                                        &crate::i18n::gettext(app.locale, "Image"),
+                                        &crate::i18n::gettext(
+                                            app.locale,
+                                            "Your own picture replaces the colour and doodles.",
+                                        ),
                                     );
-                                    ui.add_space(12.0);
-                                    image_buttons(app, ui, palette_width);
-                                    ui.add_space(18.0);
-                                    let button_width = 80.0;
-                                    let item_spacing = ui.spacing().item_spacing.x;
-                                    let columns = ((palette_width + item_spacing)
-                                        / (button_width + item_spacing))
+                                    ui.add_space(8.0);
+                                    image_buttons(app, ui);
+                                    ui.add_space(22.0);
+                                    block_heading(
+                                        ui,
+                                        &palette,
+                                        &crate::i18n::gettext(app.locale, "Colour"),
+                                        &crate::i18n::gettext(
+                                            app.locale,
+                                            "Pick the background. Doodles are chosen under Appearance.",
+                                        ),
+                                    );
+                                    ui.add_space(10.0);
+                                    let selected = app.settings.wallpaper_color_for(palette.dark);
+                                    let gap = 10.0;
+                                    let columns = ((palette_width + gap) / (COLOR_SWATCH + gap))
                                         .floor()
                                         .max(1.0)
                                         as usize;
-                                    let grid_width = button_width * columns as f32
-                                        + item_spacing * columns.saturating_sub(1) as f32;
-                                    ui.horizontal(|ui| {
-                                        ui.add_space((palette_width - grid_width).max(0.0) / 2.0);
-                                        ui.horizontal_wrapped(|ui| {
-                                            let selected =
-                                                app.settings.wallpaper_color_for(palette.dark);
-                                            for color in WallpaperColor::choices(palette.dark) {
-                                                if wallpaper_color_button(
-                                                    ui,
-                                                    &palette,
-                                                    app.locale,
-                                                    *color,
-                                                    selected,
-                                                ) {
-                                                    app.actions.push(Action::SetWallpaperColor(*color));
-                                                }
-                                            }
-                                        });
-                                    });
+                                    let choices = WallpaperColor::choices(palette.dark);
+                                    let rows = choices.len().div_ceil(columns);
+                                    let (area, _) = ui.allocate_exact_size(
+                                        vec2(
+                                            palette_width,
+                                            rows as f32 * (COLOR_SWATCH + gap) - gap,
+                                        ),
+                                        Sense::hover(),
+                                    );
+                                    for (index, color) in choices.iter().enumerate() {
+                                        let rect = Rect::from_min_size(
+                                            area.min
+                                                + vec2(
+                                                    (index % columns) as f32 * (COLOR_SWATCH + gap),
+                                                    (index / columns) as f32 * (COLOR_SWATCH + gap),
+                                                ),
+                                            Vec2::splat(COLOR_SWATCH),
+                                        );
+                                        if wallpaper_color_button(
+                                            ui,
+                                            &palette,
+                                            app.locale,
+                                            rect,
+                                            *color,
+                                            selected,
+                                        ) {
+                                            app.actions.push(Action::SetWallpaperColor(*color));
+                                        }
+                                    }
+                                    ui.add_space(20.0);
                                 });
                         },
                     );
@@ -2236,6 +2254,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                     );
                     // The same look the chat draws, image and theme colour included.
                     wallpaper::paint_rect(ui, preview, &app.wallpaper());
+                    wallpaper_sample_bubbles(ui, &palette, preview);
                 },
             );
             ui.painter().line_segment(
@@ -2249,34 +2268,45 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
     );
 }
 
-/// "Choose image…", and "Remove image" while one is set, centred over the
-/// colours. An image replaces the colour and doodles in the chat.
-fn image_buttons(app: &mut App, ui: &mut egui::Ui, width: f32) {
+/// "Choose image…", and "Remove image" while one is set. An image replaces
+/// the colour and doodles in the chat.
+fn image_buttons(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let choose = crate::i18n::gettext(app.locale, "Choose image…");
     let remove = crate::i18n::gettext(app.locale, "Remove image");
     let has_image = app.account().settings.wallpaper_image.is_some();
-    let spacing = ui.spacing().item_spacing.x;
-    let mut row_width = theme::soft_button_width(ui, &choose, true);
-    if has_image {
-        row_width += spacing + theme::soft_button_width(ui, &remove, true);
-    }
-    ui.allocate_ui_with_layout(
-        vec2(width, 32.0),
-        Layout::left_to_right(Align::Center),
-        |ui| {
-            ui.add_space(((width - row_width) / 2.0).max(0.0));
-            if theme::soft_button(ui, &palette, Some(Icon::Image), &choose, false).clicked() {
-                app.actions.push(Action::PickWallpaperImage);
-            }
-            if has_image
-                && theme::soft_button(ui, &palette, Some(Icon::Trash), &remove, false).clicked()
-            {
-                app.actions.push(Action::RemoveWallpaperImage);
-            }
-        },
-    );
+    ui.horizontal(|ui| {
+        if theme::soft_button(ui, &palette, Some(Icon::Image), &choose, has_image).clicked() {
+            app.actions.push(Action::PickWallpaperImage);
+        }
+        if has_image
+            && theme::soft_button(ui, &palette, Some(Icon::Trash), &remove, false).clicked()
+        {
+            app.actions.push(Action::RemoveWallpaperImage);
+        }
+    });
 }
+
+/// The two sample bubbles the wallpaper preview shows over the wallpaper.
+fn wallpaper_sample_bubbles(ui: &egui::Ui, palette: &Palette, preview: Rect) {
+    let painter = ui.painter_at(preview);
+    let radius = f32::from(theme::RADIUS_MENU);
+    let width = (preview.width() * 0.5).clamp(110.0, 260.0);
+    let theirs = Rect::from_min_size(preview.left_top() + vec2(24.0, 28.0), vec2(width, 40.0));
+    painter.rect_filled(theirs, radius, palette.bubble_in);
+    let ours = Rect::from_min_size(
+        pos2(preview.right() - 24.0 - width * 0.8, theirs.bottom() + 10.0),
+        vec2(width * 0.8, 40.0),
+    );
+    painter.rect_filled(ours, radius, palette.bubble_out);
+    for (bubble, fraction) in [(theirs, 0.6), (ours, 0.5)] {
+        let line = Rect::from_center_size(bubble.center(), vec2(bubble.width() * fraction, 6.0));
+        painter.rect_filled(line, 3.0, palette.text.gamma_multiply(0.35));
+    }
+}
+
+/// How wide and tall a wallpaper colour swatch is.
+const COLOR_SWATCH: f32 = 68.0;
 
 /// A wallpaper colour's name in the interface language.
 fn wallpaper_label(locale: Locale, color: WallpaperColor) -> String {
@@ -2288,46 +2318,235 @@ fn wallpaper_label(locale: Locale, color: WallpaperColor) -> String {
     }
 }
 
+/// One colour swatch in `rect`, ringed in the accent with a tick once chosen.
 fn wallpaper_color_button(
     ui: &mut egui::Ui,
     palette: &Palette,
     locale: Locale,
+    rect: Rect,
     color: WallpaperColor,
     selected: WallpaperColor,
 ) -> bool {
     let fill = color.color32(palette);
     let label = wallpaper_label(locale, color);
-    // Theme follows the palette, so its swatch names itself.
-    let text = if color == WallpaperColor::Theme {
-        egui::RichText::new(label.as_str())
-            .font(theme::medium(13.0))
-            .color(palette.text)
-    } else {
-        egui::RichText::new(" ")
-    };
-    let button = egui::Button::new(text)
-        .min_size(Vec2::splat(80.0))
-        .fill(fill)
-        .stroke(if color == selected {
-            Stroke::new(4.0, fill.gamma_multiply(0.5))
-        } else if color == WallpaperColor::Theme {
-            // Otherwise the swatch vanishes into a panel of the same colour.
-            Stroke::new(1.0, palette.outline)
+    let chosen = color == selected;
+    let response = ui.interact(
+        rect,
+        ui.id().with(("wallpaper-swatch", color.label())),
+        Sense::click(),
+    );
+    theme::reveal_focus(&response);
+    let radius = f32::from(theme::RADIUS_CARD);
+    theme::focus_outline(ui, response.id, rect, radius);
+    if ui.is_rect_visible(rect) {
+        let t = ui.ctx().animate_bool_with_time_and_easing(
+            response.id,
+            chosen,
+            0.16,
+            egui::emath::easing::quadratic_out,
+        );
+        let painter = ui.painter_at(rect.expand(6.0));
+        painter.rect_filled(rect, radius, fill);
+        // Theme follows the palette, so its swatch names itself.
+        if color == WallpaperColor::Theme {
+            painter.text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                &label,
+                theme::medium(13.0),
+                palette.text,
+            );
+        }
+        // Otherwise a swatch of the panel's own colour vanishes into it.
+        let edge = if response.hovered() {
+            Stroke::new(1.5, palette.secondary)
         } else {
-            Stroke::NONE
-        })
-        .corner_radius(CornerRadius::ZERO);
-    let response = ui.add(button).on_hover_text(label.as_str());
+            Stroke::new(1.0, palette.outline)
+        };
+        painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Inside);
+        if t > 0.0 {
+            painter.rect_stroke(
+                rect.expand(3.0),
+                radius + 3.0,
+                Stroke::new(2.5, palette.accent.gamma_multiply(t)),
+                egui::StrokeKind::Outside,
+            );
+            let badge = Rect::from_center_size(
+                rect.right_bottom() - vec2(14.0, 14.0),
+                Vec2::splat(22.0 * t),
+            );
+            painter.circle_filled(badge.center(), badge.width() / 2.0, palette.accent);
+            if t > 0.6 {
+                theme::paint_icon(ui, Icon::Check, badge, 14.0, palette.on_accent);
+            }
+        }
+    }
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::Button,
             ui.is_enabled(),
-            color == selected,
+            chosen,
             label.as_str(),
         )
     });
-    response.clicked()
+    response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(label.as_str())
+        .clicked()
 }
+
+/// The doodle patterns, as tiles of the wallpaper each draws, and none.
+fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    block_heading(
+        ui,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Doodles"),
+        &crate::i18n::gettext(
+            app.locale,
+            "The pattern drawn over the wallpaper colour in your chats.",
+        ),
+    );
+    ui.add_space(2.0);
+    let look = app.wallpaper();
+    let shown = app.settings.show_wallpaper;
+    let current = app.settings.doodle_style;
+    let width = ui.available_width();
+    let gap = 10.0;
+    let tiles = DoodleStyle::ALL.len() + 1;
+    let columns = (((width + gap) / (DOODLE_TILE + gap)).floor() as usize).clamp(1, tiles);
+    let tile = vec2(
+        (width - gap * (columns - 1) as f32) / columns as f32,
+        DOODLE_PREVIEW + CARD_LABEL,
+    );
+    let rows = tiles.div_ceil(columns);
+    ui.add_space(12.0);
+    let (area, _) = ui.allocate_exact_size(
+        vec2(width, rows as f32 * (tile.y + gap) - gap),
+        Sense::hover(),
+    );
+    let radius = f32::from(theme::RADIUS_CARD);
+    for index in 0..tiles {
+        // The first tile is none; the rest follow DoodleStyle::ALL.
+        let style = index.checked_sub(1).map(|index| DoodleStyle::ALL[index]);
+        let chosen = match style {
+            None => !shown,
+            Some(style) => shown && style == current,
+        };
+        let label = match style {
+            None => crate::i18n::pgettext(app.locale, "doodles", "None").into_owned(),
+            Some(style) => crate::i18n::gettext(app.locale, style.label()).into_owned(),
+        };
+        let rect = Rect::from_min_size(
+            area.min
+                + vec2(
+                    (index % columns) as f32 * (tile.x + gap),
+                    (index / columns) as f32 * (tile.y + gap),
+                ),
+            tile,
+        );
+        let response = ui.interact(rect, ui.id().with(("doodle-tile", index)), Sense::click());
+        theme::reveal_focus(&response);
+        theme::focus_outline(ui, response.id, rect, radius);
+        if ui.is_rect_visible(rect) {
+            let t = ui.ctx().animate_bool_with_time_and_easing(
+                response.id,
+                chosen,
+                0.16,
+                egui::emath::easing::quadratic_out,
+            );
+            let painter = ui.painter_at(rect.expand(6.0));
+            let r = radius as u8;
+            let preview = Rect::from_min_size(rect.min, vec2(rect.width(), DOODLE_PREVIEW));
+            let footer = Rect::from_min_max(pos2(rect.left(), preview.bottom()), rect.max);
+            painter.rect_filled(
+                footer,
+                CornerRadius {
+                    nw: 0,
+                    ne: 0,
+                    sw: r,
+                    se: r,
+                },
+                palette.surface,
+            );
+            // The wallpaper's own colour, with this pattern over it.
+            painter.rect_filled(
+                preview,
+                CornerRadius {
+                    nw: r,
+                    ne: r,
+                    sw: 0,
+                    se: 0,
+                },
+                look.color,
+            );
+            if let Some(style) = style {
+                wallpaper::paint_doodles(ui, preview, look.color, style);
+            } else {
+                theme::paint_icon(
+                    ui,
+                    Icon::Ban,
+                    Rect::from_center_size(preview.center(), Vec2::splat(26.0)),
+                    24.0,
+                    palette.secondary,
+                );
+            }
+            let name = widgets::line(
+                ui,
+                &label,
+                theme::medium(12.5),
+                if chosen { palette.accent } else { palette.text },
+                footer.width() - 20.0,
+                1,
+            );
+            name.paint(
+                ui,
+                pos2(
+                    footer.center().x - name.size().x / 2.0,
+                    footer.center().y - name.size().y / 2.0,
+                ),
+                if chosen { palette.accent } else { palette.text },
+            );
+            let edge = if response.hovered() {
+                Stroke::new(1.0, palette.secondary)
+            } else {
+                Stroke::new(1.0, palette.outline)
+            };
+            painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Inside);
+            if t > 0.0 {
+                painter.rect_stroke(
+                    rect,
+                    radius,
+                    Stroke::new(2.0 + t, palette.accent.gamma_multiply(t)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::RadioButton,
+                ui.is_enabled(),
+                chosen,
+                &label,
+            )
+        });
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            match style {
+                None => app.actions.push(Action::SetWallpaperDoodles(false)),
+                Some(style) => app.actions.push(Action::SetDoodleStyle(style)),
+            }
+        }
+    }
+    ui.add_space(4.0);
+}
+
+/// Least width of a doodle tile before the grid drops a column.
+const DOODLE_TILE: f32 = 128.0;
+/// How tall the doodled part of a tile is.
+const DOODLE_PREVIEW: f32 = 84.0;
 
 /// The space this account's media cache takes, split by kind, with the
 /// button that empties it.
