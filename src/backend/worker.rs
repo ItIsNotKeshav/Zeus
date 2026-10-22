@@ -2717,6 +2717,7 @@ impl Worker {
         for id in self.archive.waiting_receipts(&chat).unwrap_or_default() {
             self.settle_early_receipts(&chat, &id);
         }
+        self.carry_names_to_phone(&lid_chat, &chat);
         let mapped = self.canonical_str(&lid_chat);
         for id in self.early.rekey(&lid_chat, &mapped) {
             if matches!(self.archive.message(&mapped, &id), Ok(Some(_))) {
@@ -2728,6 +2729,40 @@ impl Worker {
         if self.receipts_watch.is_some() {
             self.emit_receipts();
         }
+    }
+
+    /// Names heard under a privacy id before its phone number was known
+    /// (a profile name from a message or the history sync) belong to the
+    /// person's phone-number contact too, or a mention of them would stay a
+    /// bare number. A name already held for the number wins.
+    fn carry_names_to_phone(&mut self, lid_chat: &str, chat: &str) {
+        let Some(heard) = self.contacts.get(lid_chat).cloned() else {
+            return;
+        };
+        if chat == self.me() {
+            return;
+        }
+        let known = self.contacts.get(chat);
+        let merged = Contact {
+            id: chat.to_owned(),
+            full_name: known
+                .and_then(|known| known.full_name.clone())
+                .or(heard.full_name),
+            first_name: known
+                .and_then(|known| known.first_name.clone())
+                .or(heard.first_name),
+            push_name: known
+                .and_then(|known| known.push_name.clone())
+                .or(heard.push_name),
+        };
+        if known.is_some_and(|known| *known == merged) {
+            return;
+        }
+        if let Err(error) = self.archive.upsert_contact(&merged) {
+            log::warn!("could not save a contact: {error}");
+        }
+        self.contacts.insert(chat.to_owned(), merged.clone());
+        self.emit(Event::Contacts(vec![merged]));
     }
 
     fn learn_pair(&mut self, a: &Jid, b: &Jid) {
@@ -16875,6 +16910,24 @@ mod receipt_tests {
         // names: the queue it belonged to is gone.
         worker.advance_serial_forward("a");
         assert!(worker.forward_queue.is_none());
+    }
+
+    #[test]
+    fn a_name_heard_under_a_privacy_id_follows_it_to_the_phone_number() {
+        let (mut worker, _events, _commands, _runtime) = worker();
+        worker.remember_push_name("167650256810092@lid", "Keshav");
+        worker.learn_lid("167650256810092", "4917663430455");
+        let phone = worker.contacts.get("4917663430455@s.whatsapp.net").unwrap();
+        assert_eq!(phone.push_name.as_deref(), Some("Keshav"));
+        assert_eq!(
+            worker
+                .archive
+                .contact("4917663430455@s.whatsapp.net")
+                .unwrap()
+                .and_then(|contact| contact.push_name)
+                .as_deref(),
+            Some("Keshav")
+        );
     }
 
     pub(super) fn worker() -> (
