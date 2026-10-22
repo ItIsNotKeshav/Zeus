@@ -546,10 +546,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     appearance.row(
         translated(locale, "Font"),
-        translated(
-            locale,
-            "Choose the desktop font, Inter, Geist, or Google Sans Flex.",
-        ),
+        translated(locale, "Choose the desktop font."),
         font_picker,
     );
     appearance.row(
@@ -2055,9 +2052,7 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
     // Font family names stay in their own branding.
     let label = |choice: FontChoice| match choice {
         FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
-        FontChoice::Inter => choice.label().to_owned(),
-        FontChoice::Geist => choice.label().to_owned(),
-        FontChoice::GoogleSansFlex => choice.label().to_owned(),
+        _ => choice.label().to_owned(),
     };
     let response = egui::ComboBox::from_id_salt("interface_font")
         .selected_text(label(selected))
