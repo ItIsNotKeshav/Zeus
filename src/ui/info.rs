@@ -336,6 +336,7 @@ fn card<R>(ui: &mut egui::Ui, palette: &theme::Palette, add: impl FnOnce(&mut eg
         .inner_margin(Margin::same(14))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
             add(ui)
         })
         .inner
@@ -439,7 +440,7 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool, popup: bo
             Frame::new()
                 .inner_margin(Margin::symmetric(MARGIN as i8, if popup { 16 } else { 12 }))
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = if popup { 12.0 } else { 8.0 };
+                    ui.spacing_mut().item_spacing.y = if popup { 18.0 } else { 8.0 };
                     identity(app, ui, &shown, overlay, popup);
                 });
         });
@@ -470,6 +471,9 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool, popu
     let mut renaming = app.group_name_edit.take().filter(|_| group_editable);
     let mut group_action = None;
     ui.vertical_centered(|ui| {
+        if popup {
+            ui.spacing_mut().item_spacing.y = 10.0;
+        }
         if group_editable {
             group_action = group_photo(app, ui, name, id, photo, picture.as_deref());
         } else {
@@ -693,7 +697,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool, popu
     if let Some(action) = group_action {
         app.actions.push(action);
     }
-    ui.add_space(4.0);
+    ui.add_space(if popup { 6.0 } else { 4.0 });
     actions(app, ui, shown, mine, editable);
     if let Some(description) = shown.description.as_deref() {
         section(ui, &palette, popup, |ui| {
