@@ -1645,7 +1645,16 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
                         PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
                     };
-                    let smile = last_line(ui, line, |ui| theme::icon_button(
+                    // The icon fades in when the mode changes.
+                    let mode_fade = ui.ctx().animate_bool_with_time_and_easing(
+                        egui::Id::new(("picker-mode", app.settings.picker_mode as u8)),
+                        true,
+                        0.18,
+                        egui::emath::easing::quadratic_out,
+                    );
+                    let smile = last_line(ui, line, |ui| ui.scope(|ui| {
+                        ui.multiply_opacity(mode_fade);
+                        theme::icon_button(
                         ui,
                         mode_icon,
                         22.0,
@@ -1656,7 +1665,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         },
                         palette.text,
                         mode_label,
-                    )).tab_stop(Stop::Emoji);
+                    )}).inner).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
                     if smile.clicked() {
                         if app.composer_tools_open {
@@ -3691,15 +3700,23 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         app.scroll_to_bottom = false;
     }
     // Show a return-to-bottom button while reading older messages.
-    if !at_bottom {
+    // It scales and fades in and out, as the other floating controls do.
+    let appear = ui.ctx().animate_bool_with_time_and_easing(
+        ui.id().with("to-bottom"),
+        !at_bottom,
+        if reduce_motion { 0.0 } else { 0.18 },
+        egui::emath::easing::quadratic_out,
+    );
+    if appear > 0.0 {
         let rect = output.inner_rect;
         let center = pos2(rect.right() - 34.0, rect.bottom() - over - 34.0);
-        let button = Rect::from_center_size(center, Vec2::splat(40.0));
+        let button = Rect::from_center_size(center, Vec2::splat(40.0 * (0.7 + 0.3 * appear)));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(button)
                 .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
         );
+        child.multiply_opacity(appear);
         let unread = app.chat(&chat.id).map_or(0, |chat| chat.unread);
         // It floats over the messages: a soft shadow lifts it off them.
         child.painter().add(
@@ -3716,7 +3733,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         if theme::circle_button(
             &mut child,
             Icon::ArrowDown,
-            40.0,
+            button.width(),
             palette.frosted(palette.overlay),
             palette.surface_hover,
             palette.text,
@@ -6430,6 +6447,18 @@ fn reactions(
         }
     }
     ui.spacing_mut().item_spacing.x = 3.0;
+    // Chips fade in as they arrive.
+    let arrived = ui.ctx().animate_bool_with_time_and_easing(
+        egui::Id::new(("reaction-chips", &view.chat.id, &message.id, counts.len())),
+        true,
+        if crate::motion::screen_reader_attached(ui.ctx()) {
+            0.0
+        } else {
+            0.18
+        },
+        egui::emath::easing::quadratic_out,
+    );
+    ui.multiply_opacity(arrived);
     // A right-to-left row lays its first item last, so its chips come reversed.
     if reversed {
         counts.reverse();
