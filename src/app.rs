@@ -7371,6 +7371,10 @@ impl App {
                     self.refocus_composer(ctx);
                 } else {
                     self.picker = Some(tab);
+                    if self.settings.picker_mode != tab {
+                        self.settings.picker_mode = tab;
+                        self.mark_settings_dirty();
+                    }
                     self.picker_search.clear();
                     self.picker_focus = tab == PickerTab::Emoji;
                     if tab == PickerTab::Emoji {
@@ -10985,7 +10989,11 @@ mod tests {
             )]
         );
         assert!(app.selection.is_none(), "the carried selection is done");
-        assert!(app.toasts.iter().any(|toast| toast.message == "Forwarded to Target"));
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message == "Forwarded to Target")
+        );
     }
 
     #[test]
