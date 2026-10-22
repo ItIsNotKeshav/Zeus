@@ -657,6 +657,10 @@ pub struct ChatLink {
     pub url: String,
     /// The preview's title, when WhatsApp attached one for this address.
     pub title: Option<String>,
+    /// The preview's description, when it has one.
+    pub description: Option<String>,
+    /// The preview's picture as WhatsApp sent it, when it sent one.
+    pub thumbnail: Option<Vec<u8>>,
 }
 
 /// How many pictures and videos, documents, and links the info panel lists
@@ -693,12 +697,23 @@ impl ChatMedia {
                 Content::Image { .. } | Content::Video { .. } => media.media.push(row),
                 Content::Document { .. } => media.docs.push(row),
                 Content::Text { .. } => {
-                    for (url, title) in row.content.web_links() {
+                    let preview = match &row.content {
+                        Content::Text { preview, .. } => preview.as_ref(),
+                        _ => None,
+                    };
+                    for (index, (url, title)) in row.content.web_links().into_iter().enumerate() {
+                        // The preview's address comes first.
+                        let own = index == 0 && preview.is_some();
                         media.links.push(ChatLink {
                             message: row.id.clone(),
                             timestamp: row.timestamp,
                             url,
                             title,
+                            description: preview
+                                .filter(|_| own)
+                                .and_then(|preview| preview.description.clone())
+                                .filter(|text| !text.trim().is_empty()),
+                            thumbnail: row.thumbnail.clone().filter(|_| own),
                         });
                     }
                 }

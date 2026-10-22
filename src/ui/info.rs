@@ -21,14 +21,15 @@ const MARGIN: f32 = 18.0;
 /// Space between the cells of the picture grid and strip.
 const GAP: f32 = 4.0;
 /// A document or link row.
-const ROW_HEIGHT: f32 = 64.0;
+const ROW_HEIGHT: f32 = 76.0;
 /// A member's row.
 const MEMBER_HEIGHT: f32 = 48.0;
 /// The popup's width, and how far it eases up while it appears.
 const POPUP_WIDTH: f32 = 480.0;
 const POPUP_RISE: f32 = 18.0;
-/// Seconds the popup takes to appear.
+/// Seconds the popup takes to appear, and to leave: a little quicker.
 const POPUP_SECONDS: f64 = 0.24;
+const POPUP_LEAVE_SECONDS: f64 = 0.16;
 /// The members shown without a search field above them.
 const SEARCH_FROM: usize = 8;
 /// The panel's Tab stops after its close button, in reading order: the
@@ -78,6 +79,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
         ui.ctx().data_mut(|data| {
             data.remove::<bool>(docked_id());
             data.remove::<f64>(popup_start_id());
+            data.remove::<f64>(popup_leave_id());
             data.remove::<(String, String)>(member_filter_id());
         });
         // The thumbnails go with the panel, not with the resident window.
@@ -107,15 +109,32 @@ pub fn show_popup(app: &mut App, ctx: &egui::Context) {
     let palette = app.palette;
     let now = ctx.input(|input| input.time);
     let start = ctx.data_mut(|data| *data.get_temp_mut_or_insert_with(popup_start_id(), || now));
-    let progress = ((now - start) / POPUP_SECONDS).clamp(0.0, 1.0) as f32;
-    // A screen reader's window is not asked for a frame per refresh.
-    let progress = if crate::motion::screen_reader_attached(ctx) {
-        1.0
-    } else {
-        if progress < 1.0 {
+    let leaving = ctx.data(|data| data.get_temp::<f64>(popup_leave_id()));
+    let reduced = crate::motion::screen_reader_attached(ctx);
+    let progress = match leaving {
+        Some(began) => {
+            let left = ((now - began) / POPUP_LEAVE_SECONDS).clamp(0.0, 1.0) as f32;
+            if left >= 1.0 || reduced {
+                // Gone: the panel closes for good.
+                ctx.data_mut(|data| data.remove::<f64>(popup_leave_id()));
+                app.actions.push(Action::CloseInfo);
+                return;
+            }
             ctx.request_repaint();
+            1.0 - egui::emath::easing::cubic_in(left)
         }
-        egui::emath::easing::cubic_out(progress)
+        None => {
+            let arrived = ((now - start) / POPUP_SECONDS).clamp(0.0, 1.0) as f32;
+            // A screen reader's window is not asked for a frame per refresh.
+            if reduced {
+                1.0
+            } else {
+                if arrived < 1.0 {
+                    ctx.request_repaint();
+                }
+                egui::emath::easing::cubic_out(arrived)
+            }
+        }
     };
     let window = ctx.content_rect();
     let width = POPUP_WIDTH.min((window.width() - 48.0).max(260.0));
@@ -159,9 +178,23 @@ pub fn show_popup(app: &mut App, ctx: &egui::Context) {
     // Escape is the keyboard's: it first leaves what the panel was in the
     // middle of, in `keys`.
     if response.backdrop_response.clicked() {
-        app.actions.push(Action::CloseInfo);
+        leave(ctx);
     }
     ctx.data_mut(|data| data.insert_temp(docked_id(), true));
+}
+
+/// Starts the popup's exit: it eases out, then closes the panel.
+fn leave(ctx: &egui::Context) {
+    let now = ctx.input(|input| input.time);
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_insert_with(popup_leave_id(), || now);
+    });
+    ctx.request_repaint();
+}
+
+/// When the popup began to leave, while it does.
+fn popup_leave_id() -> egui::Id {
+    egui::Id::new("chat-info-popup-leave")
 }
 
 /// When the popup opened, so it eases in once.
@@ -214,7 +247,12 @@ fn header(
 ) {
     let palette = app.palette;
     let margin = if popup {
-        Margin::symmetric(MARGIN as i8, 14)
+        Margin {
+            left: MARGIN as i8,
+            right: MARGIN as i8,
+            top: 20,
+            bottom: 8,
+        }
     } else {
         pane::header_margin(ui.ctx())
     };
@@ -259,17 +297,20 @@ fn header(
                         }
                     }
                     if button.clicked() {
-                        app.actions.push(Action::CloseInfo);
+                        leave(ui.ctx());
                     }
                 });
             }
         });
     });
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, palette.outline),
-    );
+    // A page keeps its rule under the header; a popup is spaced instead.
+    if !popup {
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            ui.cursor().top(),
+            Stroke::new(1.0, palette.outline),
+        );
+    }
 }
 
 /// A section of the overview: a card in a popup, a plain block on a page.
@@ -1116,7 +1157,7 @@ fn media_view(
     let uris = std::mem::take(&mut app.info_uris);
     let shown = listing.as_ref().filter(|media| media.chat == chat);
     Frame::new()
-        .inner_margin(Margin::symmetric(MARGIN as i8, 10))
+        .inner_margin(Margin::symmetric(MARGIN as i8, if popup { 14 } else { 10 }))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -1140,11 +1181,13 @@ fn media_view(
                 }
             });
         });
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, palette.outline),
-    );
+    if !popup {
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            ui.cursor().top(),
+            Stroke::new(1.0, palette.outline),
+        );
+    }
     match shown {
         Some(media) => {
             let cut = match tab {
@@ -1343,13 +1386,19 @@ fn thumbnail(
         }
         _ => return false,
     };
+    cover(ui, palette, rect, image);
+    true
+}
+
+/// Paints `image` cropped to fill `rect`.
+fn cover(ui: &egui::Ui, palette: &theme::Palette, rect: Rect, image: egui::Image<'_>) {
     // The texture's shape is known once it is decoded; until then the cell
     // is a plain surface rather than a stretched placeholder.
     let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), rect.size())
     else {
         ui.painter()
             .rect_filled(rect, theme::RADIUS_CONTROL, palette.surface);
-        return true;
+        return;
     };
     // Cover the square: the longer side is cropped at both ends.
     let (width, height) = (texture.size.x.max(1.0), texture.size.y.max(1.0));
@@ -1364,7 +1413,6 @@ fn thumbnail(
         .uv(uv)
         .corner_radius(theme::RADIUS_CONTROL)
         .paint_at(ui, rect);
-    true
 }
 
 /// The chat's documents, newest first: a file icon, the name, and its
@@ -1406,7 +1454,14 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
                 }
                 detail.push(crate::util::bytes(media.size));
                 detail.push(crate::util::chat_stamp(app.locale, message.timestamp));
-                if item_row(app, ui, Icon::FileText, file_name, &detail.join(" · ")).clicked() {
+                let row = Row {
+                    icon: Icon::FileText,
+                    title: file_name,
+                    description: None,
+                    detail: &detail.join(" · "),
+                    picture: None,
+                };
+                if item_row(app, ui, row).clicked() {
                     go_to(app, message, overlay);
                 }
             }
@@ -1440,23 +1495,52 @@ fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
                     domain(&link.url),
                     crate::util::chat_stamp(app.locale, link.timestamp)
                 );
-                if item_row(app, ui, Icon::ExternalLink, title, &detail).clicked() {
+                let uri = link_uri(&listing.chat, link);
+                let picture = link.thumbnail.as_deref().zip(uri.as_deref());
+                let row = Row {
+                    icon: Icon::ExternalLink,
+                    title,
+                    description: link.description.as_deref(),
+                    detail: &detail,
+                    picture,
+                };
+                if item_row(app, ui, row).clicked() {
                     app.actions.push(Action::OpenUrl(link.url.clone()));
                 }
             }
         });
 }
 
-/// One document or link row: an icon in a tile, a title, and a detail line.
-/// A pointer and accessibility target, like a chat row, not a Tab stop.
-fn item_row(
-    app: &mut App,
-    ui: &mut egui::Ui,
+/// The texture name a link's preview picture is drawn under, when it has one.
+pub(crate) fn link_uri(chat: &str, link: &crate::model::ChatLink) -> Option<String> {
+    link.thumbnail
+        .as_ref()
+        .map(|_| thumbnail_uri(chat, &format!("link-{}", link.message)))
+}
+
+/// What a document or link row shows.
+struct Row<'a> {
     icon: Icon,
-    title: &str,
-    detail: &str,
-) -> egui::Response {
+    title: &'a str,
+    /// A line between the title and the detail, such as a link's summary.
+    description: Option<&'a str>,
+    detail: &'a str,
+    /// A picture in place of the icon: its bytes and the texture name.
+    picture: Option<(&'a [u8], &'a str)>,
+}
+
+/// One document or link row: a tile with an icon or a picture, a title, and
+/// the lines under it. A pointer and accessibility target, like a chat row,
+/// not a Tab stop.
+fn item_row(app: &mut App, ui: &mut egui::Ui, row: Row<'_>) -> egui::Response {
     let palette = app.palette;
+    let Row {
+        icon,
+        title,
+        description,
+        detail,
+        picture,
+    } = row;
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
     response.widget_info(|| {
@@ -1465,24 +1549,42 @@ fn item_row(
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             ui.painter().rect_filled(
-                rect.shrink2(vec2(MARGIN - 8.0, 3.0)),
+                rect.shrink2(vec2(MARGIN - 8.0, 4.0)),
                 theme::RADIUS_CONTROL,
                 palette.surface_hover,
             );
         }
         let tile = Rect::from_center_size(
-            pos2(rect.left() + MARGIN + 22.0, rect.center().y),
-            Vec2::splat(44.0),
+            pos2(rect.left() + MARGIN + 24.0, rect.center().y),
+            Vec2::splat(48.0),
         );
-        ui.painter()
-            .rect_filled(tile, theme::RADIUS_CONTROL, palette.surface);
-        theme::paint_icon(ui, icon, tile, 20.0, palette.secondary);
+        match picture {
+            Some((bytes, uri)) => {
+                crate::image_cache::include(ui.ctx(), uri, bytes);
+                cover(ui, &palette, tile, egui::Image::new(uri.to_owned()));
+            }
+            None => {
+                ui.painter()
+                    .rect_filled(tile, theme::RADIUS_CONTROL, palette.surface);
+                theme::paint_icon(ui, icon, tile, 20.0, palette.secondary);
+            }
+        }
         let left = tile.right() + 14.0;
         let width = rect.right() - MARGIN - left;
-        let name = widgets::line(ui, title, theme::medium(14.0), palette.text, width, 1);
-        name.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
-        let line = widgets::line(ui, detail, theme::regular(12.0), palette.dim, width, 1);
-        line.paint(ui, pos2(left, rect.top() + 35.0), palette.dim);
+        let mut lines = vec![(title, theme::medium(14.0), palette.text, 18.0)];
+        if let Some(description) = description {
+            lines.push((description, theme::regular(12.5), palette.secondary, 17.0));
+        }
+        lines.push((detail, theme::regular(12.0), palette.dim, 16.0));
+        let gap = 3.0;
+        let total: f32 =
+            lines.iter().map(|line| line.3).sum::<f32>() + gap * (lines.len() - 1) as f32;
+        let mut top = rect.center().y - total / 2.0;
+        for (text, font, color, height) in lines {
+            let line = widgets::line(ui, text, font, color, width, 1);
+            line.paint(ui, pos2(left, top), color);
+            top += height + gap;
+        }
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

@@ -4616,6 +4616,13 @@ impl App {
             .media
             .iter()
             .map(|row| crate::ui::info::thumbnail_uri(&row.chat, &row.id))
+            // The Links tab's previews follow the pictures.
+            .chain(
+                media
+                    .links
+                    .iter()
+                    .filter_map(|link| crate::ui::info::link_uri(&media.chat, link)),
+            )
             .collect();
         let listed: HashSet<&str> = uris.iter().map(String::as_str).collect();
         // One dropped earlier and listed again before a frame stays.
