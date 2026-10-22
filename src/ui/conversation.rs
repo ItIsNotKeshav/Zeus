@@ -97,6 +97,28 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 bar
             })
             .inner;
+        // The pinned line hangs under the header on a layer of its own, over
+        // frosted messages that scroll under it, and they start below it.
+        let pins = has_live_pins(app, &chat);
+        let pin_bar = if pins {
+            let rect = Rect::from_min_size(
+                pos2(bar.left(), bar.bottom()),
+                vec2(bar.width(), PIN_ROW_HEIGHT),
+            );
+            let layer = egui::LayerId::new(egui::Order::Middle, ui.id().with("chat-pins"));
+            ui.scope_builder(
+                egui::UiBuilder::new().layer_id(layer).max_rect(rect),
+                |ui| {
+                    let glass = ui.painter().add(egui::Shape::Noop);
+                    pin_banner(app, ui, &chat, true);
+                    ui.painter().set(glass, super::glass::shape(rect, 0.0, 0.0));
+                },
+            );
+            rect
+        } else {
+            bar.with_max_y(bar.bottom())
+        };
+        let bar = bar.with_max_y(pin_bar.bottom());
         // The composer too floats on its own layer, over frosted messages
         // that scroll on under it, as under the header.
         let area = ui.available_rect_before_wrap();
@@ -146,7 +168,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let header = header(app, ui, &chat);
-    pin_banner(app, ui, &chat);
+    pin_banner(app, ui, &chat, false);
     composer(app, ui, &chat);
     messages(app, ui, &chat, 0.0, 0.0);
     // Over the messages, which scroll under the header.
@@ -227,7 +249,7 @@ fn pin_bar_segments(top: f32, height: f32, count: usize) -> Vec<(f32, f32)> {
 /// an ellipsis when they do not fit. Clicking it opens that message and moves
 /// the line on to the next pin, so repeated clicks walk the chat's pins. A bar
 /// at its left has a segment per pin and lights the one shown.
-fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat, floating: bool) {
     let now = crate::util::now();
     if let Some(wait) = app.chat_pins.get(&chat.id).and_then(|rows| {
         rows.iter()
@@ -260,6 +282,8 @@ fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         0.0,
         if response.hovered() {
             palette.surface_hover
+        } else if floating {
+            palette.frosted(palette.panel)
         } else {
             palette.panel
         },
@@ -317,6 +341,14 @@ fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         let next = rows[next_pin(rows.len(), shown)].id.clone();
         ui.ctx().data_mut(|data| data.insert_temp(cursor_id, next));
     }
+}
+
+/// Whether the chat has a pin the line under the header would show.
+fn has_live_pins(app: &App, chat: &Chat) -> bool {
+    let now = crate::util::now();
+    app.chat_pins
+        .get(&chat.id)
+        .is_some_and(|rows| rows.iter().any(|row| row.expires_at > now))
 }
 
 /// Where the pin line keeps the id of the pin it shows, per chat.
