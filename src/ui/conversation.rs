@@ -4474,7 +4474,7 @@ fn bubble_row(
             // reacting to its own item.
             let members = album.unwrap_or(std::slice::from_ref(message));
             if members.iter().any(|member| !member.reactions.is_empty()) {
-                ui.add_space(-7.0);
+                ui.add_space(-5.0);
                 // Chips hang off the bubble's far side: the right of a
                 // received message, the left of one we sent.
                 let bubble_width = ui
@@ -6446,7 +6446,7 @@ fn reactions(
             None => counts.push((reaction.emoji.clone(), 1, reaction.from_me, vec![who])),
         }
     }
-    ui.spacing_mut().item_spacing.x = 3.0;
+    ui.spacing_mut().item_spacing.x = 5.0;
     // Chips fade in as they arrive.
     let arrived = ui.ctx().animate_bool_with_time_and_easing(
         egui::Id::new(("reaction-chips", &view.chat.id, &message.id, counts.len())),
@@ -6469,8 +6469,8 @@ fn reactions(
         } else {
             emoji.clone()
         };
-        let line = widgets::line(ui, &label, theme::regular(13.0), palette.text, 200.0, 1);
-        let size = line.size() + vec2(12.0, 6.0);
+        let line = widgets::line(ui, &label, theme::regular(15.0), palette.text, 200.0, 1);
+        let size = line.size() + vec2(18.0, 10.0);
         let (rect, response) = ui.allocate_exact_size(size, Sense::click());
         if ui.is_rect_visible(rect) {
             // Lifted as gently as a hovered chat-list row, so the pill
