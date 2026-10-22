@@ -4492,16 +4492,16 @@ fn bubble_row(
                     Layout::right_to_left(Align::Center)
                 };
                 ui.allocate_ui_with_layout(vec2(lead + bubble_width, 0.0), layout, |ui| {
+                    // A right-to-left row lays its first item last.
                     let mut shown = members
                         .iter()
                         .filter(|member| !member.reactions.is_empty())
                         .collect::<Vec<_>>();
-                    // A right-to-left row lays its first item last.
                     if !own {
                         shown.reverse();
                     }
                     for member in shown {
-                        reactions(ui, view, member, !own, actions);
+                        reactions(ui, view, member, actions);
                     }
                 });
                 ui.add_space(2.0);
@@ -6419,35 +6419,13 @@ fn reference_footer_marks(
     }
 }
 
-fn reactions(
-    ui: &mut egui::Ui,
-    view: &View<'_>,
-    message: &Message,
-    reversed: bool,
-    actions: &mut Vec<Action>,
-) {
+/// The message's reactions as one pill: its four most used emoji, with no
+/// counts. Clicking it lists who reacted with what.
+fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
-    let mut counts: Vec<(String, u32, bool, Vec<String>)> = Vec::new();
-    for reaction in &message.reactions {
-        let who = if reaction.from_me {
-            "You".to_owned()
-        } else {
-            (view.names_or)(&reaction.sender, None)
-        };
-        match counts
-            .iter_mut()
-            .find(|(emoji, _, _, _)| *emoji == reaction.emoji)
-        {
-            Some((_, count, mine, names)) => {
-                *count += 1;
-                *mine |= reaction.from_me;
-                names.push(who);
-            }
-            None => counts.push((reaction.emoji.clone(), 1, reaction.from_me, vec![who])),
-        }
-    }
-    ui.spacing_mut().item_spacing.x = 5.0;
-    // Chips fade in as they arrive.
+    let counts = super::reaction_list::tally(message);
+    let mine = message.reactions.iter().any(|reaction| reaction.from_me);
+    // The pill fades in as it arrives, and again when its emoji change.
     let arrived = ui.ctx().animate_bool_with_time_and_easing(
         egui::Id::new(("reaction-chips", &view.chat.id, &message.id, counts.len())),
         true,
@@ -6459,49 +6437,57 @@ fn reactions(
         egui::emath::easing::quadratic_out,
     );
     ui.multiply_opacity(arrived);
-    // A right-to-left row lays its first item last, so its chips come reversed.
-    if reversed {
-        counts.reverse();
+    let shown: Vec<&str> = counts
+        .iter()
+        .take(4)
+        .map(|(emoji, _)| emoji.as_str())
+        .collect();
+    let line = widgets::line(
+        ui,
+        &shown.join(" "),
+        theme::regular(15.0),
+        palette.text,
+        240.0,
+        1,
+    );
+    let size = line.size() + vec2(18.0, 10.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    if ui.is_rect_visible(rect) {
+        // Lifted as gently as a hovered chat-list row, so the pill
+        // stands off the bubble it overlaps.
+        let mut shadow = palette.bubble_shadow();
+        shadow.color = shadow.color.gamma_multiply(0.6);
+        ui.painter()
+            .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
+        // No outline: a pill holding our own reaction is tinted with the accent.
+        ui.painter().rect_filled(
+            rect,
+            rect.height() / 2.0,
+            if mine {
+                palette.overlay.lerp_to_gamma(palette.accent, 0.35)
+            } else {
+                palette.overlay
+            },
+        );
+        line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
     }
-    for (emoji, count, mine, names) in counts {
-        let label = if count > 1 {
-            format!("{emoji} {count}")
-        } else {
-            emoji.clone()
-        };
-        let line = widgets::line(ui, &label, theme::regular(15.0), palette.text, 200.0, 1);
-        let size = line.size() + vec2(18.0, 10.0);
-        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        if ui.is_rect_visible(rect) {
-            // Lifted as gently as a hovered chat-list row, so the pill
-            // stands off the bubble it overlaps.
-            let mut shadow = palette.bubble_shadow();
-            shadow.color = shadow.color.gamma_multiply(0.6);
-            ui.painter()
-                .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
-            // No outline: our own reaction is the one tinted with the accent.
-            ui.painter().rect_filled(
-                rect,
-                rect.height() / 2.0,
-                if mine {
-                    palette.overlay.lerp_to_gamma(palette.accent, 0.35)
-                } else {
-                    palette.overlay
-                },
-            );
-            line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
-        }
-        let response = response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(names.join(", "));
-        if response.clicked() {
-            // Clicking our reaction removes it; clicking another adds it.
-            actions.push(Action::React {
-                chat: view.chat.id.clone(),
-                message: message.id.clone(),
-                emoji: if mine { String::new() } else { emoji },
-            });
-        }
+    let names: Vec<String> = message
+        .reactions
+        .iter()
+        .map(|reaction| {
+            let who = if reaction.from_me {
+                "You".to_owned()
+            } else {
+                (view.names_or)(&reaction.sender, None)
+            };
+            format!("{} {who}", reaction.emoji)
+        })
+        .collect();
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(names.join("\n"));
+    if response.clicked() {
+        actions.push(super::reaction_list::open(&view.chat.id, &message.id));
     }
 }
 

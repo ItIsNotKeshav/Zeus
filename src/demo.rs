@@ -3425,6 +3425,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.at_bottom = false;
                 app.scroll_anchor = Some("group-photo".into());
             }
+            "reaction-list" => {
+                app.open_chat = Some(SAMPLES[1].id.to_owned());
+                app.dialog = Some(Dialog::Reactions {
+                    chat: SAMPLES[1].id.to_owned(),
+                    message: "group-photo".into(),
+                });
+            }
             "unsent-voice" => {
                 let chat = SAMPLES[0].id;
                 app.open_chat = Some(chat.to_owned());
@@ -6217,6 +6224,7 @@ mod tests {
             "unsent-voice",
             "scrolled",
             "reactions",
+            "reaction-list",
             "typers",
             "nosidebar",
             "wide",

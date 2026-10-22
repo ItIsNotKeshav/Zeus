@@ -2329,6 +2329,11 @@ pub enum Dialog {
         chat: ChatId,
         message: String,
     },
+    /// Who reacted to a message, and with what.
+    Reactions {
+        chat: ChatId,
+        message: String,
+    },
 }
 
 /// One recipient's receipts for one of our group messages.
