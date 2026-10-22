@@ -5969,6 +5969,9 @@ fn picture_radius(palette: &Palette, message: &Message) -> f32 {
             ))
     {
         f32::from(widgets::NOTHING_BUBBLE_RADIUS) - f32::from(CARD_RING)
+    } else if palette.bubbles == theme::BubbleStyle::Messages {
+        // The bubble's corners less the even rim around the picture.
+        f32::from(widgets::MESSAGES_BUBBLE_RADIUS) - f32::from(MESSAGES_BUBBLE_MARGIN.top)
     } else {
         // The bubble's own corners less the few points around the picture.
         f32::from(widgets::BUBBLE_RADIUS) - 4.0
@@ -5999,8 +6002,24 @@ fn picture_bleed(ui: &egui::Ui, palette: &Palette, message: &Message, captioned:
     if compact_picture_message(message) {
         return Margin::ZERO;
     }
+    if palette.bubbles != theme::BubbleStyle::Nothing {
+        // Messages and WhatsApp: the picture keeps the room the bubble gives
+        // above it on every side, so its rim is even.
+        let margin = bubble_margin(palette, message, false);
+        let side = margin.top - margin.left;
+        return Margin {
+            left: side,
+            right: side,
+            top: 0,
+            bottom: if captioned {
+                0
+            } else {
+                margin.top - margin.bottom
+            },
+        };
+    }
     let mut bleed = edge_card(ui, palette, 0).0;
-    if palette.bubbles == theme::BubbleStyle::Nothing && !captioned {
+    if !captioned {
         bleed.bottom = CARD_RING - NOTHING_TEXT_MARGIN.bottom;
     }
     bleed
@@ -12292,6 +12311,37 @@ mod reaction_tests {
             assert_eq!((own.name, own.bar), (tint, tint));
             assert_eq!(own.fill, palette.window.gamma_multiply(0.35));
         }
+    }
+
+    #[test]
+    fn captioned_pictures_keep_an_even_rim_in_messages_and_whatsapp() {
+        let mut photo = with_reactions(Vec::new());
+        photo.content = Content::Image {
+            caption: Some("Look".into()),
+            media: crate::model::Media {
+                album: None,
+                mime: "image/jpeg".into(),
+                size: 1,
+                width: None,
+                height: None,
+                path: None,
+                state: crate::model::MediaState::Idle,
+            },
+            motion: None,
+        };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            for palette in [Palette::messages(), Palette::dark()] {
+                let margin = bubble_margin(&palette, &photo, false);
+                let bleed = picture_bleed(ui, &palette, &photo, true);
+                // Rim at the sides equals the rim above, which is the bubble's top margin.
+                assert_eq!(margin.left + bleed.left, margin.top);
+                assert_eq!(margin.right + bleed.right, margin.top);
+                let bare = picture_bleed(ui, &palette, &photo, false);
+                assert_eq!(margin.bottom + bare.bottom, margin.top);
+            }
+        });
+        output.textures_delta.clear();
     }
 
     #[test]
