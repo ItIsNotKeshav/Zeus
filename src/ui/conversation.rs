@@ -12391,6 +12391,21 @@ mod reaction_tests {
     }
 
     #[test]
+    fn a_staged_picture_keeps_its_ratio_inside_the_bounds() {
+        let bounds = vec2(440.0, 300.0);
+        let wide = pending_media_size(vec2(1600.0, 900.0), bounds);
+        assert!((wide.x / wide.y - 16.0 / 9.0).abs() < 0.01);
+        assert!(wide.x <= bounds.x && wide.y <= bounds.y);
+        let tall = pending_media_size(vec2(600.0, 1200.0), bounds);
+        assert!((tall.y - bounds.y).abs() < 0.01 && (tall.x * 2.0 - tall.y).abs() < 0.01);
+        // A tiny picture grows at most twice.
+        assert_eq!(
+            pending_media_size(vec2(100.0, 80.0), bounds),
+            vec2(200.0, 160.0)
+        );
+    }
+
+    #[test]
     fn the_message_menu_measures_star_and_unstar() {
         let labels = message_menu_labels(crate::i18n::Locale::German);
         assert!(labels.iter().any(|label| label == "Markierung entfernen"));
@@ -12398,14 +12413,127 @@ mod reaction_tests {
     }
 }
 
+/// A video's poster frame for the composer, read off the UI thread.
+enum PendingPoster {
+    Loading,
+    Decoded(Option<egui::ColorImage>),
+    Ready(egui::TextureHandle),
+    Failed,
+}
+
+/// The poster of a staged video, started on first sight and picked up
+/// when the decode finishes. `None` while it is still loading or when the
+/// clip has no picture the app can decode.
+fn pending_poster(ctx: &egui::Context, path: &std::path::Path) -> Option<(egui::TextureId, Vec2)> {
+    let id = egui::Id::new(("pending-poster", path));
+    let slot = ctx
+        .data_mut(|data| data.get_temp::<std::sync::Arc<std::sync::Mutex<PendingPoster>>>(id))
+        .unwrap_or_else(|| {
+            let slot = std::sync::Arc::new(std::sync::Mutex::new(PendingPoster::Loading));
+            ctx.data_mut(|data| data.insert_temp(id, slot.clone()));
+            let (worker, ctx, path) = (slot.clone(), ctx.clone(), path.to_path_buf());
+            std::thread::spawn(move || {
+                let picture = std::fs::read(&path)
+                    .ok()
+                    .and_then(|bytes| crate::animation::poster(&bytes))
+                    .and_then(|poster| poster.picture)
+                    .map(|picture| {
+                        let picture = image::DynamicImage::ImageRgb8(picture);
+                        let picture = if picture.width().max(picture.height()) > 1024 {
+                            picture.resize(1024, 1024, image::imageops::FilterType::Triangle)
+                        } else {
+                            picture
+                        };
+                        let rgba = picture.to_rgba8();
+                        egui::ColorImage::from_rgba_unmultiplied(
+                            [rgba.width() as usize, rgba.height() as usize],
+                            &rgba,
+                        )
+                    });
+                if let Ok(mut slot) = worker.lock() {
+                    *slot = PendingPoster::Decoded(picture);
+                }
+                ctx.request_repaint();
+            });
+            slot
+        });
+    let mut state = slot.lock().ok()?;
+    if let PendingPoster::Decoded(picture) = &mut *state {
+        *state = match picture.take() {
+            Some(image) => PendingPoster::Ready(ctx.load_texture(
+                format!("pending-poster-{}", path.display()),
+                image,
+                egui::TextureOptions::LINEAR,
+            )),
+            None => PendingPoster::Failed,
+        };
+    }
+    match &*state {
+        PendingPoster::Ready(handle) => Some((handle.id(), handle.size_vec2())),
+        _ => None,
+    }
+}
+
+/// Pixel size of a staged picture file, read once from its header.
+fn pending_picture_size(ctx: &egui::Context, path: &std::path::Path) -> Option<Vec2> {
+    let id = egui::Id::new(("pending-size", path));
+    let known = ctx.data_mut(|data| data.get_temp::<Option<(u32, u32)>>(id));
+    let size = known.unwrap_or_else(|| {
+        let size = image::image_dimensions(path).ok();
+        ctx.data_mut(|data| data.insert_temp(id, size));
+        size
+    });
+    size.map(|(width, height)| vec2(width as f32, height as f32))
+}
+
+/// Largest size for a staged picture or clip: the native aspect ratio fitted
+/// into `bounds`, enlarged at most twice, and never thinner than a tile.
+fn pending_media_size(native: Vec2, bounds: Vec2) -> Vec2 {
+    let native = vec2(native.x.max(1.0), native.y.max(1.0));
+    let scale = (bounds.x / native.x).min(bounds.y / native.y).min(2.0);
+    let fitted = native * scale;
+    let floor = (PENDING_TILE / fitted.min_elem()).max(1.0);
+    // A strip of a panorama keeps its ratio and may run past a tile's floor.
+    let lifted = (fitted * floor).min(bounds.max(Vec2::splat(PENDING_TILE)));
+    if lifted.x / lifted.y > 0.0 {
+        lifted
+    } else {
+        fitted
+    }
+}
+
+/// Side of the square a document or an undecoded attachment shows as.
+const PENDING_TILE: f32 = 72.0;
+
 /// Pending attachment tiles above the composer.
 fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let tile = 72.0;
     let mut remove = None;
     let mut open = None;
+    let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
+    let animation_time = if reduce_motion {
+        0.0
+    } else {
+        ui.ctx().global_style().animation_time.min(0.24)
+    };
+    // One attachment gets most of the panel, so a photo can be seen before it
+    // goes out. Several share the width in pairs. Neither is a fixed size: the
+    // picture's own ratio decides the shape inside these bounds.
+    let spacing = 8.0;
+    let available = ui.available_width();
+    let count = app.pending.len();
+    let screen_height = ui.ctx().content_rect().height();
+    let bounds = if count == 1 {
+        vec2(
+            available.min(440.0),
+            (screen_height * 0.38).clamp(160.0, 320.0),
+        )
+    } else {
+        let side = ((available - spacing) / 2.0).clamp(120.0, 220.0);
+        vec2(side, side)
+    };
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        ui.spacing_mut().item_spacing = vec2(spacing, spacing);
         for (index, item) in app.pending.iter_mut().enumerate() {
             // A picture can be cropped before it goes out. Anything else
             // cannot, and does not pretend to be clickable.
@@ -12420,10 +12548,59 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
             } else {
                 Sense::hover()
             };
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(tile), sense);
+            // A document shows as the file it arrives as, even a picture.
+            let document = matches!(item.item, crate::app::Pending::Document(_));
+            // What can be drawn as the picture itself, and how big it is.
+            let ctx = ui.ctx().clone();
+            let (poster, native) = match &item.item {
+                crate::app::Pending::Picture { width, height, .. } => {
+                    (None, Some(vec2(*width as f32, *height as f32)))
+                }
+                crate::app::Pending::File(path) if crate::app::Pending::is_picture_file(path) => {
+                    (None, pending_picture_size(&ctx, path))
+                }
+                crate::app::Pending::File(path) if crate::image_preview::is_video(path) => {
+                    let poster = pending_poster(&ctx, path);
+                    // Until the frame arrives the clip holds a landscape slot.
+                    let native = poster.map_or(vec2(16.0, 9.0), |(_, size)| size);
+                    (poster, Some(native))
+                }
+                _ => (None, None),
+            };
+            let target = match native {
+                Some(native) if !document => pending_media_size(native, bounds) + Vec2::splat(8.0),
+                _ => Vec2::splat(PENDING_TILE),
+            };
+            let size = vec2(
+                ctx.animate_value_with_time(
+                    ui.id().with(("pending-w", item.id)),
+                    target.x,
+                    animation_time,
+                ),
+                ctx.animate_value_with_time(
+                    ui.id().with(("pending-h", item.id)),
+                    target.y,
+                    animation_time,
+                ),
+            );
+            if size != target {
+                ctx.request_repaint();
+            }
+            let (rect, response) = ui.allocate_exact_size(size, sense);
             if ui.is_rect_visible(rect) {
-                // Lifted off the chat like a bubble, with a bubble's corners.
-                let radius = CornerRadius::same(widgets::BUBBLE_RADIUS);
+                // Lifted off the chat like a bubble, with a bubble's corners;
+                // a large picture takes the control radius so the corners
+                // are in proportion to it.
+                let radius = CornerRadius::same(if size.min_elem() > 120.0 {
+                    theme::RADIUS_CONTROL
+                } else {
+                    widgets::BUBBLE_RADIUS
+                });
+                let inner_radius = if size.min_elem() > 120.0 {
+                    theme::RADIUS_SMALL
+                } else {
+                    theme::RADIUS_SMALL.min(widgets::BUBBLE_RADIUS)
+                };
                 ui.painter()
                     .add(palette.bubble_shadow().as_shape(rect, radius));
                 ui.painter().rect_filled(
@@ -12432,8 +12609,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     palette.raised_edge(palette.surface),
                 );
                 ui.painter().rect_filled(rect, radius, palette.surface);
-                // A document shows as the file it arrives as, even a picture.
-                let document = matches!(item.item, crate::app::Pending::Document(_));
+                let media = rect.shrink(4.0);
                 match &mut item.item {
                     crate::app::Pending::Picture {
                         width,
@@ -12443,8 +12619,8 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     } => {
                         let handle = texture.get_or_insert_with(|| {
                             // Limit thumbnails to the GPU's maximum texture size.
-                            let image = if *width > 1024 || *height > 1024 {
-                                let scale = 1024.0 / (*width).max(*height) as f32;
+                            let image = if *width > 2048 || *height > 2048 {
+                                let scale = 2048.0 / (*width).max(*height) as f32;
                                 let (w, h) = (
                                     ((*width as f32 * scale) as u32).max(1),
                                     ((*height as f32 * scale) as u32).max(1),
@@ -12477,22 +12653,35 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                                 egui::TextureOptions::LINEAR,
                             )
                         });
-                        // Preserve aspect ratio while filling the tile.
-                        let side = tile - 8.0;
-                        let scale =
-                            (side / (*width).max(1) as f32).min(side / (*height).max(1) as f32);
-                        let fitted = vec2(*width as f32 * scale, *height as f32 * scale);
-                        let inner = Rect::from_center_size(rect.center(), fitted);
-                        egui::Image::from_texture((handle.id(), fitted))
-                            .corner_radius(theme::RADIUS_SMALL)
-                            .paint_at(ui, inner);
+                        egui::Image::from_texture((handle.id(), media.size()))
+                            .corner_radius(inner_radius)
+                            .paint_at(ui, media);
                     }
                     crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
                         if !document && crate::app::Pending::is_picture_file(path) {
                             widgets::file_image(ui, path)
-                                .fit_to_exact_size(Vec2::splat(tile - 8.0))
-                                .corner_radius(theme::RADIUS_SMALL)
-                                .paint_at(ui, rect.shrink(4.0));
+                                .fit_to_exact_size(media.size())
+                                .corner_radius(inner_radius)
+                                .paint_at(ui, media);
+                        } else if !document && crate::image_preview::is_video(path) {
+                            ui.painter().rect_filled(
+                                media,
+                                inner_radius,
+                                palette.shadow.gamma_multiply(1.4),
+                            );
+                            if let Some((texture, _)) = poster {
+                                egui::Image::from_texture((texture, media.size()))
+                                    .corner_radius(inner_radius)
+                                    .paint_at(ui, media);
+                            }
+                            // A clip says it is one, as it does in the chat.
+                            let disc = Rect::from_center_size(media.center(), Vec2::splat(42.0));
+                            ui.painter().circle_filled(
+                                disc.center(),
+                                21.0,
+                                Color32::from_black_alpha(130),
+                            );
+                            theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE);
                         } else {
                             let icon = Rect::from_center_size(
                                 rect.center() - vec2(0.0, 10.0),
@@ -12508,7 +12697,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                                 &name,
                                 theme::regular(10.5),
                                 palette.text,
-                                tile - 8.0,
+                                size.x - 8.0,
                                 1,
                             );
                             line.paint(
@@ -12537,12 +12726,12 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                 }
                 // Remove button in the corner.
                 let close =
-                    Rect::from_center_size(rect.right_top() + vec2(-10.0, 10.0), Vec2::splat(18.0));
+                    Rect::from_center_size(rect.right_top() + vec2(-14.0, 14.0), Vec2::splat(22.0));
                 let close_response =
                     ui.interact(close, ui.id().with(("unstage", item.id)), Sense::click());
                 ui.painter()
-                    .circle_filled(close.center(), 9.0, palette.overlay);
-                theme::paint_icon(ui, Icon::X, close, 12.0, palette.text);
+                    .circle_filled(close.center(), 11.0, palette.overlay);
+                theme::paint_icon(ui, Icon::X, close, 14.0, palette.text);
                 if close_response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
