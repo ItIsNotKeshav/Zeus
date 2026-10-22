@@ -8,6 +8,11 @@ use crate::i18n::gettext;
 use crate::model::{Action, Dialog, Message};
 use crate::theme::{self, Icon};
 
+const ROW: f32 = 38.0;
+/// Width of the popup's content, and its frame's margin.
+const WIDTH: f32 = 270.0;
+const MARGIN: i8 = 10;
+
 /// The distinct emoji of `message`'s reactions, most used first.
 pub(crate) fn tally(message: &Message) -> Vec<(String, u32)> {
     let mut counts: Vec<(String, u32)> = Vec::new();
@@ -54,7 +59,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 "{total} {}",
                 gettext(locale, if total == 1 { "reaction" } else { "reactions" })
             ),
-            theme::semibold(18.0),
+            theme::semibold(13.0),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -72,9 +77,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
         if tab(ui, &palette, state.with("add"), None, "", false).clicked() {
             app.actions.push(Action::CloseDialog);
             app.actions.push(Action::OpenReactionPicker {
@@ -109,7 +114,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         None => data.insert_temp::<Option<String>>(state, None),
     });
     ui.add_space(6.0);
-    let height = widgets::dialog_scroll_height(ui).min(360.0);
+    let height = 5.0 * ROW;
     egui::ScrollArea::vertical()
         .id_salt(("reaction-list", chat, id))
         .max_height(height)
@@ -122,7 +127,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             {
                 let name = app.display_name_or(&reaction.sender, None);
                 let picture = app.avatar(&reaction.sender);
-                let height = 48.0;
+                let height = ROW;
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
                 let own = reaction.from_me;
@@ -137,8 +142,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     );
                 }
                 let avatar = egui::Rect::from_center_size(
-                    egui::pos2(rect.left() + 8.0 + 18.0, rect.center().y),
-                    vec2(36.0, 36.0),
+                    egui::pos2(rect.left() + 6.0 + 14.0, rect.center().y),
+                    vec2(28.0, 28.0),
                 );
                 widgets::paint_avatar(
                     ui,
@@ -156,14 +161,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     rect.width() - 120.0,
                     1,
                 );
-                let x = avatar.right() + 12.0;
+                let x = avatar.right() + 10.0;
                 if own {
                     let hint = widgets::line(
                         ui,
                         &gettext(locale, "Tap to remove"),
-                        theme::regular(12.5),
+                        theme::regular(11.5),
                         palette.secondary,
-                        rect.width() - 120.0,
+                        rect.width() - 90.0,
                         1,
                     );
                     let top = rect.center().y - (name_line.size().y + hint.size().y) / 2.0;
@@ -191,7 +196,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 glyph.paint(
                     ui,
                     egui::pos2(
-                        rect.right() - 12.0 - glyph.size().x,
+                        rect.right() - 8.0 - glyph.size().x,
                         rect.center().y - glyph.size().y / 2.0,
                     ),
                     palette.text,
@@ -222,8 +227,8 @@ fn tab(
 ) -> egui::Response {
     let line =
         label.map(|label| widgets::line(ui, label, theme::semibold(15.0), palette.text, 200.0, 1));
-    let width = line.as_ref().map_or(56.0, |line| line.size().x + 28.0);
-    let (rect, response) = ui.allocate_exact_size(vec2(width, 34.0), Sense::click());
+    let width = line.as_ref().map_or(44.0, |line| line.size().x + 20.0);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
     let on = ui.ctx().animate_bool_with_time(id, selected, 0.15);
     let fill = palette
         .surface_hover
@@ -247,4 +252,70 @@ pub(crate) fn open(chat: &str, message: &str) -> Action {
         chat: chat.to_owned(),
         message: message.to_owned(),
     })
+}
+
+/// The list as a small popup by the pill, in the emoji picker's style. A click
+/// outside it, or Escape, closes it.
+pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
+    use egui::{CornerRadius, Frame, Margin, Stroke};
+    let palette = app.palette;
+    let rows = app
+        .conversations
+        .get(chat)
+        .and_then(|c| c.message(id))
+        .map_or(0, |message| message.reactions.len());
+    let outer_width = WIDTH + f32::from(MARGIN) * 2.0;
+    let outer_height = 76.0 + rows.min(5) as f32 * ROW + f32::from(MARGIN) * 2.0;
+    let anchor = ctx.data(|data| {
+        data.get_temp::<egui::Rect>(super::conversation::bubble_id(chat, id).with("pill-rect"))
+    });
+    let pos = super::picker::place_picker(ctx.content_rect(), anchor, outer_width, outer_height);
+    let area_id = egui::Id::new("reaction-list");
+    let shown = ctx
+        .data(|data| data.get_temp::<bool>(area_id.with("shown")))
+        .unwrap_or(false);
+    let appear = ctx.animate_bool_with_time_and_easing(
+        area_id.with("appear"),
+        true,
+        if crate::motion::screen_reader_attached(ctx) {
+            0.0
+        } else {
+            0.16
+        },
+        egui::emath::easing::quadratic_out,
+    );
+    let frost = super::widgets::Frost::reserve(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, area_id),
+        theme::RADIUS_DIALOG,
+    );
+    let area = egui::Area::new(area_id)
+        .fixed_pos(pos + vec2(0.0, 6.0 * (1.0 - appear)))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.multiply_opacity(appear);
+            Frame::new()
+                .fill(palette.menu_glass())
+                .stroke(Stroke::new(1.0, palette.outline))
+                .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
+                .inner_margin(Margin::same(MARGIN))
+                .shadow(palette.float_shadow())
+                .show(ui, |ui| {
+                    ui.set_width(WIDTH);
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    show(app, ui, chat, id);
+                })
+        });
+    frost.place(area.inner.response.rect);
+    let clicked_outside = shown
+        && ctx.input(|input| input.pointer.any_pressed())
+        && ctx
+            .input(|input| input.pointer.interact_pos())
+            .is_some_and(|at| !area.response.rect.contains(at));
+    let escape = ctx.input(|input| input.key_pressed(egui::Key::Escape));
+    ctx.data_mut(|data| data.insert_temp(area_id.with("shown"), true));
+    if clicked_outside || escape {
+        ctx.data_mut(|data| data.insert_temp(area_id.with("shown"), false));
+        app.actions.push(Action::CloseDialog);
+    }
 }

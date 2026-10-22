@@ -6452,6 +6452,12 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     );
     let size = line.size() + vec2(18.0, 10.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&view.chat.id, &message.id).with("pill-rect"),
+            rect,
+        )
+    });
     if ui.is_rect_visible(rect) {
         // Lifted as gently as a hovered chat-list row, so the pill
         // stands off the bubble it overlaps.

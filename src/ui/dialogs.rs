@@ -10,6 +10,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(dialog) = app.dialog.clone() else {
         return;
     };
+    // The reaction list is a small popup at the pill, not a modal.
+    if let Dialog::Reactions { chat, message } = &dialog {
+        super::reaction_list::popup(app, ctx, chat, message);
+        return;
+    }
     let palette = app.palette;
     let frame = Frame::new()
         .fill(palette.menu_glass())
@@ -59,7 +64,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     420.0_f32.min((ui.ctx().content_rect().width() - 64.0).max(180.0))
                 }
                 Dialog::Labels => 460.0,
-                Dialog::Reactions { .. } => 400.0,
+                Dialog::Reactions { .. } => 290.0,
             });
             ui.spacing_mut().item_spacing.y = 8.0;
             match dialog {
