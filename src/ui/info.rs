@@ -681,89 +681,183 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
     }
 }
 
-/// The group's members, each opening their own panel. They are sorted once
-/// per change of the chat list or the contacts, not every frame.
-fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) {
+/// Maximum members shown before the "View all members" button appears.
+const MEMBERS_PREVIEW: usize = 10;
+
+/// egui temp-data key: whether the full member list is expanded for a chat.
+fn members_expanded_id(chat_id: &str) -> egui::Id {
+    egui::Id::new(("members-expanded", chat_id))
+}
+
+/// The group's members, each opening their own panel.
+///
+/// Order of precedence:
+/// 1. Admins appear on top regardless of save status.
+/// 2. Saved contacts (address book name), sorted alphabetically.
+/// 3. Unsaved contacts (push name `~...` or bare phone number `+...`), sorted alphabetically.
+///
+/// Up to [`MEMBERS_PREVIEW`] rows are rendered directly in the parent
+/// scroll container so the list scrolls with the group info pane. An option
+/// to view all members appears when the count exceeds [`MEMBERS_PREVIEW`].
+fn members(app: &mut App, ui: &mut egui::Ui, id: &str, _window: f32, _photo: f32) {
     let palette = app.palette;
     if app.info_members.as_ref().is_none_or(|(chat, _)| chat != id) {
-        let list = app
+        let is_we_admin = app.chat(id).map_or(false, |c| c.admin);
+        let mut list = app
             .chat(id)
             .map(|chat| app.participant_list(chat))
             .unwrap_or_default();
+
+        let clean = |name: &str| -> String {
+            name.trim_start_matches(|c| c == '~' || c == '+')
+                .trim()
+                .to_lowercase()
+        };
+
+        list.sort_by(|(id_a, name_a), (id_b, name_b)| {
+            let admin_a = is_we_admin && Some(id_a.as_str()) == app.me.as_deref();
+            let admin_b = is_we_admin && Some(id_b.as_str()) == app.me.as_deref();
+            let rank_a = if admin_a {
+                0
+            } else if app.is_saved_contact(id_a) {
+                1
+            } else {
+                2
+            };
+            let rank_b = if admin_b {
+                0
+            } else if app.is_saved_contact(id_b) {
+                1
+            } else {
+                2
+            };
+
+            rank_a
+                .cmp(&rank_b)
+                .then_with(|| clean(name_a).cmp(&clean(name_b)))
+        });
+
         app.info_members = Some((id.to_owned(), list));
     }
     // Taken for the frame rather than cloned: the rows only push actions.
     let Some((_, members)) = app.info_members.take() else {
         return;
     };
+    let total = members.len();
     theme::text(
         ui,
-        format!("Members ({})", members.len()),
+        format!("Members ({})", total),
         theme::medium(12.5),
         palette.secondary,
     );
     ui.add_space(4.0);
-    // Limit the visible rows because groups can have thousands of members.
+
+    let expanded = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(members_expanded_id(id)).unwrap_or(false));
+    let shown = if expanded || total <= MEMBERS_PREVIEW {
+        total
+    } else {
+        MEMBERS_PREVIEW
+    };
+
+    let is_we_admin = app.chat(id).map_or(false, |c| c.admin);
     let row_height = 30.0;
-    let rows = ((window - photo - 300.0) / row_height)
-        .floor()
-        .clamp(2.0, 8.0);
     let mut open = None;
-    // `show_rows` reads the spacing from outside its closure.
+    let prev_spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt(("members", id))
-        .max_height(row_height * rows)
-        .auto_shrink([false, true])
-        .show_rows(ui, row_height, members.len(), |ui, range| {
-            for (member, name) in &members[range] {
-                let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), row_height),
-                    egui::Sense::click(),
-                );
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
-                });
-                if ui.is_rect_visible(rect) {
-                    if response.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, theme::RADIUS, palette.surface_hover);
-                    }
-                    let picture = app.avatar(member);
-                    let avatar = egui::Rect::from_center_size(
-                        egui::pos2(rect.left() + 16.0, rect.center().y),
-                        egui::Vec2::splat(24.0),
-                    );
-                    widgets::paint_avatar(
-                        ui,
-                        &palette,
-                        avatar,
-                        name.trim_start_matches('~'),
-                        member,
-                        picture.as_deref(),
-                    );
-                    let line = widgets::line(
-                        ui,
-                        name,
-                        theme::regular(13.0),
-                        palette.text,
-                        rect.width() - 40.0,
-                        1,
-                    );
-                    line.paint(
-                        ui,
-                        egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
-                        palette.text,
-                    );
-                }
-                if response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    open = Some(member.clone());
-                }
-            }
+    for (member, name) in &members[..shown] {
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), row_height),
+            egui::Sense::click(),
+        );
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
         });
+        if ui.is_rect_visible(rect) {
+            if response.hovered() {
+                ui.painter()
+                    .rect_filled(rect, theme::RADIUS, palette.surface_hover);
+            }
+            let picture = app.avatar(member);
+            let avatar = egui::Rect::from_center_size(
+                egui::pos2(rect.left() + 16.0, rect.center().y),
+                egui::Vec2::splat(24.0),
+            );
+            widgets::paint_avatar(
+                ui,
+                &palette,
+                avatar,
+                name.trim_start_matches('~'),
+                member,
+                picture.as_deref(),
+            );
+            let is_admin = is_we_admin && Some(member.as_str()) == app.me.as_deref();
+            if is_admin {
+                let tag = "Admin";
+                let font = theme::regular(11.0);
+                let galley = ui.painter().layout_no_wrap(tag.to_owned(), font, palette.accent);
+                let tag_pos = egui::pos2(
+                    rect.right() - galley.size().x - 6.0,
+                    rect.center().y - galley.size().y / 2.0,
+                );
+                ui.painter().galley(tag_pos, galley, palette.accent);
+            }
+            let right_margin = if is_admin { 80.0 } else { 40.0 };
+            let line = widgets::line(
+                ui,
+                name,
+                theme::regular(13.0),
+                palette.text,
+                rect.width() - right_margin,
+                1,
+            );
+            line.paint(
+                ui,
+                egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
+                palette.text,
+            );
+        }
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            open = Some(member.clone());
+        }
+    }
+    ui.spacing_mut().item_spacing.y = prev_spacing;
+
+    if total > MEMBERS_PREVIEW {
+        ui.add_space(4.0);
+        let label = if expanded {
+            crate::i18n::gettext(app.locale, "Show less").into_owned()
+        } else {
+            format!("View all {} members", total)
+        };
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), 26.0),
+            egui::Sense::click(),
+        );
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(rect, theme::RADIUS, palette.surface_hover);
+        }
+        ui.painter().text(
+            egui::pos2(rect.left() + 6.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &label,
+            theme::medium(13.0),
+            palette.accent,
+        );
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(members_expanded_id(id), !expanded));
+        }
+    }
+
     app.info_members = Some((id.to_owned(), members));
     if let Some(member) = open
         && Some(member.as_str()) != app.me.as_deref()
