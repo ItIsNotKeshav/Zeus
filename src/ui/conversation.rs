@@ -6445,7 +6445,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     let line = widgets::line(
         ui,
         &shown.join(" "),
-        theme::regular(15.0),
+        theme::regular(13.5),
         palette.text,
         240.0,
         1,

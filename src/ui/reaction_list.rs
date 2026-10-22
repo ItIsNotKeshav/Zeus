@@ -8,10 +8,10 @@ use crate::i18n::gettext;
 use crate::model::{Action, Dialog, Message};
 use crate::theme::{self, Icon};
 
-const ROW: f32 = 38.0;
+const ROW: f32 = 42.0;
 /// Width of the popup's content, and its frame's margin.
 const WIDTH: f32 = 270.0;
-const MARGIN: i8 = 10;
+const MARGIN: i8 = 16;
 
 /// The distinct emoji of `message`'s reactions, most used first.
 pub(crate) fn tally(message: &Message) -> Vec<(String, u32)> {
@@ -59,7 +59,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 "{total} {}",
                 gettext(locale, if total == 1 { "reaction" } else { "reactions" })
             ),
-            theme::semibold(13.0),
+            theme::semibold(12.5),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -79,7 +79,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
     });
     ui.add_space(2.0);
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+        ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
         if tab(ui, &palette, state.with("add"), None, "", false).clicked() {
             app.actions.push(Action::CloseDialog);
             app.actions.push(Action::OpenReactionPicker {
@@ -113,7 +113,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         Some(emoji) => data.insert_temp(state, Some(emoji.clone())),
         None => data.insert_temp::<Option<String>>(state, None),
     });
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     let height = 5.0 * ROW;
     egui::ScrollArea::vertical()
         .id_salt(("reaction-list", chat, id))
@@ -156,9 +156,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let name_line = widgets::line(
                     ui,
                     &name,
-                    theme::regular(15.0),
+                    theme::regular(13.0),
                     palette.text,
-                    rect.width() - 120.0,
+                    rect.width() - 90.0,
                     1,
                 );
                 let x = avatar.right() + 10.0;
@@ -166,7 +166,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     let hint = widgets::line(
                         ui,
                         &gettext(locale, "Tap to remove"),
-                        theme::regular(11.5),
+                        theme::regular(11.0),
                         palette.secondary,
                         rect.width() - 90.0,
                         1,
@@ -188,7 +188,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let glyph = widgets::line(
                     ui,
                     &reaction.emoji,
-                    theme::regular(22.0),
+                    theme::regular(16.0),
                     palette.text,
                     60.0,
                     1,
@@ -226,7 +226,7 @@ fn tab(
     selected: bool,
 ) -> egui::Response {
     let line =
-        label.map(|label| widgets::line(ui, label, theme::semibold(15.0), palette.text, 200.0, 1));
+        label.map(|label| widgets::line(ui, label, theme::semibold(12.5), palette.text, 200.0, 1));
     let width = line.as_ref().map_or(44.0, |line| line.size().x + 20.0);
     let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
     let on = ui.ctx().animate_bool_with_time(id, selected, 0.15);
@@ -265,7 +265,7 @@ pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
         .and_then(|c| c.message(id))
         .map_or(0, |message| message.reactions.len());
     let outer_width = WIDTH + f32::from(MARGIN) * 2.0;
-    let outer_height = 76.0 + rows.min(5) as f32 * ROW + f32::from(MARGIN) * 2.0;
+    let outer_height = 92.0 + rows.min(5) as f32 * ROW + f32::from(MARGIN) * 2.0;
     let anchor = ctx.data(|data| {
         data.get_temp::<egui::Rect>(super::conversation::bubble_id(chat, id).with("pill-rect"))
     });
@@ -302,7 +302,7 @@ pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
                 .shadow(palette.float_shadow())
                 .show(ui, |ui| {
                     ui.set_width(WIDTH);
-                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.spacing_mut().item_spacing.y = 8.0;
                     show(app, ui, chat, id);
                 })
         });
