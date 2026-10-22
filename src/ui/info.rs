@@ -1,8 +1,9 @@
 //! The info panel beside the open chat: a contact's, group's or channel's
 //! picture, name and actions, its members, and the pictures, videos,
-//! documents and links shared in it. It opens as a frosted card floating in
-//! the middle of the window, over a dimmed chat, easing up as it appears; in
-//! the narrow window mode it is a page of its own over the chat, with Back.
+//! documents and links shared in it. It opens as a rounded card floating at
+//! the right of the chat, like the chat's own card, easing in as it appears,
+//! and the window grows to make room; in the narrow window mode it is a page
+//! of its own over the chat, with Back.
 
 use egui::{Align, Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Stroke, Vec2};
 use egui::{pos2, vec2};
@@ -24,14 +25,18 @@ const GAP: f32 = 4.0;
 const ROW_HEIGHT: f32 = 76.0;
 /// A member's row.
 const MEMBER_HEIGHT: f32 = 48.0;
-/// The popup's width, and how far it eases up while it appears.
-const POPUP_WIDTH: f32 = 480.0;
-const POPUP_RISE: f32 = 18.0;
+/// The card's width, the column it takes with its gap, and how far it eases
+/// in from the right while it appears.
+const CARD_WIDTH: f32 = 440.0;
+const CARD_COLUMN: f32 = CARD_WIDTH + super::chats::CARD_GAP;
+const POPUP_RISE: f32 = 36.0;
 /// Seconds the popup takes to appear, and to leave: a little quicker.
 const POPUP_SECONDS: f64 = 0.24;
 const POPUP_LEAVE_SECONDS: f64 = 0.16;
 /// The members shown without a search field above them.
 const SEARCH_FROM: usize = 8;
+/// The members listed before "Show all".
+const MEMBERS_SHOWN: usize = 10;
 /// The panel's Tab stops after its close button, in reading order: the
 /// group photo, the rename pencil, the name editor's check, the action
 /// buttons, the media row, the media view's tabs, Leave, and Try again.
@@ -71,24 +76,34 @@ pub fn release_thumbnails(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Returns the rect of the chat the panel covers as a page of its own, in a
-/// narrow window, for [`show_overlay`], drawn after the conversation so it
-/// lies on top. A wide window shows it with [`show_popup`] instead.
+/// Draws the panel as a floating card at the right of the chat when the
+/// window is wide, and returns the rect of the chat it covers as a page of
+/// its own, for [`show_overlay`], when the window is narrow. Called before
+/// the conversation is laid out, so the card takes its own column.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
+    let ctx = ui.ctx().clone();
     if !app.info_visible() {
-        ui.ctx().data_mut(|data| {
+        ctx.data_mut(|data| {
             data.remove::<bool>(docked_id());
             data.remove::<f64>(popup_start_id());
             data.remove::<f64>(popup_leave_id());
             data.remove::<(String, String)>(member_filter_id());
+            data.remove::<String>(members_open_id());
         });
+        // The window goes back to the width it had before the card.
+        widen_window(&ctx, false);
         // The thumbnails go with the panel, not with the resident window.
         for uri in std::mem::take(&mut app.info_textures) {
-            crate::image_cache::forget(ui.ctx(), &uri);
+            crate::image_cache::forget(&ctx, &uri);
         }
         return None;
     }
-    super::narrow(ui.ctx()).then(|| ui.available_rect_before_wrap())
+    if super::narrow(&ctx) {
+        return Some(ui.available_rect_before_wrap());
+    }
+    widen_window(&ctx, true);
+    side_card(app, ui);
+    None
 }
 
 /// The panel as a page over the whole conversation in a narrow window.
@@ -100,17 +115,50 @@ pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
     ctx.data_mut(|data| data.insert_temp(docked_id(), false));
 }
 
-/// The panel as a frosted card in the middle of a wide window, over a
-/// dimmed chat. It eases up and in when it opens; a click outside closes it.
-pub fn show_popup(app: &mut App, ctx: &egui::Context) {
-    if !app.info_visible() || super::narrow(ctx) {
-        return;
+/// The width the window grew by for the card, while it has.
+fn widened_id() -> egui::Id {
+    egui::Id::new("chat-info-widened")
+}
+
+/// Grows the window by the card's column while the card is open, and shrinks
+/// it back after, so the chat keeps its width. A maximized or full-screen
+/// window cannot grow: the chat gives way instead.
+fn widen_window(ctx: &egui::Context, open: bool) {
+    let widened = ctx.data(|data| data.get_temp::<f32>(widened_id()));
+    let size = ctx.input(|input| {
+        let viewport = input.viewport();
+        let fixed = viewport.maximized == Some(true) || viewport.fullscreen == Some(true);
+        let inner = viewport
+            .inner_rect
+            .map_or_else(|| input.content_rect().size(), |rect| rect.size());
+        (!fixed).then_some(inner)
+    });
+    match (open, widened, size) {
+        (true, None, Some(size)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                size + vec2(CARD_COLUMN, 0.0),
+            ));
+            ctx.data_mut(|data| data.insert_temp(widened_id(), CARD_COLUMN));
+        }
+        (false, Some(by), Some(size)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size - vec2(by, 0.0)));
+            ctx.data_mut(|data| data.remove::<f32>(widened_id()));
+        }
+        // The window was maximized meanwhile: nothing to give back.
+        (false, Some(_), None) => ctx.data_mut(|data| data.remove::<f32>(widened_id())),
+        _ => {}
     }
+}
+
+/// The card in its own column at the right of the chat, the chat card's
+/// twin: the same rounding and gaps, easing in from the right.
+fn side_card(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
     let palette = app.palette;
     let now = ctx.input(|input| input.time);
     let start = ctx.data_mut(|data| *data.get_temp_mut_or_insert_with(popup_start_id(), || now));
     let leaving = ctx.data(|data| data.get_temp::<f64>(popup_leave_id()));
-    let reduced = crate::motion::screen_reader_attached(ctx);
+    let reduced = crate::motion::screen_reader_attached(&ctx);
     let progress = match leaving {
         Some(began) => {
             let left = ((now - began) / POPUP_LEAVE_SECONDS).clamp(0.0, 1.0) as f32;
@@ -136,50 +184,47 @@ pub fn show_popup(app: &mut App, ctx: &egui::Context) {
             }
         }
     };
-    let window = ctx.content_rect();
-    let width = POPUP_WIDTH.min((window.width() - 48.0).max(260.0));
-    let height = (window.height() - 96.0).clamp(320.0, 760.0);
-    let frame = Frame::new()
-        .fill(palette.menu_glass())
-        .stroke(Stroke::new(1.0, palette.outline))
-        .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
-        // The lists end above the rounded corners.
-        .inner_margin(Margin {
-            bottom: 12,
-            ..Margin::ZERO
-        })
-        .shadow(palette.modal_shadow());
-    let id = egui::Id::new("chat-info-popup");
-    // Under the card, the chat frosted.
-    let frost = widgets::Frost::reserve(
-        ctx,
-        egui::LayerId::new(egui::Order::Foreground, id),
-        theme::RADIUS_DIALOG,
-    );
-    let area = egui::Modal::default_area(id).anchor(
-        Align2::CENTER_CENTER,
-        vec2(0.0, (1.0 - progress) * POPUP_RISE),
-    );
-    let mut content = None;
-    let response = egui::Modal::new(id)
-        .area(area)
-        .frame(frame)
-        .backdrop_color(palette.shadow.gamma_multiply(progress))
-        .show(ctx, |ui| {
-            ui.multiply_opacity(0.4 + 0.6 * progress);
-            ui.set_width(width);
-            ui.set_max_height(height);
-            contents(app, ui, true, true);
-            content = Some(ui.min_rect());
+    let gap = super::chats::CARD_GAP;
+    egui::Panel::right("chat-info-side")
+        .resizable(false)
+        .default_size(CARD_COLUMN)
+        .size_range(CARD_COLUMN..=CARD_COLUMN)
+        .show_separator_line(false)
+        .frame(Frame::NONE)
+        .show(ui, |ui| {
+            let column = ui.max_rect();
+            let rest = Rect::from_min_max(
+                pos2(column.left(), column.top() + gap),
+                pos2(column.right() - gap, column.bottom() - gap),
+            );
+            let card = rest.translate(vec2((1.0 - progress) * POPUP_RISE, 0.0));
+            let fill = super::central_frame(app).fill;
+            let radius = f32::from(super::chats::CARD_RADIUS);
+            let painter = ui.painter().clone();
+            let faded = |color: egui::Color32| color.gamma_multiply(progress);
+            painter.rect(
+                card,
+                radius,
+                faded(fill),
+                Stroke::new(1.25, faded(palette.outline)),
+                egui::StrokeKind::Inside,
+            );
+            ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
+                ui.set_clip_rect(card.intersect(ui.clip_rect()));
+                ui.multiply_opacity(progress);
+                // The lists end above the rounded corners.
+                Frame::new()
+                    .inner_margin(Margin {
+                        bottom: 12,
+                        ..Margin::ZERO
+                    })
+                    .show(ui, |ui| {
+                        ui.set_min_size(card.size() - vec2(0.0, 12.0));
+                        ui.set_max_size(card.size() - vec2(0.0, 12.0));
+                        contents(app, ui, true, true);
+                    });
+            });
         });
-    if let Some(content) = content {
-        frost.place(frame.widget_rect(content));
-    }
-    // Escape is the keyboard's: it first leaves what the panel was in the
-    // middle of, in `keys`.
-    if response.backdrop_response.clicked() {
-        leave(ctx);
-    }
     ctx.data_mut(|data| data.insert_temp(docked_id(), true));
 }
 
@@ -200,6 +245,11 @@ fn popup_leave_id() -> egui::Id {
 /// When the popup opened, so it eases in once.
 fn popup_start_id() -> egui::Id {
     egui::Id::new("chat-info-popup-start")
+}
+
+/// The chat whose whole member list is open.
+fn members_open_id() -> egui::Id {
+    egui::Id::new("chat-info-members-open")
 }
 
 /// What is typed in the member search, for the chat shown.
@@ -433,8 +483,7 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool, popup: bo
     );
     egui::ScrollArea::vertical()
         .id_salt(("chat-info", id))
-        // A popup is as tall as its contents, up to the window.
-        .auto_shrink([false, popup])
+        .auto_shrink([false, false])
         .max_height(ui.available_height())
         .show(ui, |ui| {
             Frame::new()
@@ -719,26 +768,15 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool, popu
                 });
         });
     }
-    if popup {
-        if shown.group && shown.members > 0 {
-            section(ui, &palette, popup, |ui| members(app, ui, id));
-        }
-        if app.info_media_allowed() {
-            section(ui, &palette, popup, |ui| {
-                media_row(app, ui, id, overlay, popup)
-            });
-        }
-    } else {
-        // A locked chat's media stays in the locked folder: the section is not
-        // there, rather than empty.
-        if app.info_media_allowed() {
-            section(ui, &palette, popup, |ui| {
-                media_row(app, ui, id, overlay, popup)
-            });
-        }
-        if shown.group && shown.members > 0 {
-            section(ui, &palette, popup, |ui| members(app, ui, id));
-        }
+    // A locked chat's media stays in the locked folder: the section is not
+    // there, rather than empty.
+    if app.info_media_allowed() {
+        section(ui, &palette, popup, |ui| {
+            media_row(app, ui, id, overlay, popup)
+        });
+    }
+    if shown.group && shown.members > 0 {
+        section(ui, &palette, popup, |ui| members(app, ui, id));
     }
     if shown.can_leave {
         ui.add_space(4.0);
@@ -933,9 +971,17 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str) {
         })
         .collect();
     ui.add_space(4.0);
+    // Ten are listed; the rest are a click away. A search looks through all.
+    let all = ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(members_open_id()))
+        .is_some_and(|chat| chat == id);
+    let total = shown.len();
+    let capped = needle.is_empty() && !all && total > MEMBERS_SHOWN;
+    let listed = if capped { MEMBERS_SHOWN } else { total };
     let mut open = None;
     ui.spacing_mut().item_spacing.y = 0.0;
-    for (member, name) in &shown {
+    for (member, name) in &shown[..listed] {
         let (rect, response) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), MEMBER_HEIGHT),
             egui::Sense::click(),
@@ -987,6 +1033,28 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str) {
         {
             open = Some(member.clone());
         }
+    }
+    if needle.is_empty() && total > MEMBERS_SHOWN {
+        ui.add_space(8.0);
+        let label = if capped {
+            format!("Show all {total} members")
+        } else {
+            "Show fewer".to_owned()
+        };
+        ui.vertical_centered(|ui| {
+            if theme::soft_button(ui, &palette, None, &label, false)
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
+            {
+                ui.ctx().data_mut(|data| {
+                    if capped {
+                        data.insert_temp(members_open_id(), id.to_owned());
+                    } else {
+                        data.remove::<String>(members_open_id());
+                    }
+                });
+            }
+        });
     }
     if shown.is_empty() {
         theme::text(ui, "No members found", theme::regular(13.0), palette.dim);

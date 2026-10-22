@@ -225,7 +225,6 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     if let Some(region) = info_overlay {
         info::show_overlay(app, ui.ctx(), region);
     }
-    info::show_popup(app, ui.ctx());
 }
 
 /// The open chat or page in the central area.

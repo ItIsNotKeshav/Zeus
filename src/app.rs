@@ -19128,7 +19128,6 @@ mod tests {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
                 crate::ui::info::release_thumbnails(app, ui.ctx());
                 crate::ui::info::show(app, ui);
-                crate::ui::info::show_popup(app, ui.ctx());
             });
             output.textures_delta.clear();
         };
@@ -19224,7 +19223,6 @@ mod tests {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             crate::ui::info::release_thumbnails(&mut app, ui.ctx());
             crate::ui::info::show(&mut app, ui);
-            crate::ui::info::show_popup(&mut app, ui.ctx());
         });
         output.textures_delta.clear();
         assert!(ctx.try_load_bytes(&uri).is_ok(), "the listed picture stays");
