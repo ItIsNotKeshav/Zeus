@@ -403,7 +403,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
         widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
     }
     let avatar_rect =
-        Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        Rect::from_center_size(pos2(rect.left() + 44.0, rect.center().y), Vec2::splat(48.0));
     if link {
         crate::ui::call::paint_link_avatar(ui, &palette, avatar_rect);
     } else {
@@ -416,7 +416,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             picture.as_deref(),
         );
     }
-    let left = rect.left() + 76.0;
+    let left = rect.left() + 82.0;
     let right = button_rect.left() - 6.0;
     let stamp_galley = ui
         .painter()
@@ -594,9 +594,9 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+            Rect::from_center_size(pos2(rect.left() + 44.0, rect.center().y), Vec2::splat(48.0));
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
-        let left = rect.left() + 76.0;
+        let left = rect.left() + 82.0;
         let width = (buttons.left() - 8.0 - left).max(0.0);
         let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);

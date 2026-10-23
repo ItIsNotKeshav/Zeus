@@ -644,6 +644,19 @@ A release is not finished when the tag is pushed. Do these in order:
    native builds with `makepkg -f`. A recipe-only `zapfast-git` change does
    not require an application release.
 
+## Animations
+
+New popups, panels, dialogs and state changes are animated, eased in and out
+like the rest of the theme, never cut: open with a short rise and fade
+(about 0.24 s, `cubic_out`), leave a little quicker (about 0.16 s,
+`cubic_in`), and use egui's `animate_bool_with_time` or
+`animate_value_with_time` for smaller changes (0.15 to 0.25 s), as the
+composer and the upload cards do. Look at the nearest existing surface and reuse
+its durations and easing rather than inventing new ones. Ask for frames
+through `motion::request_frame` where it exists, and draw the final state at
+once while a screen reader is attached (`motion::screen_reader_attached`).
+Say in the pull request what animates, since a screenshot cannot show it.
+
 ## Definition of done
 
 - Add focused tests for changed behaviour. The `demo` feature carries sample
