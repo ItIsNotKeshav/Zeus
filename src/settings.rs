@@ -671,6 +671,8 @@ pub struct Settings {
     pub proxy: String,
     /// Ask GitHub once a day whether a newer release exists.
     pub check_for_updates: bool,
+    /// Whether updates follow stable releases or betas too.
+    pub update_channel: crate::updates::Channel,
     /// Download verified updates in the background; restarting remains explicit.
     pub download_updates_automatically: bool,
     /// Voice and audio playback speed multiplier.
@@ -773,6 +775,7 @@ impl Default for Settings {
             keep_chats_archived: true,
             proxy: String::new(),
             check_for_updates: true,
+            update_channel: crate::updates::Channel::Stable,
             download_updates_automatically: false,
             save_contacts_to_phone: true,
             voice_speed: 1.0,

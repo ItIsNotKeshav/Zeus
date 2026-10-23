@@ -7095,7 +7095,7 @@ impl Worker {
                 let waker = self.waker.clone();
                 tokio::task::spawn_blocking(move || {
                     let result = crate::updates::updater()
-                        .and_then(|updater| updater.check())
+                        .and_then(|updater| crate::updates::check(&updater))
                         .map_err(|error| format!("{error:#}"));
                     match &result {
                         Ok(Some(_)) => {}

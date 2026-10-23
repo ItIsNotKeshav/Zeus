@@ -1637,6 +1637,34 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     );
 }
 
+/// Seconds the pill's fill takes to reach a new segment.
+const SLIDE_SECONDS: f64 = 0.22;
+
+/// Where the fill is, in segments, `target` being where it is going: it
+/// leaves where it was drawn last and eases out to `target`.
+fn slide_position(ui: &egui::Ui, id: egui::Id, target: f32) -> f32 {
+    let now = ui.input(|input| input.time);
+    let (from, to, since) = ui
+        .data(|data| data.get_temp::<(f32, f32, f64)>(id))
+        .unwrap_or((target, target, now - SLIDE_SECONDS));
+    let progress = (((now - since) / SLIDE_SECONDS) as f32).clamp(0.0, 1.0);
+    let here = from + (to - from) * egui::emath::easing::cubic_out(progress);
+    let (from, to, since) = if to == target {
+        (from, to, since)
+    } else {
+        (here, target, now)
+    };
+    ui.data_mut(|data| data.insert_temp(id, (from, to, since)));
+    if progress < 1.0 || to != here {
+        ui.ctx().request_repaint();
+    }
+    if to == target && progress >= 1.0 {
+        target
+    } else {
+        from + (to - from) * egui::emath::easing::cubic_out(((now - since) / SLIDE_SECONDS) as f32)
+    }
+}
+
 /// Options as segments of one pill, the selected one filled with the
 /// accent. Returns the option clicked.
 fn segmented<T: Copy + PartialEq>(
@@ -1654,6 +1682,15 @@ fn segmented<T: Copy + PartialEq>(
     );
     ui.painter()
         .rect_filled(outer, outer.height() / 2.0, palette.surface);
+    // The accent fill glides to the chosen segment.
+    let slide = selected
+        .and_then(|value| options.iter().position(|(option, _)| *option == value))
+        .map(|index| slide_position(ui, ui.id().with((salt, "slide")), index as f32));
+    if let Some(position) = slide {
+        let rect = Rect::from_min_size(outer.min + vec2(3.0 + segment.x * position, 3.0), segment);
+        ui.painter()
+            .rect_filled(rect, rect.height() / 2.0, palette.accent);
+    }
     let mut clicked = None;
     for (index, (value, label)) in options.iter().enumerate() {
         let rect = Rect::from_min_size(
@@ -1664,17 +1701,14 @@ fn segmented<T: Copy + PartialEq>(
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
         let on = selected == Some(*value);
-        let color = if on {
+        let color = if slide.is_some_and(|position| (position - index as f32).abs() < 0.5) {
             palette.on_accent
         } else if response.hovered() {
             palette.text
         } else {
             palette.secondary
         };
-        if on {
-            ui.painter()
-                .rect_filled(rect, rect.height() / 2.0, palette.accent);
-        } else if response.hovered() {
+        if !on && response.hovered() {
             ui.painter()
                 .rect_filled(rect, rect.height() / 2.0, palette.surface_hover);
         }
@@ -3034,10 +3068,48 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             theme::paragraph(ui, text, theme::regular(13.0), color);
         }
     }
+    if crate::brand::UPDATES {
+        ui.add_space(12.0);
+        update_channel_picker(app, ui);
+    }
     ui.add_space(14.0);
     if let Some(url) = widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
     }
+}
+
+/// Stable or Beta: which releases About offers.
+fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let options: Vec<_> = crate::updates::Channel::ALL
+        .into_iter()
+        .map(|channel| (channel, crate::i18n::gettext(locale, channel.label())))
+        .collect();
+    let selected = Some(app.settings.update_channel);
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(locale, "Update channel"),
+            theme::medium(13.0),
+            palette.secondary,
+        );
+        ui.add_space(6.0);
+        if let Some(channel) = segmented(ui, &palette, "channel", &options, selected, 88.0) {
+            app.actions.push(Action::SetUpdateChannel(channel));
+        }
+    });
+    let note = match app.settings.update_channel {
+        crate::updates::Channel::Stable => "Tested releases only.",
+        crate::updates::Channel::Beta => "Early builds first. They may have rough edges.",
+    };
+    ui.add_space(6.0);
+    theme::paragraph(
+        ui,
+        crate::i18n::gettext(locale, note),
+        theme::regular(12.0),
+        palette.secondary,
+    );
 }
 
 /// Asks GitHub for a newer release now; a newer one opens the update window.

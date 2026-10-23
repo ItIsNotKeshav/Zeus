@@ -2979,6 +2979,8 @@ pub enum Action {
     CloseUpdate,
     /// Asks GitHub for a newer release now, from Settings.
     CheckForUpdates,
+    /// Follows stable releases only, or betas too, from About.
+    SetUpdateChannel(crate::updates::Channel),
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),

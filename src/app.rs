@@ -1153,6 +1153,7 @@ impl App {
         options: AppOptions,
     ) -> std::io::Result<Self> {
         crate::proxy::configure(&settings.proxy);
+        crate::updates::set_channel(settings.update_channel);
         let mut roster = AccountRoster::load(&dirs.accounts_file())?;
         if roster.order.is_empty() {
             roster = AccountRoster::default();
@@ -5843,6 +5844,28 @@ impl App {
         }
     }
 
+    /// Moves to another channel: what the last one offered no longer applies,
+    /// so the offer and any download of it go, and the new channel is asked
+    /// at once.
+    fn set_update_channel(&mut self, channel: crate::updates::Channel) {
+        if self.settings.update_channel == channel {
+            return;
+        }
+        self.settings.update_channel = channel;
+        crate::updates::set_channel(channel);
+        self.mark_settings_dirty();
+        self.update = None;
+        self.show_update = false;
+        if matches!(
+            self.update_download,
+            crate::updates::DownloadState::Ready(_) | crate::updates::DownloadState::Failed(_)
+        ) {
+            self.update_download = crate::updates::DownloadState::Idle;
+        }
+        self.update_check = crate::updates::Check::Idle;
+        self.check_for_updates_now();
+    }
+
     /// A check the reader asked for, whatever the daily setting says.
     fn check_for_updates_now(&mut self) {
         if !crate::brand::UPDATES
@@ -8140,6 +8163,7 @@ impl App {
             }
             Action::CloseUpdate => self.show_update = false,
             Action::CheckForUpdates => self.check_for_updates_now(),
+            Action::SetUpdateChannel(channel) => self.set_update_channel(channel),
             Action::DownloadUpdate => self.download_update(),
             Action::InstallUpdate => {
                 if matches!(
