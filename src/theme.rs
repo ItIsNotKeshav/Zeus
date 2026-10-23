@@ -1609,10 +1609,47 @@ pub struct FocusOutline {
     pub clip: egui::Rect,
     pub frame: u64,
     pub fill: Color32,
+    /// A ring colour of its own, for a control that keeps the accent for
+    /// itself (the search fields draw a quiet grey one).
+    pub color: Option<Color32>,
 }
 
 pub fn focus_outline(ui: &egui::Ui, id: egui::Id, rect: egui::Rect, radius: f32) {
     focus_outline_on_fill(ui, id, rect, radius, Color32::TRANSPARENT);
+}
+
+/// The colour a focus ring is drawn in: the control's own, else the accent,
+/// or the on-accent colour over a control filled with it (an inset accent
+/// border would disappear there).
+pub fn focus_ring_color(palette: &Palette, outline: Option<FocusOutline>) -> Color32 {
+    match outline {
+        Some(FocusOutline {
+            color: Some(color), ..
+        }) => color,
+        Some(outline) if outline.fill == palette.accent => palette.on_accent,
+        _ => palette.accent,
+    }
+}
+
+/// [`focus_outline`] drawn in `color` instead of the accent.
+pub fn focus_outline_colored(
+    ui: &egui::Ui,
+    id: egui::Id,
+    rect: egui::Rect,
+    radius: f32,
+    color: Color32,
+) {
+    let outline = FocusOutline {
+        rect,
+        radius,
+        corners: None,
+        clip: ui.clip_rect(),
+        frame: ui.ctx().cumulative_frame_nr(),
+        fill: Color32::TRANSPARENT,
+        color: Some(color),
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("focus-outline"), outline));
 }
 
 /// [`focus_outline`] for a control whose corners differ, so the ring runs
@@ -1630,6 +1667,7 @@ pub fn focus_outline_corners(
         clip: ui.clip_rect(),
         frame: ui.ctx().cumulative_frame_nr(),
         fill: Color32::TRANSPARENT,
+        color: None,
     };
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("focus-outline"), outline));
@@ -1649,6 +1687,7 @@ fn focus_outline_on_fill(
         clip: ui.clip_rect(),
         frame: ui.ctx().cumulative_frame_nr(),
         fill,
+        color: None,
     };
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("focus-outline"), outline));

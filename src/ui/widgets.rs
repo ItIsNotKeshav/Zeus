@@ -878,6 +878,9 @@ pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body
     });
 }
 
+/// How strongly a search field's focus ring shows, as a tint of the text colour.
+const SEARCH_RING: f32 = 0.28;
+
 /// Search field with icon and clear button.
 pub fn search_field(
     ui: &mut Ui,
@@ -937,7 +940,15 @@ pub fn search_field(
             .horizontal_align(align)
             .layouter(&mut layouter),
     );
-    theme::focus_outline(ui, response.id, rect, height / 2.0);
+    // A quiet grey ring, a tint of the text colour: a search field is
+    // always at hand, and the accent there is loud.
+    theme::focus_outline_colored(
+        ui,
+        response.id,
+        rect,
+        height / 2.0,
+        palette.tint(SEARCH_RING),
+    );
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_label(hint));
     if !text.is_empty() {

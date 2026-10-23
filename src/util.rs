@@ -529,6 +529,45 @@ pub fn search_key(text: &str) -> String {
         .collect()
 }
 
+/// The fewest letters of a search a loose match is allowed for: two letters
+/// are a subsequence of too many names to mean anything.
+const FUZZY_MIN_LETTERS: usize = 3;
+
+/// Whether the search key `needle` loosely matches the search key `text`: its
+/// letters follow one another in `text`, with no more than a letter's gap on
+/// average between them, so "jhn" finds "john" and "mkt plc" "Market Place"
+/// but "jhn" does not find a name that merely holds a j, an h and an n far
+/// apart. A search that `text` contains outright matches too.
+pub fn fuzzy_matches(text: &str, needle: &str) -> bool {
+    if text.contains(needle) {
+        return true;
+    }
+    let needle: Vec<char> = needle.chars().filter(|c| !c.is_whitespace()).collect();
+    if needle.len() < FUZZY_MIN_LETTERS {
+        return false;
+    }
+    let text: Vec<char> = text.chars().collect();
+    let reach = needle.len() * 2;
+    (0..text.len())
+        .filter(|&start| text[start] == needle[0])
+        .any(|start| {
+            let mut next = 1;
+            for (offset, letter) in text[start + 1..].iter().enumerate() {
+                // `offset + 2` letters of `text` are spanned so far.
+                if offset + 2 > reach {
+                    break;
+                }
+                if *letter == needle[next] {
+                    next += 1;
+                    if next == needle.len() {
+                        return true;
+                    }
+                }
+            }
+            false
+        })
+}
+
 /// Duration such as "0:12".
 pub fn duration(seconds: u32) -> String {
     format!("{}:{:02}", seconds / 60, seconds % 60)
@@ -823,6 +862,31 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_loose_search_finds_names_with_letters_left_out() {
+        use super::fuzzy_matches as loose;
+        assert!(loose("john smith", "jhn"));
+        assert!(loose("john smith", "jo sm"));
+        assert!(loose("market place", "mkt plc"));
+        assert!(
+            loose("john smith", "smith"),
+            "an exact search still matches"
+        );
+        assert!(loose("ab", "ab"), "even one too short to be loose");
+    }
+
+    #[test]
+    fn a_loose_search_does_not_match_scattered_letters() {
+        use super::fuzzy_matches as loose;
+        assert!(!loose("jack the harbour inn", "jhn"));
+        assert!(!loose("john smith", "xyz"));
+        assert!(!loose("john smith", "nj"), "letters out of order");
+        assert!(
+            !loose("john smith", "jh"),
+            "two letters are not enough to guess"
+        );
+    }
+
     #[test]
     fn a_call_length_reads_the_way_the_phone_shows_it() {
         assert_eq!(super::call_duration(0), "0:00");

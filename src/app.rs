@@ -2918,7 +2918,8 @@ impl App {
         let needle = crate::util::search_key(self.search.trim());
         let locked = self.locked_folder_open();
         let filtering = !locked && needle.is_empty() && !self.show_archived;
-        let mut chats: Vec<&Chat> = self
+        // Each chat comes with whether it matched only loosely.
+        let mut chats: Vec<(bool, &Chat)> = self
             .chats
             .iter()
             .filter(|chat| chat.locked == locked)
@@ -2934,36 +2935,44 @@ impl App {
                             && self.unread_kept.contains(&chat.id))
                 }
             })
-            .filter(|chat| {
+            .filter_map(|chat| {
                 // Inside the locked folder the typed text is the secret code,
                 // not a query to match.
-                (self.locked_folder && !self.chat_lock_authenticated())
-                    || needle.is_empty()
-                    || crate::util::search_key(&self.chat_title(chat)).contains(&needle)
+                if (self.locked_folder && !self.chat_lock_authenticated()) || needle.is_empty() {
+                    return Some((false, chat));
+                }
+                let title = crate::util::search_key(&self.chat_title(chat));
+                let exact = title.contains(&needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
                     || chat.last.as_ref().is_some_and(|last| {
                         crate::util::search_key(&last.summary).contains(&needle)
-                    })
+                    });
+                // A name with letters left out is found too, below the
+                // chats the search matches as typed.
+                (exact || crate::util::fuzzy_matches(&title, &needle)).then_some((!exact, chat))
             })
             .collect();
         // The Favorites chip keeps the phone's order below the pinned chats.
         let favorites_order = self.favorites_order();
-        chats.sort_by(|a, b| {
-            b.pinned.cmp(&a.pinned).then_with(|| {
-                if a.pinned && b.pinned {
-                    b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
-                } else if favorites_order {
-                    a.favorite_position
-                        .cmp(&b.favorite_position)
-                        .then(a.id.cmp(&b.id))
-                } else {
-                    self.sort_activity(b)
-                        .cmp(&self.sort_activity(a))
-                        .then(a.id.cmp(&b.id))
-                }
-            })
+        chats.sort_by(|(loose_a, a), (loose_b, b)| {
+            loose_a
+                .cmp(loose_b)
+                .then_with(|| b.pinned.cmp(&a.pinned))
+                .then_with(|| {
+                    if a.pinned && b.pinned {
+                        b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                    } else if favorites_order {
+                        a.favorite_position
+                            .cmp(&b.favorite_position)
+                            .then(a.id.cmp(&b.id))
+                    } else {
+                        self.sort_activity(b)
+                            .cmp(&self.sort_activity(a))
+                            .then(a.id.cmp(&b.id))
+                    }
+                })
         });
-        chats
+        chats.into_iter().map(|(_, chat)| chat).collect()
     }
 
     /// When a chat counts as last active for the list order: a chat holding a
@@ -2991,27 +3000,35 @@ impl App {
         if needle.is_empty() {
             return Vec::new();
         }
-        let mut contacts: Vec<&Contact> = self
+        // Each contact comes with whether it matched only loosely.
+        let mut contacts: Vec<(bool, &Contact)> = self
             .contacts
             .values()
             .filter(|contact| crate::model::phone_of(&contact.id).is_some())
             .filter(|contact| self.me.as_deref() != Some(contact.id.as_str()))
             .filter(|contact| !self.chats.iter().any(|chat| chat.id == contact.id))
-            .filter(|contact| {
-                contact
-                    .display_name()
-                    .is_some_and(|name| crate::util::search_key(name).contains(&needle))
+            .filter_map(|contact| {
+                let name = contact.display_name().map(crate::util::search_key);
+                let exact = name.as_ref().is_some_and(|name| name.contains(&needle))
                     || contact
                         .id
                         .split('@')
                         .next()
-                        .is_some_and(|phone| phone.contains(&needle))
+                        .is_some_and(|phone| phone.contains(&needle));
+                let loose = name
+                    .as_ref()
+                    .is_some_and(|name| crate::util::fuzzy_matches(name, &needle));
+                (exact || loose).then_some((!exact, contact))
             })
             .collect();
-        contacts
-            .sort_by_key(|contact| contact.display_name().unwrap_or(&contact.id).to_lowercase());
+        contacts.sort_by_key(|(loose, contact)| {
+            (
+                *loose,
+                contact.display_name().unwrap_or(&contact.id).to_lowercase(),
+            )
+        });
         contacts.truncate(15);
-        contacts
+        contacts.into_iter().map(|(_, contact)| contact).collect()
     }
 
     /// Archived chats with unread messages, for the Archived chip.

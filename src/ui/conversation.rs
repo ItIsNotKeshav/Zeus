@@ -90,8 +90,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 let ease = HEADER_TAIL + bar.height() * HEADER_EASE;
                 ui.painter()
                     .set(glass, super::glass::shape(frosted, ease, radius));
-                ui.painter()
-                    .set(veil, header_veil(&app.palette, frosted, ease, radius));
+                ui.painter().set(
+                    veil,
+                    header_veil(
+                        app.palette.vibrant_header(app.palette.chat),
+                        frosted,
+                        ease,
+                        radius,
+                    ),
+                );
                 // Over messages scrolled up under the header's corners.
                 card_corners(ui, &app.palette, card, radius);
                 bar
@@ -407,19 +414,18 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
 
 /// The share of a vibrant header, from its bottom, over which its frost and
 /// veil begin to ease off.
-const HEADER_EASE: f32 = 0.35;
+pub(super) const HEADER_EASE: f32 = 0.35;
 /// How far below a vibrant header its frost and veil carry on, easing off.
-const HEADER_TAIL: f32 = 24.0;
+pub(super) const HEADER_TAIL: f32 = 24.0;
 /// Rows of the veil's ease, enough for its curve to look smooth.
 const VEIL_STEPS: usize = 8;
 
-/// The veil over a vibrant header's frost: the palette's at the top, then
+/// The veil over a vibrant header's frost: `top` at the top, then
 /// easing to nothing over the bottom `ease` points of `rect` along the same
 /// curve as the frost, so the messages under it never stop at a line. Its
 /// top corners follow the card's `radius`, so they stay round over a
 /// see-through window too.
-fn header_veil(palette: &Palette, rect: Rect, ease: f32, radius: f32) -> egui::Shape {
-    let top = palette.vibrant_header(palette.chat);
+pub(super) fn header_veil(top: Color32, rect: Rect, ease: f32, radius: f32) -> egui::Shape {
     let start = rect.bottom() - ease;
     let radius = radius.clamp(0.0, (rect.height() - ease).max(0.0));
     let mut mesh = egui::Mesh::default();

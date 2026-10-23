@@ -15606,11 +15606,7 @@ mod tests {
         let outline = ctx.memory(|memory| memory.focused()).and_then(|id| {
             ctx.data(|data| data.get_temp::<crate::theme::FocusOutline>(id.with("focus-outline")))
         });
-        let color = if outline.is_some_and(|outline| outline.fill == app.palette.accent) {
-            app.palette.on_accent
-        } else {
-            app.palette.accent
-        };
+        let color = crate::theme::focus_ring_color(&app.palette, outline);
         fn borders(shape: &egui::Shape, rect: egui::Rect, accent: egui::Color32) -> usize {
             match shape {
                 egui::Shape::Vec(shapes) => shapes

@@ -175,7 +175,7 @@ fn row_name(app: &App, chat: &str) -> String {
 /// Whether `id`'s name or number matches `needle`, a `search_key`.
 fn matches(app: &App, id: &str, needle: &str) -> bool {
     needle.is_empty()
-        || crate::util::search_key(&row_name(app, id)).contains(needle)
+        || crate::util::fuzzy_matches(&crate::util::search_key(&row_name(app, id)), needle)
         || crate::model::phone_of(id).is_some_and(|phone| phone.contains(needle))
 }
 
@@ -242,27 +242,30 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
         .map(|row| row.into_iter().cloned().collect())
         .collect();
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("call-history")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            if rows.is_empty() {
+    super::chats::under_header(ui, |ui, inset| {
+        egui::ScrollArea::vertical()
+            .id_salt("call-history")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(inset);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if rows.is_empty() {
+                    ui.add_space(12.0);
+                    ui.vertical_centered(|ui| {
+                        theme::text(
+                            ui,
+                            gettext(app.locale, "No matching calls"),
+                            theme::regular(13.0),
+                            palette.secondary,
+                        );
+                    });
+                }
+                for row in &rows {
+                    history_row(app, ui, row, &mut actions);
+                }
                 ui.add_space(12.0);
-                ui.vertical_centered(|ui| {
-                    theme::text(
-                        ui,
-                        gettext(app.locale, "No matching calls"),
-                        theme::regular(13.0),
-                        palette.secondary,
-                    );
-                });
-            }
-            for row in &rows {
-                history_row(app, ui, row, &mut actions);
-            }
-            ui.add_space(12.0);
-        });
+            });
+    });
     app.actions.extend(actions);
 }
 
@@ -522,39 +525,42 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
         Vec::new()
     };
     let mut actions = Vec::new();
-    egui::ScrollArea::vertical()
-        .id_salt("new-call-contacts")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            if !frequent.is_empty() {
-                section(ui, &palette, &gettext(app.locale, "Frequently contacted"));
-                for chat in &frequent {
-                    ui.push_id(("frequent", chat), |ui| {
-                        person(app, ui, chat, &mut actions);
+    super::chats::under_header(ui, |ui, inset| {
+        egui::ScrollArea::vertical()
+            .id_salt("new-call-contacts")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.add_space(inset);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                if !frequent.is_empty() {
+                    section(ui, &palette, &gettext(app.locale, "Frequently contacted"));
+                    for chat in &frequent {
+                        ui.push_id(("frequent", chat), |ui| {
+                            person(app, ui, chat, &mut actions);
+                        });
+                    }
+                }
+                if contacts.is_empty() {
+                    ui.add_space(12.0);
+                    ui.vertical_centered(|ui| {
+                        theme::text(
+                            ui,
+                            gettext(app.locale, "No matching contacts"),
+                            theme::regular(13.0),
+                            palette.secondary,
+                        );
+                    });
+                } else {
+                    section(ui, &palette, &gettext(app.locale, "All contacts"));
+                }
+                for contact in &contacts {
+                    ui.push_id(&contact.id, |ui| {
+                        person(app, ui, &contact.id, &mut actions);
                     });
                 }
-            }
-            if contacts.is_empty() {
                 ui.add_space(12.0);
-                ui.vertical_centered(|ui| {
-                    theme::text(
-                        ui,
-                        gettext(app.locale, "No matching contacts"),
-                        theme::regular(13.0),
-                        palette.secondary,
-                    );
-                });
-            } else {
-                section(ui, &palette, &gettext(app.locale, "All contacts"));
-            }
-            for contact in &contacts {
-                ui.push_id(&contact.id, |ui| {
-                    person(app, ui, &contact.id, &mut actions);
-                });
-            }
-            ui.add_space(12.0);
-        });
+            });
+    });
     if !actions.is_empty() {
         actions.push(Action::ShowNewCall(false));
     }
