@@ -12,11 +12,18 @@ mkdir -p "$out"
 shots=(
   "chat-dark|chat,nothing"
   "chat-light|chat,nothing-light"
+  "chat-dracula|chat,dracula"
+  "chat-catppuccin|chat,catppuccin"
+  "chat-tokyo-night|chat,tokyo-night"
   "chat-messages|chat,messages"
-  "settings|settings,nothing"
-  "settings-light|settings,nothing-light"
-  "info|info,nothing"
+  "settings-appearance|settings,nothing,section-0"
+  "settings-chats|settings,nothing-light,section-1"
+  "settings-notifications|settings,dracula,section-2"
+  "settings-calls|voice-settings,nothing"
+  "settings-privacy|settings,nord,section-4"
+  "doodles|chat,nothing-light,doodles-accent,doodle-style-travel,doodle-intensity-200"
   "composer|chat,nothing,composer-tools"
+  "reactions|chat,nothing,reactions"
 )
 
 for entry in "${shots[@]}"; do
