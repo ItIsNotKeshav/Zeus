@@ -3128,6 +3128,22 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "mode-light" => app.settings.mode = crate::chat_themes::Mode::Light,
             "mode-dark" => app.settings.mode = crate::chat_themes::Mode::Dark,
             "noblur" => app.settings.blur = false,
+            "focus-composer" => app.focus_composer = true,
+            "doodles-accent" => app.settings.doodle_color = crate::settings::DoodleColor::Accent,
+            // The doodles' strength as a percentage, such as doodle-intensity-200.
+            part if let Some(percent) = part
+                .strip_prefix("doodle-intensity-")
+                .and_then(|percent| percent.parse::<f32>().ok()) =>
+            {
+                app.settings.doodle_intensity = percent / 100.0;
+            }
+            // A doodle style by its stored name, such as doodle-style-travel.
+            part if let Some(style) = part
+                .strip_prefix("doodle-style-")
+                .and_then(|name| serde_json::from_value(name.into()).ok()) =>
+            {
+                app.settings.doodle_style = style;
+            }
             "always-time" => app.settings.always_show_time = true,
             // A settings category beside the list of them, by its place.
             part if let Some(index) = part
@@ -14777,16 +14793,32 @@ mod tests {
         let input = egui::Id::new("composer-text");
         ctx.memory_mut(|memory| memory.request_focus(input));
         frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        let field = ctx
-            .data(|data| data.get_temp::<crate::theme::FocusOutline>(input.with("focus-outline")))
-            .unwrap();
+        let outline = |ctx: &egui::Context, id: egui::Id| {
+            ctx.data(|data| data.get_temp::<crate::theme::FocusOutline>(id.with("focus-outline")))
+        };
         let text = ctx.read_response(input).unwrap();
+        assert!(
+            outline(&ctx, input).is_none(),
+            "clicking into the field draws no accent ring around it"
+        );
+        assert_eq!(
+            ring(&ctx),
+            Some(text.rect),
+            "the caret's own bounds stand in for it"
+        );
+        // Tab moves on to the record button; Shift+Tab back to the field,
+        // which is outlined whole now that the keyboard drives.
+        frame_sized(&mut app, &ctx, 780.0, tab());
+        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        ctx.memory_mut(|memory| memory.request_focus(input));
+        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let field = outline(&ctx, input).expect("Tab reveals the composer's outline");
         assert!(field.rect.contains_rect(text.rect));
         assert!(field.rect.width() > text.rect.width());
         assert_eq!(
             ring(&ctx),
             Some(field.rect),
-            "input focus outlines the composer's rounded field"
+            "keyboard focus outlines the composer's rounded field"
         );
         assert_eq!(
             ctx.data(

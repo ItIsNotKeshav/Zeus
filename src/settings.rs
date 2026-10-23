@@ -195,6 +195,31 @@ impl DoodleStyle {
     }
 }
 
+/// The colour the doodles are drawn in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoodleColor {
+    /// Near-black or white, whichever stands out from the wallpaper colour.
+    #[default]
+    Gray,
+    /// The accent colour.
+    Accent,
+}
+
+impl DoodleColor {
+    pub const ALL: [Self; 2] = [Self::Gray, Self::Accent];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Gray => "Gray",
+            Self::Accent => "Accent",
+        }
+    }
+}
+
+/// How much of the default doodle strength the slider scales it by.
+pub const DOODLE_INTENSITY: std::ops::RangeInclusive<f32> = 0.2..=2.5;
+
 /// Background colours offered by WhatsApp's wallpaper picker, after the
 /// active theme's own chat colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -594,6 +619,10 @@ pub struct Settings {
     pub show_wallpaper: bool,
     /// Which doodles `show_wallpaper` draws.
     pub doodle_style: DoodleStyle,
+    /// The colour of those doodles.
+    pub doodle_color: DoodleColor,
+    /// How strongly they show, as a multiple of the default (1.0).
+    pub doodle_intensity: f32,
     /// Colour selected in the wallpaper picker.
     pub wallpaper_color: WallpaperColor,
     /// Colour selected for the dark wallpaper picker.
@@ -723,6 +752,8 @@ impl Default for Settings {
             auto_download: true,
             show_wallpaper: true,
             doodle_style: DoodleStyle::Classic,
+            doodle_color: DoodleColor::Gray,
+            doodle_intensity: 1.0,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,

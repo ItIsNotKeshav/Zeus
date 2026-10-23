@@ -11,7 +11,7 @@ use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{DoodleStyle, Settings, WallpaperColor};
+use crate::settings::{DOODLE_INTENSITY, DoodleColor, DoodleStyle, Settings, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -2481,7 +2481,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
                 look.color,
             );
             if let Some(style) = style {
-                wallpaper::paint_doodles(ui, preview, look.color, style);
+                wallpaper::paint_doodles(ui, preview, &look, style);
             } else {
                 theme::paint_icon(
                     ui,
@@ -2540,7 +2540,54 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             }
         }
     }
+    ui.add_space(14.0);
+    doodle_ink_controls(ui, app);
     ui.add_space(4.0);
+}
+
+/// The doodles' colour, grey or the accent, and how strongly they show.
+fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let current = app.settings.doodle_color;
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "Doodle colour").into_owned(),
+            theme::medium(13.5),
+            palette.text,
+        );
+        ui.add_space(6.0);
+        for color in DoodleColor::ALL {
+            let label = crate::i18n::gettext(app.locale, color.label());
+            if theme::soft_button(ui, &palette, None, &label, color == current).clicked() {
+                app.actions.push(Action::SetDoodleColor(color));
+            }
+        }
+    });
+    ui.add_space(10.0);
+    let range = DOODLE_INTENSITY;
+    let mut intensity = app
+        .settings
+        .doodle_intensity
+        .clamp(*range.start(), *range.end());
+    ui.horizontal(|ui| {
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "Doodle intensity").into_owned(),
+            theme::medium(13.5),
+            palette.text,
+        );
+        ui.add_space(6.0);
+        let value = format!("{:.0}%", intensity * 100.0);
+        let value_width = 48.0;
+        ui.spacing_mut().slider_width =
+            (ui.available_width() - value_width - ui.spacing().item_spacing.x).max(60.0);
+        let slider = ui.add(egui::Slider::new(&mut intensity, range).show_value(false));
+        theme::text(ui, value, theme::medium(13.0), palette.secondary);
+        if slider.changed() {
+            app.actions.push(Action::SetDoodleIntensity(intensity));
+        }
+    });
 }
 
 /// Least width of a doodle tile before the grid drops a column.

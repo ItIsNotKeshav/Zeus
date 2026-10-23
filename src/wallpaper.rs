@@ -49,6 +49,10 @@ pub struct Look {
     pub doodles: bool,
     /// Which doodles those are.
     pub style: DoodleStyle,
+    /// How strongly they show, as a multiple of the default.
+    pub intensity: f32,
+    /// The accent they are drawn in, or nothing for the grey ink.
+    pub accent: Option<Color32>,
     /// A decoded image of the reader's, which wins over colour and doodles.
     pub image: Option<(u64, Arc<ColorImage>)>,
 }
@@ -81,13 +85,13 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
     }
 
     if look.doodles {
-        paint_doodles(ui, rect, look.color, look.style);
+        paint_doodles(ui, rect, look, look.style);
     }
 }
 
-/// The doodles of `style` over `rect`, tinted for `background`, which the
-/// caller has already painted.
-pub fn paint_doodles(ui: &egui::Ui, rect: Rect, background: Color32, style: DoodleStyle) {
+/// The doodles of `style` over `rect`, inked as `look` says for its
+/// background, which the caller has already painted.
+pub fn paint_doodles(ui: &egui::Ui, rect: Rect, look: &Look, style: DoodleStyle) {
     let painter = ui.painter().with_clip_rect(rect);
     let Some(texture) = texture(ui.ctx(), style) else {
         return;
@@ -98,7 +102,7 @@ pub fn paint_doodles(ui: &egui::Ui, rect: Rect, background: Color32, style: Dood
         return;
     }
 
-    let line = doodle_ink(background);
+    let line = ink(look);
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let origin = pos2(0.0, 0.0);
     let first_x = origin.x + (rect.left() - origin.x).div_euclid(tile.x) * tile.x;
@@ -116,6 +120,26 @@ pub fn paint_doodles(ui: &egui::Ui, rect: Rect, background: Color32, style: Dood
         }
         y += tile.y;
     }
+}
+
+/// The doodles' tint for `look`: the grey ink of [`doodle_ink`], or the accent
+/// at the same opacity, with the opacity scaled by the intensity.
+fn ink(look: &Look) -> Color32 {
+    let grey = doodle_ink(look.color);
+    let intensity = if look.intensity.is_finite() {
+        look.intensity.clamp(
+            *crate::settings::DOODLE_INTENSITY.start(),
+            *crate::settings::DOODLE_INTENSITY.end(),
+        )
+    } else {
+        1.0
+    };
+    let alpha = (f32::from(grey.a()) * intensity).round().min(255.0) as u8;
+    let [r, g, b] = match look.accent {
+        Some(accent) => [accent.r(), accent.g(), accent.b()],
+        None => [grey.r(), grey.g(), grey.b()],
+    };
+    Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
 /// The doodles' tint over `background`: whichever of near-black or white
@@ -498,6 +522,52 @@ mod tests {
 
     fn ink_alpha(ink: Color32) -> u8 {
         ink.to_srgba_unmultiplied()[3]
+    }
+
+    fn look(intensity: f32, accent: Option<Color32>) -> Look {
+        Look {
+            color: Color32::from_rgb(22, 23, 23),
+            doodles: true,
+            style: DoodleStyle::Classic,
+            intensity,
+            accent,
+            image: None,
+        }
+    }
+
+    #[test]
+    fn intensity_scales_the_doodles_and_stays_in_range() {
+        let default = ink_alpha(ink(&look(1.0, None)));
+        assert_eq!(
+            default,
+            ink_alpha(doodle_ink(Color32::from_rgb(22, 23, 23)))
+        );
+        assert!(ink_alpha(ink(&look(2.0, None))) > default);
+        assert!(ink_alpha(ink(&look(0.5, None))) < default);
+        // Out of range or not a number falls back to the slider's ends or 1.
+        let range = &crate::settings::DOODLE_INTENSITY;
+        assert_eq!(
+            ink_alpha(ink(&look(100.0, None))),
+            ink_alpha(ink(&look(*range.end(), None)))
+        );
+        assert_eq!(
+            ink_alpha(ink(&look(-3.0, None))),
+            ink_alpha(ink(&look(*range.start(), None)))
+        );
+        assert_eq!(ink_alpha(ink(&look(f32::NAN, None))), default);
+    }
+
+    #[test]
+    fn accent_doodles_take_the_accent_at_the_same_opacity() {
+        let accent = Color32::from_rgb(0x20, 0x90, 0xf0);
+        let grey = ink(&look(1.5, None));
+        let tinted = ink(&look(1.5, Some(accent)));
+        assert_eq!(ink_alpha(tinted), ink_alpha(grey));
+        assert_eq!(tinted.to_srgba_unmultiplied()[..3], [0x20, 0x90, 0xf0]);
+        assert_ne!(
+            tinted.to_srgba_unmultiplied()[..3],
+            grey.to_srgba_unmultiplied()[..3]
+        );
     }
 
     fn write_image(path: &Path, width: u32, height: u32) {

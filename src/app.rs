@@ -1877,6 +1877,9 @@ impl App {
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
             style: self.settings.doodle_style,
+            intensity: self.settings.doodle_intensity,
+            accent: (self.settings.doodle_color == crate::settings::DoodleColor::Accent)
+                .then_some(self.palette.accent),
             image: self
                 .account()
                 .settings
@@ -8222,6 +8225,17 @@ impl App {
             Action::SetDoodleStyle(style) => {
                 self.settings.doodle_style = style;
                 self.settings.show_wallpaper = true;
+                self.mark_settings_dirty();
+            }
+            Action::SetDoodleColor(color) => {
+                self.settings.doodle_color = color;
+                self.mark_settings_dirty();
+            }
+            Action::SetDoodleIntensity(intensity) => {
+                self.settings.doodle_intensity = intensity.clamp(
+                    *crate::settings::DOODLE_INTENSITY.start(),
+                    *crate::settings::DOODLE_INTENSITY.end(),
+                );
                 self.mark_settings_dirty();
             }
             Action::PickWallpaperImage => self.backend.send(Command::PickWallpaperImage),

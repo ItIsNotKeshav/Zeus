@@ -3002,6 +3002,8 @@ pub enum Action {
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),
     SetDoodleStyle(crate::settings::DoodleStyle),
+    SetDoodleColor(crate::settings::DoodleColor),
+    SetDoodleIntensity(f32),
     /// Asks for an image to use as the chat wallpaper.
     PickWallpaperImage,
     /// Goes back to the wallpaper colour and deletes the copied image.

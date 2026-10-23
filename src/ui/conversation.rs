@@ -138,10 +138,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layer_id(layer)
                     .layout(Layout::bottom_up(Align::Min)),
                 |ui| {
-                    let glass = ui.painter().add(egui::Shape::Noop);
                     composer(app, ui, &chat);
                     // From a little above the field, or the reply, edit or voice
-                    // strip over it, to the bottom, as wide as the chat.
+                    // strip over it, to the bottom, as wide as the chat. Nothing
+                    // is blurred under it: the wallpaper and the theme's tint
+                    // show through the translucent field.
                     let pill = ui
                         .ctx()
                         .data(|data| data.get_temp::<Rect>(composer_pill_id()))
@@ -150,11 +151,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     let foot = Rect::from_x_y_ranges(
                         area.x_range(),
                         (top - 12.0).max(area.top())..=area.bottom(),
-                    );
-                    // Strongest at the bottom, easing off towards its top.
-                    ui.painter().set(
-                        glass,
-                        super::glass::shape(foot, -foot.height() * HEADER_EASE, radius),
                     );
                     card_corners(ui, &app.palette, card, radius);
                     foot
@@ -1653,9 +1649,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
-            let frost = palette.vibrant().then(|| {
-                widgets::Frost::reserve(ui.ctx(), ui.layer_id(), COMPOSER_RADIUS)
-            });
             let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
@@ -1963,10 +1956,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             },
                     );
                 });
-            if let Some(frost) = frost {
-                frost.place(pill.response.rect);
+            // Clicking into the field draws no accent ring around it: the caret
+            // shows where typing goes. Tabbing to it still outlines the field.
+            if ui.ctx().data(|data| {
+                data.get_temp::<bool>(theme::keyboard_focus_id())
+                    .unwrap_or(false)
+            }) {
+                theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
             }
-            theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
             ui.ctx()
                 .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
             if (send_key || send_click)
