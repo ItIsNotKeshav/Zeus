@@ -3498,7 +3498,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     }
                     // Room to scroll the last message clear of a composer
                     // that floats over the list's end.
-                    ui.add_space(4.0 + over);
+                    ui.add_space((over - 4.0).max(0.0));
                     // An explicit jump (Ctrl+End, or the return-to-bottom
                     // button) wins over a message bubble's retained keyboard
                     // focus; other triggers still defer to it, so an
@@ -3860,7 +3860,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
     // Keep the indicator comfortably separated from the last message and
     // composer. Its height stays fixed while the dots animate, so motion
     // never shifts the transcript layout.
-    ui.add_space(8.0);
+    ui.add_space(4.0);
     ui.horizontal(|ui| {
         let show_avatars = shows_sender_pictures(view.chat);
         let count = if show_avatars { typers.len().min(3) } else { 0 };
@@ -3871,9 +3871,12 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
             0.0
         };
         let avatar_gap = if show_avatars { 10.0 } else { 0.0 };
-        let row_height = 40.0;
+        let row_height = 36.0;
         ui.allocate_ui_with_layout(
-            vec2(avatars_width + avatar_gap + 30.0, row_height),
+            vec2(
+                avatars_width + avatar_gap + TYPING_BUBBLE_PAD_X * 2.0 + 28.0,
+                row_height,
+            ),
             Layout::left_to_right(Align::Center),
             |ui| {
                 if show_avatars {
@@ -3908,11 +3911,35 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
                     }
                 }
                 ui.add_space(avatar_gap);
-                typing_dots(ui, &palette);
+                typing_bubble(ui, view);
             },
         );
     });
-    ui.add_space(8.0);
+    ui.add_space(2.0);
+}
+
+const TYPING_BUBBLE_PAD_X: f32 = 14.0;
+const TYPING_BUBBLE_PAD_Y: f32 = 11.0;
+
+/// The dots inside an incoming bubble, with the theme's fill and corners.
+fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
+    let palette = view.palette;
+    let corners = match palette.bubbles {
+        theme::BubbleStyle::Nothing => widgets::grouped_bubble_corners(false, true, true),
+        theme::BubbleStyle::Messages => CornerRadius::same(widgets::MESSAGES_BUBBLE_RADIUS),
+        _ => widgets::bubble_corners(Some(widgets::Side::Left)),
+    };
+    let fill = ui.painter().add(egui::Shape::Noop);
+    let inner = Frame::new()
+        .inner_margin(Margin::symmetric(
+            TYPING_BUBBLE_PAD_X as i8,
+            TYPING_BUBBLE_PAD_Y as i8,
+        ))
+        .show(ui, |ui| typing_dots(ui, &palette));
+    ui.painter().set(
+        fill,
+        egui::epaint::RectShape::filled(inner.response.rect, corners, palette.bubble_in),
+    );
 }
 
 fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
