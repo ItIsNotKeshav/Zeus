@@ -17197,10 +17197,10 @@ mod bubble_detail_tests {
                 "{id}: no strip under the picture ({picture:?} in {frame:?})"
             );
             assert!(
-                // A forwarded photo keeps the text padding for its label;
-                // one alone has an even rim.
+                // A forwarded photo sits at the bubble's top margin all
+                // round, under its label; one alone has a thinner rim.
                 {
-                    let rim = if id == "photos-in" { 10.0 } else { 4.0 };
+                    let rim = if id == "photos-in" { 6.0 } else { 4.0 };
                     (frame.left() + rim - picture.left()).abs() < 0.5
                         && (frame.right() - rim - picture.right()).abs() < 0.5
                 },
