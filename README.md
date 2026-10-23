@@ -25,11 +25,54 @@ written in Rust with [egui](https://www.egui.rs), with no browser engine
 inside. It links to your phone as a companion device, the way WhatsApp Web
 does, and keeps your chats in an encrypted archive on your own computer.
 
-<img src="docs/screenshot.png" alt="Zeus in dark mode, showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview">
+<p align="center">
+  <img src="docs/readme/chat-dark.png" alt="Zeus in its Dark theme on a MacBook, showing a conversation with a photo, a file, voice messages, a quoted reply, and a link preview">
+</p>
 
-<img src="docs/screenshot-light.png" alt="The same conversation in Zeus's light mode">
+<p align="center"><em>The screenshots use made-up demo chats, never real conversations.</em></p>
 
-*The screenshots use made-up demo chats, never real conversations.*
+## Your look
+
+20 ready-made themes, each in light and dark, or your own mix of look, mode
+and accent. Frosted panels with blur you can switch off, and doodle wallpapers
+in several styles.
+
+<p align="center">
+  <img src="docs/readme/chat-light.png" alt="Zeus's Light theme" width="49%">
+  <img src="docs/readme/chat-dracula.png" alt="Zeus with the Dracula theme" width="49%">
+</p>
+<p align="center">
+  <img src="docs/readme/chat-catppuccin.png" alt="Zeus with the Catppuccin theme" width="49%">
+  <img src="docs/readme/chat-tokyo-night.png" alt="Zeus with the Tokyo Night theme" width="49%">
+</p>
+<p align="center">
+  <img src="docs/readme/chat-messages.png" alt="Zeus with the Messages look, with its own bubble shapes" width="49%">
+  <img src="docs/readme/doodles.png" alt="Zeus in the Light theme with accent-coloured travel doodles" width="49%">
+</p>
+
+## Chats that feel good
+
+Frosted composer, attachment previews while files send, reactions you can pick
+from the message, and a message menu with Reply, Edit, Forward, Pin and more.
+
+<p align="center">
+  <img src="docs/readme/composer.png" alt="Zeus's composer with its attachment and poll menu open" width="49%">
+  <img src="docs/readme/reactions.png" alt="Zeus's reaction picker and messages with reactions" width="49%">
+</p>
+
+## Settings
+
+A sidebar of categories with search. Appearance, Chats, Notifications, Calls
+and voice (pick your microphone, push to talk), Privacy, and more.
+
+<p align="center">
+  <img src="docs/readme/settings-appearance.png" alt="Zeus Settings, Appearance: look, mode, accent and blur" width="49%">
+  <img src="docs/readme/settings-chats.png" alt="Zeus Settings, Chats, in the Light theme" width="49%">
+</p>
+<p align="center">
+  <img src="docs/readme/settings-notifications.png" alt="Zeus Settings, Notifications, in the Dracula theme" width="49%">
+  <img src="docs/readme/settings-calls.png" alt="Zeus Settings, Calls and voice: microphone and push to talk" width="49%">
+</p>
 
 ## What Zeus is
 
