@@ -22,6 +22,7 @@ pub mod pane;
 pub mod picker;
 pub mod polls;
 pub mod rail;
+pub mod reaction_list;
 pub mod settings;
 pub mod update;
 pub mod widgets;

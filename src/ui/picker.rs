@@ -241,7 +241,12 @@ fn rows_for(
     rows
 }
 
-fn place_picker(screen: Rect, anchor: Option<Rect>, width: f32, height: f32) -> egui::Pos2 {
+pub(super) fn place_picker(
+    screen: Rect,
+    anchor: Option<Rect>,
+    width: f32,
+    height: f32,
+) -> egui::Pos2 {
     let max_x = (screen.right() - width - 8.0).max(screen.left() + 8.0);
     let x = match anchor {
         Some(anchor) => anchor.left().clamp(screen.left() + 8.0, max_x),

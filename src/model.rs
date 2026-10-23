@@ -1853,8 +1853,10 @@ pub enum CallDirection {
 }
 
 /// The tabs of the picker above the composer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PickerTab {
+    #[default]
     Emoji,
     Gifs,
     Stickers,
@@ -2324,6 +2326,11 @@ pub enum Dialog {
     StickerMaker,
     /// Who has received and read one of our messages.
     MessageInfo {
+        chat: ChatId,
+        message: String,
+    },
+    /// Who reacted to a message, and with what.
+    Reactions {
         chat: ChatId,
         message: String,
     },

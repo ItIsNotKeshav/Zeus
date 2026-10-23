@@ -567,6 +567,9 @@ pub struct Settings {
     /// The hint bar under the composer, hidden with its × and shown again
     /// from the Keyboard shortcuts dialog.
     pub show_shortcut_hints: bool,
+    /// The picker tab used last: the composer's button shows its icon and
+    /// opens it.
+    pub picker_mode: crate::model::PickerTab,
     /// Recently used emoji, newest first.
     pub recent_emoji: Vec<String>,
     /// Emoji reaction usage on this device, most-used first (recent breaks ties).
@@ -685,6 +688,7 @@ impl Default for Settings {
             wallpaper_image: None,
             last_chat: None,
             show_shortcut_hints: true,
+            picker_mode: crate::model::PickerTab::default(),
             recent_emoji: Vec::new(),
             reaction_emoji: Vec::new(),
             giphy_key: String::new(),

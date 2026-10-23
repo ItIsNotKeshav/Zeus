@@ -1653,6 +1653,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
+            let frost = palette.vibrant().then(|| {
+                widgets::Frost::reserve(ui.ctx(), ui.layer_id(), COMPOSER_RADIUS)
+            });
             let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
@@ -1678,9 +1681,24 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     composer_tools_menu(app, chat, &tools);
                     // Plus and emoji sit close together, as a pair.
                     ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
-                    let smile = last_line(ui, line, |ui| theme::icon_button(
+                    // The button shows the picker's tab used last.
+                    let (mode_icon, mode_label) = match app.settings.picker_mode {
+                        PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
+                        PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
+                        PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
+                    };
+                    // The icon fades in when the mode changes.
+                    let mode_fade = ui.ctx().animate_bool_with_time_and_easing(
+                        egui::Id::new(("picker-mode", app.settings.picker_mode as u8)),
+                        true,
+                        0.18,
+                        egui::emath::easing::quadratic_out,
+                    );
+                    let smile = last_line(ui, line, |ui| ui.scope(|ui| {
+                        ui.multiply_opacity(mode_fade);
+                        theme::icon_button(
                         ui,
-                        Icon::Smile,
+                        mode_icon,
                         22.0,
                         if app.picker.is_some() {
                             palette.accent
@@ -1688,14 +1706,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             palette.secondary
                         },
                         palette.text,
-                        "Emoji, GIFs, and stickers",
-                    )).tab_stop(Stop::Emoji);
+                        mode_label,
+                    )}).inner).tab_stop(Stop::Emoji);
                     app.picker_anchor = Some(smile.rect);
                     if smile.clicked() {
                         if app.composer_tools_open {
                             app.actions.push(Action::SetComposerTools(false));
                         }
-                        app.actions.push(Action::TogglePicker(PickerTab::Emoji));
+                        app.actions.push(Action::TogglePicker(app.settings.picker_mode));
                     }
                     // The text follows the pair as closely as the emoji
                     // follows the plus (the field's own left margin included).
@@ -1945,6 +1963,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             },
                     );
                 });
+            if let Some(frost) = frost {
+                frost.place(pill.response.rect);
+            }
             theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
             ui.ctx()
                 .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
@@ -2082,7 +2103,7 @@ fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) ->
 fn composer_pill(palette: &Palette) -> Frame {
     // Glass over a vibrant conversation, as the header's.
     let (fill, edge) = if palette.vibrant() {
-        (palette.glass(), palette.glass_edge())
+        (palette.frosted(palette.chat), palette.glass_edge())
     } else {
         (palette.bubble_in, Stroke::NONE)
     };
@@ -3721,15 +3742,23 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         app.scroll_to_bottom = false;
     }
     // Show a return-to-bottom button while reading older messages.
-    if !at_bottom {
+    // It scales and fades in and out, as the other floating controls do.
+    let appear = ui.ctx().animate_bool_with_time_and_easing(
+        ui.id().with("to-bottom"),
+        !at_bottom,
+        if reduce_motion { 0.0 } else { 0.18 },
+        egui::emath::easing::quadratic_out,
+    );
+    if appear > 0.0 {
         let rect = output.inner_rect;
         let center = pos2(rect.right() - 34.0, rect.bottom() - over - 34.0);
-        let button = Rect::from_center_size(center, Vec2::splat(40.0));
+        let button = Rect::from_center_size(center, Vec2::splat(40.0 * (0.7 + 0.3 * appear)));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(button)
                 .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
         );
+        child.multiply_opacity(appear);
         let unread = app.chat(&chat.id).map_or(0, |chat| chat.unread);
         // It floats over the messages: a soft shadow lifts it off them.
         child.painter().add(
@@ -3741,11 +3770,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             }
             .as_shape(button, CornerRadius::same(20)),
         );
+        // Frosted over the messages it floats on; solid while Blur is off.
+        child.painter().add(super::glass::rounded(button, 20.0));
         if theme::circle_button(
             &mut child,
             Icon::ArrowDown,
-            40.0,
-            palette.overlay,
+            button.width(),
+            palette.frosted(palette.overlay),
             palette.surface_hover,
             palette.text,
             "Newest message",
@@ -4485,12 +4516,33 @@ fn bubble_row(
             // reacting to its own item.
             let members = album.unwrap_or(std::slice::from_ref(message));
             if members.iter().any(|member| !member.reactions.is_empty()) {
-                ui.add_space(-7.0);
-                ui.horizontal(|ui| {
-                    if with_avatar {
-                        ui.add_space(SENDER_AVATAR + 8.0);
+                ui.add_space(-5.0);
+                // Chips hang off the bubble's far side: the right of a
+                // received message, the left of one we sent.
+                let bubble_width = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<Rect>(id.with("rect")))
+                    .map_or(max_width, |rect| rect.width());
+                let lead = if with_avatar {
+                    SENDER_AVATAR + 8.0
+                } else {
+                    0.0
+                };
+                let layout = if own {
+                    Layout::left_to_right(Align::Center)
+                } else {
+                    Layout::right_to_left(Align::Center)
+                };
+                ui.allocate_ui_with_layout(vec2(lead + bubble_width, 0.0), layout, |ui| {
+                    // A right-to-left row lays its first item last.
+                    let mut shown = members
+                        .iter()
+                        .filter(|member| !member.reactions.is_empty())
+                        .collect::<Vec<_>>();
+                    if !own {
+                        shown.reverse();
                     }
-                    for member in members.iter().filter(|member| !member.reactions.is_empty()) {
+                    for member in shown {
                         reactions(ui, view, member, actions);
                     }
                 });
@@ -6428,65 +6480,81 @@ fn reference_footer_marks(
     }
 }
 
+/// The message's reactions as one pill: its four most used emoji, with no
+/// counts. Clicking it lists who reacted with what.
 fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mut Vec<Action>) {
     let palette = view.palette;
-    let mut counts: Vec<(String, u32, bool, Vec<String>)> = Vec::new();
-    for reaction in &message.reactions {
-        let who = if reaction.from_me {
-            "You".to_owned()
+    let counts = super::reaction_list::tally(message);
+    let mine = message.reactions.iter().any(|reaction| reaction.from_me);
+    // The pill fades in as it arrives, and again when its emoji change.
+    let arrived = ui.ctx().animate_bool_with_time_and_easing(
+        egui::Id::new(("reaction-chips", &view.chat.id, &message.id, counts.len())),
+        true,
+        if crate::motion::screen_reader_attached(ui.ctx()) {
+            0.0
         } else {
-            (view.names_or)(&reaction.sender, None)
-        };
-        match counts
-            .iter_mut()
-            .find(|(emoji, _, _, _)| *emoji == reaction.emoji)
-        {
-            Some((_, count, mine, names)) => {
-                *count += 1;
-                *mine |= reaction.from_me;
-                names.push(who);
-            }
-            None => counts.push((reaction.emoji.clone(), 1, reaction.from_me, vec![who])),
-        }
+            0.18
+        },
+        egui::emath::easing::quadratic_out,
+    );
+    ui.multiply_opacity(arrived);
+    let shown: Vec<&str> = counts
+        .iter()
+        .take(4)
+        .map(|(emoji, _)| emoji.as_str())
+        .collect();
+    let line = widgets::line(
+        ui,
+        &shown.join(" "),
+        theme::regular(13.5),
+        palette.text,
+        240.0,
+        1,
+    );
+    let size = line.size() + vec2(18.0, 10.0);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&view.chat.id, &message.id).with("pill-rect"),
+            rect,
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        // Lifted as gently as a hovered chat-list row, so the pill
+        // stands off the bubble it overlaps.
+        let mut shadow = palette.bubble_shadow();
+        shadow.color = shadow.color.gamma_multiply(0.6);
+        ui.painter()
+            .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
+        // No outline: a pill holding our own reaction is tinted with the accent.
+        ui.painter().rect_filled(
+            rect,
+            rect.height() / 2.0,
+            if mine {
+                palette.overlay.lerp_to_gamma(palette.accent, 0.35)
+            } else {
+                palette.overlay
+            },
+        );
+        line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
     }
-    ui.spacing_mut().item_spacing.x = 3.0;
-    for (emoji, count, mine, names) in counts {
-        let label = if count > 1 {
-            format!("{emoji} {count}")
-        } else {
-            emoji.clone()
-        };
-        let line = widgets::line(ui, &label, theme::regular(13.0), palette.text, 200.0, 1);
-        let size = line.size() + vec2(12.0, 6.0);
-        let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-        if ui.is_rect_visible(rect) {
-            // Lifted as gently as a hovered chat-list row, so the pill
-            // stands off the bubble it overlaps.
-            let mut shadow = palette.bubble_shadow();
-            shadow.color = shadow.color.gamma_multiply(0.6);
-            ui.painter()
-                .add(shadow.as_shape(rect, CornerRadius::from(rect.height() / 2.0)));
-            ui.painter()
-                .rect_filled(rect, rect.height() / 2.0, palette.overlay);
-            ui.painter().rect_stroke(
-                rect,
-                rect.height() / 2.0,
-                Stroke::new(1.0, if mine { palette.accent } else { palette.chat }),
-                egui::StrokeKind::Inside,
-            );
-            line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
-        }
-        let response = response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .on_hover_text(names.join(", "));
-        if response.clicked() {
-            // Clicking our reaction removes it; clicking another adds it.
-            actions.push(Action::React {
-                chat: view.chat.id.clone(),
-                message: message.id.clone(),
-                emoji: if mine { String::new() } else { emoji },
-            });
-        }
+    let names: Vec<String> = message
+        .reactions
+        .iter()
+        .map(|reaction| {
+            let who = if reaction.from_me {
+                "You".to_owned()
+            } else {
+                (view.names_or)(&reaction.sender, None)
+            };
+            format!("{} {who}", reaction.emoji)
+        })
+        .collect();
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(names.join("\n"));
+    if response.clicked() {
+        actions.push(super::reaction_list::open(&view.chat.id, &message.id));
     }
 }
 
