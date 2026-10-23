@@ -607,7 +607,7 @@ mod tests {
         let big = vec![0u8; (MAX_ENTRY_BYTES + 1) as usize];
         let mut budget = MAX_PACK_BYTES;
         assert!(read_capped(&big[..], &mut budget).is_none());
-        let ok = vec![0u8; 10];
+        let ok = [0u8; 10];
         assert_eq!(read_capped(&ok[..], &mut budget).map(|b| b.len()), Some(10));
         assert_eq!(budget, MAX_PACK_BYTES - 10);
     }
