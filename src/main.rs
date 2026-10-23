@@ -792,7 +792,12 @@ impl Shell {
         } else {
             28.0 / ctx.zoom_factor()
         };
-        fastframe_titlebar::align_traffic_lights(frame, ctx, title_bar);
+        // In fullscreen the OS hides the caption buttons, so skip aligning
+        // them: the library would still reserve vertical space for them and
+        // push the header content down.
+        if !ctx.input(|i| i.viewport().fullscreen.unwrap_or(false)) {
+            fastframe_titlebar::align_traffic_lights(frame, ctx, title_bar);
+        }
         zeus::backdrop::apply(frame, &app.palette, self.transparent);
         // A message carried out of the window last frame: its files go on
         // to the system's drag and drop.
