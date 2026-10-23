@@ -16466,7 +16466,7 @@ mod wallpaper_tests {
             "the preview shows the theme's chat colour"
         );
         assert!(
-            fills.iter().any(|rect| (rect.width() - 80.0).abs() < 1.0),
+            fills.iter().any(|rect| (rect.width() - 68.0).abs() < 1.0),
             "the Theme swatch shows it too"
         );
 

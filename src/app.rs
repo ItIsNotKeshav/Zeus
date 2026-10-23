@@ -1876,6 +1876,7 @@ impl App {
             // Messages draws its conversations on a plain background.
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
+            style: self.settings.doodle_style,
             image: self
                 .account()
                 .settings
@@ -8216,6 +8217,11 @@ impl App {
             }
             Action::SetWallpaperDoodles(show) => {
                 self.settings.show_wallpaper = show;
+                self.mark_settings_dirty();
+            }
+            Action::SetDoodleStyle(style) => {
+                self.settings.doodle_style = style;
+                self.settings.show_wallpaper = true;
                 self.mark_settings_dirty();
             }
             Action::PickWallpaperImage => self.backend.send(Command::PickWallpaperImage),

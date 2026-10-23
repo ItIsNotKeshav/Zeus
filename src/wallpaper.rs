@@ -1,15 +1,27 @@
 //! The chat wallpaper: a colour, the default doodles over it, or an image of
 //! the reader's own in place of both.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
 use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 
-/// The default doodle tile, drawn from Lucide icons (ISC, see
-/// `assets/icons/LICENSE.txt`). It is embedded so the wallpaper works offline
-/// and does not depend on a third-party request at runtime.
-const DEFAULT_SVG: &[u8] = include_bytes!("../assets/wallpaper.svg");
+pub use crate::settings::DoodleStyle;
+
+/// A doodle tile, drawn from Lucide icons (ISC, see
+/// `assets/icons/LICENSE.txt`). They are embedded so the wallpaper works
+/// offline and does not depend on a third-party request at runtime.
+fn svg(style: DoodleStyle) -> &'static [u8] {
+    match style {
+        DoodleStyle::Classic => include_bytes!("../assets/wallpaper.svg"),
+        DoodleStyle::Nature => include_bytes!("../assets/doodles/nature.svg"),
+        DoodleStyle::Space => include_bytes!("../assets/doodles/space.svg"),
+        DoodleStyle::Food => include_bytes!("../assets/doodles/food.svg"),
+        DoodleStyle::Travel => include_bytes!("../assets/doodles/travel.svg"),
+        DoodleStyle::Play => include_bytes!("../assets/doodles/play.svg"),
+    }
+}
 
 /// The longest side a wallpaper image keeps, which bounds its texture to about
 /// 26 MB even for a square picture while staying sharp on a 1440p display.
@@ -19,7 +31,7 @@ pub const MAX_SIDE: u32 = 2560;
 const EXTENSIONS: [&str; 4] = ["jpg", "png", "webp", "gif"];
 
 #[derive(Clone, Default)]
-struct Cache(Arc<Mutex<Option<TextureHandle>>>);
+struct Cache(Arc<Mutex<HashMap<DoodleStyle, TextureHandle>>>);
 
 /// The uploaded custom image and which image it was made from.
 #[derive(Clone)]
@@ -35,6 +47,8 @@ pub struct Look {
     pub color: Color32,
     /// Whether the doodles are drawn over the colour.
     pub doodles: bool,
+    /// Which doodles those are.
+    pub style: DoodleStyle,
     /// A decoded image of the reader's, which wins over colour and doodles.
     pub image: Option<(u64, Arc<ColorImage>)>,
 }
@@ -66,11 +80,16 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
         None => forget_image(ui.ctx()),
     }
 
-    if !look.doodles {
-        return;
+    if look.doodles {
+        paint_doodles(ui, rect, look.color, look.style);
     }
+}
 
-    let Some(texture) = texture(ui.ctx()) else {
+/// The doodles of `style` over `rect`, tinted for `background`, which the
+/// caller has already painted.
+pub fn paint_doodles(ui: &egui::Ui, rect: Rect, background: Color32, style: DoodleStyle) {
+    let painter = ui.painter().with_clip_rect(rect);
+    let Some(texture) = texture(ui.ctx(), style) else {
         return;
     };
 
@@ -79,7 +98,7 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
         return;
     }
 
-    let line = doodle_ink(look.color);
+    let line = doodle_ink(background);
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
     let origin = pos2(0.0, 0.0);
     let first_x = origin.x + (rect.left() - origin.x).div_euclid(tile.x) * tile.x;
@@ -179,11 +198,12 @@ pub fn forget_image(ctx: &egui::Context) {
 #[cfg(test)]
 pub(crate) fn texture_ids(ctx: &egui::Context) -> (Option<egui::TextureId>, egui::TextureId) {
     let image = ctx.data(|data| data.get_temp::<ImageTexture>(image_texture_id()));
-    let doodles = texture(ctx).expect("the doodle tile renders");
+    let doodles = texture(ctx, DoodleStyle::Classic).expect("the doodle tile renders");
     (image.map(|image| image.texture.id()), doodles.id())
 }
 
-fn texture(ctx: &egui::Context) -> Option<TextureHandle> {
+/// The tile of `style`, rendered once per window.
+pub fn texture(ctx: &egui::Context, style: DoodleStyle) -> Option<TextureHandle> {
     let cache = ctx.data_mut(|data| {
         data.get_temp_mut_or_default::<Cache>(egui::Id::new("chat-wallpaper"))
             .clone()
@@ -192,20 +212,24 @@ fn texture(ctx: &egui::Context) -> Option<TextureHandle> {
         .0
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(texture) = cached.as_ref() {
+    if let Some(texture) = cached.get(&style) {
         return Some(texture.clone());
     }
 
-    let image = rasterize()?;
-    let texture = ctx.load_texture("chat-wallpaper", image, TextureOptions::LINEAR);
-    *cached = Some(texture.clone());
+    let image = rasterize(style)?;
+    let texture = ctx.load_texture(
+        format!("chat-wallpaper-{style:?}"),
+        image,
+        TextureOptions::LINEAR,
+    );
+    cached.insert(style, texture.clone());
     Some(texture)
 }
 
-fn rasterize() -> Option<ColorImage> {
+fn rasterize(style: DoodleStyle) -> Option<ColorImage> {
     // The source uses currentColor. Render a white mask once, then use the
     // painter tint to adapt the line colour and opacity to the active theme.
-    let source = String::from_utf8_lossy(DEFAULT_SVG).replace("currentColor", "#ffffff");
+    let source = String::from_utf8_lossy(svg(style)).replace("currentColor", "#ffffff");
     let tree =
         resvg::usvg::Tree::from_data(source.as_bytes(), &resvg::usvg::Options::default()).ok()?;
     let size = tree.size();
@@ -401,10 +425,12 @@ mod tests {
     use egui::vec2;
 
     #[test]
-    fn default_tile_keeps_its_intrinsic_dimensions() {
-        let image = rasterize().expect("default wallpaper SVG renders");
-        assert_eq!(image.size, [374, 666]);
-        assert!(image.pixels.iter().any(|pixel| pixel.a() != 0));
+    fn every_doodle_tile_keeps_its_intrinsic_dimensions() {
+        for style in DoodleStyle::ALL {
+            let image = rasterize(style).expect("doodle SVG renders");
+            assert_eq!(image.size, [374, 666], "{style:?}");
+            assert!(image.pixels.iter().any(|pixel| pixel.a() != 0), "{style:?}");
+        }
     }
 
     #[test]

@@ -158,6 +158,43 @@ impl FontChoice {
     }
 }
 
+/// The doodle pattern drawn over the wallpaper colour. Each is a tile of
+/// Lucide icons (ISC), see `assets/doodles` and `scripts/generate-doodles.py`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DoodleStyle {
+    /// The everyday icons the wallpaper has always had.
+    #[default]
+    Classic,
+    Nature,
+    Space,
+    Food,
+    Travel,
+    Play,
+}
+
+impl DoodleStyle {
+    pub const ALL: [Self; 6] = [
+        Self::Classic,
+        Self::Nature,
+        Self::Space,
+        Self::Food,
+        Self::Travel,
+        Self::Play,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Nature => "Nature",
+            Self::Space => "Space",
+            Self::Food => "Food",
+            Self::Travel => "Travel",
+            Self::Play => "Play",
+        }
+    }
+}
+
 /// Background colours offered by WhatsApp's wallpaper picker, after the
 /// active theme's own chat colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -555,6 +592,8 @@ pub struct Settings {
     pub auto_download: bool,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
+    /// Which doodles `show_wallpaper` draws.
+    pub doodle_style: DoodleStyle,
     /// Colour selected in the wallpaper picker.
     pub wallpaper_color: WallpaperColor,
     /// Colour selected for the dark wallpaper picker.
@@ -683,6 +722,7 @@ impl Default for Settings {
             send_typing: true,
             auto_download: true,
             show_wallpaper: true,
+            doodle_style: DoodleStyle::Classic,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
