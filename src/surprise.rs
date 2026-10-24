@@ -450,22 +450,24 @@ mod tests {
         let mut surprise = Surprise::default();
         for (kind, seconds) in [(Kind::Ghost, GHOST_SECONDS), (Kind::Candy, CANDY_SECONDS)] {
             let frame = |time: f64, surprise: &mut Surprise| {
-                let _ = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         time: Some(time),
                         ..Default::default()
                     },
                     |_| surprise.paint(&ctx),
                 );
+                output.textures_delta.clear();
             };
             frame(100.0, &mut surprise);
-            let _ = ctx.run_ui(
+            let mut output = ctx.run_ui(
                 egui::RawInput {
                     time: Some(100.0),
                     ..Default::default()
                 },
                 |_| surprise.start(&ctx, kind),
             );
+            output.textures_delta.clear();
             assert!(surprise.running());
             frame(100.0 + seconds / 2.0, &mut surprise);
             assert!(surprise.running());
