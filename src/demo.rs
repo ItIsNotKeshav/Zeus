@@ -14647,6 +14647,12 @@ mod tests {
                 egui::Shape::Rect(rect) if (rect.rect.width() - 4.0).abs() < 0.01 => {
                     out.push(rect.fill)
                 }
+                // The bar is cut to the card's rounded corners.
+                egui::Shape::Path(path)
+                    if (egui::Rect::from_points(&path.points).width() - 4.0).abs() < 0.01 =>
+                {
+                    out.push(path.fill)
+                }
                 egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| bars(shape, out)),
                 _ => {}
             }

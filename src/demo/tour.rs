@@ -343,8 +343,10 @@ fn script() -> Vec<Cue> {
     );
     add(33.0, Move(Label("Zeus")));
     add(33.35, Click(left));
-    add(33.5, Move(Label("Light")));
-    add(33.85, Click(left));
+    // The mode sits below the Halloween row: bring it up.
+    add(33.4, Wheel(-200.0));
+    add(33.65, Move(Label("Light")));
+    add(34.05, Click(left));
     add(
         34.5,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
@@ -1167,7 +1169,9 @@ mod tests {
         assert_eq!(app.open_chat.as_deref(), Some(group.as_str()));
         // The chat list's Info opens that chat and its panel together.
         app.open_chat_menu = Some(ada.clone());
-        for _ in 0..3 {
+        // Long enough for the menu's opening animation to finish, so its
+        // items are where they take clicks.
+        for _ in 0..30 {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
         click(&mut app, &mut tour, &ctx, "Info");
