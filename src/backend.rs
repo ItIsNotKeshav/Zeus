@@ -1058,7 +1058,7 @@ pub enum Event {
     /// Every label in creation order. Chats carry the labels they wear.
     Labels(Vec<crate::model::Label>),
     /// Unsent text stored for each chat, sent once at startup.
-    Drafts(Vec<(ChatId, String)>),
+    Drafts(Vec<(ChatId, String, i64)>),
     /// The starred messages of one chat, for the mark in the conversation.
     Stars {
         chat: ChatId,

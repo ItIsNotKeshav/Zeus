@@ -4077,7 +4077,10 @@ pub(crate) mod tests {
         assert!(archive.chat(lid).unwrap().is_none());
         assert!(archive.messages(lid, None, 50).unwrap().is_empty());
         assert_eq!(archive.chat_labels(phone).unwrap(), [label.id]);
-        assert_eq!(archive.drafts().unwrap(), [(phone.into(), "unsent".into())]);
+        assert_eq!(
+            archive.drafts().unwrap(),
+            [(phone.into(), "unsent".into(), 100)]
+        );
         assert_eq!(archive.read_through(phone).unwrap(), None);
         let ephemeral_timestamp: Option<i64> = archive
             .connection
