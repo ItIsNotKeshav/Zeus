@@ -766,6 +766,8 @@ const SHADOW_DENSITY: f32 = 1.04;
 const DARK_EDGE_TINT: f32 = 0.128;
 /// The light palette's shadow opacity, the most a raised surface casts.
 const LIGHT_SHADOW_ALPHA: u8 = 50;
+/// Hover and selection on a light list: `#000` at 5% (`13/255`).
+pub const LIGHT_ROW: Color32 = Color32::from_black_alpha(13);
 /// How far a light theme's raised edge moves from the surface toward white.
 const LIGHT_EDGE_TINT: f32 = 0.48;
 /// How thick the raised edge is, in points.

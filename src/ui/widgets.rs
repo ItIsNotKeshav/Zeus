@@ -1349,6 +1349,12 @@ pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
             .rect_filled(card, radius, palette.tint(strength));
         return;
     }
+    // A light list stays flat. The shadow under a hovered or selected row
+    // reads as a grey halo, so both states are black at 5%.
+    if !palette.dark {
+        ui.painter().rect_filled(card, radius, theme::LIGHT_ROW);
+        return;
+    }
     // Raised like a message bubble, only more gently: the list sits on a
     // flat panel, and a hovered row should not jump out.
     let mut shadow = palette.bubble_shadow();
@@ -1573,13 +1579,14 @@ pub fn bubble_corners(tail: Option<Side>) -> CornerRadius {
     corners
 }
 
-/// A message bubble's backdrop: its soft shadow, its fill, and on the first
-/// message of a run a small tail at the top corner toward the sender, as the
-/// phone draws it. A handful of vertices; bubbles off screen are culled
-/// before tessellation. `pixels_per_point` sets the soft edge the Messages
-/// style draws for itself, and `screen` is the span of the view the bubble
-/// scrolls in, down which Messages shades your own balloons; WhatsApp's
-/// style ignores both.
+/// A message bubble's backdrop: its fill, and on a dark chat the soft shadow
+/// under it. A light chat leaves the bubble flat. On the first message of a
+/// run, a small tail at the top corner toward the sender, as the phone draws
+/// it. A handful of vertices; bubbles off screen are culled before
+/// tessellation. `pixels_per_point` sets the soft edge the Messages style
+/// draws for itself, and `screen` is the span of the view the bubble scrolls
+/// in, down which Messages shades your own balloons; WhatsApp's style
+/// ignores both.
 pub fn bubble_shape(
     palette: &Palette,
     rect: Rect,
@@ -1606,8 +1613,13 @@ pub fn bubble_shape(
         return egui::Shape::mesh(fill_outline(&outline, color, 1.0 / pixels_per_point));
     }
     let corners = bubble_corners(tail);
-    let shadow = palette.bubble_shadow();
-    let mut shapes = vec![egui::Shape::Rect(shadow.as_shape(rect, corners))];
+    // Light bubbles stay flat. The lift shadow reads as a grey halo on a
+    // light chat.
+    let shadow = palette.dark.then(|| palette.bubble_shadow());
+    let mut shapes = Vec::new();
+    if let Some(shadow) = shadow {
+        shapes.push(egui::Shape::Rect(shadow.as_shape(rect, corners)));
+    }
     // The tail overlaps the bubble by a few points so no seam shows where
     // the two anti-aliased edges meet.
     let tail_points = tail.map(|side| {
@@ -1628,7 +1640,7 @@ pub fn bubble_shape(
         }
         points
     });
-    if let Some(points) = &tail_points {
+    if let Some((points, shadow)) = tail_points.as_ref().zip(shadow) {
         let offset = vec2(shadow.offset[0].into(), shadow.offset[1].into());
         let points: Vec<_> = points.iter().map(|point| *point + offset).collect();
         shapes.push(soft_triangle(&points, shadow.color, shadow.blur.into()));
@@ -2094,8 +2106,11 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
         } else {
             palette.panel
         };
-        ui.painter()
-            .add(palette.bubble_shadow().as_shape(rect, radius));
+        // Same flat treatment as a light bubble: no lift shadow.
+        if palette.dark {
+            ui.painter()
+                .add(palette.bubble_shadow().as_shape(rect, radius));
+        }
         ui.painter().rect_filled(
             rect.translate(vec2(0.0, -theme::RAISED_EDGE)),
             radius,
@@ -2616,30 +2631,81 @@ mod tests {
         );
     }
 
-    /// WhatsApp's bubbles are drawn exactly as before the Messages balloon
-    /// was rebuilt: every shape, point and colour of a tailed and a tailless
-    /// bubble, in both palettes, hashes to the value recorded then.
+    /// A light WhatsApp bubble and date chip cast no shadow. A hovered or
+    /// selected list row is flat black at 5%, in either state. Dark keeps
+    /// the lift.
     #[test]
-    fn whatsapp_bubbles_are_unchanged() {
+    fn light_messages_and_rows_are_flat() {
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
-        // FNV-1a, stable across toolchains, over every shape's debug text.
-        let mut fingerprint: u64 = 0xcbf2_9ce4_8422_2325;
-        for palette in [Palette::dark(), Palette::light()] {
-            for tail in [None, Some(Side::Left), Some(Side::Right)] {
-                for (fill, ppp) in [(palette.bubble_out, 1.0), (palette.bubble_in, 1.5)] {
-                    let shape = bubble_shape(&palette, rect, fill, tail, ppp, SCREEN);
-                    for byte in format!("{shape:?}").bytes() {
-                        fingerprint = (fingerprint ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
-                    }
-                }
-            }
+        let light = Palette::light();
+        let shadow = light.bubble_shadow().color;
+        for tail in [None, Some(Side::Left), Some(Side::Right)] {
+            let shape = bubble_shape(&light, rect, light.bubble_out, tail, 2.0, SCREEN);
+            assert!(!uses_color(&shape, shadow), "light bubble casts a shadow");
         }
-        println!("whatsapp bubble fingerprint {fingerprint:#x}");
-        assert_eq!(fingerprint, WHATSAPP_BUBBLES);
+        let dark = Palette::dark();
+        let shape = bubble_shape(&dark, rect, dark.bubble_in, None, 2.0, SCREEN);
+        assert!(
+            uses_color(&shape, dark.bubble_shadow().color),
+            "a dark bubble keeps its shadow"
+        );
+
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            chip(ui, &light, "Thursday, 15 October 2026");
+        });
+        output.textures_delta.clear();
+        assert!(
+            output
+                .shapes
+                .iter()
+                .all(|clipped| !uses_color(&clipped.shape, shadow)),
+            "a light date chip casts a shadow"
+        );
+
+        let card = Rect::from_min_size(pos2(8.0, 8.0), vec2(240.0, 64.0));
+        for color in [light.surface_hover, light.surface_active] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                highlight_card(ui, &light, card, color);
+            });
+            output.textures_delta.clear();
+            let fills: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(shape) => Some((shape.rect, shape.fill)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(fills, vec![(card, theme::LIGHT_ROW)]);
+        }
+
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            highlight_card(ui, &dark, card, dark.surface_active);
+        });
+        output.textures_delta.clear();
+        let mut lifted = dark.bubble_shadow();
+        lifted.color = lifted.color.gamma_multiply(0.6);
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|clipped| uses_color(&clipped.shape, lifted.color)),
+            "a dark row keeps its shadow"
+        );
     }
 
-    /// The fingerprint [`whatsapp_bubbles_are_unchanged`] recorded.
-    const WHATSAPP_BUBBLES: u64 = 0x179b_3424_7615_2b9a;
+    fn uses_color(shape: &egui::Shape, color: Color32) -> bool {
+        match shape {
+            egui::Shape::Rect(shape) => shape.fill == color,
+            egui::Shape::Path(path) => path.fill == color,
+            egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|vertex| vertex.color == color),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| uses_color(shape, color)),
+            _ => false,
+        }
+    }
 
     /// Every shape-checking test below draws into this view.
     const SCREEN: egui::Rangef = egui::Rangef {
