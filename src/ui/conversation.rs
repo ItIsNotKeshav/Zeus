@@ -2209,8 +2209,6 @@ fn strip_gap(ui: &mut egui::Ui) {
 /// Corner radius of the strips above the composer and of its suggestion
 /// lists: rounder than a bubble, closer to the composer's own ends.
 const STRIP_RADIUS: u8 = 22;
-/// Space between a reply strip's edge and the quoted block inside it.
-const REPLY_INSET: i8 = 6;
 
 /// The frame of a strip above the composer (reply, edit, unsent voice).
 /// Like the composer it takes the incoming bubble's colour, which in the
@@ -2312,57 +2310,37 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
     let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
-    // The quoted message sits in a block inset by REPLY_INSET, its corners
-    // concentric with the strip's, its bar cut to them.
-    let frame = strip_frame(&palette).inner_margin(Margin::same(REPLY_INSET));
-    let strip = widgets::raised(ui, &palette, frame, |ui| {
+    let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width().max(0.0));
-        let block = Frame::new()
-            .fill(palette.accent.gamma_multiply(0.12))
-            .corner_radius(CornerRadius::same(STRIP_RADIUS - REPLY_INSET as u8))
-            .inner_margin(Margin {
-                left: QUOTE_BAR as i8 + 8,
-                right: 6,
-                top: 4,
-                bottom: 4,
-            })
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width().max(0.0));
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 1.0;
-                        ui.set_max_width((ui.available_width() - 40.0).max(0.0));
-                        widgets::rich_text(
-                            ui,
-                            &format!("Replying to {who}"),
-                            theme::semibold(12.5),
-                            palette.accent,
-                        );
-                        widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
-                    });
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::X,
-                            16.0,
-                            palette.secondary,
-                            palette.text,
-                            "Cancel reply (Esc)",
-                        )
-                        .clicked()
-                        {
-                            app.actions.push(Action::CancelReply);
-                        }
-                    });
-                });
+        ui.horizontal(|ui| {
+            let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
+            ui.painter().rect_filled(bar, 2.0, palette.accent);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.set_max_width((ui.available_width() - 40.0).max(0.0));
+                widgets::rich_text(
+                    ui,
+                    &format!("Replying to {who}"),
+                    theme::semibold(12.5),
+                    palette.accent,
+                );
+                widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
             });
-        widgets::quote_bar(
-            ui.painter(),
-            block.response.rect,
-            f32::from(STRIP_RADIUS - REPLY_INSET as u8),
-            QUOTE_BAR,
-            palette.accent,
-        );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if theme::icon_button(
+                    ui,
+                    Icon::X,
+                    16.0,
+                    palette.secondary,
+                    palette.text,
+                    "Cancel reply (Esc)",
+                )
+                .clicked()
+                {
+                    app.actions.push(Action::CancelReply);
+                }
+            });
+        });
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
