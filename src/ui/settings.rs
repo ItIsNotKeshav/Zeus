@@ -736,6 +736,14 @@ fn sections(app: &App) -> Vec<Section> {
             |settings| &mut settings.notification_content,
         );
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
+        notifications.toggle(
+            translated(locale, "Notification cooldown"),
+            translated(
+                locale,
+                "When many messages arrive at once, such as when the app opens, only the first makes a sound and each chat notifies once.",
+            ),
+            |settings| &mut settings.notification_cooldown,
+        );
         notifications.row(
             translated(locale, "Limit repeat notifications"),
             translated(

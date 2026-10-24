@@ -2092,6 +2092,19 @@ impl App {
                 .limit_notifications
                 .applies(chat.is_group());
         let account = self.account().id.clone();
+        // A flood of messages, as when the app opens, sounds once and shows
+        // one notification per chat. Mentions of us still get through.
+        let mut quiet = false;
+        if self.settings.notification_cooldown {
+            match self
+                .notifications
+                .burst(&account, chat_id, std::time::Instant::now())
+            {
+                crate::notify::Burst::Skip if !for_us => return,
+                crate::notify::Burst::Show { sound: false } => quiet = true,
+                _ => {}
+            }
+        }
         if !self
             .notifications
             .allow(&account, chat_id, std::time::Instant::now(), limited)
@@ -2102,7 +2115,7 @@ impl App {
             return;
         };
         if self.app_lock.is_locked() || !self.settings.notification_content {
-            self.notify_without_content(chat_id, chat.is_group(), &message.id, limited);
+            self.notify_without_content(chat_id, chat.is_group(), &message.id, limited, quiet);
             return;
         }
         let (name, is_group) = (self.chat_title(chat), chat.is_group());
@@ -2119,7 +2132,10 @@ impl App {
             .or_else(|| self.avatar(&sender))
             .or_else(|| self.cached_avatar(&sender));
         let waker = self.waker.clone();
-        let sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
+        let mut sound = notification_sound(&self.settings, chat_sound, is_group, for_us);
+        if quiet && !for_us {
+            sound = NotificationSound::None;
+        }
         self.notifications.show(
             title,
             body,
@@ -2150,10 +2166,14 @@ impl App {
         is_group: bool,
         message: &str,
         limited: bool,
+        quiet: bool,
     ) {
         self.wants_attention = true;
         let (title, body) = crate::notify::locked_lines(self.locale);
-        let sound = notification_sound(&self.settings, None, is_group, false);
+        let mut sound = notification_sound(&self.settings, None, is_group, false);
+        if quiet {
+            sound = NotificationSound::None;
+        }
         let waker = self.waker.clone();
         self.notifications.show(
             title,
@@ -21411,7 +21431,23 @@ mod app_lock_tests {
     fn unlocked_app() -> App {
         let mut app = app_with(settings(Some(PASSWORD)));
         app.app_lock.release();
+        app.settings.notification_cooldown = false;
         app
+    }
+
+    #[test]
+    fn a_flood_of_messages_sounds_once_and_notifies_once_per_chat() {
+        let mut app = unlocked_app();
+        app.settings.notification_cooldown = true;
+        let message = incoming(&mut app);
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
+        assert_ne!(
+            app.notifications.shown[0].sound,
+            crate::settings::NotificationSound::None
+        );
     }
 
     fn manual_clock(app: &mut App) -> Arc<Mutex<Instant>> {
