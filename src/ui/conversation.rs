@@ -5637,9 +5637,17 @@ fn same_run(message: &Message, next: &Message) -> bool {
 /// A Nothing bubble's room around its text.
 const NOTHING_TEXT_MARGIN: Margin = Margin::symmetric(14, 10);
 
+/// Room between a call bubble's edge and the chip that holds its glyph
+/// and words.
+const CALL_BUBBLE_PAD: i8 = 4;
+
 /// Room around a bubble's contents: none around a picture that stands
 /// without one, Messages' insets in its style, WhatsApp's otherwise.
+/// A call keeps four points, so its chip sits just inside the bubble.
 fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Margin {
+    if matches!(message.content, Content::Call { .. }) {
+        return Margin::same(CALL_BUBBLE_PAD);
+    }
     if bare_picture(palette, message) {
         Margin::ZERO
     } else if palette.bubbles == theme::BubbleStyle::Messages {
@@ -5738,7 +5746,9 @@ fn bubble_frame(
             // Cards share the bubble's settled width: at least CARD_WIDTH and
             // no more than the cap. Text spans that width and stays left-aligned.
             // Bubbles without cards use the natural text width.
-            let inset = if !bare_picture(&palette, message)
+            let inset = if matches!(message.content, Content::Call { .. }) {
+                f32::from(CALL_BUBBLE_PAD) * 2.0
+            } else if !bare_picture(&palette, message)
                 && palette.bubbles == theme::BubbleStyle::Messages
             {
                 MESSAGES_BUBBLE_MARGIN.sum().x
@@ -6291,13 +6301,23 @@ const CALL_BADGE_GAP: f32 = 10.0;
 const CALL_LINE_GAP: f32 = 2.0;
 /// Height of the time's line, as [`footer`] draws it.
 const FOOTER_HEIGHT: f32 = 15.0;
+/// Room inside the chip, beside the glyph and the words.
+const CALL_CHIP_PAD_X: f32 = 8.0;
+/// Room inside the chip, above and below the glyph and the words.
+const CALL_CHIP_PAD_Y: f32 = 4.0;
+/// Corner of the chip. The bubble's own radius is 10, and the chip sits
+/// four points inside it.
+const CALL_CHIP_RADIUS: u8 = 6;
+/// `#000` at 5%. 13 is `0.05 * 255`, rounded.
+const CALL_CHIP_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 13);
 
-/// Draws a call entry as WhatsApp does: the glyph in a tinted disc, centred
-/// on the title and the detail beside it, and the time at the end of the
-/// detail's line when it fits there. Painted at measured positions inside one
-/// allocation, so an own bubble's right-to-left layout cannot reorder or
-/// stretch it. Returns the time's slot, or `None` when the time needs a line
-/// of its own.
+/// Draws a call entry: the glyph and the words in a chip, the time on the
+/// detail's line when there is one and on the title's line when there is
+/// not. A tap calls back the same way, with video when the call carried it.
+/// Painted at measured positions inside one allocation, so an own bubble's
+/// right-to-left layout cannot reorder or stretch it. Returns the time's
+/// slot, or `None` when the time needs a line of its own.
+#[expect(clippy::too_many_arguments)]
 fn call_entry(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -6306,6 +6326,10 @@ fn call_entry(
     tint: Color32,
     width: f32,
     reserve: f32,
+    chat: &str,
+    message_id: &str,
+    can_call: bool,
+    actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let title = entry.title(locale);
     let detail = entry.detail(locale);
@@ -6316,22 +6340,33 @@ fn call_entry(
         ui.painter()
             .layout_no_wrap(detail.clone(), theme::regular(12.5), palette.secondary)
     });
+    let title_width = title_galley.size().x;
     let detail_width = detail_galley.as_ref().map_or(0.0, |galley| galley.size().x);
-    // The time follows the detail on its line, 8 points after it as after a
-    // text's last line; with no detail it has that line to itself.
-    let gap = if detail_galley.is_some() { 8.0 } else { 0.0 };
+    // The time follows the words on their line, 8 points after them. With a
+    // detail that line is the detail's; without one it is the title's, so a
+    // missed call's clock lines up with its label.
     let lead = CALL_BADGE + CALL_BADGE_GAP;
-    let inline = lead + detail_width + gap + reserve <= width;
-    let second_width = if inline {
-        detail_width + gap + reserve
+    let usable = (width - CALL_CHIP_PAD_X * 2.0).max(0.0);
+    let inline = if detail_galley.is_some() {
+        lead + detail_width + 8.0 + reserve <= usable
     } else {
-        detail_width
+        lead + title_width + 8.0 + reserve <= usable
+    };
+    let text_span = if detail_galley.is_none() {
+        if inline {
+            title_width + 8.0 + reserve
+        } else {
+            title_width
+        }
+    } else if inline {
+        title_width.max(detail_width + 8.0 + reserve)
+    } else {
+        title_width.max(detail_width)
     };
     let second_height = match (&detail_galley, inline) {
         (Some(galley), true) => galley.size().y.max(FOOTER_HEIGHT),
         (Some(galley), false) => galley.size().y,
-        (None, true) => FOOTER_HEIGHT,
-        (None, false) => 0.0,
+        (None, _) => 0.0,
     };
     let block_height = title_galley.size().y
         + if second_height > 0.0 {
@@ -6339,16 +6374,19 @@ fn call_entry(
         } else {
             0.0
         };
-    let content_width = lead + title_galley.size().x.max(second_width);
+    let content_width = lead + text_span + CALL_CHIP_PAD_X * 2.0;
     // Span the bubble when a sender's name above made it wider, so the time
     // keeps to the bubble's end as it does under text.
     let row_width = content_width
         .max(ui.min_rect().width())
         .min(width.max(content_width));
-    let (rect, response) = ui.allocate_exact_size(
-        vec2(row_width, block_height.max(CALL_BADGE)),
-        Sense::hover(),
-    );
+    let row_height = block_height.max(CALL_BADGE) + CALL_CHIP_PAD_Y * 2.0;
+    let sense = if can_call {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(row_width, row_height), sense);
     response.widget_info(|| {
         let label = match &detail {
             Some(detail) => format!("{title}, {detail}"),
@@ -6356,15 +6394,40 @@ fn call_entry(
         };
         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label)
     });
+    if can_call {
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() {
+            let chat = chat.to_owned();
+            actions.push(if entry.video {
+                Action::StartVideoCall(chat)
+            } else {
+                Action::StartCall(chat)
+            });
+        }
+    }
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(bubble_id(chat, message_id).with("call-box"), rect);
+    });
+    let content_left = rect.left() + CALL_CHIP_PAD_X;
+    let content_right = rect.right() - CALL_CHIP_PAD_X;
     let badge = Rect::from_center_size(
-        pos2(rect.left() + CALL_BADGE / 2.0, rect.center().y),
+        pos2(content_left + CALL_BADGE / 2.0, rect.center().y),
         Vec2::splat(CALL_BADGE),
     );
     let text_left = badge.right() + CALL_BADGE_GAP;
     let top = rect.center().y - block_height / 2.0;
     let second_top = top + title_galley.size().y + CALL_LINE_GAP;
     let second_middle = second_top + second_height / 2.0;
+    // No detail: the title, the glyph and the time share one centre. A
+    // detail keeps the time on its own line.
+    let time_middle = if detail_galley.is_some() {
+        second_middle
+    } else {
+        rect.center().y
+    };
     if ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(CALL_CHIP_RADIUS), CALL_CHIP_FILL);
         ui.painter()
             .circle_filled(badge.center(), CALL_BADGE / 2.0, tint.gamma_multiply(0.16));
         theme::paint_icon(
@@ -6383,7 +6446,7 @@ fn call_entry(
     }
     inline.then(|| {
         Rect::from_min_size(
-            pos2(rect.right() - reserve, second_middle - FOOTER_HEIGHT / 2.0),
+            pos2(content_right - reserve, time_middle - FOOTER_HEIGHT / 2.0),
             vec2(reserve, FOOTER_HEIGHT),
         )
     })
@@ -8502,7 +8565,28 @@ fn content(
             } else {
                 palette.accent
             };
-            call_entry(ui, &palette, &entry, view.locale, tint, width, reserve)
+            // Same gate as the call's menu: a group's call while group calls
+            // are on, a person's call, never one among several people with
+            // no group behind it. Selecting keeps the click for the row.
+            let can_call = !view.selecting
+                && match view.chat.kind {
+                    crate::model::ChatKind::Group => crate::calls::group_calls_enabled(),
+                    crate::model::ChatKind::Direct => !group,
+                    _ => false,
+                };
+            call_entry(
+                ui,
+                &palette,
+                &entry,
+                view.locale,
+                tint,
+                width,
+                reserve,
+                &view.chat.id,
+                &message.id,
+                can_call,
+                actions,
+            )
         }
         Content::Revoked => {
             mirrored_row(

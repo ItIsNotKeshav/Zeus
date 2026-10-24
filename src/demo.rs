@@ -16610,10 +16610,11 @@ mod tests {
         }
     }
 
-    /// A call entry draws as WhatsApp's: the glyph's disc centred on the
-    /// title and detail together, the detail under the title at its start,
-    /// and the time on the detail's line at the bubble's end, on both sides
-    /// of a group, where a sender's name heads the bubble.
+    /// A call entry draws the glyph and the words in a chip four points
+    /// inside the bubble. The disc centres on the title and detail together,
+    /// the detail sits under the title at its start, and the time rides the
+    /// detail's line. With no detail the time shares the title's line, on
+    /// both sides of a group, where a sender's name heads the bubble.
     #[test]
     fn a_call_entry_centres_its_glyph_and_tucks_its_time_beside_the_detail() {
         let mut app = app();
@@ -16673,8 +16674,26 @@ mod tests {
                 .expect("the time is drawn");
             assert!(disc.x < title.left(), "{}: the disc leads", message.id);
             assert!(
-                footer.right() <= bubble.right() - 9.0 && footer.bottom() <= bubble.bottom(),
+                footer.right() <= bubble.right() - 4.0 && footer.bottom() <= bubble.bottom(),
                 "{}: the time stays inside the bubble's padding",
+                message.id
+            );
+            let chip = ctx
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(
+                        crate::ui::conversation::bubble_id(chat, &message.id).with("call-box"),
+                    )
+                })
+                .unwrap_or_else(|| panic!("{}'s chip is drawn", message.id));
+            assert!(
+                (chip.left() - bubble.left() - 4.0).abs() <= 1.0
+                    && (bubble.right() - chip.right() - 4.0).abs() <= 1.0,
+                "{}: the chip sits 4 points inside the bubble",
+                message.id
+            );
+            assert!(
+                chip.contains(title.center()),
+                "{}: the title sits in the chip",
                 message.id
             );
             match entry.detail(app.locale) {
@@ -16709,17 +16728,83 @@ mod tests {
                     );
                 }
                 None => {
-                    assert!(footer.top() >= title.bottom(), "{}", message.id);
-                    let block = (title.top() + footer.bottom()) / 2.0;
                     assert!(
-                        (disc.y - block).abs() <= 1.0,
-                        "{}: the disc centres on {}, title and time on {block}",
+                        (footer.center().y - title.center().y).abs() <= 1.0,
+                        "{}: the time shares the title's line",
+                        message.id
+                    );
+                    assert!(
+                        (disc.y - title.center().y).abs() <= 1.0,
+                        "{}: the disc centres on the title at {}, the title on {}",
                         message.id,
-                        disc.y
+                        disc.y,
+                        title.center().y
                     );
                 }
             }
         }
+    }
+
+    /// Tapping a missed call's chip calls back the same way: voice for a
+    /// voice call, video for a video call.
+    #[test]
+    fn tapping_a_missed_call_calls_back_the_same_way() {
+        let ada = SAMPLES[0].id;
+        let tap = |want_video: bool| {
+            let mut app = app();
+            app.open_chat = Some(ada.to_owned());
+            let id = format!("{}tap-{want_video}", crate::model::CALL_ENTRY_PREFIX);
+            app.conversations
+                .get_mut(ada)
+                .unwrap()
+                .messages
+                .push(message(
+                    ada,
+                    &id,
+                    false,
+                    crate::util::now(),
+                    Content::Call {
+                        video: want_video,
+                        status: crate::model::CallStatus::Missed,
+                        duration: 0,
+                        group: false,
+                    },
+                ));
+            app.scroll_to_bottom = true;
+            let ctx = egui::Context::default();
+            app.attach(&ctx);
+            render(&mut app, &ctx);
+            let rect = ctx
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(
+                        crate::ui::conversation::bubble_id(ada, &id).with("call-box"),
+                    )
+                })
+                .expect("the chip is drawn");
+            let click = |pressed| egui::Event::PointerButton {
+                pos: rect.center(),
+                pressed,
+                button: egui::PointerButton::Primary,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame_with(
+                &mut app,
+                &ctx,
+                vec![egui::Event::PointerMoved(rect.center()), click(true)],
+            );
+            frame_with(&mut app, &ctx, vec![click(false)]);
+            let commands = app.backend.take_demo_commands();
+            assert!(
+                commands.iter().any(|command| matches!(
+                    command,
+                    crate::backend::Command::StartCall { chat, video, .. }
+                        if chat.as_str() == ada && *video == want_video
+                )),
+                "video {want_video}: {commands:?}"
+            );
+        };
+        tap(false);
+        tap(true);
     }
 
     /// Zeus lists its own ready-made themes, not theme files or the
