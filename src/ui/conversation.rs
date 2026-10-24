@@ -1582,7 +1582,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 pending_strip(app, ui);
             }
             if app.recording.is_some() {
-                widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
+                widgets::raised(ui, &palette, composer_pill(&palette, COMPOSER_RADIUS), |ui| {
                     recording_strip(app, ui)
                 });
                 return;
@@ -1628,93 +1628,155 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let line = (line_height + COMPOSER_PADDING)
                 .round()
                 .max(COMPOSER_CONTROL);
-            let button_width = line;
-            let field_margin = ((line - line_height) / 2.0).round().max(0.0);
-            // Measure this frame's draft at the text column's width, so the
-            // field and the panel holding it grow on the keystroke that wraps
-            // a line rather than a frame later, which made them jump.
+            // The field is one row while the draft fits a line beside the
+            // plus and emoji buttons. Once it needs more, the text takes the
+            // full width above them and the buttons keep to a bottom row, as
+            // in iMessage and WhatsApp. The decision is made at the one-row
+            // width, so growing the field never flips the mode back.
+            let content_id = id.with("content-width");
+            let text_left_id = id.with("text-left");
             let wrap_id = id.with("wrap");
-            let text_height = ui
+            // What the field's scroll area takes from the text's width.
+            let slack = ui.ctx().data(|data| data.get_temp::<f32>(wrap_id)).unwrap_or(0.0);
+            let spacing_x = ui.spacing().item_spacing.x;
+            let lead = (line / 2.0 - PLUS_EDGE / 2.0).max(0.0);
+            let content_width = ui
                 .ctx()
-                .data(|data| data.get_temp::<f32>(wrap_id))
-                .map(|wrap| {
-                    let format =
-                        egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
-                    crate::bidi::layout_editor(ui, &app.composer, &format, wrap, true)
-                        .0
-                        .size()
-                        .y
-                })
-                .or_else(|| ui.ctx().read_response(id).map(|previous| previous.rect.height()))
-                .unwrap_or(line_height)
-                .clamp(line_height, line_height * 6.0);
-            let row_height = (text_height + 2.0 * field_margin).max(line);
-            let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
-            ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), row_height),
-                Layout::left_to_right(Align::Max),
-                |ui| {
-                // The plus sits in the field's rounded left end, centred as
-                // the send button is in the right one.
-                ui.add_space((line / 2.0 - PLUS_EDGE / 2.0).max(0.0));
+                .data(|data| data.get_temp::<f32>(content_id))
+                .unwrap_or_else(|| (ui.available_width() - 2.0 * f32::from(COMPOSER_INSET)).max(0.0));
+            let text_left = ui
+                .ctx()
+                .data(|data| data.get_temp::<f32>(text_left_id))
+                .unwrap_or(lead + 2.0 * PLUS_EDGE + COMPOSER_PAIR_GAP + COMPOSER_TEXT_GAP);
+            let inline_left = if app.editing.is_none() { text_left - 8.0 } else { lead };
+            let inline_width = (content_width - line - spacing_x - inline_left).max(0.0);
+            let stacked_left = COMPOSER_STACK_INSET - 8.0;
+            let stacked_width = (content_width - 2.0 * stacked_left).max(0.0);
+            let format = egui::TextFormat::simple(theme::regular(BODY_SIZE), palette.text);
+            let measure = |ui: &egui::Ui, width: f32| {
+                crate::bidi::layout_editor(ui, &app.composer, &format, (width - 16.0 - slack).max(1.0), true)
+                    .0
+                    .size()
+                    .y
+            };
+            let one_row = measure(ui, inline_width);
+            let stacked = one_row > line_height * 1.5;
+            let text_height = if stacked {
+                measure(ui, stacked_width)
+            } else {
+                one_row
+            }
+            .clamp(line_height, line_height * 6.0);
+            // Height and corners ease to the new size rather than jumping.
+            let target_height = if stacked {
+                COMPOSER_STACK_TOP + text_height + COMPOSER_STACK_GAP + line
+            } else {
+                line
+            };
+            let row_height = ease_toward(ui.ctx(), id.with("height"), target_height);
+            let stack = ui.ctx().animate_bool_with_time_and_easing(
+                id.with("stack"),
+                stacked,
+                composer_ease(ui.ctx()),
+                egui::emath::easing::quadratic_out,
+            );
+            let radius = ((row_height + 2.0 * f32::from(COMPOSER_INSET)) / 2.0)
+                .min(f32::from(COMPOSER_RADIUS))
+                .round() as u8;
+            // What scrolls under the composer is blurred, as under a menu.
+            let frost = palette
+                .vibrant()
+                .then(|| widgets::Frost::reserve(ui.ctx(), ui.layer_id(), radius));
+            let pill = widgets::raised(ui, &palette, composer_pill(&palette, radius), |ui| {
+                let (row, _) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), row_height),
+                    Sense::hover(),
+                );
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(content_id, row.width()));
+                // The buttons always live in the bottom band.
+                let band = Rect::from_min_size(
+                    pos2(row.left(), row.bottom() - line),
+                    vec2(row.width(), line),
+                );
+                let mut emoji_right = None;
                 if app.editing.is_none() {
-                    let tools = last_line(ui, line, |ui| theme::icon_button(
-                        ui,
-                        Icon::Plus,
-                        22.0,
-                        if app.composer_tools_open {
-                            palette.accent
-                        } else {
-                            palette.secondary
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(band)
+                            .layout(Layout::left_to_right(Align::Center)),
+                        |ui| {
+                            // The plus sits in the field's rounded left end,
+                            // centred as the send button is in the right one.
+                            ui.add_space(lead);
+                            let tools = theme::icon_button(
+                                ui,
+                                Icon::Plus,
+                                22.0,
+                                if app.composer_tools_open {
+                                    palette.accent
+                                } else {
+                                    palette.secondary
+                                },
+                                palette.text,
+                                &crate::i18n::gettext(app.locale, "Attach"),
+                            )
+                            .tab_stop(Stop::Attach);
+                            composer_tools_menu(app, chat, &tools);
+                            // Plus and emoji sit close together, as a pair.
+                            ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
+                            // The button shows the picker's tab used last.
+                            let (mode_icon, mode_label) = match app.settings.picker_mode {
+                                PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
+                                PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
+                                PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
+                            };
+                            // The icon fades in when the mode changes.
+                            let mode_fade = ui.ctx().animate_bool_with_time_and_easing(
+                                egui::Id::new(("picker-mode", app.settings.picker_mode as u8)),
+                                true,
+                                0.18,
+                                egui::emath::easing::quadratic_out,
+                            );
+                            let smile = ui
+                                .scope(|ui| {
+                                    ui.multiply_opacity(mode_fade);
+                                    theme::icon_button(
+                                        ui,
+                                        mode_icon,
+                                        22.0,
+                                        if app.picker.is_some() {
+                                            palette.accent
+                                        } else {
+                                            palette.secondary
+                                        },
+                                        palette.text,
+                                        mode_label,
+                                    )
+                                })
+                                .inner
+                                .tab_stop(Stop::Emoji);
+                            app.picker_anchor = Some(smile.rect);
+                            if smile.clicked() {
+                                if app.composer_tools_open {
+                                    app.actions.push(Action::SetComposerTools(false));
+                                }
+                                app.actions.push(Action::TogglePicker(app.settings.picker_mode));
+                            }
+                            emoji_right = Some(smile.rect.right());
                         },
-                        palette.text,
-                        &crate::i18n::gettext(app.locale, "Attach"),
-                    ))
-                    .tab_stop(Stop::Attach);
-                    composer_tools_menu(app, chat, &tools);
-                    // Plus and emoji sit close together, as a pair.
-                    ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
-                    // The button shows the picker's tab used last.
-                    let (mode_icon, mode_label) = match app.settings.picker_mode {
-                        PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
-                        PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
-                        PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
-                    };
-                    // The icon fades in when the mode changes.
-                    let mode_fade = ui.ctx().animate_bool_with_time_and_easing(
-                        egui::Id::new(("picker-mode", app.settings.picker_mode as u8)),
-                        true,
-                        0.18,
-                        egui::emath::easing::quadratic_out,
                     );
-                    let smile = last_line(ui, line, |ui| ui.scope(|ui| {
-                        ui.multiply_opacity(mode_fade);
-                        theme::icon_button(
-                        ui,
-                        mode_icon,
-                        22.0,
-                        if app.picker.is_some() {
-                            palette.accent
-                        } else {
-                            palette.secondary
-                        },
-                        palette.text,
-                        mode_label,
-                    )}).inner).tab_stop(Stop::Emoji);
-                    app.picker_anchor = Some(smile.rect);
-                    if smile.clicked() {
-                        if app.composer_tools_open {
-                            app.actions.push(Action::SetComposerTools(false));
-                        }
-                        app.actions.push(Action::TogglePicker(app.settings.picker_mode));
-                    }
-                    // The text follows the pair as closely as the emoji
-                    // follows the plus (the field's own left margin included).
-                    ui.add_space(COMPOSER_TEXT_GAP - ui.spacing().item_spacing.x - 8.0);
                 }
-                // The send button closes the row, flush with the field's end.
-                let field_width =
-                    (ui.available_width() - button_width - ui.spacing().item_spacing.x).max(0.0);
+                // The text follows the pair as closely as the emoji follows
+                // the plus (the field's own left margin included).
+                let one_row_left = match emoji_right {
+                    Some(right) => {
+                        let left = right - row.left() + COMPOSER_TEXT_GAP;
+                        ui.ctx().data_mut(|data| data.insert_temp(text_left_id, left));
+                        left - 8.0
+                    }
+                    None => lead,
+                };
                 // The ink is centred on the controls, not the line box: the
                 // span from a capital's top to a descender's bottom sits as far
                 // from the field's top as from its bottom. Inter's box leaves
@@ -1722,12 +1784,32 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 // at fractional scales the glyphs round to the pixel grid off
                 // centre in it. Measured at this scale, snapped to a pixel.
                 let ink_middle = ink_middle(ui, line_height);
-                let top = fastframe_text::snap_to_pixels(
-                    row_height - line / 2.0 - (text_height - line_height) - ink_middle,
-                    ui.ctx().pixels_per_point(),
-                )
-                .max(0.0);
-                let bottom = (row_height - text_height - top).max(0.0);
+                let one_row_top = row.bottom()
+                    - line
+                    + fastframe_text::snap_to_pixels(
+                        line / 2.0 - ink_middle,
+                        ui.ctx().pixels_per_point(),
+                    )
+                    .max(0.0);
+                let stacked_top = row.bottom() - line - COMPOSER_STACK_GAP - text_height;
+                let one_row_rect = Rect::from_min_size(
+                    pos2(row.left() + one_row_left, one_row_top),
+                    vec2((row.width() - line - spacing_x - one_row_left).max(0.0), text_height),
+                );
+                let stacked_rect = Rect::from_min_size(
+                    pos2(row.left() + stacked_left, stacked_top),
+                    vec2(stacked_width, text_height),
+                );
+                let text_rect = Rect::from_min_size(
+                    one_row_rect.min.lerp(stacked_rect.min, stack),
+                    if stacked { stacked_rect.size() } else { one_row_rect.size() },
+                );
+                let field_width = text_rect.width();
+                ui.scope_builder(
+                    egui::UiBuilder::new().max_rect(text_rect).layout(Layout::top_down(Align::Min)),
+                    |ui| {
+                // Text rising out of the old row never pokes out of the field.
+                ui.shrink_clip_rect(row.expand(0.5));
                 Frame::new()
                     .fill(Color32::TRANSPARENT)
                     .inner_margin(Margin {
@@ -1740,7 +1822,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         ui.set_width((field_width - 16.0).max(0.0));
                         ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
-                        ui.add_space(top);
                         // Grow from one to six lines, then scroll. The height
                         // is this frame's draft, measured above, rather than
                         // the scroll area's memory of the last frame.
@@ -1772,7 +1853,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     galley
                                 };
                                 let wrap = ui.available_width();
-                                ui.ctx().data_mut(|data| data.insert_temp(wrap_id, wrap));
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(wrap_id, (field_width - 16.0 - wrap).max(0.0))
+                                });
                                 let output = egui::TextEdit::multiline(&mut app.composer)
                                     .id(id)
                                     .frame(Frame::NONE)
@@ -1911,58 +1994,86 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     response.request_focus();
                                 }
                             });
-                        ui.add_space(bottom);
                         });
                     });
+                    },
+                );
                 let ready = !app.composer.trim().is_empty()
                     || !app.pending.is_empty()
                     || (unsent_voice.is_some() && app.editing.is_none());
-                let (fill, hover, icon) = if ready {
-                    (palette.accent, palette.accent_hover, palette.on_accent)
-                } else {
-                    (palette.surface, palette.surface_hover, palette.dim)
-                };
-                last_line(ui, line, |ui| if !ready && app.editing.is_none() {
-                    // An empty composer changes the send button to record.
-                    if theme::circle_button(
-                        ui,
-                        Icon::Mic,
-                        button_width,
-                        fill,
-                        hover,
-                        palette.secondary,
-                        "Record a voice message",
-                    )
-                    .tab_stop(Stop::Send)
-                    .clicked()
-                    {
-                        app.actions.push(Action::StartRecording);
-                    }
-                } else {
-                    let icon_kind = if app.editing.is_some() {
-                        Icon::Check
+                // Record turns into send, and back, as the draft fills and
+                // empties.
+                let morph = ui.ctx().animate_bool_with_time_and_easing(
+                    id.with("send-morph"),
+                    ready,
+                    composer_ease(ui.ctx()),
+                    egui::emath::easing::quadratic_out,
+                );
+                let send_rect = Rect::from_min_size(
+                    pos2(row.right() - line, row.bottom() - line),
+                    vec2(line, line),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(send_rect), |ui| {
+                    let (first, tooltip) = if app.editing.is_some() {
+                        (Icon::Check, "Send")
+                    } else if ready {
+                        (Icon::Mic, "Send")
                     } else {
-                        Icon::Send
+                        (Icon::Mic, "Record a voice message")
                     };
-                    let send =
-                        theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
-                            .tab_stop(Stop::Send);
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(send_flight_id().with("button"), send.rect));
-                    if send.clicked() {
-                        send_click = true;
+                    let second = if app.editing.is_some() { Icon::Check } else { Icon::Send };
+                    let idle = (palette.surface, palette.surface_hover, palette.secondary);
+                    let lit = (palette.accent, palette.accent_hover, palette.on_accent);
+                    let button = theme::morph_circle_button(
+                        ui,
+                        (first, second),
+                        morph,
+                        line,
+                        if app.editing.is_some() {
+                            (palette.surface, palette.surface_hover, palette.dim)
+                        } else {
+                            idle
+                        },
+                        lit,
+                        tooltip,
+                    )
+                    .tab_stop(Stop::Send);
+                    if !ready && app.editing.is_none() {
+                        if button.clicked() {
+                            app.actions.push(Action::StartRecording);
+                        }
+                    } else {
+                        ui.ctx().data_mut(|data| {
+                            data.insert_temp(send_flight_id().with("button"), button.rect)
+                        });
+                        if button.clicked() {
+                            send_click = true;
+                        }
                     }
                 });
-            },
-                    );
-                });
+            });
+            if let Some(frost) = frost {
+                frost.place(pill.response.rect);
+                // Glass takes light along its rim: a faint lit line just
+                // inside the edge, brighter along the top.
+                let rim = pill.response.rect.shrink(1.0);
+                                ui.painter().rect_stroke(
+                    rim,
+                    CornerRadius::same(radius.saturating_sub(1)),
+                    Stroke::new(
+                        1.0,
+                        Color32::from_white_alpha(if palette.dark { 22 } else { 120 }),
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+            }
             // Clicking into the field draws no accent ring around it: the caret
             // shows where typing goes. Tabbing to it still outlines the field.
             if ui.ctx().data(|data| {
                 data.get_temp::<bool>(theme::keyboard_focus_id())
                     .unwrap_or(false)
             }) {
-                theme::focus_outline(ui, id, pill.response.rect, f32::from(COMPOSER_RADIUS));
+                theme::focus_outline(ui, id, pill.response.rect, f32::from(radius));
             }
             ui.ctx()
                 .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
@@ -2053,6 +2164,56 @@ pub(crate) const COMPOSER_TEXT_GAP: f32 = 6.0;
 /// Width of the plus button: its 22-point icon and `icon_button`'s padding.
 const PLUS_EDGE: f32 = 34.0;
 
+/// Left and right space, from the field's edge to the text, once the draft
+/// outgrows one row and the text takes the full width above the buttons.
+const COMPOSER_STACK_INSET: f32 = 14.0;
+/// Space above the text of a taller field.
+const COMPOSER_STACK_TOP: f32 = 12.0;
+/// Space between the text of a taller field and the row of buttons below it.
+const COMPOSER_STACK_GAP: f32 = 2.0;
+/// Seconds the composer takes to reshape and to turn record into send; the
+/// popups' duration, with the same easing.
+const COMPOSER_EASE: f32 = 0.18;
+
+/// How long the composer's transitions take: none while animations are off.
+fn composer_ease(ctx: &egui::Context) -> f32 {
+    if ctx.global_style().animation_time <= 0.0 {
+        0.0
+    } else {
+        COMPOSER_EASE
+    }
+}
+
+/// Moves a displayed value toward `target` with an ease-out, and returns it.
+/// It lands on `target` once it is within a fraction of a point, and it
+/// jumps there on the first call, after a pause, and when animations are
+/// off.
+fn ease_toward(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
+    let now = ctx.input(|input| input.time);
+    let dt = ctx.input(|input| input.stable_dt).min(0.05);
+    let instant = ctx.global_style().animation_time <= 0.0;
+    let shown = ctx.data_mut(|data| {
+        let value = match data.get_temp::<(f32, f64)>(id) {
+            Some((value, at)) if !instant && now - at < 0.5 => {
+                let step = 1.0 - (-dt / (COMPOSER_EASE / 4.0)).exp();
+                let next = value + (target - value) * step;
+                if (target - next).abs() < 0.3 {
+                    target
+                } else {
+                    next
+                }
+            }
+            _ => target,
+        };
+        data.insert_temp(id, (value, now));
+        value
+    });
+    if (shown - target).abs() > f32::EPSILON {
+        ctx.request_repaint();
+    }
+    shown
+}
+
 /// Where the composer's text was painted in the frame's last pass, for
 /// layout tests.
 pub(crate) fn composer_text_id() -> egui::Id {
@@ -2089,25 +2250,21 @@ fn ink_middle(ui: &egui::Ui, line_height: f32) -> f32 {
         .unwrap_or(line_height / 2.0)
 }
 
-/// Lays out a control centred in the composer's last-line band, however
-/// tall the draft has grown, so every control shares one vertical centre.
-fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.allocate_ui_with_layout(vec2(0.0, line), Layout::left_to_right(Align::Center), add)
-        .inner
-}
-
 /// The rounded field that holds the composer's controls, or the recorder.
-fn composer_pill(palette: &Palette) -> Frame {
+fn composer_pill(palette: &Palette, radius: u8) -> Frame {
     // Glass over a vibrant conversation, as the header's.
     let (fill, edge) = if palette.vibrant() {
-        (palette.frosted(palette.chat), palette.glass_edge())
+        (
+            palette.frosted(palette.chat),
+            Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
+        )
     } else {
         (palette.bubble_in, Stroke::NONE)
     };
     Frame::new()
         .fill(fill)
         .stroke(edge)
-        .corner_radius(CornerRadius::same(COMPOSER_RADIUS))
+        .corner_radius(CornerRadius::same(radius))
         // The end buttons are inset by as much at the sides as above and
         // below, so they sit evenly in the rounded ends.
         .inner_margin(Margin {

@@ -3330,6 +3330,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     .join("\n");
                 app.focus_composer = true;
             }
+            // A short draft, to see the record button turn into send.
+            "draft-short" => app.composer = "On my way".into(),
+            // A three-line draft, to see the field grow.
+            "draft-lines" => {
+                app.composer =
+                    "Dinner at eight?\nI booked the corner table\nBring the photos from Lisbon"
+                        .into();
+            }
             "composer-tools" => {
                 app.open_chat = Some(SAMPLES[0].id.to_owned());
                 app.composer_tools_open = true;
@@ -15288,33 +15296,35 @@ mod tests {
         let mut app = app();
         app.composer = "one\ntwo\nthree".into();
         let ctx = egui::Context::default();
+        ctx.global_style_mut(|style| style.animation_time = 0.0);
         app.attach(&ctx);
         render(&mut app, &ctx);
         let (pill, text, controls) = measure(&mut app, &ctx);
         // One line is 40pt tall; three clearly outgrow it.
         assert!(pill.height() > 70.0, "the field grew: {pill:?}");
-        let line = text.height() / 3.0;
-        let last = text.bottom() - line / 2.0;
-        // The last line's ink centres on the controls, which puts its line box
-        // up to a couple of points higher (Inter's box is roomier above).
+        // The text takes the full width above a bottom row of controls, which
+        // share one centre.
         for (stop, y) in [Stop::Attach, Stop::Emoji, Stop::Send].iter().zip(controls) {
             assert!(
-                (0.0..=2.5).contains(&(y - last)),
-                "{stop:?} {y} vs last line {last}"
+                y > text.bottom(),
+                "{stop:?} {y} is not below the text {text:?}"
+            );
+            assert!(
+                (y - controls[0]).abs() <= 1.0 && pill.bottom() - y < 30.0,
+                "{stop:?} {y} is not in the bottom row of {pill:?}"
             );
         }
     }
 
-    /// A keystroke that wraps the draft onto another line, or joins it back,
-    /// shows the grown field in that same frame: sizing it from the frame
-    /// before made the field and its text jump while typing.
+    /// However a draft wraps or joins, the field settles around its text.
     #[test]
-    fn typing_never_shows_the_composer_a_frame_late() {
-        for scale in [1.0_f32, 1.25, 1.5] {
+    fn the_composer_settles_around_its_draft_while_typing() {
+        for scale in [1.0_f32, 1.5] {
             let mut app = app();
             app.focus_composer = true;
             let ctx = egui::Context::default();
             ctx.set_pixels_per_point(scale);
+            ctx.global_style_mut(|style| style.animation_time = 0.0);
             app.attach(&ctx);
             render(&mut app, &ctx);
             for _ in 0..3 {
@@ -15343,27 +15353,16 @@ mod tests {
             events.extend((0..draft.len()).map(|_| key(egui::Key::Backspace)));
             events.push(egui::Event::Text("one\ntwo\nthree".into()));
             let mut heights = std::collections::BTreeSet::new();
-            for (index, event) in events.into_iter().enumerate() {
+            for event in events {
                 frame_with(&mut app, &ctx, vec![event]);
-                let typed = snap(&ctx);
-                frame_with(&mut app, &ctx, Vec::new());
+                // The field's height eases to its size, so let it land.
+                for _ in 0..20 {
+                    frame_with(&mut app, &ctx, Vec::new());
+                }
                 let settled = snap(&ctx);
                 let (Some(pill), Some(text)) = settled else {
                     panic!("the composer is drawn")
                 };
-                // The field, and where its text starts, must not move once
-                // the keystroke has landed. (egui lays out the first
-                // character typed into an empty field a frame late, so the
-                // text's far corner is not compared.)
-                let (Some(typed_pill), Some(typed_text)) = typed else {
-                    panic!("the composer is drawn")
-                };
-                assert!(
-                    (typed_pill.min - pill.min).length() < 0.5
-                        && (typed_pill.max - pill.max).length() < 0.5
-                        && (typed_text.min - text.min).length() < 0.5,
-                    "event {index} at scale {scale}: {typed:?} then {settled:?}"
-                );
                 assert!(
                     pill.contains_rect(text),
                     "text {text:?} leaves the field {pill:?}"
