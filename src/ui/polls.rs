@@ -1,5 +1,6 @@
 //! Poll composition and voting controls.
 
+use super::controls;
 use super::widgets;
 use crate::app::App;
 use crate::model::{Action, Content, Dialog, Message, PollState};
@@ -22,25 +23,12 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     ui.add_space(8.0);
     ui.add_enabled_ui(!app.poll_creating, |ui| {
         theme::text(ui, "Question", theme::medium(13.5), palette.secondary);
-        let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
-        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-            crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
-        };
-        let question_align = if crate::bidi::base_rtl(&app.poll_draft.question) {
-            Align::RIGHT
-        } else {
-            Align::LEFT
-        };
-        ui.add(
-            egui::TextEdit::singleline(&mut app.poll_draft.question)
-                .id_salt("poll-question")
-                .hint_text("Ask a question")
-                .char_limit(255)
-                .font(theme::regular(14.0))
-                .desired_width(f32::INFINITY)
-                .horizontal_align(question_align)
-                .layouter(&mut layouter),
-        );
+        controls::Field::new(&mut app.poll_draft.question)
+            .id(ui.make_persistent_id("poll-question"))
+            .hint("Ask a question")
+            .char_limit(255)
+            .width(f32::INFINITY)
+            .show(ui, &palette);
         ui.add_space(8.0);
         theme::text(ui, "Answers", theme::medium(13.5), palette.secondary);
         let height = (ui.ctx().content_rect().height() - 320.0).clamp(90.0, 330.0);
@@ -50,29 +38,15 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             .id_salt("poll-answers")
             .max_height(height)
             .show(ui, |ui| {
-                let answer_format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
-                let mut answer_layouter =
-                    |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                        crate::bidi::layout_field(ui, text.as_str(), &answer_format, wrap)
-                    };
                 for (index, answer) in app.poll_draft.options.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         let width = (ui.available_width() - 32.0).max(100.0);
-                        let answer_align = if crate::bidi::base_rtl(answer) {
-                            Align::RIGHT
-                        } else {
-                            Align::LEFT
-                        };
-                        ui.add(
-                            egui::TextEdit::singleline(answer)
-                                .id_salt(("poll-answer", index))
-                                .hint_text(format!("Answer {}", index + 1))
-                                .char_limit(100)
-                                .font(theme::regular(14.0))
-                                .desired_width(width)
-                                .horizontal_align(answer_align)
-                                .layouter(&mut answer_layouter),
-                        );
+                        controls::Field::new(answer)
+                            .id(ui.make_persistent_id(("poll-answer", index)))
+                            .hint(&format!("Answer {}", index + 1))
+                            .char_limit(100)
+                            .width(width)
+                            .show(ui, &palette);
                         if removable
                             && theme::icon_button(
                                 ui,

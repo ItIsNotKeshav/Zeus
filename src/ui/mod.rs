@@ -5,6 +5,7 @@ pub mod call;
 pub mod calls;
 pub(crate) mod carry;
 pub mod chats;
+pub mod controls;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;

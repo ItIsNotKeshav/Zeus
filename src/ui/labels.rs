@@ -13,6 +13,7 @@ use crate::i18n::{Locale, gettext, ngettext, pgettext};
 use crate::model::{Action, Chat, Dialog, Label};
 use crate::theme::{self, Icon, Palette};
 
+use super::controls;
 use super::focus::{Stop, TabStop};
 use super::widgets;
 
@@ -261,14 +262,13 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         );
     } else {
         ui.horizontal(|ui| {
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut app.label_name)
-                    .id(name_field_id())
-                    .hint_text(gettext(locale, "New label"))
-                    .char_limit(crate::archive::NAME_LIMIT)
-                    .desired_width(160.0)
-                    .font(theme::regular(14.0)),
-            );
+            let hint = gettext(locale, "New label");
+            let field = controls::Field::new(&mut app.label_name)
+                .id(name_field_id())
+                .hint(&hint)
+                .char_limit(crate::archive::NAME_LIMIT)
+                .width(180.0)
+                .show(ui, &palette);
             if field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                 create(app);
             }

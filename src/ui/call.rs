@@ -16,7 +16,7 @@ use crate::calls::{CallOutcome, CallPhase, CallUpdate, PeerAudio, SilenceReason}
 use crate::i18n::{Locale, gettext};
 use crate::model::Action;
 use crate::theme::{self, Icon, Palette};
-use crate::ui::widgets;
+use crate::ui::{controls, widgets};
 
 /// The area's id, so the surface keeps its place in the layer order.
 const SURFACE: &str = "zapfast-call-surface";
@@ -780,26 +780,34 @@ impl Picker<'_> {
                 theme::icon(ui, self.icon, 13.0, self.palette.secondary);
                 theme::text(ui, self.title, theme::medium(12.0), self.palette.secondary);
             });
-            egui::ComboBox::from_id_salt(self.salt)
-                .selected_text(label)
-                .width(PICKER)
-                .truncate()
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(self.current.is_none(), self.default_label)
-                        .clicked()
-                    {
+            controls::dropdown(
+                ui,
+                &self.palette,
+                self.salt,
+                self.title,
+                &label,
+                PICKER,
+                |ui| {
+                    if controls::option(
+                        ui,
+                        &self.palette,
+                        self.default_label,
+                        self.current.is_none(),
+                    ) {
                         actions.push(action(None));
                     }
                     for (id, name) in self.devices {
-                        if ui
-                            .selectable_label(self.current == Some(id.as_str()), name)
-                            .clicked()
-                        {
+                        if controls::option(
+                            ui,
+                            &self.palette,
+                            name,
+                            self.current == Some(id.as_str()),
+                        ) {
                             actions.push(action(Some(id.clone())));
                         }
                     }
-                });
+                },
+            );
         });
     }
 }

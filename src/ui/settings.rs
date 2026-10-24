@@ -6,6 +6,7 @@ use egui::{
     Align, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2, pos2, vec2,
 };
 
+use super::controls;
 use crate::app::App;
 use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use crate::i18n::Locale;
@@ -676,14 +677,11 @@ fn sections(app: &App) -> Vec<Section> {
             // stored form, so there is nothing to read it back from.
             let code_id = egui::Id::new("settings-chat-lock-code");
             let mut code: String = ui.data_mut(|data| data.get_temp(code_id).unwrap_or_default());
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut code)
-                    .font(theme::regular(13.0))
-                    .text_color(palette.text)
-                    .desired_width(220.0)
-                    .hint_text(crate::i18n::gettext(app.locale, "Secret code"))
-                    .password(true),
-            );
+            let hint = crate::i18n::gettext(app.locale, "Secret code");
+            let response = controls::Field::new(&mut code)
+                .hint(&hint)
+                .password()
+                .show(ui, &palette);
             if response.changed() {
                 let trimmed = code.trim().to_owned();
                 app.actions.push(Action::SetChatLockCode(Some(trimmed)));
@@ -727,23 +725,31 @@ fn sections(app: &App) -> Vec<Section> {
                 let palette = app.palette;
                 let locale = app.locale;
                 let selected = app.account().settings.limit_notifications;
-                let response = egui::ComboBox::from_id_salt("limit_notifications")
-                    .selected_text(selected.label(locale))
-                    .width(200.0_f32.min(ui.available_width()))
-                    .show_ui(ui, |ui| {
+                let mut picked = None;
+                controls::dropdown(
+                    ui,
+                    &palette,
+                    "limit_notifications",
+                    &translated(locale, "Limit repeat notifications").shown,
+                    selected.label(locale).as_ref(),
+                    controls::WIDTH,
+                    |ui| {
                         for limit in crate::settings::NotificationLimit::ALL {
-                            if theme_option(
+                            if controls::option(
                                 ui,
                                 &palette,
                                 limit.label(locale).as_ref(),
                                 limit == selected,
                             ) {
-                                app.account_mut().settings.limit_notifications = limit;
-                                app.account_mut().mark_settings_dirty();
+                                picked = Some(limit);
                             }
                         }
-                    });
-                theme::reveal_focus(&response.response);
+                    },
+                );
+                if let Some(limit) = picked {
+                    app.account_mut().settings.limit_notifications = limit;
+                    app.account_mut().mark_settings_dirty();
+                }
             },
         );
         notifications.toggle(
@@ -911,13 +917,9 @@ fn sections(app: &App) -> Vec<Section> {
         let mut draft = ui
             .data(|data| data.get_temp::<String>(id))
             .unwrap_or_else(|| app.settings.proxy.clone());
-        let response = ui.add(
-            egui::TextEdit::singleline(&mut draft)
-                .hint_text("socks5h://127.0.0.1:9050")
-                .font(theme::regular(13.0))
-                .text_color(palette.text)
-                .desired_width(220.0),
-        );
+        let response = controls::Field::new(&mut draft)
+            .hint("socks5h://127.0.0.1:9050")
+            .show(ui, &palette);
         if response.lost_focus() {
             app.actions.push(Action::SetProxy(draft.clone()));
             ui.data_mut(|data| data.remove::<String>(id));
@@ -939,12 +941,9 @@ fn sections(app: &App) -> Vec<Section> {
             )
         },
         move |ui, app| {
-            let response = ui.add(
-                egui::TextEdit::singleline(&mut app.settings.giphy_key)
-                    .font(theme::regular(13.0))
-                    .text_color(palette.text)
-                    .desired_width(220.0),
-            );
+            let response = controls::Field::new(&mut app.settings.giphy_key)
+                .hint("GIPHY API key")
+                .show(ui, &palette);
             if response.changed() {
                 app.actions.push(Action::SettingsChanged);
             }
@@ -1171,25 +1170,28 @@ fn microphone_picker(ui: &mut egui::Ui, app: &mut App) {
     };
     let found = app.microphones.found.clone().unwrap_or_default();
     let mut picked = None;
-    let response = egui::ComboBox::from_id_salt("settings-microphone")
-        .selected_text(selected)
-        .width(220.0_f32.min(ui.available_width()))
-        .truncate()
-        .show_ui(ui, |ui| {
-            if theme_option(ui, &palette, &default_label, saved.is_none()) {
+    controls::dropdown(
+        ui,
+        &palette,
+        "settings-microphone",
+        "Microphone",
+        &selected,
+        controls::WIDTH,
+        |ui| {
+            if controls::option(ui, &palette, &default_label, saved.is_none()) {
                 picked = Some(None);
             }
             for (id, label) in &found {
                 let current = saved.as_ref().is_some_and(|device| device.id == *id);
-                if theme_option(ui, &palette, label, current) {
+                if controls::option(ui, &palette, label, current) {
                     picked = Some(Some(crate::settings::SavedDevice {
                         id: id.clone(),
                         name: label.clone(),
                     }));
                 }
             }
-        });
-    theme::reveal_focus(&response.response);
+        },
+    );
     let scanning = app.microphones.scanning();
     let refresh = ui
         .add_enabled_ui(!scanning, |ui| {
@@ -1347,22 +1349,27 @@ fn app_lock_rows(app: &App, privacy: &mut Section) {
             )),
             move |ui, app| {
                 let selected = app.settings.app_lock_after;
-                let response = egui::ComboBox::from_id_salt("app_lock_after")
-                    .selected_text(selected.label(app.locale))
-                    .width(200.0_f32.min(ui.available_width()))
-                    .show_ui(ui, |ui| {
+                let locale = app.locale;
+                controls::dropdown(
+                    ui,
+                    &palette,
+                    "app_lock_after",
+                    &translated(locale, "Lock after").shown,
+                    selected.label(locale).as_ref(),
+                    controls::WIDTH,
+                    |ui| {
                         for after in crate::settings::AutoLock::ALL {
-                            if theme_option(
+                            if controls::option(
                                 ui,
                                 &palette,
-                                after.label(app.locale).as_ref(),
+                                after.label(locale).as_ref(),
                                 after == selected,
                             ) {
                                 app.actions.push(Action::SetAutoLock(after));
                             }
                         }
-                    });
-                theme::reveal_focus(&response.response);
+                    },
+                );
             },
         );
     }
@@ -1419,15 +1426,16 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
         // TextEdit surrenders focus on Enter; take the key before drawing it.
         submit |= ui.memory(|memory| memory.has_focus(id))
             && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-        let response = ui.add_enabled(
-            !busy,
-            egui::TextEdit::singleline(text)
-                .id(id)
-                .password(true)
-                .hint_text(hint)
-                .font(theme::regular(13.0))
-                .desired_width(320.0_f32.min(ui.available_width())),
-        );
+        let response = ui
+            .add_enabled_ui(!busy, |ui| {
+                controls::Field::new(text)
+                    .id(id)
+                    .password()
+                    .hint(&hint)
+                    .width(320.0)
+                    .show(ui, &palette)
+            })
+            .inner;
         if index == 0 && focus_first && !busy {
             response.request_focus();
         }
@@ -2096,17 +2104,21 @@ fn font_picker(ui: &mut egui::Ui, app: &mut App) {
         FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
         _ => choice.label().to_owned(),
     };
-    let response = egui::ComboBox::from_id_salt("interface_font")
-        .selected_text(label(selected))
-        .width(200.0_f32.min(ui.available_width()))
-        .show_ui(ui, |ui| {
+    controls::dropdown(
+        ui,
+        &palette,
+        "interface_font",
+        "Font",
+        &label(selected),
+        controls::WIDTH,
+        |ui| {
             for choice in FontChoice::ALL {
-                if theme_option(ui, &palette, &label(choice), selected == choice) {
+                if controls::option(ui, &palette, &label(choice), selected == choice) {
                     app.actions.push(Action::SetFont(choice));
                 }
             }
-        });
-    theme::reveal_focus(&response.response);
+        },
+    );
 }
 
 fn language_picker(ui: &mut egui::Ui, app: &mut App) {
@@ -2116,11 +2128,15 @@ fn language_picker(ui: &mut egui::Ui, app: &mut App) {
         Some(locale) => locale.label().to_owned(),
         None => crate::i18n::gettext(app.locale, "Auto").into_owned(),
     };
-    let response = egui::ComboBox::from_id_salt("interface_language")
-        .selected_text(label)
-        .width(200.0_f32.min(ui.available_width()))
-        .show_ui(ui, |ui| {
-            if theme_option(
+    controls::dropdown(
+        ui,
+        &palette,
+        "interface_language",
+        "Language",
+        &label,
+        controls::WIDTH,
+        |ui| {
+            if controls::option(
                 ui,
                 &palette,
                 crate::i18n::gettext(app.locale, "Auto").as_ref(),
@@ -2129,12 +2145,12 @@ fn language_picker(ui: &mut egui::Ui, app: &mut App) {
                 app.actions.push(Action::SetInterfaceLanguage(None));
             }
             for locale in Locale::ALL {
-                if theme_option(ui, &palette, locale.label(), selected == Some(locale)) {
+                if controls::option(ui, &palette, locale.label(), selected == Some(locale)) {
                     app.actions.push(Action::SetInterfaceLanguage(Some(locale)));
                 }
             }
-        });
-    theme::reveal_focus(&response.response);
+        },
+    );
 }
 
 /// Wallpaper colour picker and live preview.
@@ -2968,13 +2984,10 @@ fn profile_field(
     limit: usize,
 ) -> bool {
     theme::text(ui, label, theme::medium(12.5), palette.secondary);
-    let response = ui.add(
-        egui::TextEdit::singleline(value)
-            .font(theme::regular(14.0))
-            .text_color(palette.text)
-            .char_limit(limit)
-            .desired_width(ui.available_width()),
-    );
+    let response = controls::Field::new(value)
+        .char_limit(limit)
+        .width(f32::INFINITY)
+        .show(ui, palette);
     response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter))
 }
 
@@ -3230,6 +3243,25 @@ fn sound_control(ui: &mut egui::Ui, app: &mut App, mention: bool) {
             .map(|(_, name)| name.to_string())
             .unwrap_or_default(),
     };
+    controls::dropdown(
+        ui,
+        &palette,
+        ("notification-sound", mention),
+        "Sound",
+        &selected,
+        controls::WIDTH,
+        |ui| {
+            for (sound, name) in choices {
+                if controls::option(ui, &palette, &name, current == sound) {
+                    app.actions
+                        .push(Action::SetNotificationSound { mention, sound });
+                }
+            }
+            if controls::option(ui, &palette, &gettext(locale, "Choose a file…"), false) {
+                app.actions.push(Action::PickNotificationSound { mention });
+            }
+        },
+    );
     if !matches!(current, NotificationSound::System | NotificationSound::None)
         && theme::icon_button(
             ui,
@@ -3243,24 +3275,6 @@ fn sound_control(ui: &mut egui::Ui, app: &mut App, mention: bool) {
     {
         app.actions.push(Action::PreviewSound(current.clone()));
     }
-    let response = egui::ComboBox::from_id_salt(("notification-sound", mention))
-        .selected_text(selected)
-        .width(170.0_f32.min(ui.available_width()))
-        .show_ui(ui, |ui| {
-            for (sound, name) in choices {
-                if ui.selectable_label(current == sound, name).clicked() {
-                    app.actions
-                        .push(Action::SetNotificationSound { mention, sound });
-                }
-            }
-            if ui
-                .selectable_label(false, gettext(locale, "Choose a file…"))
-                .clicked()
-            {
-                app.actions.push(Action::PickNotificationSound { mention });
-            }
-        });
-    theme::reveal_focus(&response.response);
 }
 
 /// One account privacy category's picker: what the phone holds, and the
@@ -3273,84 +3287,30 @@ fn privacy_control(ui: &mut egui::Ui, app: &mut App, kind: PrivacyKind) {
     let selected = current.map_or(Cow::Borrowed("\u{2014}"), |choice| choice.label(locale));
     let pending = app.account_privacy.pending(kind);
     ui.add_enabled_ui(!pending, |ui| {
-        ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-            let salt = format!("privacy_{}", kind.wire_name());
-            let response = egui::ComboBox::from_id_salt(salt)
-                .selected_text(" ")
-                .width(220.0_f32.min(ui.available_width()))
-                .show_ui(ui, |ui| {
-                    for choice in kind.choices() {
-                        if theme_option(
-                            ui,
-                            &palette,
-                            &choice.label(locale),
-                            current == Some(*choice),
-                        ) {
-                            app.actions.push(Action::SetAccountPrivacy {
-                                kind,
-                                choice: *choice,
-                            });
-                        }
-                    }
-                });
-            theme::reveal_focus(&response.response);
-            let rect = response.response.rect;
-            let text = widgets::line(
-                ui,
-                &selected,
-                theme::regular(14.0),
-                palette.text,
-                rect.width() - 36.0,
-                1,
-            );
-            text.paint(
-                ui,
-                egui::pos2(rect.left() + 8.0, rect.center().y - text.size().y / 2.0),
-                palette.text,
-            );
-            response.response.widget_info(|| {
-                let mut info = egui::WidgetInfo::labeled(
-                    egui::WidgetType::ComboBox,
-                    ui.is_enabled(),
-                    kind.label(locale),
-                );
-                info.current_text_value = Some(selected.to_string());
-                info
-            });
-        });
-    });
-}
-
-/// Theme filenames can contain emoji, so paint them through the shared line renderer.
-fn theme_option(ui: &mut egui::Ui, palette: &theme::Palette, text: &str, selected: bool) -> bool {
-    let response = ui.add(
-        egui::Button::selectable(selected, " ").min_size(egui::vec2(ui.available_width(), 28.0)),
-    );
-    let rect = response.rect;
-    let line = widgets::line(
-        ui,
-        text,
-        theme::regular(14.0),
-        palette.text,
-        rect.width() - 16.0,
-        1,
-    );
-    if ui.is_rect_visible(rect) {
-        line.paint(
+        controls::dropdown(
             ui,
-            egui::pos2(rect.left() + 8.0, rect.center().y - line.size().y / 2.0),
-            palette.text,
+            &palette,
+            format!("privacy_{}", kind.wire_name()),
+            &kind.label(locale),
+            &selected,
+            controls::WIDTH,
+            |ui| {
+                for choice in kind.choices() {
+                    if controls::option(
+                        ui,
+                        &palette,
+                        &choice.label(locale),
+                        current == Some(*choice),
+                    ) {
+                        app.actions.push(Action::SetAccountPrivacy {
+                            kind,
+                            choice: *choice,
+                        });
+                    }
+                }
+            },
         );
-    }
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            ui.is_enabled(),
-            selected,
-            text,
-        )
     });
-    response.clicked()
 }
 
 #[cfg(test)]
