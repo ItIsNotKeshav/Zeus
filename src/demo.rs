@@ -3145,6 +3145,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.settings.doodle_style = style;
             }
             "always-time" => app.settings.always_show_time = true,
+            // Zeus's Halloween look, which ships on, put back or taken away.
+            "halloween-off" => app.settings.set_halloween(false),
+            "halloween-on" => app.settings.set_halloween(true),
             // A dropdown held open, by its salt, such as dropdown-open=interface_font.
             part if let Some(salt) = part.strip_prefix("dropdown-open=") => {
                 crate::ui::controls::set_demo_open(&format!("{salt:?}"));

@@ -726,7 +726,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     let more_glass = ui.painter().add(egui::Shape::Noop);
                     let more = theme::icon_button(
                         ui,
-                        Icon::Ellipsis,
+                        theme::ellipsis_icon(),
                         18.0,
                         palette.secondary,
                         palette.text,
@@ -843,7 +843,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         } else {
                             (
                                 crate::i18n::gettext(app.locale, "Voice call").into_owned(),
-                                Icon::Phone,
+                                theme::phone_icon(),
                                 palette.secondary,
                                 Action::StartCall(chat.id.clone()),
                             )
@@ -877,7 +877,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             let video_glass = ui.painter().add(egui::Shape::Noop);
                             let video = theme::icon_button(
                                 ui,
-                                Icon::Video,
+                                theme::video_icon(),
                                 18.0,
                                 palette.secondary,
                                 palette.text,
@@ -904,7 +904,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     let search_glass = ui.painter().add(egui::Shape::Noop);
                     let search = theme::icon_button(
                         ui,
-                        Icon::Search,
+                        theme::search_icon(),
                         18.0,
                         if searching {
                             palette.accent
@@ -1907,6 +1907,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 {
                                     app.focus_composer = false;
                                     response.request_focus();
+                                    if std::mem::take(&mut app.composer_caret_end) {
+                                        let mut state = egui::TextEdit::load_state(ui.ctx(), response.id)
+                                            .unwrap_or_default();
+                                        state.cursor.set_char_range(Some(
+                                            egui::text::CCursorRange::one(egui::text::CCursor::new(
+                                                app.composer.chars().count(),
+                                            )),
+                                        ));
+                                        egui::TextEdit::store_state(ui.ctx(), response.id, state);
+                                        ui.ctx().request_repaint();
+                                    }
                                 }
                             });
                         ui.add_space(bottom);
@@ -1924,7 +1935,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     // An empty composer changes the send button to record.
                     if theme::circle_button(
                         ui,
-                        Icon::Mic,
+                        theme::mic_icon(),
                         button_width,
                         fill,
                         hover,
@@ -1940,7 +1951,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     let icon_kind = if app.editing.is_some() {
                         Icon::Check
                     } else {
-                        Icon::Send
+                        theme::send_icon()
                     };
                     let send =
                         theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
@@ -11126,7 +11137,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             }
             if theme::circle_button(
                 ui,
-                Icon::Send,
+                theme::send_icon(),
                 button,
                 palette.accent,
                 palette.accent_hover,

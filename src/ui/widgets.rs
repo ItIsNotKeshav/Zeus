@@ -793,6 +793,9 @@ impl Frost {
     }
 }
 
+/// How small a popup is when it starts to open.
+const POPUP_FROM_SCALE: f32 = 0.92;
+
 /// Shows a popup menu over frosted glass.
 pub trait FrostedPopup {
     /// [`egui::Popup::show`] over frosted glass. Its first frame only
@@ -817,32 +820,32 @@ impl FrostedPopup for egui::Popup<'_> {
             egui::LayerId::new(egui::Order::Foreground, id),
             theme::RADIUS_MENU,
         );
-        // Every menu eases in like the dropdowns do: a short fade as it opens.
-        let appear_id = id.with("menu-appear");
         let appear = ctx.animate_bool_with_time_and_easing(
-            appear_id,
-            measured,
-            if crate::motion::screen_reader_attached(ctx) {
-                0.0
-            } else {
-                0.14
-            },
+            id.with("appear"),
+            true,
+            theme::POPUP_OPEN,
             egui::emath::easing::quadratic_out,
         );
         let shown = self.show(|ui| {
             ui.multiply_opacity(appear);
             add(ui)
         });
-        if shown.is_none() {
-            // Closed: the next opening starts from invisible again.
-            ctx.animate_bool_with_time(appear_id, false, 0.0);
-        }
-        if let Some(shown) = &shown
-            && measured
-        {
+        let Some(shown) = shown else {
+            // Closed: the next opening starts from the beginning.
+            ctx.animate_bool_with_time(id.with("appear"), false, 0.0);
+            return None;
+        };
+        if measured {
             frost.place(shown.response.rect);
+            // Grows from the corner it opened at, glass and all.
+            let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
+            let pivot = shown.response.rect.left_top().to_vec2();
+            ctx.transform_layer_shapes(
+                egui::LayerId::new(egui::Order::Foreground, id),
+                egui::emath::TSTransform::new(pivot * (1.0 - scale), scale),
+            );
         }
-        shown
+        Some(shown)
     }
 }
 

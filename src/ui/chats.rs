@@ -948,7 +948,7 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
                 "Use New chat to message a contact or yourself.",
             )
         };
-        widgets::empty_state(ui, &palette, Icon::MessageCircle, title, body);
+        widgets::empty_state(ui, &palette, theme::chats_icon(), title, body);
         return;
     }
     // Rows touch: one clickable surface from top to bottom, no gaps or rules.
@@ -2138,6 +2138,8 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
     let current = chat.notification_sound.clone();
     let sounds = [
         (None, "Default"),
+        (Some(NotificationSound::Spooky), "Spooky"),
+        (Some(NotificationSound::Witching), "Witching hour"),
         (Some(NotificationSound::Receive), "Pidgin"),
         (Some(NotificationSound::Alert), "Pidgin alert"),
         (Some(NotificationSound::System), "System sound"),
