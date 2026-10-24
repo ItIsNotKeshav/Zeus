@@ -679,6 +679,9 @@ impl fastframe_theme::Palette for Palette {
 
 /// How strong the tint of a field over a vibrant window is, and of a row
 /// under the pointer and a selected one.
+/// Seconds a popup menu takes to open: the dropdown's ease.
+pub const POPUP_OPEN: f32 = 0.14;
+
 pub const TINT_FIELD: f32 = 0.08;
 pub const TINT_HOVER: f32 = 0.06;
 pub const TINT_SELECTED: f32 = 0.12;
