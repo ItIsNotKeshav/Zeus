@@ -403,6 +403,8 @@ const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
 /// Zeus's own Halloween sounds, synthesised for it (see `assets/sounds/README.md`).
 const SPOOKY: &[u8] = include_bytes!("../assets/sounds/spooky.wav");
 const WITCHING: &[u8] = include_bytes!("../assets/sounds/witching.wav");
+/// The ghost surprise's soft "woooo", synthesised for Zeus.
+const BOO: &[u8] = include_bytes!("../assets/sounds/boo.wav");
 
 /// Whether the notification itself plays the sound, instead of ZapFast. On
 /// macOS a sound the notification plays is silenced along with the banner by
@@ -448,6 +450,15 @@ pub fn play_sound(sound: NotificationSound) {
         }),
         NotificationSound::System | NotificationSound::None => return,
     };
+    play_source(source);
+}
+
+/// Plays the ghost surprise's sound.
+pub fn play_boo() {
+    play_source(Box::new(|| Ok(Box::new(std::io::Cursor::new(BOO)))));
+}
+
+fn play_source(source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send>) {
     let spawned = std::thread::Builder::new()
         .name("notification-sound".into())
         .spawn(move || {

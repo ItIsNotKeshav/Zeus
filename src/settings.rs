@@ -172,6 +172,10 @@ pub struct HalloweenParts {
     pub icons: bool,
     /// The spooky notification sounds.
     pub sounds: bool,
+    /// The ghost that sometimes jumps out when a message is sent.
+    pub ghost: bool,
+    /// The candy that sometimes falls when a message is sent.
+    pub candies: bool,
 }
 
 impl Default for HalloweenParts {
@@ -182,6 +186,8 @@ impl Default for HalloweenParts {
             doodles: true,
             icons: true,
             sounds: true,
+            ghost: true,
+            candies: true,
         }
     }
 }
@@ -194,15 +200,19 @@ pub enum HalloweenPart {
     Doodles,
     Icons,
     Sounds,
+    Ghost,
+    Candies,
 }
 
 impl HalloweenPart {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Colors,
         Self::Wallpaper,
         Self::Doodles,
         Self::Icons,
         Self::Sounds,
+        Self::Ghost,
+        Self::Candies,
     ];
 
     pub fn label(self) -> &'static str {
@@ -212,6 +222,8 @@ impl HalloweenPart {
             Self::Doodles => "Halloween doodles",
             Self::Icons => "Halloween icons",
             Self::Sounds => "Spooky sounds",
+            Self::Ghost => "Ghost surprise",
+            Self::Candies => "Candy surprise",
         }
     }
 }
@@ -1020,20 +1032,23 @@ impl Settings {
     /// The palette to draw with, given whether the window is dark.
     pub fn palette(&self, dark: bool) -> crate::theme::Palette {
         if self.halloween_active() {
-            return crate::theme::Palette::halloween(dark, self.accent.rgb());
+            return crate::theme::Palette::halloween(dark);
         }
         self.cached_palette()
             .unwrap_or_else(|| self.chat_theme.palette(dark, self.accent))
     }
 
-    /// Whether the Halloween colours are drawn: switched on, over Zeus's or
-    /// WhatsApp's own Dark and Light. A ready-made or custom theme chosen on
-    /// purpose keeps its colours.
+    /// Whether the Halloween colours are drawn: the look and its Orange
+    /// colours switch are on, over any built-in look, theme or stored accent.
+    /// Only a theme file the reader loaded keeps its colours.
     pub fn halloween_active(&self) -> bool {
-        self.halloween
-            && self.halloween_parts.colors
-            && self.chat_theme.takes_accent()
-            && self.cached_palette().is_none()
+        self.halloween && self.halloween_parts.colors && self.cached_palette().is_none()
+    }
+
+    /// Whether the Orange colours are switched on but a theme file overrides
+    /// them, so Settings can say why the window is not orange.
+    pub fn halloween_colors_overridden(&self) -> bool {
+        self.halloween && self.halloween_parts.colors && self.cached_palette().is_some()
     }
 
     /// Whether the Halloween night wallpaper is drawn.
@@ -1044,6 +1059,16 @@ impl Settings {
     /// Whether the Halloween icons are drawn.
     pub fn halloween_icons(&self) -> bool {
         self.halloween && self.halloween_parts.icons
+    }
+
+    /// Whether the ghost may jump out when a message is sent.
+    pub fn halloween_ghost(&self) -> bool {
+        self.halloween && self.halloween_parts.ghost
+    }
+
+    /// Whether candy may fall when a message is sent.
+    pub fn halloween_candies(&self) -> bool {
+        self.halloween && self.halloween_parts.candies
     }
 
     /// Turns the Halloween look on or off as a whole.
@@ -1060,6 +1085,8 @@ impl Settings {
             HalloweenPart::Doodles => self.halloween_parts.doodles = on,
             HalloweenPart::Icons => self.halloween_parts.icons = on,
             HalloweenPart::Sounds => self.halloween_parts.sounds = on,
+            HalloweenPart::Ghost => self.halloween_parts.ghost = on,
+            HalloweenPart::Candies => self.halloween_parts.candies = on,
         }
         self.sync_halloween();
     }
@@ -1517,7 +1544,7 @@ mod tests {
     }
 
     #[test]
-    fn halloween_is_orange_in_light_and_dark_and_yields_to_a_chosen_accent() {
+    fn halloween_is_orange_in_light_and_dark_whatever_accent_is_stored() {
         let settings = Settings::default();
         for dark in [true, false] {
             let palette = settings.palette(dark);
@@ -1530,14 +1557,17 @@ mod tests {
             accent: Accent::Blue,
             ..Settings::default()
         };
-        assert!(blue.palette(true).accent.b() > 200);
+        assert!(blue.palette(true).accent.b() < 80);
     }
 
     #[test]
-    fn a_ready_made_theme_chosen_on_purpose_keeps_its_colours() {
+    fn halloween_colours_cover_a_ready_made_theme_until_their_switch_is_off() {
         let mut settings = Settings::default();
-        settings.chat_theme = ChatTheme::Dracula;
+        settings.chat_theme = ChatTheme::Vercel;
+        assert!(settings.halloween_active());
+        settings.set_halloween_part(HalloweenPart::Colors, false);
         assert!(!settings.halloween_active());
+        assert_ne!(settings.palette(true).accent.r(), 0xff);
     }
 
     #[test]

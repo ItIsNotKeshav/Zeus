@@ -66,3 +66,9 @@ for hz, gain in [(146.8, 0.9), (155.6, 0.7), (220.0, 0.35), (329.6, 0.2)]:
     place(w, bell(hz, 0.9, ratio=2.76, index=1.4, decay=0.22) * gain, 0.24)
 place(w, glide(260, 200, 0.4, vibrato=5, depth=0.03) * 0.18, 0.3)
 save("witching", echo(w, 0.14, 0.3, 1))
+
+# Boo: a soft, low "woooo" that swells and fades, for the ghost surprise.
+# Gentle attack and level, so it startles without a sudden blast.
+b = glide(300, 190, 0.75, vibrato=5.0, depth=0.03) * 0.5
+b = b * np.minimum(t(0.75) / 0.12, 1.0)
+save("boo", echo(b, 0.15, 0.3, 1))

@@ -497,9 +497,25 @@ fn sections(app: &App) -> Vec<Section> {
     );
     if app.settings.halloween {
         for part in crate::settings::HalloweenPart::ALL {
-            appearance.row(translated(locale, part.label()), "", move |ui, app| {
-                halloween_part_switch(ui, app, part)
-            });
+            let note = match part {
+                crate::settings::HalloweenPart::Colors
+                    if app.settings.halloween_colors_overridden() =>
+                {
+                    "A theme file you loaded is in use, so its colours show instead. Choose a built-in theme to see the orange."
+                }
+                crate::settings::HalloweenPart::Ghost => {
+                    "Sending a message sometimes makes a ghost jump out for a second."
+                }
+                crate::settings::HalloweenPart::Candies => {
+                    "Sending a message sometimes makes candy fall for two seconds."
+                }
+                _ => "",
+            };
+            appearance.row(
+                translated(locale, part.label()),
+                translated(locale, note),
+                move |ui, app| halloween_part_switch(ui, app, part),
+            );
         }
     }
     appearance.block(
@@ -1804,6 +1820,8 @@ fn halloween_part_switch(ui: &mut egui::Ui, app: &mut App, part: crate::settings
         crate::settings::HalloweenPart::Doodles => parts.doodles,
         crate::settings::HalloweenPart::Icons => parts.icons,
         crate::settings::HalloweenPart::Sounds => parts.sounds,
+        crate::settings::HalloweenPart::Ghost => parts.ghost,
+        crate::settings::HalloweenPart::Candies => parts.candies,
     };
     let response = widgets::switch(ui, &palette, &mut on);
     theme::reveal_focus(&response);
