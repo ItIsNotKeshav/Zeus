@@ -3,6 +3,7 @@
 
 use egui::{Align, Key, Layout, Modifiers};
 
+use super::controls;
 use crate::app::App;
 use crate::app_lock::Forgetting;
 use crate::i18n::gettext;
@@ -58,14 +59,17 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
     let mut submit = ui.memory(|memory| memory.has_focus(id))
         && ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter));
     let checking = app.app_lock.checking();
-    let field = ui.add_enabled(
-        !checking,
-        egui::TextEdit::singleline(&mut app.app_lock.entry)
-            .id(id)
-            .password(true)
-            .hint_text(gettext(locale, "Password"))
-            .desired_width(f32::INFINITY),
-    );
+    let password = gettext(locale, "Password");
+    let field = ui
+        .add_enabled_ui(!checking, |ui| {
+            controls::Field::new(&mut app.app_lock.entry)
+                .id(id)
+                .password()
+                .hint(&password)
+                .width(f32::INFINITY)
+                .show(ui, &app.palette)
+        })
+        .inner;
     if ui.memory(|memory| memory.focused().is_none()) && !checking {
         field.request_focus();
     }

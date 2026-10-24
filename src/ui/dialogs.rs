@@ -2,6 +2,7 @@
 
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, pos2, vec2};
 
+use super::controls;
 use crate::app::App;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
@@ -334,24 +335,22 @@ fn unlock_locked_chats(app: &mut App, ui: &mut egui::Ui) {
     let mut submit = ui
         .memory(|memory| memory.has_focus(entry_id) || (setup && memory.has_focus(confirm_id)))
         && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
-    let entry = ui.add(
-        egui::TextEdit::singleline(&mut app.chat_lock_entry)
-            .id(entry_id)
-            .password(true)
-            .hint_text("Local code")
-            .desired_width(f32::INFINITY),
-    );
+    let entry = controls::Field::new(&mut app.chat_lock_entry)
+        .id(entry_id)
+        .password()
+        .hint("Local code")
+        .width(f32::INFINITY)
+        .show(ui, &app.palette);
     if ui.memory(|memory| memory.focused().is_none()) {
         entry.request_focus();
     }
     if setup {
-        ui.add(
-            egui::TextEdit::singleline(&mut app.chat_lock_confirm)
-                .id(confirm_id)
-                .password(true)
-                .hint_text("Confirm code")
-                .desired_width(f32::INFINITY),
-        );
+        controls::Field::new(&mut app.chat_lock_confirm)
+            .id(confirm_id)
+            .password()
+            .hint("Confirm code")
+            .width(f32::INFINITY)
+            .show(ui, &app.palette);
     }
     if app.chat_lock_error {
         theme::paragraph(
@@ -1312,28 +1311,12 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             );
         });
     }
-    Frame::new()
-        .fill(palette.surface)
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(Margin::symmetric(10, 6))
-        .show(ui, |ui| {
-            ui.add(
-                egui::TextEdit::singleline(&mut draft.emojis)
-                    .id(egui::Id::new("sticker-maker-emojis"))
-                    .hint_text(
-                        egui::RichText::new(crate::i18n::gettext(
-                            locale,
-                            "Emojis that describe it, like 😂 or ❤️",
-                        ))
-                        .color(palette.dim)
-                        .font(theme::regular(13.0)),
-                    )
-                    .font(theme::regular(13.0))
-                    .text_color(palette.text)
-                    .frame(Frame::NONE)
-                    .desired_width(f32::INFINITY),
-            );
-        });
+    let describe = crate::i18n::gettext(locale, "Emojis that describe it, like 😂 or ❤️");
+    controls::Field::new(&mut draft.emojis)
+        .id(egui::Id::new("sticker-maker-emojis"))
+        .hint(&describe)
+        .width(f32::INFINITY)
+        .show(ui, &palette);
     app.sticker_draft = Some(draft);
     ui.add_space(10.0);
     let can_send = app.open_chat.is_some();

@@ -9,6 +9,7 @@ use egui::{
     pos2, vec2,
 };
 
+use super::controls;
 use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::i18n::gettext;
@@ -996,37 +997,16 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
         ui.add_space(6.0);
-        let field = Frame::new()
-            .fill(palette.surface)
-            .corner_radius(CornerRadius::same(theme::RADIUS))
-            .inner_margin(Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                let response = ui.add(
-                    egui::TextEdit::singleline(&mut app.settings.giphy_key)
-                        .hint_text(
-                            egui::RichText::new("GIPHY API key")
-                                .color(palette.dim)
-                                .font(theme::regular(13.5)),
-                        )
-                        .font(theme::regular(13.5))
-                        .text_color(palette.text)
-                        .frame(Frame::NONE)
-                        .desired_width(f32::INFINITY),
-                );
-                if response.changed() {
-                    app.actions.push(Action::SettingsChanged);
-                }
-                if response.lost_focus() && !app.settings.giphy_key.trim().is_empty() {
-                    app.actions.push(Action::SearchGifs(String::new()));
-                }
-                response
-            });
-        theme::focus_outline(
-            ui,
-            field.inner.id,
-            field.response.rect,
-            f32::from(theme::RADIUS),
-        );
+        let response = controls::Field::new(&mut app.settings.giphy_key)
+            .hint("GIPHY API key")
+            .width(f32::INFINITY)
+            .show(ui, palette);
+        if response.changed() {
+            app.actions.push(Action::SettingsChanged);
+        }
+        if response.lost_focus() && !app.settings.giphy_key.trim().is_empty() {
+            app.actions.push(Action::SearchGifs(String::new()));
+        }
         return;
     }
     let mut query = app.picker_search.clone();
@@ -1501,32 +1481,13 @@ fn new_pack_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     ui.horizontal(|ui| {
         let label = gettext(locale, "Create pack");
         let button = theme::soft_button_width(ui, &label, true);
-        let field = Frame::new()
-            .fill(palette.surface)
-            .corner_radius(CornerRadius::same(theme::RADIUS))
-            .inner_margin(Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.sticker_pack_name)
-                        .id(egui::Id::new("sticker-pack-name"))
-                        .hint_text(
-                            egui::RichText::new(gettext(locale, "New pack…"))
-                                .color(palette.dim)
-                                .font(theme::regular(13.0)),
-                        )
-                        .font(theme::regular(13.0))
-                        .text_color(palette.text)
-                        .frame(Frame::NONE)
-                        .desired_width(ui.available_width() - button - 26.0),
-                )
-            });
-        theme::focus_outline(
-            ui,
-            field.inner.id,
-            field.response.rect,
-            f32::from(theme::RADIUS),
-        );
-        if field.inner.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
+        let new_pack = gettext(locale, "New pack…");
+        let field = controls::Field::new(&mut app.sticker_pack_name)
+            .id(egui::Id::new("sticker-pack-name"))
+            .hint(&new_pack)
+            .width(ui.available_width() - button - ui.spacing().item_spacing.x)
+            .show(ui, palette);
+        if field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) {
             create = true;
         }
         if theme::soft_button(ui, palette, Some(Icon::Plus), &label, false).clicked() {
@@ -1550,32 +1511,12 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         let buttons = theme::soft_button_width(ui, &find, true)
             + theme::soft_button_width(ui, &open, true)
             + spacing * 2.0;
-        let field = Frame::new()
-            .fill(palette.surface)
-            .corner_radius(CornerRadius::same(theme::RADIUS))
-            .inner_margin(Margin::symmetric(10, 6))
-            .show(ui, |ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.sticker_link)
-                        .id(egui::Id::new("sticker-link"))
-                        .hint_text(
-                            egui::RichText::new(gettext(locale, "Paste a signal.art link"))
-                                .color(palette.dim)
-                                .font(theme::regular(13.0)),
-                        )
-                        .font(theme::regular(13.0))
-                        .text_color(palette.text)
-                        .frame(Frame::NONE)
-                        .desired_width(ui.available_width() - buttons - 26.0),
-                )
-            });
-        theme::focus_outline(
-            ui,
-            field.inner.id,
-            field.response.rect,
-            f32::from(theme::RADIUS),
-        );
-        let field = field.inner;
+        let paste = gettext(locale, "Paste a signal.art link");
+        let field = controls::Field::new(&mut app.sticker_link)
+            .id(egui::Id::new("sticker-link"))
+            .hint(&paste)
+            .width(ui.available_width() - buttons - ui.spacing().item_spacing.x)
+            .show(ui, palette);
         let pasted = field.changed()
             && crate::backend::sticker_import::looks_like_signal_url(app.sticker_link.trim());
         let submitted = field.lost_focus()

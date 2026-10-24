@@ -2,6 +2,7 @@
 
 use egui::{Align, Layout};
 
+use super::controls;
 use crate::app::App;
 use crate::geo;
 use crate::model::Action;
@@ -27,14 +28,13 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     });
     ui.add_space(8.0);
     let hint = crate::i18n::gettext(app.locale, "Paste a map link or coordinates");
-    ui.add(
-        egui::TextEdit::singleline(&mut app.location_draft)
-            .id_salt("send-location")
-            .hint_text(hint.as_ref())
-            .char_limit(2048)
-            .font(theme::regular(14.0))
-            .desired_width(f32::INFINITY),
-    );
+    let palette = app.palette;
+    controls::Field::new(&mut app.location_draft)
+        .id(ui.make_persistent_id("send-location"))
+        .hint(&hint)
+        .char_limit(2048)
+        .width(f32::INFINITY)
+        .show(ui, &palette);
     ui.add_space(6.0);
     // The spot is read again here and shown before it is sent: a pair read the
     // wrong way round is visible in this dialog, not in someone else's chat.
