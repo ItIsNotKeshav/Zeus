@@ -2616,7 +2616,7 @@ fn sticky_date<R>(
     let now = ui.input(|input| input.time);
     let offset = output.state.offset.y;
     let viewport = output.inner_rect;
-    let at_bottom = offset + viewport.height() >= output.content_size.y - 24.0;
+    let at_bottom = offset + viewport.height() >= output.content_size.y - BOTTOM_SLACK;
     let (last_offset, was_at_bottom, mut moved_at) = ctx
         .data(|data| data.get_temp::<(f32, bool, f64)>(id))
         .unwrap_or((offset, at_bottom, f64::NEG_INFINITY));
@@ -2663,6 +2663,11 @@ fn sticky_date<R>(
 /// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`, and under 300ms.
 const GLIDE_SECONDS: f64 = 0.25;
 
+/// The tail still counts as the bottom this far from the content end.
+/// `scroll_to_rect` stops a few points short, so a one-point test never sees
+/// a reader who is following the newest message.
+const BOTTOM_SLACK: f32 = 24.0;
+
 /// Slides the list up into place when a new last message lands while the
 /// reader is at the bottom, instead of jumping by its height in one frame.
 /// Only the picture moves: the scroll offset, and so every click, is already
@@ -2706,6 +2711,14 @@ fn slides_with_transcript(clip: Rect, viewport: Rect) -> bool {
     along || inside
 }
 
+/// Message text is painted with the panel clip, which is taller than the
+/// viewport, so [`slides_with_transcript`] skips it. The scrollbar shares
+/// that clip and sits on the trailing edge.
+fn shape_follows_transcript(shape: &egui::Shape, viewport: Rect) -> bool {
+    let bounds = shape.visual_bounding_rect();
+    bounds.intersects(viewport) && bounds.left() < viewport.right() - 18.0
+}
+
 fn glide_new_message<R>(
     ui: &egui::Ui,
     chat: &str,
@@ -2717,7 +2730,8 @@ fn glide_new_message<R>(
     let id = Glide::id(chat);
     let now = ui.input(|input| input.time);
     let height = output.content_size.y;
-    let at_bottom = output.state.offset.y + output.inner_rect.height() >= height - 1.0;
+    let viewport = output.inner_rect;
+    let at_bottom = output.state.offset.y + viewport.height() >= height - BOTTOM_SLACK;
     let before = ui.ctx().data(|data| data.get_temp::<Glide>(id));
     let mut glide = Glide {
         newest: newest.clone(),
@@ -2726,6 +2740,11 @@ fn glide_new_message<R>(
         start: before.as_ref().map_or(0.0, |glide| glide.start),
         distance: before.as_ref().map_or(0.0, |glide| glide.distance),
     };
+    // The offset this pass just stored is what the next pass lays out at.
+    // Discard once so the shown pass is already there, and the shift below
+    // can hold the picture on the old line. A later pass sees the same
+    // newest and does not discard again.
+    let mut started = false;
     if let Some(before) = &before
         && before.newest.is_some()
         && before.newest != newest
@@ -2735,12 +2754,16 @@ fn glide_new_message<R>(
     {
         // A message arriving mid-glide adds to what is left of it, so fast
         // sends do not snap the list back to its old place.
-        glide.distance =
-            (before.shift(now) + (height - before.height)).min(output.inner_rect.height());
+        glide.distance = (before.shift(now) + (height - before.height)).min(viewport.height());
         glide.start = now;
+        started = true;
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(id, glide.clone()));
+    if started {
+        ui.ctx()
+            .request_discard("easing the transcript for a new message");
+    }
     let shift = glide.shift(now);
     if shift <= 0.0 {
         return;
@@ -2749,9 +2772,15 @@ fn glide_new_message<R>(
         let list = graphics.entry(layer);
         for index in first_shape.0..list.next_idx().0 {
             list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
-                // The clip stays: the list slides within its viewport.
-                if slides_with_transcript(clipped.clip_rect, output.inner_rect) {
+                let clip_slides = slides_with_transcript(clipped.clip_rect, viewport);
+                if clip_slides || shape_follows_transcript(&clipped.shape, viewport) {
+                    // The clip stays on a viewport-shaped shape. Panel-clipped
+                    // text would otherwise slide over the header, so that clip
+                    // is cut to the viewport for the slide.
                     clipped.shape.translate(vec2(0.0, shift));
+                    if !clip_slides {
+                        clipped.clip_rect = clipped.clip_rect.intersect(viewport);
+                    }
                 }
             });
         }
@@ -3710,7 +3739,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
     let at_bottom =
-        output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
+        output.state.offset.y + output.inner_rect.height() >= output.content_size.y - BOTTOM_SLACK;
     ui.ctx().data_mut(|data| {
         data.insert_temp(
             scroll_metrics_id(&chat.id),
@@ -12480,6 +12509,168 @@ mod tests {
         assert!((ease_out_strong(0.2) - 0.682).abs() < 0.01);
     }
 
+    /// A row that was on screen while the reader was following the tail keeps
+    /// most of its place on the frame a send lands, then finishes the move
+    /// over the glide. An instant stick-to-bottom would already be at the end.
+    #[test]
+    fn a_new_message_eases_the_open_transcript_up() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = crate::app::App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = crate::backend::LinkStatus::Connected;
+        app.window_focused = true;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+        let mut conversation = crate::app::Conversation::default();
+        for index in 0..40 {
+            let text = if index == 38 { "keep-me" } else { "older line" };
+            conversation.messages.push(sample_message(
+                &chat.id,
+                &format!("m{index}"),
+                text,
+                1_700_000_000 + index as i64,
+            ));
+        }
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
+        let frame = |app: &mut crate::app::App, time: f64| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        for time in [0.0, 0.05, 0.1, 0.2] {
+            frame(&mut app, time);
+        }
+        let settled = frame(&mut app, 0.3);
+        let y0 = text_top(&settled, "keep-me").expect("the anchor row is on screen");
+        let metrics = || ctx.data(|data| data.get_temp::<(f32, f32)>(scroll_metrics_id(&chat.id)));
+        let gap_of = |glide: &Option<Glide>, metrics: Option<(f32, f32)>| match (glide, metrics) {
+            (Some(glide), Some((offset, view))) => glide.height - offset - view,
+            _ => f32::NAN,
+        };
+        let gap_settled = gap_of(
+            &ctx.data(|data| data.get_temp::<Glide>(Glide::id(&chat.id))),
+            metrics(),
+        );
+        app.scroll_to_bottom = true;
+        app.conversations
+            .get_mut(&chat.id)
+            .unwrap()
+            .messages
+            .push(sample_message(
+                &chat.id,
+                "sent",
+                "just-sent",
+                crate::util::now(),
+            ));
+        let arrived = frame(&mut app, 0.32);
+        let y1 = text_top(&arrived, "keep-me").expect("the anchor stays on screen");
+        let glide_arrived = ctx.data(|data| data.get_temp::<Glide>(Glide::id(&chat.id)));
+        let gap_arrived = gap_of(&glide_arrived, metrics());
+        let next = frame(&mut app, 0.34);
+        let y_next = text_top(&next, "keep-me").expect("the anchor stays on the next frame");
+        let glide_next = ctx.data(|data| data.get_temp::<Glide>(Glide::id(&chat.id)));
+        let gap_next = gap_of(&glide_next, metrics());
+        let done = frame(&mut app, 0.32 + GLIDE_SECONDS + 0.05);
+        let y2 = text_top(&done, "keep-me").expect("the anchor is on screen after the glide");
+        let travelled = y0.0 - y2.0;
+        let early = y0.0 - y1.0;
+        // One frame after the row lands, a real ease still has most of the
+        // distance left. An instant stick is already on the final line.
+        let left = y_next.0 - y2.0;
+        let describe = |glide: &Option<Glide>| {
+            glide.as_ref().map_or("none".to_owned(), |glide| {
+                format!(
+                    "newest={:?} height={} at_bottom={} distance={} shift_now={}",
+                    glide.newest,
+                    glide.height,
+                    glide.at_bottom,
+                    glide.distance,
+                    glide.shift(0.32)
+                )
+            })
+        };
+        assert!(
+            travelled > 8.0,
+            "the tail moves up for the new row: y0={} y1={} y_next={} y2={} clip0={:?} clip1={:?} arrived={} next={}",
+            y0.0,
+            y1.0,
+            y_next.0,
+            y2.0,
+            y0.1,
+            y1.1,
+            describe(&glide_arrived),
+            describe(&glide_next)
+        );
+        assert!(
+            early < travelled * 0.45 && left > travelled * 0.25,
+            "the tail eases instead of jumping: early={early} left={left} of {travelled} (y0={} y1={} y_next={} y2={} clip0={:?} clip1={:?} gap_settled={gap_settled} gap_arrived={gap_arrived} gap_next={gap_next} arrived={} next={})",
+            y0.0,
+            y1.0,
+            y_next.0,
+            y2.0,
+            y0.1,
+            y1.1,
+            describe(&glide_arrived),
+            describe(&glide_next)
+        );
+    }
+
+    fn sample_message(chat: &str, id: &str, text: &str, timestamp: i64) -> crate::model::Message {
+        crate::model::Message {
+            id: id.to_owned(),
+            chat: chat.to_owned(),
+            sender: "123@s.whatsapp.net".into(),
+            sender_name: Some("Alice".into()),
+            from_me: false,
+            timestamp,
+            content: crate::model::Content::text(text),
+            status: crate::model::Delivery::None,
+            delivered_at: None,
+            read_at: None,
+            quoted: None,
+            reactions: Vec::new(),
+            history_order: None,
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
+    }
+
+    fn text_top(shapes: &[egui::epaint::ClippedShape], needle: &str) -> Option<(f32, egui::Rect)> {
+        fn walk(shape: &egui::Shape, clip: egui::Rect, needle: &str) -> Option<(f32, egui::Rect)> {
+            match shape {
+                egui::Shape::Text(text) if text.galley.job.text.contains(needle) => {
+                    Some((text.pos.y, clip))
+                }
+                egui::Shape::Vec(shapes) => {
+                    shapes.iter().find_map(|shape| walk(shape, clip, needle))
+                }
+                _ => None,
+            }
+        }
+        shapes
+            .iter()
+            .find_map(|clipped| walk(&clipped.shape, clipped.clip_rect, needle))
+    }
+
     #[test]
     fn a_new_bubble_springs_past_its_place_then_settles() {
         assert_eq!(arrive_spring(0.0), 0.0);
@@ -12500,6 +12691,18 @@ mod tests {
         assert!(slides_with_transcript(nested, viewport));
         let bar = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 600.0));
         assert!(!slides_with_transcript(bar, viewport));
+        let text = egui::Shape::rect_filled(
+            Rect::from_min_max(pos2(20.0, 200.0), pos2(180.0, 240.0)),
+            0.0,
+            Color32::WHITE,
+        );
+        assert!(shape_follows_transcript(&text, viewport));
+        let handle = egui::Shape::rect_filled(
+            Rect::from_min_max(pos2(390.0, 40.0), pos2(398.0, 120.0)),
+            0.0,
+            Color32::WHITE,
+        );
+        assert!(!shape_follows_transcript(&handle, viewport));
     }
 
     #[test]
