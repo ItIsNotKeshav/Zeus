@@ -5525,7 +5525,14 @@ fn bubble_frame(
         popup.at_pointer_fixed()
     };
     let menu = popup.show_frosted(ui.ctx(), |ui| {
-        context_menu(ui, view, menu_target, MenuOrigin::Chat, actions);
+        context_menu(
+            ui,
+            view,
+            menu_target,
+            album.unwrap_or_default(),
+            MenuOrigin::Chat,
+            actions,
+        );
     });
     if let Some(menu) = menu {
         ui.ctx()
@@ -6704,7 +6711,7 @@ pub(crate) fn list_menu(
         pins: app.pins.get(&message.chat),
         pin_notices: &[],
     };
-    context_menu(ui, &view, message, MenuOrigin::List, actions);
+    context_menu(ui, &view, message, &[], MenuOrigin::List, actions);
 }
 
 /// Quick reactions plus our current reaction when needed.
@@ -6817,6 +6824,7 @@ fn context_menu(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
+    album: &[Message],
     origin: MenuOrigin,
     actions: &mut Vec<Action>,
 ) {
@@ -7056,11 +7064,49 @@ fn context_menu(
                 {
                     actions.push(Action::CopyImage(path.clone()));
                 }
-                if widgets::menu_item(ui, &palette, Some(Icon::Download), "Save as…") {
+                // In an album the same menu saves the one under the pointer or
+                // every member fetched so far.
+                let files: Vec<(PathBuf, String)> = album
+                    .iter()
+                    .filter_map(|member| {
+                        let path = member.content.media()?.path.as_ref()?;
+                        Some((path.clone(), attachment_name(&member.content, path)))
+                    })
+                    .collect();
+                let in_album = album.len() > 1;
+                let save = if !in_album {
+                    "Save as…".into()
+                } else if matches!(message.content, Content::Image { .. }) {
+                    crate::i18n::gettext(view.locale, "Save this image")
+                } else {
+                    crate::i18n::gettext(view.locale, "Save this item")
+                };
+                if widgets::menu_item(ui, &palette, Some(Icon::Download), &save) {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
                         name: attachment_name(&message.content, path),
                     });
+                }
+                if in_album
+                    && files.len() > 1
+                    && widgets::menu_item(
+                        ui,
+                        &palette,
+                        Some(Icon::Download),
+                        &crate::i18n::gettext(
+                            view.locale,
+                            if album
+                                .iter()
+                                .all(|member| matches!(member.content, Content::Image { .. }))
+                            {
+                                "Save all images"
+                            } else {
+                                "Save all items"
+                            },
+                        ),
+                    )
+                {
+                    actions.push(Action::SaveAttachments { files });
                 }
                 if let Some(folder) = path.parent()
                     && widgets::menu_item(ui, &palette, Some(Icon::FileText), "Show in folder")
@@ -8196,8 +8242,13 @@ fn carousel_arrow(
         .on_hover_text(label)
 }
 
-/// Draws WhatsApp's media-album items as one compact grid with one batch
-/// action, and returns where each member's tile was drawn.
+/// How round the corners are where two tiles of an album meet.
+const ALBUM_SEAM_RADIUS: f32 = 4.0;
+/// The size of the button that downloads a whole album.
+const ALBUM_BUTTON: f32 = 56.0;
+
+/// Draws WhatsApp's media-album items as one compact grid with one download
+/// button over it, and returns where each member's tile was drawn.
 fn album_content(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -8208,6 +8259,10 @@ fn album_content(
     let gap = 3.0;
     let columns = 2;
     let tile = ((width - gap * (columns - 1) as f32) / columns as f32).max(80.0);
+    // The grid's outer corners follow the picture's own radius; corners where
+    // two tiles meet share one small radius, so the seams read evenly.
+    let outer = picture_radius(&view.palette, &messages[0]);
+    let inner = ALBUM_SEAM_RADIUS.min(outer);
     let mut tiles = Vec::with_capacity(messages.len());
     for (row, chunk) in messages.chunks(columns).enumerate() {
         // An own bubble lays out right to left; the grid keeps reading order.
@@ -8217,9 +8272,28 @@ fn album_content(
             |ui| {
                 ui.spacing_mut().item_spacing.x = gap;
                 for (column, message) in chunk.iter().enumerate() {
-                    if let Some(rect) =
-                        album_tile(ui, view, message, vec2(tile, tile), row, column, actions)
-                    {
+                    let left = column > 0;
+                    let right = column + 1 < chunk.len();
+                    let above = row > 0;
+                    let below = (row + 1) * columns + column < messages.len();
+                    let corner = |first: bool, second: bool| {
+                        if first || second { inner } else { outer }.round() as u8
+                    };
+                    let corners = CornerRadius {
+                        nw: corner(left, above),
+                        ne: corner(right, above),
+                        sw: corner(left, below),
+                        se: corner(right, below),
+                    };
+                    if let Some(rect) = album_tile(
+                        ui,
+                        view,
+                        message,
+                        vec2(tile, tile),
+                        corners,
+                        (row, column),
+                        actions,
+                    ) {
                         tiles.push((rect, message.id.clone()));
                     }
                 }
@@ -8251,6 +8325,26 @@ fn album_content(
         }
     }
 
+    album_download_button(ui, view, messages, &tiles, actions);
+    tiles
+}
+
+/// The one button over an album that still has members to fetch: it downloads
+/// them all, and eases away once none is left.
+fn album_download_button(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    messages: &[Message],
+    tiles: &[(Rect, String)],
+    actions: &mut Vec<Action>,
+) {
+    let Some(grid) = tiles
+        .iter()
+        .map(|(rect, _)| *rect)
+        .reduce(|all, rect| all.union(rect))
+    else {
+        return;
+    };
     let missing: Vec<&Message> = messages
         .iter()
         .filter(|message| {
@@ -8260,61 +8354,84 @@ fn album_content(
                 .is_some_and(|media| media.path.is_none())
         })
         .collect();
-    let files: Vec<(PathBuf, String)> = messages
-        .iter()
-        .filter_map(|message| {
-            let path = message.content.media()?.path.as_ref()?;
-            Some((path.clone(), attachment_name(&message.content, path)))
-        })
-        .collect();
-    if !files.is_empty()
-        && theme::pill_button(
-            ui,
-            &view.palette,
-            &crate::i18n::gettext(view.locale, "Save all…"),
-            true,
-        )
-        .clicked()
-    {
-        actions.push(Action::SaveAttachments { files });
-    }
-    if !missing.is_empty() {
-        let downloading = missing.iter().all(|message| {
+    let downloading = !missing.is_empty()
+        && missing.iter().all(|message| {
             message
                 .content
                 .media()
                 .is_some_and(|media| matches!(media.state, MediaState::Downloading))
         });
-        if theme::pill_button(
-            ui,
-            &view.palette,
-            &crate::i18n::gettext(
-                view.locale,
-                if downloading {
-                    "Downloading…"
-                } else {
-                    "Download all"
-                },
-            ),
+    let id = bubble_id(&view.chat.id, &messages[0].id).with("album-download");
+    let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
+    let appear = ui.ctx().animate_bool_with_time_and_easing(
+        id,
+        !missing.is_empty(),
+        if reduce_motion { 0.0 } else { 0.18 },
+        egui::emath::easing::quadratic_out,
+    );
+    if appear <= 0.0 {
+        return;
+    }
+    let button = Rect::from_center_size(grid.center(), Vec2::splat(ALBUM_BUTTON));
+    let response = ui.interact(button, id, Sense::click());
+    let label = if downloading {
+        "Downloading…"
+    } else {
+        "Download all"
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
             !downloading,
+            crate::i18n::gettext(view.locale, label),
         )
+    });
+    theme::reveal_focus(&response);
+    let hover = ui.ctx().animate_bool_with_time_and_easing(
+        id.with("hover"),
+        response.hovered() && !downloading,
+        if reduce_motion { 0.0 } else { 0.12 },
+        egui::emath::easing::quadratic_out,
+    );
+    let scale = (0.7 + 0.3 * appear) * (1.0 + 0.06 * hover);
+    let disc = Rect::from_center_size(button.center(), button.size() * scale);
+    let painter = ui.painter();
+    let alpha = |value: f32| (value * appear).round() as u8;
+    painter.circle_filled(
+        disc.center(),
+        disc.width() / 2.0,
+        Color32::from_black_alpha(alpha(125.0 + 40.0 * hover)),
+    );
+    painter.circle_stroke(
+        disc.center(),
+        disc.width() / 2.0 - 0.5,
+        Stroke::new(1.0, Color32::from_white_alpha(alpha(46.0))),
+    );
+    let white = Color32::from_white_alpha(alpha(255.0));
+    if downloading {
+        theme::paint_spinner(ui, disc, 26.0 * scale, white);
+    } else {
+        theme::paint_icon(ui, Icon::Download, disc, 26.0 * scale, white);
+    }
+    theme::focus_outline(ui, response.id, disc, disc.width() / 2.0);
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
-        {
-            for message in missing {
-                if let Some(media) = message.content.media()
-                    && !matches!(media.state, MediaState::Downloading)
-                {
-                    actions.push(Action::Download {
-                        manual: true,
-                        card: None,
-                        chat: message.chat.clone(),
-                        message: message.id.clone(),
-                    });
-                }
+        && !downloading
+    {
+        for message in missing {
+            if let Some(media) = message.content.media()
+                && !matches!(media.state, MediaState::Downloading)
+            {
+                actions.push(Action::Download {
+                    manual: true,
+                    card: None,
+                    chat: message.chat.clone(),
+                    message: message.id.clone(),
+                });
             }
         }
     }
-    tiles
 }
 
 /// Draws one album member with its own download, selection and activation
@@ -8324,8 +8441,8 @@ fn album_tile(
     view: &View<'_>,
     message: &Message,
     size: Vec2,
-    row: usize,
-    column: usize,
+    corners: CornerRadius,
+    (row, column): (usize, usize),
     actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let media = message.content.media()?;
@@ -8346,7 +8463,8 @@ fn album_tile(
     });
     theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
-        ui.painter().rect_filled(rect, 5.0, view.palette.surface);
+        ui.painter()
+            .rect_filled(rect, corners, view.palette.surface);
         let uri = media
             .path
             .as_ref()
@@ -8387,26 +8505,12 @@ fn album_tile(
                 image
                     .uv(Rect::from_center_size(pos2(0.5, 0.5), uv))
                     .fit_to_exact_size(size)
-                    .corner_radius(5.0)
+                    .corner_radius(corners)
                     .paint_at(ui, rect);
             }
         }
         if matches!(message.content, Content::Video { .. }) {
             theme::paint_icon(ui, Icon::Play, rect, 30.0, Color32::WHITE);
-        }
-        if media.path.is_none() {
-            let disc = Rect::from_center_size(rect.center(), Vec2::splat(42.0));
-            ui.painter()
-                .circle_filled(disc.center(), 21.0, Color32::from_black_alpha(130));
-            match media.state {
-                MediaState::Downloading => theme::paint_spinner(ui, disc, 20.0, Color32::WHITE),
-                MediaState::Failed(_) => {
-                    theme::paint_icon(ui, Icon::CircleAlert, disc, 20.0, Color32::WHITE)
-                }
-                MediaState::Idle => {
-                    theme::paint_icon(ui, Icon::Download, disc, 20.0, Color32::WHITE)
-                }
-            }
         }
         if not_sent(message) {
             let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
@@ -8422,7 +8526,7 @@ fn album_tile(
     {
         motion_clip(ui, view, message, motion, rect, actions);
     }
-    theme::focus_outline(ui, response.id, rect, 5.0);
+    theme::focus_outline_corners(ui, response.id, rect, corners);
     // Each member keeps its own failure: the others stay usable, and a click
     // on this one retries it.
     let response = if let MediaState::Failed(error) = &media.state {
