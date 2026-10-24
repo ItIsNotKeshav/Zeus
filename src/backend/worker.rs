@@ -9793,8 +9793,14 @@ impl Worker {
         {
             crate::mentions::push_everyone_id(&mut mentions);
         }
+        // Pictures and clips sent together travel as one album: a parent
+        // message announces it and every member names that parent.
+        let album = (!documents)
+            .then(|| self.begin_album(&chat, &client, &paths))
+            .flatten();
         for (index, path) in paths.into_iter().enumerate() {
             let client = client.clone();
+            let album = album.clone();
             // Like the caption, the reply belongs to the first file.
             let quote = quote.take();
             let commands = self.commands.clone();
@@ -9825,11 +9831,14 @@ impl Worker {
                     let file_name = path
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned());
-                    let prepared = if documents {
+                    let mut prepared = if documents {
                         prepare_document(&client, bytes, &mime, file_name.as_deref()).await?
                     } else {
                         prepare_media(&client, bytes, &mime, file_name.as_deref(), false).await?
                     };
+                    if let Some(parent) = &album {
+                        join_album(&mut prepared, &chat, parent);
+                    }
                     quoted_outbound(
                         &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                     )
@@ -9861,6 +9870,58 @@ impl Worker {
                 }
             });
         }
+    }
+
+    /// Sends the parent message of an album when several pictures or clips go
+    /// out together, returning its id for the members to name.
+    fn begin_album(
+        &mut self,
+        chat: &str,
+        client: &Arc<Client>,
+        paths: &[PathBuf],
+    ) -> Option<String> {
+        let (mut images, mut videos) = (0u32, 0u32);
+        for path in paths {
+            let mime = mime_guess2::from_path(path).first_or_octet_stream();
+            match mime.type_().as_str() {
+                "image" => images += 1,
+                "video" => videos += 1,
+                _ => return None,
+            }
+        }
+        if images + videos < 2 {
+            return None;
+        }
+        let jid = Self::jid_of(chat)?;
+        let id = client.generate_message_id().into_string();
+        let mut album = wa::message::AlbumMessage::default();
+        album.expected_image_count = Some(images);
+        album.expected_video_count = Some(videos);
+        let mut message = wa::Message::default();
+        message.album_message = MessageField::some(album);
+        let expiration = self.apply_ephemeral(chat, &mut message);
+        let client = client.clone();
+        let chat = chat.to_owned();
+        let parent = id.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let message_id =
+                    whatsapp_rust::MessageId::new(&parent).map_err(|error| error.to_string())?;
+                let mut options = SendOptions::default().with_message_id(message_id);
+                if let Some(expiration) = expiration {
+                    options = options.with_ephemeral_expiration(expiration);
+                }
+                client
+                    .send(whatsapp_rust::SendRequest::new(&jid, message).with_options(options))
+                    .await
+                    .map_err(|error| error.to_string())
+            }
+            .await;
+            if let Err(error) = result {
+                log::warn!("could not send an album parent in {chat}: {error}");
+            }
+        });
+        Some(id)
     }
 
     /// Encodes and dispatches pasted image pixels while preserving the quote for a refused send.
@@ -11298,6 +11359,28 @@ fn motion_clip(base: &wa::Message) -> Option<(String, Vec<u8>)> {
         proto
     };
     Some((parent, clip.encode_to_vec()))
+}
+
+/// Makes an outgoing attachment a member of the album `parent` started.
+fn join_album(prepared: &mut Prepared, chat: &str, parent: &str) {
+    let mut key = wa::MessageKey::default();
+    key.remote_jid = Some(chat.to_owned());
+    key.from_me = Some(true);
+    key.id = Some(parent.to_owned());
+    let mut association = wa::MessageAssociation::default();
+    association.association_type = Some(wa::message_association::AssociationType::MEDIA_ALBUM);
+    association.parent_message_key = MessageField::some(key);
+    let mut context = prepared
+        .message
+        .message_context_info
+        .as_option()
+        .cloned()
+        .unwrap_or_default();
+    context.message_association = MessageField::some(association);
+    prepared.message.message_context_info = MessageField::some(context);
+    if let Some(media) = prepared.content.media_mut() {
+        media.album = Some(parent.to_owned());
+    }
 }
 
 /// Builds synthetic album attachments with explicit protocol parent ids.
