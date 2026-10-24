@@ -2591,16 +2591,18 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
             palette.text,
         );
         ui.add_space(6.0);
-        for color in DoodleColor::ALL {
-            let label = crate::i18n::gettext(app.locale, color.label());
-            if theme::soft_button(ui, &palette, None, &label, color == current).clicked() {
-                app.actions.push(Action::SetDoodleColor(color));
-            }
+        let options: Vec<_> = DoodleColor::ALL
+            .into_iter()
+            .map(|color| (color, crate::i18n::gettext(app.locale, color.label())))
+            .collect();
+        if let Some(color) = segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0)
+        {
+            app.actions.push(Action::SetDoodleColor(color));
         }
     });
     ui.add_space(10.0);
     let range = DOODLE_INTENSITY;
-    let mut intensity = app
+    let intensity = app
         .settings
         .doodle_intensity
         .clamp(*range.start(), *range.end());
