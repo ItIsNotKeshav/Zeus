@@ -172,7 +172,8 @@ pub struct HalloweenParts {
     pub icons: bool,
     /// The spooky notification sounds.
     pub sounds: bool,
-    /// The ghost that sometimes jumps out when a message is sent.
+    /// The ghosts and skeletons that sometimes rain down when a message is
+    /// sent. Still stored as `ghost`, so a saved choice carries over.
     pub ghost: bool,
     /// The candy that sometimes falls when a message is sent.
     pub candies: bool,
@@ -222,7 +223,7 @@ impl HalloweenPart {
             Self::Doodles => "Halloween doodles",
             Self::Icons => "Halloween icons",
             Self::Sounds => "Spooky sounds",
-            Self::Ghost => "Ghost surprise",
+            Self::Ghost => "Ghost and skeleton rain",
             Self::Candies => "Candy surprise",
         }
     }

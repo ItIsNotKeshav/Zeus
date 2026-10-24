@@ -3005,6 +3005,8 @@ pub enum Action {
     SetHalloween(bool),
     /// One part of the Halloween look on or off.
     SetHalloweenPart(crate::settings::HalloweenPart, bool),
+    /// Opens or closes the Halloween page under Settings, Appearance.
+    ShowHalloweenPage(bool),
     /// An accent over the chat theme's own.
     SetAccent(crate::chat_themes::Accent),
     /// Draws the interface in the platform's font or in the bundled Inter.

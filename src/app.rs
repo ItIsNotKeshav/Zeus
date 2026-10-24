@@ -727,6 +727,8 @@ pub struct App {
     pub settings_search: String,
     /// The settings category shown beside the list of them.
     pub settings_section: usize,
+    /// Whether Settings shows the Halloween page instead of the list.
+    pub settings_halloween: bool,
     pub focus_settings_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
@@ -1480,6 +1482,7 @@ impl App {
             focus_search: false,
             settings_search: String::new(),
             settings_section: 0,
+            settings_halloween: false,
             focus_settings_search: false,
             quit_requested: false,
             window_focused: false,
@@ -6346,6 +6349,7 @@ impl App {
                     self.cancel_contact_dialog_request();
                 }
                 self.page = page;
+                self.settings_halloween = false;
                 self.dialog = None;
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -8308,6 +8312,10 @@ impl App {
             }
             Action::OpenSettingsSection(index) => {
                 self.settings_section = index;
+                self.settings_search.clear();
+            }
+            Action::ShowHalloweenPage(open) => {
+                self.settings_halloween = open;
                 self.settings_search.clear();
             }
             Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),

@@ -1265,6 +1265,7 @@ fastframe_icons::icons! {
         Settings => lucide "settings",
         Smartphone => lucide "smartphone",
         Smile => "smile",
+        SmileHw => "smile-halloween",
         SquarePen => lucide "square-pen",
         Star => "star",
         StarFill => "star-fill",
@@ -1336,6 +1337,13 @@ pub fn ellipsis_icon() -> Icon {
 }
 pub fn mic_icon() -> Icon {
     if halloween() { Icon::MicHw } else { Icon::Mic }
+}
+pub fn smile_icon() -> Icon {
+    if halloween() {
+        Icon::SmileHw
+    } else {
+        Icon::Smile
+    }
 }
 pub fn send_icon() -> Icon {
     if halloween() {

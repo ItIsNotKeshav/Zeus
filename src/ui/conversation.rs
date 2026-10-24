@@ -1674,7 +1674,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
                     // The button shows the picker's tab used last.
                     let (mode_icon, mode_label) = match app.settings.picker_mode {
-                        PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
+                        PickerTab::Emoji => (theme::smile_icon(), "Emoji, GIFs, and stickers"),
                         PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
                         PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
                     };
