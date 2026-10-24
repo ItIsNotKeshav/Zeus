@@ -2659,8 +2659,9 @@ fn sticky_date<R>(
     );
 }
 
-/// How long the list takes to slide up for a message that lands at its end.
-const GLIDE_SECONDS: f64 = theme::MOTION_PANEL as f64;
+/// How long the list takes to ease up for a message that lands at its end.
+/// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`, and under 300ms.
+const GLIDE_SECONDS: f64 = 0.25;
 
 /// Slides the list up into place when a new last message lands while the
 /// reader is at the bottom, instead of jumping by its height in one frame.
@@ -2682,16 +2683,27 @@ impl Glide {
         egui::Id::new(("message-glide", chat))
     }
 
-    /// How far below its place the list is drawn at `now`. Ease out: it
-    /// starts at the old place and settles gently.
+    /// How far below its place the list is drawn at `now`. Strong ease-out:
+    /// it leaves the old place at once and settles gently.
     fn shift(&self, now: f64) -> f32 {
         let t = ((now - self.start) / GLIDE_SECONDS) as f32;
         if t >= 1.0 || self.distance <= 0.0 {
             0.0
         } else {
-            self.distance * (1.0 - theme::ease_out(t))
+            self.distance * (1.0 - ease_out_strong(t))
         }
     }
+}
+
+/// A transcript shape: its clip shares the viewport's vertical span, or
+/// sits inside it. A vertical scroll clips y to the viewport and leaves x
+/// on the parent, so the clip is wider than the viewport and an equality
+/// check never matches. The scrollbar's clip is taller, so it stays put.
+fn slides_with_transcript(clip: Rect, viewport: Rect) -> bool {
+    let along = (clip.top() - viewport.top()).abs() <= 1.0
+        && (clip.bottom() - viewport.bottom()).abs() <= 1.0;
+    let inside = clip.top() >= viewport.top() - 0.5 && clip.bottom() <= viewport.bottom() + 0.5;
+    along || inside
 }
 
 fn glide_new_message<R>(
@@ -2738,9 +2750,7 @@ fn glide_new_message<R>(
         for index in first_shape.0..list.next_idx().0 {
             list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
                 // The clip stays: the list slides within its viewport.
-                if clipped.clip_rect == output.inner_rect
-                    || output.inner_rect.contains_rect(clipped.clip_rect)
-                {
+                if slides_with_transcript(clipped.clip_rect, output.inner_rect) {
                     clipped.shape.translate(vec2(0.0, shift));
                 }
             });
@@ -4382,17 +4392,112 @@ fn doodle_scrim(
     ))
 }
 
-/// How long a sent message takes to travel from the send button to its place.
-const FLIGHT_SECONDS: f64 = theme::MOTION_PANEL as f64;
-/// How long a received message takes to settle in.
-const LANDING_SECONDS: f64 = theme::MOTION_PANEL as f64;
 /// How old a message may be when first drawn and still be animated in: one
 /// just sent or received, not history or a chat opened later.
 const ARRIVAL_FRESH: i64 = 3;
+/// Apple-style spring for a bubble arriving: duration 0.5s, bounce 0.2.
+const ARRIVE_SECONDS: f64 = 0.5;
+const ARRIVE_BOUNCE: f64 = 0.2;
+/// A new bubble starts a little small. Nothing arrives from nothing.
+const ARRIVE_FROM_SCALE: f32 = 0.95;
+/// How far below its row a new bubble starts. The spring carries it up.
+const ARRIVE_DROP: f32 = 8.0;
 
-/// Ease out: quick at first, gentle at the end, no overshoot.
-fn ease_out(t: f32) -> f32 {
-    theme::ease_out(t)
+/// Strong ease-out for the transcript, `cubic-bezier(0.23, 1, 0.32, 1)`.
+fn ease_out_strong(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let (x1, y1, x2, y2) = (0.23, 1.0, 0.32, 1.0);
+    let mut u = t;
+    for _ in 0..8 {
+        let x = bezier_sample(u, x1, x2);
+        let dx = bezier_slope(u, x1, x2);
+        if dx.abs() < 1e-6 {
+            break;
+        }
+        u = (u - (x - t) / dx).clamp(0.0, 1.0);
+    }
+    bezier_sample(u, y1, y2)
+}
+
+fn bezier_sample(t: f32, a: f32, b: f32) -> f32 {
+    let u = 1.0 - t;
+    3.0 * u * u * t * a + 3.0 * u * t * t * b + t * t * t
+}
+
+fn bezier_slope(t: f32, a: f32, b: f32) -> f32 {
+    let u = 1.0 - t;
+    3.0 * u * u * a + 6.0 * u * t * (b - a) + 3.0 * t * t * (1.0 - b)
+}
+
+/// Where a unit spring (`duration` ms, `bounce`) is after `elapsed` seconds.
+/// Motion's duration/bounce solver: bounce 0.2 is damping ratio 0.8, and the
+/// duration is when the motion has settled.
+fn arrive_spring(elapsed: f64) -> f32 {
+    if elapsed <= 0.0 {
+        return 0.0;
+    }
+    if elapsed >= ARRIVE_SECONDS {
+        return 1.0;
+    }
+    let (stiffness, damping) = spring_from_duration(ARRIVE_SECONDS * 1000.0, ARRIVE_BOUNCE);
+    spring_unit(elapsed * 1000.0, stiffness, damping) as f32
+}
+
+/// Stiffness and damping for Motion's `{ duration, bounce }` spring. `duration`
+/// is milliseconds. Velocity is 0 and mass is 1, as in that config.
+fn spring_from_duration(duration_ms: f64, bounce: f64) -> (f64, f64) {
+    const SAFE_MIN: f64 = 0.001;
+    const ROOT_STEPS: i32 = 12;
+    let mass = 1.0;
+    let velocity = 0.0;
+    let damping_ratio = (1.0 - bounce).clamp(0.05, 1.0);
+    let duration = (duration_ms / 1000.0).clamp(0.01, 10.0);
+    let angular = |undamped: f64| undamped * (1.0 - damping_ratio * damping_ratio).sqrt();
+    let envelope = |undamped: f64| {
+        let decay = undamped * damping_ratio;
+        let delta = decay * duration;
+        let a = decay - velocity;
+        let b = angular(undamped);
+        SAFE_MIN - (a / b) * (-delta).exp()
+    };
+    let derivative = |undamped: f64| {
+        let decay = undamped * damping_ratio;
+        let delta = decay * duration;
+        let d = delta * velocity + velocity;
+        let e = damping_ratio.powi(2) * undamped.powi(2) * duration;
+        let f = (-delta).exp();
+        let g = angular(undamped.powi(2));
+        let factor = if -envelope(undamped) + SAFE_MIN > 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        (factor * ((d - e) * f)) / g
+    };
+    let mut undamped = 5.0 / duration;
+    for _ in 1..ROOT_STEPS {
+        let slope = derivative(undamped);
+        if slope.abs() < 1e-9 {
+            break;
+        }
+        undamped -= envelope(undamped) / slope;
+    }
+    let stiffness = undamped * undamped * mass;
+    let damping = damping_ratio * 2.0 * (mass * stiffness).sqrt();
+    (stiffness, damping)
+}
+
+/// Underdamped spring from 0 to 1 at `t_ms`, the form Motion samples.
+fn spring_unit(t_ms: f64, stiffness: f64, damping: f64) -> f64 {
+    let mass = 1.0;
+    let damping_ratio = damping / (2.0 * (stiffness * mass).sqrt());
+    let undamped = (stiffness / mass).sqrt() / 1000.0;
+    let angular = undamped * (1.0 - damping_ratio * damping_ratio).sqrt();
+    let initial_delta = 1.0;
+    let envelope = (-damping_ratio * undamped * t_ms).exp();
+    1.0 - envelope
+        * ((damping_ratio * undamped * initial_delta) / angular * (angular * t_ms).sin()
+            + initial_delta * (angular * t_ms).cos())
 }
 
 /// Draws a message row and returns its bubble response for scrolling. A
@@ -4519,9 +4624,9 @@ fn swipe_chat(app: &mut App, ui: &egui::Ui, chat: &Chat, area: Rect, actions: &m
     super::swipe::edge_badge(ui, id, area, pull, whole, &app.palette);
 }
 
-/// Draws a message row. A message just sent flies there from the composer,
-/// carrying the text out of the field; one just received fades in and grows
-/// a little from its side.
+/// Draws a message row. A message just sent springs from the send button
+/// into its bubble; one just received, or a send that did not leave the
+/// button, springs in from its side.
 fn bubble_arriving(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -4531,7 +4636,7 @@ fn bubble_arriving(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    // A third of a second, only on a send or a receipt: unlike the looping
+    // Half a second, only on a send or a receipt: unlike the looping
     // animations `motion` paces, these need no screen-reader exception (and
     // on Windows any accessibility client, not only a reader, sets it).
     let fresh = view.animate && (crate::util::now() - message.timestamp).abs() <= ARRIVAL_FRESH;
@@ -4567,91 +4672,104 @@ fn bubble_arriving(
             }
             claimed(flights).map(|index| flights[index].clone())
         });
-        let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
-        let Some((from, landed)) = flight.and_then(|flight| {
+        if let Some((from, landed)) = flight.and_then(|flight| {
             let (_, at) = flight.message?;
             Some((flight.from, at))
-        }) else {
-            return response;
-        };
-        let t = ((now - landed) / FLIGHT_SECONDS) as f32;
-        if t >= 1.0 {
+        }) {
+            let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
+            let elapsed = now - landed;
+            if elapsed >= ARRIVE_SECONDS {
+                return response;
+            }
+            let Some(rect) = ui.ctx().data(|data| {
+                data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect"))
+            }) else {
+                return response;
+            };
+            // It grows out of the button: its corner there, a quarter of its
+            // size, and both spring to its own place and size together.
+            // The button is the origin, so the scale starts at the button's
+            // size rather than at an entrance scale.
+            let p = arrive_spring(elapsed);
+            // The list slides up to meet a new last message; aim where the row
+            // is drawn now, not where it ends, or the bubble overshoots it.
+            let gliding = ui
+                .ctx()
+                .data(|data| data.get_temp::<Glide>(Glide::id(&view.chat.id)))
+                .map_or(0.0, |glide| glide.shift(now));
+            let corner = rect.right_bottom() + vec2(0.0, gliding);
+            let at = from.center() + (corner - from.center()) * p;
+            let transform = egui::emath::TSTransform::from_translation(at.to_vec2())
+                * egui::emath::TSTransform::from_scaling(0.25 + 0.75 * p)
+                * egui::emath::TSTransform::from_translation(-corner.to_vec2());
+            // Lifted onto a layer above the chat, so it can cross the composer
+            // and the list's edge on its way, and the list's own glide leaves it be.
+            let flying = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("send-flight"));
+            let clip = ui.ctx().content_rect();
+            ui.ctx().graphics_mut(|graphics| {
+                let list = graphics.entry(layer);
+                let end = list.next_idx();
+                let shapes: Vec<egui::Shape> = list
+                    .all_entries()
+                    .skip(start.0)
+                    .take(end.0 - start.0)
+                    .map(|clipped| clipped.shape.clone())
+                    .collect();
+                for index in start.0..end.0 {
+                    list.reset_shape(egui::layers::ShapeIdx(index));
+                }
+                let above = graphics.entry(flying);
+                for mut shape in shapes {
+                    shape.transform(transform);
+                    above.add(clip, shape);
+                }
+                // The button itself leaves its place and stretches into the
+                // bubble, fading as the message shows through.
+                let bubble = transform.mul_rect(rect);
+                let blob =
+                    Rect::from_min_max(from.min.lerp(bubble.min, p), from.max.lerp(bubble.max, p));
+                let radius = egui::lerp(from.height() / 2.0..=18.0, p).min(blob.height() / 2.0);
+                let fade = (1.0 - (elapsed as f32) / (ARRIVE_SECONDS as f32 * 0.6)).clamp(0.0, 1.0);
+                above.add(
+                    clip,
+                    egui::Shape::rect_filled(
+                        blob,
+                        radius,
+                        view.palette.accent.gamma_multiply(fade),
+                    ),
+                );
+            });
+            ui.ctx().request_repaint();
             return response;
         }
-        let Some(rect) = ui
-            .ctx()
-            .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")))
-        else {
-            return response;
-        };
-        // It grows out of the button: its corner there, a quarter of its
-        // size, and both ease to its own place and size together.
-        let p = 1.0 - (1.0 - t).powi(4);
-        // The list slides up to meet a new last message; aim where the row
-        // is drawn now, not where it ends, or the bubble overshoots it.
-        let gliding = ui
-            .ctx()
-            .data(|data| data.get_temp::<Glide>(Glide::id(&view.chat.id)))
-            .map_or(0.0, |glide| glide.shift(now));
-        let corner = rect.right_bottom() + vec2(0.0, gliding);
-        let at = from.center() + (corner - from.center()) * p;
-        let transform = egui::emath::TSTransform::from_translation(at.to_vec2())
-            * egui::emath::TSTransform::from_scaling(0.25 + 0.75 * p)
-            * egui::emath::TSTransform::from_translation(-corner.to_vec2());
-        // Lifted onto a layer above the chat, so it can cross the composer
-        // and the list's edge on its way, and the list's own glide leaves it be.
-        let flying = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("send-flight"));
-        let clip = ui.ctx().content_rect();
-        ui.ctx().graphics_mut(|graphics| {
-            let list = graphics.entry(layer);
-            let end = list.next_idx();
-            let shapes: Vec<egui::Shape> = list
-                .all_entries()
-                .skip(start.0)
-                .take(end.0 - start.0)
-                .map(|clipped| clipped.shape.clone())
-                .collect();
-            for index in start.0..end.0 {
-                list.reset_shape(egui::layers::ShapeIdx(index));
-            }
-            let above = graphics.entry(flying);
-            for mut shape in shapes {
-                shape.transform(transform);
-                above.add(clip, shape);
-            }
-            // The button itself leaves its place and stretches into the
-            // bubble, fading as the message shows through.
-            let bubble = transform.mul_rect(rect);
-            let blob =
-                Rect::from_min_max(from.min.lerp(bubble.min, p), from.max.lerp(bubble.max, p));
-            let radius = egui::lerp(from.height() / 2.0..=18.0, p).min(blob.height() / 2.0);
-            let fade = (1.0 - t / 0.6).clamp(0.0, 1.0);
-            above.add(
-                clip,
-                egui::Shape::rect_filled(blob, radius, view.palette.accent.gamma_multiply(fade)),
-            );
-        });
-        ui.ctx().request_repaint();
-        return response;
     }
-    // Received: the first time it is drawn starts its landing, unless it was
-    // already there when the chat itself first appeared.
+    // Received, or a send that did not leave the button. The first time it
+    // is drawn starts its spring, unless it was already there when the chat
+    // itself first appeared.
     let shown = egui::Id::new(("chat-shown", &view.chat.id));
     let shown = ui.ctx().data_mut(|data| *data.get_temp_mut_or(shown, now));
     let id = egui::Id::new(("landing", &view.chat.id, &message.id));
     let landed = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
-    let t = ((now - landed) / LANDING_SECONDS) as f32;
-    if t >= 1.0 || landed <= shown {
+    let elapsed = now - landed;
+    if elapsed >= ARRIVE_SECONDS || landed <= shown {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
     }
-    let p = ease_out(t);
+    let p = arrive_spring(elapsed);
     let row = ui.scope(|ui| {
-        ui.multiply_opacity(p);
+        ui.multiply_opacity(p.clamp(0.0, 1.0));
         bubble_row(ui, view, message, album, place, reduce_motion, actions)
     });
-    let pivot = row.response.rect.left_bottom();
-    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2())
-        * egui::emath::TSTransform::from_scaling(0.9 + 0.1 * p)
+    // Grows from the tail's side. Scale starts at 0.95 and the spring may
+    // pass 1 before it settles.
+    let pivot = if message.from_me {
+        row.response.rect.right_bottom()
+    } else {
+        row.response.rect.left_bottom()
+    };
+    let scale = ARRIVE_FROM_SCALE + (1.0 - ARRIVE_FROM_SCALE) * p;
+    let drop = ARRIVE_DROP * (1.0 - p);
+    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2() + vec2(0.0, drop))
+        * egui::emath::TSTransform::from_scaling(scale)
         * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
     ui.ctx().graphics_mut(|graphics| {
         let list = graphics.entry(layer);
@@ -12344,6 +12462,44 @@ mod tests {
             flight_progress(1.0, 1.0 + f64::from(STICKER_FLIGHT) * 2.0),
             1.0
         );
+    }
+
+    #[test]
+    fn a_new_row_eases_the_transcript_out() {
+        let glide = Glide {
+            newest: None,
+            height: 0.0,
+            at_bottom: true,
+            start: 0.0,
+            distance: 40.0,
+        };
+        assert!((glide.shift(0.0) - 40.0).abs() < 0.01);
+        assert_eq!(glide.shift(GLIDE_SECONDS), 0.0);
+        // Strong ease-out is ahead of halfway by the middle of the slide.
+        assert!(glide.shift(GLIDE_SECONDS * 0.5) < 20.0);
+        assert!((ease_out_strong(0.2) - 0.682).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_new_bubble_springs_past_its_place_then_settles() {
+        assert_eq!(arrive_spring(0.0), 0.0);
+        assert_eq!(arrive_spring(ARRIVE_SECONDS), 1.0);
+        assert_eq!(arrive_spring(ARRIVE_SECONDS + 1.0), 1.0);
+        let early = arrive_spring(0.1);
+        assert!(early > 0.5 && early < 0.8, "early {early}");
+        let past = arrive_spring(0.3);
+        assert!(past > 1.0 && past < 1.05, "overshoot {past}");
+    }
+
+    #[test]
+    fn a_wider_transcript_clip_still_slides() {
+        let viewport = Rect::from_min_max(pos2(0.0, 10.0), pos2(400.0, 500.0));
+        let wider = Rect::from_min_max(pos2(-20.0, 10.0), pos2(420.0, 500.0));
+        assert!(slides_with_transcript(wider, viewport));
+        let nested = Rect::from_min_max(pos2(40.0, 100.0), pos2(200.0, 160.0));
+        assert!(slides_with_transcript(nested, viewport));
+        let bar = Rect::from_min_max(pos2(0.0, 0.0), pos2(400.0, 600.0));
+        assert!(!slides_with_transcript(bar, viewport));
     }
 
     #[test]
