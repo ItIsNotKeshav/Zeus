@@ -1422,6 +1422,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         .is_some_and(|selected| *selected == chat.id);
     let now = crate::util::now();
     let muted = chat.muted(now);
+    let shapes = super::swipe::mark(ui);
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
@@ -1641,6 +1642,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     if response.clicked() {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }
+    swipe(app, ui, chat, rect, shapes);
     let menu_palette = palette;
     // The favorite item is translated, so its width counts in the reader's
     // language.
@@ -1691,6 +1693,24 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     };
     popup.show_frosted(ui.ctx(), |ui| context_menu(app, ui, chat, &menu_palette));
     response
+}
+
+/// Two fingers swiped sideways across a chat: the row follows them showing
+/// what Settings give that swipe, and letting go past the threshold does it.
+fn swipe(app: &mut App, ui: &egui::Ui, chat: &Chat, rect: Rect, shapes: egui::layers::ShapeIdx) {
+    let area = Rect::from_x_y_ranges(ui.clip_rect().x_range(), rect.y_range());
+    let pull = super::swipe::over(ui.ctx(), area);
+    if let Some(pull) = pull.filter(|pull| pull.fired) {
+        let action = super::swipe::action(app, false, pull.right);
+        let actions = super::swipe::actions(app, action, chat, None);
+        app.actions.extend(actions);
+    }
+    let icon = |right| {
+        let action = super::swipe::action(app, false, right);
+        super::swipe::available(app, action, chat, false).then(|| super::swipe::icon(action, chat))
+    };
+    let id = egui::Id::new(("swipe-chat", &chat.id));
+    super::swipe::slide_row(ui, id, shapes, rect, pull, icon, &app.palette);
 }
 
 /// The widest a chat row's full-message tooltip grows before it wraps.

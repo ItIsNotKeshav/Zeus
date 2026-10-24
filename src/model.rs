@@ -3009,6 +3009,8 @@ pub enum Action {
     SetAccent(crate::chat_themes::Accent),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
+    /// Sets what one of the four touchpad swipes does.
+    SetSwipe(crate::settings::SwipeSlot, crate::settings::SwipeAction),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

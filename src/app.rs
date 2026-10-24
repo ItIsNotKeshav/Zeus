@@ -8311,6 +8311,10 @@ impl App {
                 crate::theme::set_font(ctx, choice);
                 ctx.request_repaint();
             }
+            Action::SetSwipe(slot, action) => {
+                self.settings.swipes.set(slot, action);
+                self.mark_settings_dirty();
+            }
             Action::SetInterfaceLanguage(choice) => {
                 self.settings.interface_language = choice;
                 self.locale = crate::i18n::resolve(choice);
@@ -9558,6 +9562,12 @@ impl App {
         } else {
             self.scrolling.apply(ctx);
             self.route_scroll(ctx);
+            // Over a dialog, a menu or the image preview, the rows beneath
+            // must not follow the fingers.
+            let covered = self.dialog.is_some()
+                || self.image_preview.is_some()
+                || egui::Popup::is_any_open(ctx);
+            crate::ui::swipe::update(ctx, covered);
             self.take_drops_and_pastes(ctx);
         }
         crate::ui::show(self, ui);

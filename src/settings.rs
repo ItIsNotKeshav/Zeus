@@ -557,6 +557,171 @@ impl AutoLock {
     }
 }
 
+/// What a two-finger touchpad swipe does. The chat list and the open chat
+/// each have a swipe left and a swipe right; [`Self::LIST`] and
+/// [`Self::CHAT`] are the choices each place offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SwipeAction {
+    None,
+    /// Replies to the message under the fingers.
+    Reply,
+    OpenChat,
+    CloseChat,
+    NextChat,
+    PreviousChat,
+    ToggleRead,
+    TogglePin,
+    ToggleArchive,
+    ToggleMute,
+    ToggleFavorite,
+    /// Asks to delete the chat, as the menu's Delete chat does.
+    Delete,
+}
+
+impl SwipeAction {
+    /// The choices for a chat in the list.
+    pub const LIST: [SwipeAction; 8] = [
+        Self::None,
+        Self::OpenChat,
+        Self::ToggleRead,
+        Self::TogglePin,
+        Self::ToggleArchive,
+        Self::ToggleMute,
+        Self::ToggleFavorite,
+        Self::Delete,
+    ];
+
+    /// The choices for the open chat.
+    pub const CHAT: [SwipeAction; 11] = [
+        Self::None,
+        Self::Reply,
+        Self::CloseChat,
+        Self::NextChat,
+        Self::PreviousChat,
+        Self::ToggleRead,
+        Self::TogglePin,
+        Self::ToggleArchive,
+        Self::ToggleMute,
+        Self::ToggleFavorite,
+        Self::Delete,
+    ];
+
+    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
+        crate::i18n::gettext(
+            locale,
+            match self {
+                Self::None => "Nothing",
+                Self::Reply => "Reply to the message",
+                Self::OpenChat => "Open the chat",
+                Self::CloseChat => "Back to the chat list",
+                Self::NextChat => "Next chat",
+                Self::PreviousChat => "Previous chat",
+                Self::ToggleRead => "Mark as read or unread",
+                Self::TogglePin => "Pin or unpin",
+                Self::ToggleArchive => "Archive or unarchive",
+                Self::ToggleMute => "Mute or unmute",
+                Self::ToggleFavorite => "Add or remove favorite",
+                Self::Delete => "Delete chat",
+            },
+        )
+    }
+}
+
+/// One of the four swipes [`Swipes`] holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum SwipeSlot {
+    ListLeft,
+    ListRight,
+    ChatLeft,
+    ChatRight,
+}
+
+impl SwipeSlot {
+    pub const ALL: [SwipeSlot; 4] = [
+        Self::ListLeft,
+        Self::ListRight,
+        Self::ChatLeft,
+        Self::ChatRight,
+    ];
+
+    /// Which way the fingers move: in the open chat or over the list.
+    pub fn of(in_chat: bool, right: bool) -> Self {
+        match (in_chat, right) {
+            (false, false) => Self::ListLeft,
+            (false, true) => Self::ListRight,
+            (true, false) => Self::ChatLeft,
+            (true, true) => Self::ChatRight,
+        }
+    }
+
+    /// The actions this place offers.
+    pub fn choices(self) -> &'static [SwipeAction] {
+        match self {
+            Self::ListLeft | Self::ListRight => &SwipeAction::LIST,
+            Self::ChatLeft | Self::ChatRight => &SwipeAction::CHAT,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::ListLeft => "Swipe left on a chat",
+            Self::ListRight => "Swipe right on a chat",
+            Self::ChatLeft => "Swipe left in the open chat",
+            Self::ChatRight => "Swipe right in the open chat",
+        }
+    }
+}
+
+/// What each two-finger touchpad swipe does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Swipes {
+    pub list_left: SwipeAction,
+    pub list_right: SwipeAction,
+    pub chat_left: SwipeAction,
+    pub chat_right: SwipeAction,
+}
+
+impl Default for Swipes {
+    /// As on the phone: left archives a chat and replies to a message, right
+    /// marks a chat read or unread and goes back from the open chat.
+    fn default() -> Self {
+        Self {
+            list_left: SwipeAction::ToggleArchive,
+            list_right: SwipeAction::ToggleRead,
+            chat_left: SwipeAction::Reply,
+            chat_right: SwipeAction::CloseChat,
+        }
+    }
+}
+
+impl Swipes {
+    /// The slot's action; one a place does not offer does nothing there.
+    pub fn get(&self, slot: SwipeSlot) -> SwipeAction {
+        let action = match slot {
+            SwipeSlot::ListLeft => self.list_left,
+            SwipeSlot::ListRight => self.list_right,
+            SwipeSlot::ChatLeft => self.chat_left,
+            SwipeSlot::ChatRight => self.chat_right,
+        };
+        if slot.choices().contains(&action) {
+            action
+        } else {
+            SwipeAction::None
+        }
+    }
+
+    pub fn set(&mut self, slot: SwipeSlot, action: SwipeAction) {
+        *match slot {
+            SwipeSlot::ListLeft => &mut self.list_left,
+            SwipeSlot::ListRight => &mut self.list_right,
+            SwipeSlot::ChatLeft => &mut self.chat_left,
+            SwipeSlot::ChatRight => &mut self.chat_right,
+        } = action;
+    }
+}
+
 /// Which chats show one notification, then stay quiet for ten minutes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -688,6 +853,8 @@ pub struct Settings {
     pub halloween: bool,
     /// Which parts of the Halloween look apply while it is on.
     pub halloween_parts: HalloweenParts,
+    /// What two-finger touchpad swipes do in the chat list and the open chat.
+    pub swipes: Swipes,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Which doodles `show_wallpaper` draws.
@@ -831,6 +998,7 @@ impl Default for Settings {
             auto_download: true,
             halloween: true,
             halloween_parts: HalloweenParts::default(),
+            swipes: Swipes::default(),
             show_wallpaper: true,
             doodle_style: DoodleStyle::Halloween,
             doodle_color: DoodleColor::Accent,
@@ -1465,6 +1633,19 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn swipes_default_without_a_setting_and_ignore_a_choice_out_of_place() {
+        let swipes: Swipes = serde_json::from_str(r#"{"chat_left":"close_chat"}"#).unwrap();
+        assert_eq!(swipes.get(SwipeSlot::ChatLeft), SwipeAction::CloseChat);
+        assert_eq!(swipes.get(SwipeSlot::ListLeft), SwipeAction::ToggleArchive);
+        let mut swipes = Swipes::default();
+        swipes.set(SwipeSlot::ListRight, SwipeAction::Reply);
+        assert_eq!(swipes.get(SwipeSlot::ListRight), SwipeAction::None);
+        for slot in SwipeSlot::ALL {
+            assert!(slot.choices().contains(&Swipes::default().get(slot)));
+        }
+    }
 
     #[test]
     fn halloween_ships_on_and_turning_it_off_restores_the_classic_look() {

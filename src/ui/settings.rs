@@ -316,6 +316,7 @@ fn category_icon(source: &str) -> Icon {
             }
         }
         "Chats" => theme::chats_icon(),
+        "Touchpad swipes" => Icon::ArrowLeftRight,
         "Calls and voice" => Icon::Phone,
         "Notifications" => Icon::Bell,
         "Privacy" => Icon::Lock,
@@ -719,6 +720,8 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
+    let swipes = swipe_section(locale);
+
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
         translated(locale, "Desktop notifications"),
@@ -1096,6 +1099,7 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
+        swipes,
         notifications,
         voice,
         privacy,
@@ -1104,6 +1108,49 @@ fn sections(app: &App) -> Vec<Section> {
         files,
         about_section,
     ]
+}
+
+/// What each two-finger touchpad swipe does, one drop-down per swipe.
+fn swipe_section(locale: Locale) -> Section {
+    use crate::settings::SwipeSlot;
+    let mut swipes = Section::new(translated(locale, "Touchpad swipes"));
+    for slot in SwipeSlot::ALL {
+        let description = match slot {
+            SwipeSlot::ListLeft => "Two fingers sliding left over a chat in the list.",
+            SwipeSlot::ListRight => "Two fingers sliding right over a chat in the list.",
+            SwipeSlot::ChatLeft => {
+                "Two fingers sliding left across the open chat. A reply goes to the message under them."
+            }
+            SwipeSlot::ChatRight => "Two fingers sliding right across the open chat.",
+        };
+        swipes.row(
+            translated(locale, slot.label()),
+            translated(locale, description),
+            move |ui, app| swipe_picker(ui, app, slot),
+        );
+    }
+    swipes
+}
+
+fn swipe_picker(ui: &mut egui::Ui, app: &mut App, slot: crate::settings::SwipeSlot) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let selected = app.settings.swipes.get(slot);
+    controls::dropdown(
+        ui,
+        &palette,
+        ("swipe", slot),
+        &crate::i18n::gettext(locale, slot.label()),
+        &selected.label(locale),
+        controls::WIDTH,
+        |ui| {
+            for &choice in slot.choices() {
+                if controls::option(ui, &palette, &choice.label(locale), selected == choice) {
+                    app.actions.push(Action::SetSwipe(slot, choice));
+                }
+            }
+        },
+    );
 }
 
 /// The microphone calls and voice messages use, a check of how it hears the
