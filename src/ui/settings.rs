@@ -2595,10 +2595,13 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
             .into_iter()
             .map(|color| (color, crate::i18n::gettext(app.locale, color.label())))
             .collect();
-        if let Some(color) = segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0)
-        {
-            app.actions.push(Action::SetDoodleColor(color));
-        }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if let Some(color) =
+                segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0)
+            {
+                app.actions.push(Action::SetDoodleColor(color));
+            }
+        });
     });
     ui.add_space(10.0);
     let range = DOODLE_INTENSITY;
