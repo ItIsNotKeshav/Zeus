@@ -25,6 +25,7 @@ pub mod polls;
 pub mod rail;
 pub mod reaction_list;
 pub mod settings;
+pub(crate) mod swipe;
 pub mod update;
 pub mod widgets;
 
