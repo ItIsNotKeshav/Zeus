@@ -5912,6 +5912,8 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
 
 /// Width of a quote's accent bar.
 const QUOTE_BAR: f32 = 4.0;
+/// Room between a quote's text and the bar on its left, and its right edge.
+const QUOTE_SIDE: i8 = 10;
 /// Corner radius of a quote.
 const QUOTE_RADIUS: u8 = 12;
 /// The even ring a Nothing bubble keeps around a card at its edge.
@@ -6017,9 +6019,11 @@ fn quote_block(
         )
     });
     let (bleed, radius) = edge_card(ui, &palette, QUOTE_RADIUS);
+    // The same room on both sides of the text: after the bar and before the
+    // card's right edge.
     let padding = Margin {
-        left: QUOTE_BAR as i8 + 8,
-        right: 12,
+        left: QUOTE_BAR as i8 + QUOTE_SIDE,
+        right: QUOTE_SIDE,
         top: 6,
         bottom: 7,
     };

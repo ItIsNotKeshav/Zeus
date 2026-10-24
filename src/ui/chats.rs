@@ -1659,9 +1659,6 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             "Unarchive",
             &crate::i18n::gettext(app.locale, "Leave group"),
             &crate::i18n::gettext(app.locale, "Leave channel"),
-            "Mute for 8 hours",
-            "Mute for a week",
-            "Mute indefinitely",
             "Unlock chat",
             "Copy number",
         ],
@@ -1672,6 +1669,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         widgets::menu_width(
             ui,
             &[
+                "Mute",
                 "Notification sound",
                 "Voice message speed",
                 &crate::i18n::gettext(app.locale, "Labels"),
@@ -2066,15 +2064,20 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             app.actions.push(Action::SetMuted(chat.id.clone(), None));
         }
     } else {
-        for (label, until) in [
+        let options = [
             ("Mute for 8 hours", Some(now + 8 * 3600)),
             ("Mute for a week", Some(now + 7 * 86_400)),
             ("Mute indefinitely", Some(0)),
-        ] {
-            if widgets::menu_item(ui, palette, Some(Icon::BellOff), label) {
-                app.actions.push(Action::SetMuted(chat.id.clone(), until));
+        ];
+        let items: Vec<&str> = options.iter().map(|(label, _)| *label).collect();
+        widgets::submenu(ui, palette, Icon::BellOff, "Mute", &items, |ui| {
+            for (label, until) in options {
+                if widgets::menu_item(ui, palette, None, label) {
+                    app.actions.push(Action::SetMuted(chat.id.clone(), until));
+                    ui.close();
+                }
             }
-        }
+        });
     }
     sound_menu(app, ui, palette, chat);
     voice_speed_menu(app, ui, palette, chat);
