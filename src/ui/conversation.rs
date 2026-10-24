@@ -6418,11 +6418,16 @@ fn footer_over_picture(
     // A narrow picture (a tall sticker, a small photo) cannot hold the whole
     // time and ticks, so the bubble widens until it can.
     let needed = width + OVER_PICTURE_INSET.x * 2.0;
+    let narrow = needed > picture.width();
     let picture = Rect::from_min_size(
         picture.min,
         vec2(picture.width().max(needed), picture.height()),
     );
-    ui.expand_to_include_x(picture.right());
+    // Only then: a picture that reaches into the bubble's padding already
+    // has the bubble around it.
+    if narrow {
+        ui.expand_to_include_x(picture.right());
+    }
     let row = Rect::from_min_max(
         pos2(
             picture.right() - OVER_PICTURE_INSET.x - width,
