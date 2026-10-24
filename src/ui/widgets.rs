@@ -1327,10 +1327,17 @@ pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color3
     ui.painter().add(egui::Shape::mesh(mesh));
 }
 
+/// Horizontal inset of the elevated hover and selection card from a list row.
+/// `ROW_SIDE` is where the avatar and the trailing text sit, eight points
+/// inside that card.
+pub const ROW_CARD_X: f32 = 16.0;
+/// How far a list row's avatar and trailing text sit from the row's sides.
+pub const ROW_SIDE: f32 = 24.0;
+
 /// The hover or selection behind a chat-list row: a rounded card inset from
 /// the list's edges rather than a full-width band.
 pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
-    highlight_card(ui, palette, rect.shrink2(vec2(8.0, 2.0)), color);
+    highlight_card(ui, palette, rect.shrink2(vec2(ROW_CARD_X, 2.0)), color);
 }
 
 /// The card `row_highlight` paints, over `card` itself: the rail's lit and
@@ -2694,6 +2701,33 @@ mod tests {
                 .iter()
                 .any(|clipped| uses_color(&clipped.shape, lifted.color)),
             "a dark row keeps its shadow"
+        );
+    }
+
+    /// The elevated row is a card, inset from the list's sides, with the
+    /// avatar and trailing text further in than the card.
+    #[test]
+    fn elevated_row_clears_the_list_edges() {
+        let ctx = egui::Context::default();
+        let dark = Palette::dark();
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, theme::ROW_HEIGHT));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            row_highlight(ui, &dark, rect, dark.surface_active);
+        });
+        output.textures_delta.clear();
+        let card = rect.shrink2(vec2(ROW_CARD_X, 2.0));
+        let fills: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(shape) if shape.fill == dark.surface_active => Some(shape.rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills, vec![card]);
+        assert!(
+            card.left() - rect.left() >= 16.0 && rect.right() - card.right() >= 16.0,
+            "the elevated card needs room at both sides"
         );
     }
 

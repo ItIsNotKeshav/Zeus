@@ -684,8 +684,8 @@ fn hit_row(
         } else if response.hovered() {
             super::widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let left = rect.left() + 16.0;
-        let right = rect.right() - 16.0;
+        let left = rect.left() + widgets::ROW_SIDE;
+        let right = rect.right() - widgets::ROW_SIDE;
         ui.painter().text(
             pos2(left, rect.top() + 10.0),
             Align2::LEFT_TOP,

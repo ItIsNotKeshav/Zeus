@@ -322,8 +322,8 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
     // the rows' timestamps do.
     Frame::new()
         .inner_margin(Margin {
-            left: 14,
-            right: 14,
+            left: widgets::ROW_SIDE as i8,
+            right: widgets::ROW_SIDE as i8,
             top: 8,
             bottom: 8,
         })
@@ -655,7 +655,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
     drag.max.y = drag.min.y + 60.0;
     super::titlebar_drag(ui, drag);
     Frame::new()
-        .inner_margin(Margin::symmetric(14, 8))
+        .inner_margin(Margin::symmetric(widgets::ROW_SIDE as i8, 8))
         .show(ui, |ui| {
             let row = ui.horizontal(|ui| {
                 ui.set_min_height(super::conversation::HEADER_ROW);
@@ -1347,20 +1347,22 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(22.0));
+        let icon_rect = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(22.0),
+        );
         Icon::LockOpen
             .image(palette.accent, 22.0)
             .paint_at(ui, icon_rect);
         ui.painter().text(
-            pos2(rect.left() + 76.0, rect.center().y),
+            pos2(rect.left() + widgets::ROW_SIDE + 62.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             "Locked chats",
             theme::medium(14.5),
             palette.text,
         );
         ui.painter().text(
-            pos2(rect.right() - 16.0, rect.center().y),
+            pos2(rect.right() - widgets::ROW_SIDE, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             count.to_string(),
             theme::regular(12.5),
@@ -1514,8 +1516,8 @@ fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
     ui.add_space(10.0);
     Frame::new()
         .inner_margin(Margin {
-            left: 14,
-            right: 14,
+            left: widgets::ROW_SIDE as i8,
+            right: widgets::ROW_SIDE as i8,
             top: 0,
             bottom: 10,
         })
@@ -1540,8 +1542,10 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(&hit.chat);
         widgets::paint_avatar(
             ui,
@@ -1551,8 +1555,8 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             &hit.chat,
             picture.as_deref(),
         );
-        let left = rect.left() + 76.0;
-        let right = rect.right() - 14.0;
+        let left = rect.left() + widgets::ROW_SIDE + 62.0;
+        let right = rect.right() - widgets::ROW_SIDE;
         let stamp_galley = ui.painter().layout_no_wrap(
             crate::util::chat_stamp(app.locale, hit.timestamp),
             theme::regular(11.5),
@@ -1654,18 +1658,20 @@ pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) 
         if response.hovered() || response.has_focus() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let circle =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let circle = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
         ui.painter()
             .circle_filled(circle.center(), circle.width() / 2.0, palette.accent);
         theme::paint_icon(ui, icon, circle, 22.0, palette.on_accent);
-        let left = rect.left() + 76.0;
+        let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let line = widgets::line(
             ui,
             label,
             theme::medium(14.5),
             palette.text,
-            rect.right() - 14.0 - left,
+            rect.right() - widgets::ROW_SIDE - left,
             1,
         );
         line.paint(
@@ -1694,17 +1700,19 @@ fn person_row(
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(id);
         widgets::paint_avatar(ui, &palette, avatar_rect, name, id, picture.as_deref());
-        let left = rect.left() + 76.0;
+        let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let name_line = widgets::line(
             ui,
             name,
             theme::medium(14.5),
             palette.text,
-            rect.right() - 14.0 - left,
+            rect.right() - widgets::ROW_SIDE - left,
             1,
         );
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
@@ -1714,7 +1722,7 @@ fn person_row(
                 detail,
                 theme::regular(13.0),
                 palette.dim,
-                rect.right() - 14.0 - left,
+                rect.right() - widgets::ROW_SIDE - left,
                 1,
             );
             phone_line.paint(ui, pos2(left, rect.top() + 38.0), palette.dim);
@@ -1758,8 +1766,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
         let picture = app.avatar(&chat.id);
         widgets::paint_avatar(
             ui,
@@ -1773,8 +1783,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
 
-        let left = rect.left() + 76.0;
-        let right = rect.right() - 14.0;
+        let left = rect.left() + widgets::ROW_SIDE + 62.0;
+        let right = rect.right() - widgets::ROW_SIDE;
         let stamp = if chat.last_activity > 0 {
             crate::util::chat_stamp(app.locale, chat.last_activity)
         } else {
@@ -1946,7 +1956,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             rect,
             chat,
             &title,
-            pos2(rect.left() + 38.0, rect.center().y),
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
         );
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);

@@ -368,7 +368,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     // group calls are on; a call among several people with no group behind
     // it has no way back from here.
     let button_rect = Rect::from_center_size(
-        pos2(rect.right() - 30.0, rect.center().y),
+        pos2(rect.right() - widgets::ROW_SIDE - 17.0, rect.center().y),
         Vec2::splat(34.0),
     );
     let group_chat = crate::model::ChatKind::from_id(&message.chat)
@@ -410,8 +410,10 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     } else if response.hovered() {
         widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
     }
-    let avatar_rect =
-        Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+    let avatar_rect = Rect::from_center_size(
+        pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+        Vec2::splat(48.0),
+    );
     if link {
         crate::ui::call::paint_link_avatar(ui, &palette, avatar_rect);
     } else {
@@ -424,7 +426,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             picture.as_deref(),
         );
     }
-    let left = rect.left() + 76.0;
+    let left = rect.left() + widgets::ROW_SIDE + 62.0;
     let right = button_rect.left() - 6.0;
     let stamp_galley = ui
         .painter()
@@ -576,8 +578,8 @@ fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
     ui.add_space(10.0);
     Frame::new()
         .inner_margin(Margin {
-            left: 16,
-            right: 14,
+            left: widgets::ROW_SIDE as i8,
+            right: widgets::ROW_SIDE as i8,
             top: 4,
             bottom: 6,
         })
@@ -597,17 +599,19 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         Sense::hover(),
     );
     let buttons = Rect::from_min_max(
-        pos2(rect.right() - 92.0, rect.top()),
-        pos2(rect.right() - 12.0, rect.bottom()),
+        pos2(rect.right() - 80.0 - widgets::ROW_SIDE, rect.top()),
+        pos2(rect.right() - widgets::ROW_SIDE, rect.bottom()),
     );
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
-        let left = rect.left() + 76.0;
+        let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let width = (buttons.left() - 8.0 - left).max(0.0);
         let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
