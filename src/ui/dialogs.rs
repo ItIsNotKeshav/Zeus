@@ -1294,8 +1294,19 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             theme::regular(13.0),
             palette.secondary,
         );
-        ui.spacing_mut().slider_width = ui.available_width() - 8.0;
-        ui.add(egui::Slider::new(&mut side, smallest..=largest).show_value(false));
+        let width = ui.available_width() - 8.0;
+        let mut size = side as f32;
+        if super::widgets::glass_slider(
+            ui,
+            &palette,
+            &mut size,
+            smallest as f32..=largest as f32,
+            width,
+        )
+        .changed()
+        {
+            side = size.round() as u32;
+        }
     });
     if side != draft.crop.side {
         draft.crop = draft.crop.resized(side, draft.width, draft.height);

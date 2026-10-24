@@ -946,6 +946,100 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// A horizontal slider in the liquid glass style: a rounded track filled with
+/// the accent up to a translucent capsule thumb with a soft highlight and
+/// shadow. The thumb swells while hovered or dragged and eases back, with the
+/// same easing as [`switch`]. `width` is the whole slider's width.
+pub fn glass_slider(
+    ui: &mut Ui,
+    palette: &Palette,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    width: f32,
+) -> egui::Response {
+    let (start, end) = (*range.start(), *range.end());
+    let height = 28.0;
+    let (rect, mut response) =
+        ui.allocate_exact_size(vec2(width.max(60.0), height), Sense::click_and_drag());
+    let thumb_rest = vec2(30.0, 20.0);
+    let travel = rect.left() + thumb_rest.x / 2.0..=rect.right() - thumb_rest.x / 2.0;
+    if let Some(pointer) = response.interact_pointer_pos()
+        && (response.dragged() || response.is_pointer_button_down_on() || response.clicked())
+    {
+        let t = ((pointer.x - travel.start()) / (travel.end() - travel.start())).clamp(0.0, 1.0);
+        let next = egui::lerp(start..=end, t);
+        if (next - *value).abs() > f32::EPSILON {
+            *value = next;
+            response.mark_changed();
+        }
+    }
+    if ui.is_rect_visible(rect) {
+        let t = ((*value - start) / (end - start)).clamp(0.0, 1.0);
+        let active = ui.ctx().animate_bool_with_time(
+            response.id,
+            response.hovered() || response.dragged(),
+            0.15,
+        );
+        let painter = ui.painter();
+        let x = egui::lerp(travel.clone(), t);
+        let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 6.0));
+        painter.rect_filled(track, 3.0, palette.surface_active.gamma_multiply(0.9));
+        painter.rect_stroke(
+            track,
+            3.0,
+            Stroke::new(1.0, palette.secondary.gamma_multiply(0.18)),
+            egui::StrokeKind::Inside,
+        );
+        let filled = Rect::from_min_max(track.min, pos2(x, track.max.y));
+        painter.rect_filled(filled, 3.0, palette.accent);
+        // The thumb: a soft shadow, a clear glass body, a bright rim on top.
+        let size = thumb_rest * egui::lerp(1.0..=1.12, active);
+        let thumb = Rect::from_center_size(pos2(x, rect.center().y), size);
+        let radius = size.y / 2.0;
+        for (grow, alpha) in [(5.0, 10u8), (3.0, 16), (1.5, 24)] {
+            painter.rect_filled(
+                thumb.expand(grow).translate(vec2(0.0, 2.0 + active)),
+                radius + grow,
+                Color32::from_black_alpha(alpha),
+            );
+        }
+        let glass = if palette.dark {
+            Color32::from_white_alpha(70)
+        } else {
+            Color32::from_white_alpha(225)
+        };
+        painter.rect_filled(thumb, radius, glass);
+        // The accent shows through the lower half like light through glass.
+        painter.rect_filled(
+            thumb.shrink2(vec2(2.0, 0.0)).with_min_y(thumb.center().y),
+            radius,
+            palette.accent.gamma_multiply(0.10 + 0.08 * active),
+        );
+        painter.rect_stroke(
+            thumb,
+            radius,
+            Stroke::new(
+                1.0,
+                if palette.dark {
+                    Color32::from_white_alpha(120)
+                } else {
+                    Color32::from_black_alpha(34)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            Rect::from_center_size(
+                pos2(thumb.center().x, thumb.top() + 3.0),
+                vec2(thumb.width() - 2.0 * radius * 0.9, 1.5),
+            ),
+            0.75,
+            Color32::from_white_alpha(if palette.dark { 150 } else { 255 }),
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// The knob of a switch that is on: white on the accent track, unless the
 /// accent is so light that white would vanish into it (Nothing Dark's near
 /// white), where it takes the colour drawn on the accent instead, and the
