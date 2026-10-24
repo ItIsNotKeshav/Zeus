@@ -16,9 +16,11 @@ CREATE TABLE IF NOT EXISTS drafts (
 
 impl Archive {
     /// Every stored draft, so the composer can restore them at startup.
-    pub fn drafts(&self) -> Result<Vec<(String, String)>> {
-        let mut statement = self.connection.prepare("SELECT chat, text FROM drafts")?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    pub fn drafts(&self) -> Result<Vec<(String, String, i64)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT chat, text, updated_at FROM drafts")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect()
     }
 
@@ -72,8 +74,8 @@ mod tests {
         assert_eq!(
             drafts,
             vec![
-                ("1@s.whatsapp.net".to_owned(), "unsent again".to_owned()),
-                ("2@s.whatsapp.net".to_owned(), "other".to_owned()),
+                ("1@s.whatsapp.net".to_owned(), "unsent again".to_owned(), 12),
+                ("2@s.whatsapp.net".to_owned(), "other".to_owned(), 11),
             ]
         );
 
@@ -81,7 +83,7 @@ mod tests {
         archive.set_draft("1@s.whatsapp.net", "   ", 13).unwrap();
         assert_eq!(
             archive.drafts().unwrap(),
-            vec![("2@s.whatsapp.net".to_owned(), "other".to_owned())]
+            vec![("2@s.whatsapp.net".to_owned(), "other".to_owned(), 11)]
         );
 
         // Sending the text, or dropping the chat, drops the draft.

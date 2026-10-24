@@ -1907,6 +1907,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 {
                                     app.focus_composer = false;
                                     response.request_focus();
+                                    if std::mem::take(&mut app.composer_caret_end) {
+                                        let mut state = egui::TextEdit::load_state(ui.ctx(), response.id)
+                                            .unwrap_or_default();
+                                        state.cursor.set_char_range(Some(
+                                            egui::text::CCursorRange::one(egui::text::CCursor::new(
+                                                app.composer.chars().count(),
+                                            )),
+                                        ));
+                                        egui::TextEdit::store_state(ui.ctx(), response.id, state);
+                                        ui.ctx().request_repaint();
+                                    }
                                 }
                             });
                         ui.add_space(bottom);

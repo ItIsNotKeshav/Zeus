@@ -718,6 +718,8 @@ pub struct App {
     /// once it is in view so the eye finds it.
     pub jump_highlight: Option<JumpHighlight>,
     pub focus_composer: bool,
+    /// Puts the composer caret after the restored draft when focus returns.
+    pub composer_caret_end: bool,
     pub focus_search: bool,
     /// What the Settings page is filtered by.
     pub settings_search: String,
@@ -1471,6 +1473,7 @@ impl App {
             scroll_anchor: None,
             jump_highlight: None,
             focus_composer: false,
+            composer_caret_end: false,
             focus_search: false,
             settings_search: String::new(),
             settings_section: 0,
@@ -1609,6 +1612,8 @@ impl App {
             } else {
                 let mentions = std::mem::take(&mut self.composer_mentions);
                 self.drafts.insert(previous.clone(), draft);
+                self.draft_times
+                    .insert(previous.clone(), crate::util::now());
                 self.draft_mentions.insert(previous.clone(), mentions);
             }
             self.stop_composing(&previous);
@@ -1631,6 +1636,7 @@ impl App {
         self.prefilled = None;
         if let Some(id) = self.open_chat.clone() {
             self.composer = self.drafts.remove(&id).unwrap_or_default();
+            self.composer_caret_end = !self.composer.is_empty();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
             self.pending = attachments.pending;
@@ -2919,11 +2925,22 @@ impl App {
                         .cmp(&b.favorite_position)
                         .then(a.id.cmp(&b.id))
                 } else {
-                    b.last_activity.cmp(&a.last_activity).then(a.id.cmp(&b.id))
+                    self.sort_activity(b)
+                        .cmp(&self.sort_activity(a))
+                        .then(a.id.cmp(&b.id))
                 }
             })
         });
         chats
+    }
+
+    /// When a chat counts as last active for the list order: a chat holding a
+    /// draft sorts as if a message had just been sent when the draft was left.
+    fn sort_activity(&self, chat: &Chat) -> i64 {
+        match self.draft_times.get(&chat.id) {
+            Some(at) if self.has_draft(&chat.id) => chat.last_activity.max(*at),
+            _ => chat.last_activity,
+        }
     }
 
     /// Whether the chat list keeps the phone's favorites order instead of the
@@ -3044,7 +3061,6 @@ impl App {
 
     /// Whether a chat holds unsent text or attachments. Editing a sent
     /// message is not a draft.
-    #[cfg(test)]
     fn has_draft(&self, chat: &str) -> bool {
         if self.open_chat.as_deref() == Some(chat) {
             (self.editing.is_none() && !self.composer.trim().is_empty()) || !self.pending.is_empty()
@@ -3196,7 +3212,8 @@ impl App {
             Event::Drafts(drafts) => {
                 // Unsent text stored by an earlier session. Text typed in
                 // this session wins over the stored copy.
-                for (chat, text) in drafts {
+                for (chat, text, at) in drafts {
+                    self.draft_times.entry(chat.clone()).or_insert(at);
                     // The chat reopened at startup shows its draft at once.
                     if live
                         && self.open_chat.as_deref() == Some(chat.as_str())
@@ -4708,6 +4725,7 @@ impl App {
             let draft = std::mem::take(&mut self.composer);
             let mentions = std::mem::take(&mut self.composer_mentions);
             self.drafts.insert(id.to_owned(), draft);
+            self.draft_times.insert(id.to_owned(), crate::util::now());
             self.draft_mentions.insert(id.to_owned(), mentions);
             self.store_draft(
                 id,
@@ -5308,6 +5326,7 @@ impl App {
                         first: None,
                     });
             self.composer = self.drafts.remove(&id).unwrap_or_default();
+            self.composer_caret_end = !self.composer.is_empty();
             self.prefilled = None;
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
@@ -11985,6 +12004,7 @@ mod tests {
             .send(crate::backend::Event::Drafts(vec![(
                 "1@s.whatsapp.net".into(),
                 "from work".into(),
+                0,
             )]))
             .unwrap();
         app.handle_events();
@@ -15386,8 +15406,8 @@ mod tests {
         app.open_chat = Some(open.into());
         events
             .send(Event::Drafts(vec![
-                (open.into(), "half a reply".into()),
-                (other.into(), "later".into()),
+                (open.into(), "half a reply".into(), 0),
+                (other.into(), "later".into(), 0),
             ]))
             .unwrap();
         app.handle_events();
@@ -20001,6 +20021,32 @@ mod tests {
             .map(|chat| chat.name.as_str())
             .collect();
         assert_eq!(names, vec!["Ada"]);
+    }
+
+    #[test]
+    fn a_chat_with_a_draft_sorts_as_if_a_message_was_just_sent() {
+        let mut app = app();
+        let mut a = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        a.last_activity = 10;
+        let mut b = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
+        b.last_activity = 20;
+        app.chats = vec![a, b];
+        app.drafts.insert("1@s.whatsapp.net".into(), "hi".into());
+        app.draft_times.insert("1@s.whatsapp.net".into(), 30);
+        let names = |app: &App| -> Vec<String> {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.name.clone())
+                .collect()
+        };
+        assert_eq!(names(&app), ["Ada", "Bob"]);
+        // A newer message in another chat moves it back down.
+        app.chats[1].last_activity = 40;
+        assert_eq!(names(&app), ["Bob", "Ada"]);
+        // Clearing the draft returns the chat to its normal place.
+        app.chats[1].last_activity = 20;
+        app.drafts.clear();
+        assert_eq!(names(&app), ["Bob", "Ada"]);
     }
 
     #[test]

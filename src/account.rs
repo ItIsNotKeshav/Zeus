@@ -39,6 +39,9 @@ pub struct Account {
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
     pub scroll_chat_into_view: Option<ChatId>,
     pub drafts: HashMap<ChatId, String>,
+    /// When each chat's draft was last parked, so a chat with unsent text
+    /// sorts in the chat list as if a message had just been sent.
+    pub draft_times: HashMap<ChatId, i64>,
     /// This account's media cache as last measured, for Settings. `None`
     /// until a measurement succeeds, so a failed one shows no numbers
     /// rather than zeroes.
@@ -162,6 +165,7 @@ impl Account {
             prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
+            draft_times: HashMap::new(),
             storage_stats: None,
             storage_token: 0,
             storage_clearing: false,
