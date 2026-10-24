@@ -708,19 +708,31 @@ impl eframe::App for Shell {
         }
     }
 
-    #[cfg(feature = "demo")]
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
-        if let Some(tour) = &mut self.tour {
-            tour.input(&mut self.app, ctx, input);
-        }
-        // Moves the pointer only while it is elsewhere: each move restarts
-        // egui's tooltip delay, so a fake pointer that kept moving in place
-        // would never show one.
-        if let Some(pos) = self.hover
-            && ctx.input(|input| input.pointer.latest_pos()) != Some(pos)
+        // A maximized Windows window hides its sizing frame, which leaves the
+        // interface that much closer to a shorter title bar: start it lower.
+        let inset = zeus::window_inset::top(input);
+        if inset > 0.0
+            && let Some(screen) = &mut input.screen_rect
         {
-            input.events.push(egui::Event::PointerMoved(pos));
+            screen.min.y = (screen.min.y + inset).min(screen.max.y);
         }
+        #[cfg(feature = "demo")]
+        {
+            if let Some(tour) = &mut self.tour {
+                tour.input(&mut self.app, ctx, input);
+            }
+            // Moves the pointer only while it is elsewhere: each move restarts
+            // egui's tooltip delay, so a fake pointer that kept moving in place
+            // would never show one.
+            if let Some(pos) = self.hover
+                && ctx.input(|input| input.pointer.latest_pos()) != Some(pos)
+            {
+                input.events.push(egui::Event::PointerMoved(pos));
+            }
+        }
+        #[cfg(not(feature = "demo"))]
+        let _ = ctx;
     }
 
     /// Does not persist egui interaction state across windows. The zoom and

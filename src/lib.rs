@@ -63,3 +63,4 @@ pub mod video_rate;
 pub mod voice;
 pub mod voice_input;
 pub mod wallpaper;
+pub mod window_inset;
