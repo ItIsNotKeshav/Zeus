@@ -1,31 +1,32 @@
-//! Halloween surprises: sending a message sometimes makes a ghost jump out
-//! or candy fall over the window. Each is its own switch under Settings,
-//! Appearance, Halloween.
+//! Halloween surprises: sending a message sometimes makes ghosts and
+//! skeletons rain down the window or candy fall over it. Each is its own
+//! switch under Settings, Appearance, Halloween.
 //!
 //! Both are drawn over the window and never take a click. They are made to
-//! be safe for people sensitive to flashing: the ghost fades in and out once
-//! over a dimmed window, with no strobing or alternating colours, and
-//! neither runs while a screen reader is attached (the setting the other
-//! decorative motion follows) or during a call.
+//! be safe for people sensitive to flashing: the shapes are small, fade in
+//! and out once, never strobe or alternate colours, and neither runs while a
+//! screen reader is attached (the setting the other decorative motion
+//! follows) or during a call.
 
 use egui::{Color32, Context, Id, LayerId, Mesh, Order, Pos2, Rect, Shape, Vec2, pos2, vec2};
 
-/// The chance, per sent message, that the ghost jumps out.
+/// The chance, per sent message, that ghosts and skeletons rain down.
 pub const GHOST_CHANCE: f64 = 0.10;
 /// The chance, per sent message, that candy falls.
 pub const CANDY_CHANCE: f64 = 0.10;
-/// How long the ghost stays, in seconds.
-pub const GHOST_SECONDS: f64 = 1.0;
+/// How long the ghosts and skeletons fall, in seconds.
+pub const GHOST_SECONDS: f64 = 2.0;
 /// How long the candy falls, in seconds.
 pub const CANDY_SECONDS: f64 = 2.0;
 
 /// How many candies fall.
 const CANDIES: usize = 36;
-/// How much of the window the ghost's dimming reaches at most.
-const SCRIM: f32 = 0.55;
+/// How many ghosts and skeletons fall.
+const SPOOKS: usize = 30;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
+    /// Ghosts and skeletons.
     Ghost,
     Candy,
 }
@@ -109,7 +110,7 @@ impl Surprise {
             ctx.layer_painter(LayerId::new(Order::Tooltip, Id::new("halloween-surprise")));
         let screen = ctx.content_rect();
         match running.kind {
-            Kind::Ghost => paint_ghost(&painter, screen, t),
+            Kind::Ghost => paint_ghosts_and_skeletons(&painter, screen, t, running.seed),
             Kind::Candy => paint_candies(&painter, screen, t, running.seed),
         }
         crate::motion::request_frame(ctx);
@@ -124,50 +125,130 @@ fn ease_in_out(t: f32) -> f32 {
     egui::emath::easing::cubic_in_out(t.clamp(0.0, 1.0))
 }
 
-/// Eases out past 1 and settles back: the jump of the ghost.
-fn ease_out_back(t: f32) -> f32 {
-    const OVERSHOOT: f32 = 1.4;
-    let t = t.clamp(0.0, 1.0) - 1.0;
-    1.0 + (OVERSHOOT + 1.0) * t * t * t + OVERSHOOT * t * t
+/// How visible the falling spooks are at `t`: they ease in over the first
+/// tenth and out over the last fifth, once.
+fn spook_opacity(t: f32) -> f32 {
+    ease_out(t / 0.1) * (1.0 - ease_in_out((t - 0.8) / 0.2))
 }
 
-/// How visible the ghost is at `t` of its second: it eases in over the first
-/// fifth and out over the last third, once.
-fn ghost_opacity(t: f32) -> f32 {
-    ease_out(t / 0.2) * (1.0 - ease_in_out((t - 0.65) / 0.35))
-}
+const BONE: Color32 = Color32::from_rgb(244, 238, 224);
+const GHOST_BODY: Color32 = Color32::from_rgb(246, 242, 255);
+const INK: Color32 = Color32::from_rgb(36, 20, 46);
 
-fn paint_ghost(painter: &egui::Painter, screen: Rect, t: f32) {
-    let opacity = ghost_opacity(t);
-    let scale = (0.35 + 0.65 * ease_out_back(t / 0.3)) * (1.0 + 0.05 * t);
-    painter.rect_filled(
-        screen,
-        0.0,
-        Color32::from_black_alpha((SCRIM * opacity * 255.0) as u8),
-    );
-    let width = screen.width().min(screen.height() * 0.8) * 0.8 * scale;
-    let sway = (t * std::f32::consts::TAU * 1.5).sin() * width * 0.02;
-    let centre = screen.center() + vec2(sway, -width * 0.05);
-    let alpha = |value: f32| (value * opacity * 255.0) as u8;
-    let body = Color32::from_rgba_unmultiplied(246, 242, 255, alpha(1.0));
-    let glow = Color32::from_rgba_unmultiplied(255, 140, 40, alpha(0.22));
-    let ink = Color32::from_rgba_unmultiplied(36, 20, 46, alpha(1.0));
-    // A soft orange halo, then the ghost.
-    let halo = ghost_outline(centre, width * 1.06);
-    painter.add(fan(&halo, centre, glow));
-    let outline = ghost_outline(centre, width);
-    painter.add(fan(&outline, centre, body));
-    // Eyes and the open mouth of a "boo".
-    let eye = vec2(width * 0.085, width * 0.12);
-    for side in [-1.0, 1.0] {
-        let at = centre + vec2(side * width * 0.2, -width * 0.12);
-        painter.add(fan(&ellipse(at, eye), at, ink));
+fn paint_ghosts_and_skeletons(painter: &egui::Painter, screen: Rect, t: f32, seed: u64) {
+    let mut dice = Dice(seed);
+    let seconds = GHOST_SECONDS as f32;
+    let fade = spook_opacity(t);
+    for index in 0..SPOOKS {
+        let x = screen.left() + dice.next() * screen.width();
+        let size = 26.0 + dice.next() * 26.0;
+        let delay = dice.next() * 0.4;
+        let sway = (dice.next() - 0.5) * 0.7;
+        let phase = dice.next() * std::f32::consts::TAU;
+        let progress = ((t - delay / seconds) / (1.0 - delay / seconds - 0.05)).clamp(0.0, 1.0);
+        if progress <= 0.0 {
+            continue;
+        }
+        let fall = progress.powf(1.4);
+        let y = screen.top() - size * 2.0 + fall * (screen.height() + size * 4.0);
+        // A gentle drift and tilt, never a spin.
+        let drift = (progress * std::f32::consts::TAU * 1.2 + phase).sin();
+        let at = pos2(x + drift * size * 0.5, y);
+        let tilt = drift * sway;
+        if index % 2 == 0 {
+            ghost(painter, at, size, tilt, fade);
+        } else {
+            skeleton(painter, at, size, tilt, fade);
+        }
     }
-    let mouth = centre + vec2(0.0, width * 0.13);
+}
+
+fn faded(colour: Color32, fade: f32) -> Color32 {
+    Color32::from_rgba_unmultiplied(colour.r(), colour.g(), colour.b(), (fade * 255.0) as u8)
+}
+
+/// Turns `point` by `angle` about `centre`.
+fn about(centre: Pos2, point: Pos2, angle: f32) -> Pos2 {
+    let (sin, cos) = angle.sin_cos();
+    let offset = point - centre;
+    centre
+        + vec2(
+            offset.x * cos - offset.y * sin,
+            offset.x * sin + offset.y * cos,
+        )
+}
+
+/// A little ghost `size` across: a sheet with a round head, a scalloped hem,
+/// two eyes and an open mouth.
+fn ghost(painter: &egui::Painter, centre: Pos2, size: f32, tilt: f32, fade: f32) {
+    let outline: Vec<Pos2> = ghost_outline(centre, size)
+        .into_iter()
+        .map(|point| about(centre, point, tilt))
+        .collect();
+    painter.add(fan(&outline, centre, faded(GHOST_BODY, fade)));
+    painter.add(Shape::closed_line(
+        outline,
+        egui::Stroke::new(1.2, faded(INK, fade * 0.7)),
+    ));
+    let eye = vec2(size * 0.07, size * 0.1);
+    for side in [-1.0, 1.0] {
+        let at = about(centre, centre + vec2(side * size * 0.18, -size * 0.1), tilt);
+        painter.add(fan(&ellipse(at, eye), at, faded(INK, fade)));
+    }
+    let mouth = about(centre, centre + vec2(0.0, size * 0.14), tilt);
     painter.add(fan(
-        &ellipse(mouth, vec2(width * 0.12, width * 0.17)),
+        &ellipse(mouth, vec2(size * 0.1, size * 0.14)),
         mouth,
-        ink,
+        faded(INK, fade),
+    ));
+}
+
+/// A little skeleton `size` tall: a skull over a spine, ribs, arms and a
+/// pelvis, drawn in bone with a dark edge so it reads on any colour.
+fn skeleton(painter: &egui::Painter, centre: Pos2, size: f32, tilt: f32, fade: f32) {
+    let at = |x: f32, y: f32| about(centre, centre + vec2(x * size, y * size), tilt);
+    let bones = |points: Vec<Pos2>| {
+        painter.add(Shape::line(
+            points.clone(),
+            egui::Stroke::new(size * 0.15, faded(INK, fade)),
+        ));
+        painter.add(Shape::line(
+            points,
+            egui::Stroke::new(size * 0.075, faded(BONE, fade)),
+        ));
+    };
+    bones(vec![at(0.0, -0.1), at(0.0, 0.34)]);
+    for (y, half) in [(0.0, 0.2), (0.1, 0.22), (0.2, 0.18)] {
+        bones(vec![at(-half, y + 0.05), at(0.0, y), at(half, y + 0.05)]);
+    }
+    bones(vec![at(-0.3, 0.3), at(-0.22, 0.04), at(-0.08, -0.06)]);
+    bones(vec![at(0.3, 0.3), at(0.22, 0.04), at(0.08, -0.06)]);
+    bones(vec![at(-0.14, 0.46), at(0.0, 0.34), at(0.14, 0.46)]);
+    // The skull.
+    let skull = at(0.0, -0.3);
+    let head = ellipse(skull, vec2(size * 0.24, size * 0.22));
+    painter.add(fan(&head, skull, faded(BONE, fade)));
+    painter.add(Shape::closed_line(
+        head,
+        egui::Stroke::new(1.2, faded(INK, fade)),
+    ));
+    for side in [-1.0, 1.0] {
+        let eye = at(side * 0.09, -0.31);
+        painter.add(fan(
+            &ellipse(eye, vec2(size * 0.055, size * 0.07)),
+            eye,
+            faded(INK, fade),
+        ));
+    }
+    let nose = at(0.0, -0.23);
+    painter.add(fan(
+        &ellipse(nose, vec2(size * 0.02, size * 0.03)),
+        nose,
+        faded(INK, fade),
+    ));
+    painter.add(Shape::line(
+        vec![at(-0.1, -0.17), at(0.1, -0.17)],
+        egui::Stroke::new(size * 0.035, faded(INK, fade)),
     ));
 }
 
@@ -344,9 +425,9 @@ mod tests {
     }
 
     #[test]
-    fn the_ghost_fades_in_and_out_once_without_flicker() {
+    fn the_spooks_fade_in_and_out_once_without_flicker() {
         let samples: Vec<f32> = (0..=100)
-            .map(|step| ghost_opacity(step as f32 / 100.0))
+            .map(|step| spook_opacity(step as f32 / 100.0))
             .collect();
         assert!(samples[0] < 0.01 && samples[100] < 0.01);
         let peak = samples

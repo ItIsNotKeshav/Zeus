@@ -248,12 +248,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layout(Layout::top_down(Align::Min)),
                 |ui| {
                     ui.set_width(width);
-                    let all = sections(app);
                     let searching = !app.settings_search.trim().is_empty();
+                    // The Halloween page replaces the list; the swap fades out
+                    // and back in, halfway through the eased `swap`.
+                    let swap = ui.ctx().animate_value_with_time(
+                        egui::Id::new("settings-halloween-page"),
+                        if app.settings_halloween { 1.0 } else { 0.0 },
+                        0.2,
+                    );
+                    let halloween = (swap >= 0.5) && !searching;
+                    ui.multiply_opacity(egui::emath::easing::cubic_out(
+                        ((swap - 0.5).abs() * 2.0).clamp(0.0, 1.0),
+                    ));
+                    let all = if halloween {
+                        vec![halloween_section(app)]
+                    } else {
+                        sections(app)
+                    };
                     let section = app.settings_section.min(all.len().saturating_sub(1));
                     // Beside its categories the page shows the one picked,
                     // under its own name, or what a search finds.
-                    let one = beside.then_some(section).filter(|_| !searching);
+                    let one = if halloween {
+                        Some(0)
+                    } else {
+                        beside.then_some(section).filter(|_| !searching)
+                    };
                     let heading = match one {
                         Some(index) => all[index].title.shown.clone(),
                         None => crate::i18n::gettext(locale, "Settings"),
@@ -269,7 +288,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         )
                         .clicked()
                         {
-                            app.actions.push(Action::Open(Page::Chats));
+                            app.actions.push(if halloween {
+                                Action::ShowHalloweenPage(false)
+                            } else {
+                                Action::Open(Page::Chats)
+                            });
                         }
                         theme::text(ui, heading.as_ref(), theme::bold(24.0), palette.text);
                     });
@@ -478,16 +501,11 @@ fn search(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// Every settings section, in page order, with the rows this setup offers.
-fn sections(app: &App) -> Vec<Section> {
+/// The Halloween page's own section: the master switch and each part.
+fn halloween_section(app: &App) -> Section {
     let locale = app.locale;
-    let palette = app.palette;
-
-    let mut appearance = Section::new(translated(locale, "Appearance"));
-    // The language first: it is what a reader who cannot read the rest
-    // looks for.
-    appearance.row(translated(locale, "Language"), "", language_picker);
-    appearance.row(
+    let mut halloween = Section::new(translated(locale, "Halloween"));
+    halloween.row(
         translated(locale, "Halloween"),
         translated(
             locale,
@@ -504,19 +522,53 @@ fn sections(app: &App) -> Vec<Section> {
                     "A theme file you loaded is in use, so its colours show instead. Choose a built-in theme to see the orange."
                 }
                 crate::settings::HalloweenPart::Ghost => {
-                    "Sending a message sometimes makes a ghost jump out for a second."
+                    "Sending a message sometimes makes ghosts and skeletons fall for two seconds."
                 }
                 crate::settings::HalloweenPart::Candies => {
                     "Sending a message sometimes makes candy fall for two seconds."
                 }
                 _ => "",
             };
-            appearance.row(
+            halloween.row(
                 translated(locale, part.label()),
                 translated(locale, note),
                 move |ui, app| halloween_part_switch(ui, app, part),
             );
         }
+    }
+    halloween
+}
+
+/// Every settings section, in page order, with the rows this setup offers.
+fn sections(app: &App) -> Vec<Section> {
+    let locale = app.locale;
+    let palette = app.palette;
+
+    let mut appearance = Section::new(translated(locale, "Appearance"));
+    // The language first: it is what a reader who cannot read the rest
+    // looks for.
+    appearance.row(translated(locale, "Language"), "", language_picker);
+    appearance.row(
+        translated(locale, "Halloween"),
+        translated(
+            locale,
+            "An orange theme with a night wallpaper, pumpkin icons, spooky doodles and sounds. Off puts back the doodles and sounds it changed.",
+        ),
+        halloween_link,
+    );
+    if let Some((row, _)) = appearance.entries.last_mut() {
+        row.keywords = [
+            "Orange colours",
+            "Night wallpaper",
+            "Halloween doodles",
+            "Halloween icons",
+            "Spooky sounds",
+            "Ghost and skeleton rain",
+            "Candy surprise",
+            "pumpkin",
+        ]
+        .map(|word| translated(locale, word))
+        .into();
     }
     appearance.block(
         vec![translated(locale, "Preview"), translated(locale, "Theme")],
@@ -1788,6 +1840,28 @@ fn segmented<T: Copy + PartialEq>(
         }
     }
     clicked
+}
+
+/// The Appearance row that opens the Halloween page: what is on, and a
+/// chevron.
+fn halloween_link(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let label = crate::i18n::gettext(
+        app.locale,
+        if app.settings.halloween { "On" } else { "Off" },
+    )
+    .into_owned();
+    if theme::soft_button(
+        ui,
+        &palette,
+        Some(Icon::ChevronRight),
+        &label,
+        app.settings.halloween,
+    )
+    .clicked()
+    {
+        app.actions.push(Action::ShowHalloweenPage(true));
+    }
 }
 
 /// The Halloween look's switch. The colours change from where it was clicked,

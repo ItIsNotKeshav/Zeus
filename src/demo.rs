@@ -2554,6 +2554,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
+            "halloween-page" => {
+                app.page = Page::Settings;
+                app.settings_halloween = true;
+            }
             // Settings' microphone and push to talk, with a check listening.
             "voice-settings" => {
                 voice_settings_sample(app);
