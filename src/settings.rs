@@ -588,6 +588,10 @@ pub struct Settings {
     /// Play the message sound for ordinary group messages. Mentions and
     /// replies to us sound either way.
     pub group_sounds: bool,
+    /// Notification cooldown: when many messages arrive at once, such as
+    /// right after the app opens, only the first sounds and each chat shows
+    /// one notification.
+    pub notification_cooldown: bool,
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
@@ -694,6 +698,7 @@ impl Default for Settings {
             message_sound: NotificationSound::Receive,
             mention_sound: NotificationSound::Alert,
             group_sounds: true,
+            notification_cooldown: true,
             download_folder: None,
             keep_chats_archived: true,
             proxy: String::new(),

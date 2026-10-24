@@ -50,6 +50,86 @@ const WAITING_LIMIT: usize = 32;
 /// are limited. Opening the chat ends the wait early.
 const THROTTLE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
+/// This many notifications within `BURST_WINDOW` make a burst.
+const BURST_COUNT: usize = 4;
+const BURST_WINDOW: Duration = Duration::from_secs(5);
+/// A burst ends after this long without a new notification. Messages
+/// arriving while the app starts are treated as a burst too.
+const BURST_QUIET: Duration = Duration::from_secs(8);
+
+/// What the burst guard decides about one notification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Burst {
+    /// Show it; `sound` is whether it may make its sound.
+    Show { sound: bool },
+    /// Drop it: its chat already has one for this burst.
+    Skip,
+}
+
+/// Android-style notification cooldown. Once notifications flood in, only the
+/// first one of the burst sounds, each chat shows at most one, and the guard
+/// resets after a quiet spell. The app starts inside a burst, so the backlog
+/// that syncs at startup stays quiet too.
+#[derive(Debug)]
+pub struct BurstGuard {
+    recent: std::collections::VecDeque<Instant>,
+    /// Until when the burst lasts, extended by every notification.
+    until: Option<Instant>,
+    chats: std::collections::HashSet<String>,
+    sounded: bool,
+}
+
+impl BurstGuard {
+    pub fn starting(now: Instant) -> Self {
+        Self {
+            recent: Default::default(),
+            until: Some(now + BURST_QUIET),
+            chats: Default::default(),
+            sounded: false,
+        }
+    }
+
+    /// Judges a notification for `chat` arriving at `now`.
+    pub fn judge(&mut self, chat: &str, now: Instant) -> Burst {
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) > BURST_WINDOW)
+        {
+            self.recent.pop_front();
+        }
+        self.recent.push_back(now);
+        if self.until.is_some_and(|until| now >= until) {
+            self.until = None;
+            self.chats.clear();
+            self.sounded = false;
+        }
+        if self.until.is_none() {
+            if self.recent.len() < BURST_COUNT {
+                return Burst::Show { sound: true };
+            }
+            // The burst started with notifications that already sounded.
+            self.until = Some(now + BURST_QUIET);
+            self.chats.clear();
+            self.sounded = true;
+        } else {
+            self.until = Some(now + BURST_QUIET);
+        }
+        if !self.chats.insert(chat.to_owned()) {
+            return Burst::Skip;
+        }
+        let sound = !self.sounded;
+        self.sounded = true;
+        Burst::Show { sound }
+    }
+}
+
+impl Default for BurstGuard {
+    fn default() -> Self {
+        Self::starting(Instant::now())
+    }
+}
+
 type Throttle = Arc<Mutex<std::collections::HashMap<(String, String), Instant>>>;
 
 type PendingByAccountChat =
@@ -86,6 +166,7 @@ pub struct Notifications {
     /// When each limited chat last showed a notification. Shared so a failed
     /// delivery, which happens on the notification's own thread, can undo it.
     throttle: Throttle,
+    burst: BurstGuard,
     /// What unit tests would have shown, recorded instead of shown on the
     /// desktop. Always empty outside tests.
     pub shown: Vec<Shown>,
@@ -157,6 +238,12 @@ impl Notifications {
     /// Takes back a call's notification, and only that one.
     pub fn clear_call(&mut self, account: &crate::model::AccountId, chat: &str) {
         self.clear(account, &call_key(chat));
+    }
+
+    /// Burst cooldown verdict for a notification about `chat`.
+    pub fn burst(&mut self, account: &crate::model::AccountId, chat: &str, now: Instant) -> Burst {
+        self.burst
+            .judge(&format!("{}\0{chat}", account.as_str()), now)
     }
 
     /// Whether a notification for this chat may be shown at `now`. A chat
@@ -505,6 +592,53 @@ fn deliver(
 
 #[cfg(test)]
 mod tests {
+    use super::{Burst, BurstGuard};
+    use std::time::{Duration, Instant};
+
+    fn quiet_guard(start: Instant) -> (BurstGuard, Instant) {
+        let mut guard = BurstGuard::default();
+        // Let the startup burst end.
+        let now = start + Duration::from_secs(60);
+        assert_eq!(guard.judge("warmup", now), Burst::Show { sound: true });
+        (guard, now + Duration::from_secs(60))
+    }
+
+    #[test]
+    fn startup_backlog_sounds_once_and_one_per_chat() {
+        let start = Instant::now();
+        let mut guard = BurstGuard::starting(start);
+        assert_eq!(guard.judge("a", start), Burst::Show { sound: true });
+        assert_eq!(guard.judge("b", start), Burst::Show { sound: false });
+        assert_eq!(guard.judge("a", start), Burst::Skip);
+    }
+
+    #[test]
+    fn a_burst_mutes_then_resets_after_quiet() {
+        let (mut guard, t) = quiet_guard(Instant::now());
+        let step = Duration::from_millis(500);
+        for i in 0..3u32 {
+            assert_eq!(guard.judge("a", t + step * i), Burst::Show { sound: true });
+        }
+        // The fourth within five seconds starts the cooldown: no sound, and
+        // its chat is now used up.
+        assert_eq!(guard.judge("a", t + step * 3), Burst::Show { sound: false });
+        assert_eq!(guard.judge("a", t + step * 4), Burst::Skip);
+        assert_eq!(guard.judge("b", t + step * 5), Burst::Show { sound: false });
+        assert_eq!(guard.judge("b", t + step * 6), Burst::Skip);
+        // After a quiet spell the next one sounds again.
+        let later = t + Duration::from_secs(60);
+        assert_eq!(guard.judge("a", later), Burst::Show { sound: true });
+    }
+
+    #[test]
+    fn slow_notifications_always_sound() {
+        let (mut guard, t) = quiet_guard(Instant::now());
+        for i in 0..10u64 {
+            let now = t + Duration::from_secs(10 * i);
+            assert_eq!(guard.judge("a", now), Burst::Show { sound: true });
+        }
+    }
+
     #[test]
     fn badge_description_agrees_with_the_count() {
         use crate::i18n::Locale;
