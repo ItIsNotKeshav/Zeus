@@ -21408,6 +21408,7 @@ mod receipt_tests {
                     caption: caption.clone(),
                     mentions: vec![],
                     quoting: None,
+                    uploads: Vec::new(),
                 })
                 .await;
             let refused: Vec<_> = events
@@ -21434,6 +21435,7 @@ mod receipt_tests {
                 caption: Some("Pasted fixture".into()),
                 mentions: vec![],
                 quoting: None,
+                upload: None,
             })
             .await;
         assert!(events.try_iter().any(|event| matches!(event,

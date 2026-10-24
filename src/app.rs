@@ -22022,7 +22022,7 @@ mod tests {
             assert_eq!(app.visible_chats()[0].id, "recent");
             events_for(
                 &mut app,
-                Event::Drafts(vec![("draft".into(), "Saved archive text".into())]),
+                Event::Drafts(vec![("draft".into(), "Saved archive text".into(), 0)]),
             );
             assert_eq!(app.composer, "Saved archive text");
             assert_eq!(app.pending.len(), usize::from(staged_attachment));
