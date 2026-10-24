@@ -1315,6 +1315,63 @@ pub fn circle_button(
     }
 }
 
+/// A round button whose icon and fill morph between two states as `t` runs
+/// from 0 to 1: the first icon shrinks and fades while the second grows in
+/// from the lower left, and the disc swells slightly as the fill changes.
+/// `from` and `to` are `(fill, hover fill, icon colour)`.
+#[allow(clippy::too_many_arguments)]
+pub fn morph_circle_button(
+    ui: &mut egui::Ui,
+    icons: (Icon, Icon),
+    t: f32,
+    diameter: f32,
+    from: (Color32, Color32, Color32),
+    to: (Color32, Color32, Color32),
+    tooltip: &str,
+) -> Response {
+    let t = t.clamp(0.0, 1.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
+    reveal_focus(&response);
+    let fill = from.0.lerp_to_gamma(to.0, t);
+    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, fill);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered();
+        let hover_grow = if hovered { 1.05 } else { 1.0 };
+        let swell = 1.0 + 0.06 * (std::f32::consts::PI * t).sin();
+        let radius = diameter / 2.0 * hover_grow * swell;
+        let fill = if hovered {
+            from.1.lerp_to_gamma(to.1, t)
+        } else {
+            fill
+        };
+        ui.painter().circle_filled(rect.center(), radius, fill);
+        let icon_size = diameter * 0.46;
+        if t < 1.0 {
+            let size = icon_size * (1.0 - 0.4 * t);
+            let at = egui::Rect::from_center_size(rect.center(), Vec2::splat(size));
+            icons
+                .0
+                .image(from.2.gamma_multiply(1.0 - t), size)
+                .paint_at(ui, at);
+        }
+        if t > 0.0 {
+            let size = icon_size * (0.6 + 0.4 * t);
+            let slide = egui::vec2(-1.0, 1.0) * diameter * 0.16 * (1.0 - t);
+            let at = egui::Rect::from_center_size(rect.center() + slide, Vec2::splat(size));
+            icons.1.image(to.2.gamma_multiply(t), size).paint_at(ui, at);
+        }
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
+}
+
 /// Draws the app's mark as it ships: the lit disc and the ink bubble of
 /// `packaging/icons/zapfast.svg`, rendered once per pixel size.
 pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
