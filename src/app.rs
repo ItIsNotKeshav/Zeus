@@ -7176,6 +7176,22 @@ impl App {
                     self.focus_composer = true;
                 }
             }
+            Action::SaveEdit { chat, id, text } => {
+                if let Some(message) = self
+                    .conversations
+                    .get_mut(&chat)
+                    .and_then(|conversation| conversation.message_mut(&id))
+                {
+                    message.content = Content::text(text.clone());
+                    message.edited = true;
+                }
+                self.backend.send(Command::EditText {
+                    chat,
+                    id,
+                    text,
+                    mentions: Vec::new(),
+                });
+            }
             Action::CancelEdit => {
                 if self.editing.take().is_some() {
                     self.composer.clear();

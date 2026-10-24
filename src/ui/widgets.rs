@@ -817,7 +817,26 @@ impl FrostedPopup for egui::Popup<'_> {
             egui::LayerId::new(egui::Order::Foreground, id),
             theme::RADIUS_MENU,
         );
-        let shown = self.show(add);
+        // Every menu eases in like the dropdowns do: a short fade as it opens.
+        let appear_id = id.with("menu-appear");
+        let appear = ctx.animate_bool_with_time_and_easing(
+            appear_id,
+            measured,
+            if crate::motion::screen_reader_attached(ctx) {
+                0.0
+            } else {
+                0.14
+            },
+            egui::emath::easing::quadratic_out,
+        );
+        let shown = self.show(|ui| {
+            ui.multiply_opacity(appear);
+            add(ui)
+        });
+        if shown.is_none() {
+            // Closed: the next opening starts from invisible again.
+            ctx.animate_bool_with_time(appear_id, false, 0.0);
+        }
         if let Some(shown) = &shown
             && measured
         {

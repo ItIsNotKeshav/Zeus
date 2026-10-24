@@ -2808,6 +2808,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .then_some(app.copy_rows.as_ref()),
     };
     let mut actions = Vec::new();
+    super::swipe::update(ui.ctx(), ui.rect_contains_pointer(ui.max_rect()));
+    if super::swipe::back(ui.ctx()) {
+        actions.push(Action::CloseChat);
+    }
     let mut anchored = false;
     // The first unread message is the count-th incoming one from the end.
     let divider = app
@@ -4261,10 +4265,16 @@ fn bubble(
         }
         None => bubble_arriving(ui, view, message, album, place, reduce_motion, actions),
     };
+    let rect = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")));
+    if let Some(rect) = rect
+        && !view.selecting
+        && !matches!(message.content, Content::Revoked | Content::Call { .. })
+    {
+        swipe_to_reply(ui, view, message, start, rect, actions);
+    }
     if !view.selecting || view.selected.contains(&message.id) {
-        let rect = ui
-            .ctx()
-            .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")));
         if let Some(rect) = rect {
             let fill = if message.from_me {
                 view.palette.bubble_out
@@ -4283,6 +4293,69 @@ fn bubble(
         }
     }
     response
+}
+
+/// Two fingers swiped left across a message: the row follows them with a
+/// rubber band while a reply icon grows in the space it leaves, and past the
+/// threshold the reply starts. Letting go eases the row back.
+fn swipe_to_reply(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    start: egui::layers::ShapeIdx,
+    rect: Rect,
+    actions: &mut Vec<Action>,
+) {
+    let ctx = ui.ctx().clone();
+    let id = bubble_id(&view.chat.id, &message.id).with("swipe");
+    let (pulled, fired) = super::swipe::reply(&ctx, rect.expand2(vec2(4000.0, 4.0)));
+    let eased = if pulled > 0.0 {
+        ctx.animate_value_with_time(id, pulled, 0.0)
+    } else {
+        let time = if crate::motion::screen_reader_attached(&ctx) {
+            0.0
+        } else {
+            0.18
+        };
+        ctx.animate_value_with_time(id, 0.0, time)
+    };
+    if fired {
+        actions.push(Action::Reply(message.id.clone()));
+    }
+    if eased <= 0.0 {
+        return;
+    }
+    let shift = super::swipe::pull(eased);
+    let layer = ui.layer_id();
+    ctx.graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for index in start.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                clipped.shape.translate(vec2(-shift, 0.0));
+            });
+        }
+    });
+    let palette = view.palette;
+    let size = 30.0 * eased.sqrt();
+    let center = pos2(
+        ui.clip_rect().right().min(rect.right() + 12.0) - shift / 2.0 - 6.0,
+        rect.center().y,
+    );
+    let badge = Rect::from_center_size(center, Vec2::splat(size));
+    let painter = ui.painter();
+    painter.circle_filled(
+        center,
+        size / 2.0,
+        palette.surface_active.gamma_multiply(eased),
+    );
+    theme::paint_icon(
+        ui,
+        Icon::Reply,
+        badge,
+        16.0 * eased.sqrt(),
+        palette.accent.gamma_multiply(eased),
+    );
+    ctx.request_repaint();
 }
 
 /// Draws a message row. A message just sent flies there from the composer,
@@ -4496,7 +4569,7 @@ fn bubble_row(
                 to: message.id.clone(),
             });
         }
-        reply_on_double_click(&strip, message, actions);
+        reply_on_double_click(&strip, view, message, actions);
     }
     let mut response = None;
     ui.with_layout(
@@ -5054,12 +5127,135 @@ fn call_menu(ui: &mut egui::Ui, view: &View<'_>, group: bool, actions: &mut Vec<
 }
 
 /// Starts a reply when the response was double-clicked, as the menu's "Reply".
-fn reply_on_double_click(response: &egui::Response, message: &Message, actions: &mut Vec<Action>) {
-    if response.double_clicked()
-        && !matches!(message.content, Content::Revoked | Content::Call { .. })
-    {
+fn reply_on_double_click(
+    response: &egui::Response,
+    view: &View<'_>,
+    message: &Message,
+    actions: &mut Vec<Action>,
+) {
+    if !response.double_clicked() {
+        return;
+    }
+    if can_edit_inline(view, message) {
+        start_inline_edit(&response.ctx, view, message);
+    } else if !matches!(message.content, Content::Revoked | Content::Call { .. }) {
         actions.push(Action::Reply(message.id.clone()));
     }
+}
+
+/// Where the message being edited in its own bubble is kept: its id and the
+/// text so far. The state belongs to the view, so nothing reaches the app
+/// until the edit is saved.
+fn inline_edit_slot(chat: &str) -> egui::Id {
+    egui::Id::new(("inline-edit", chat))
+}
+
+/// Whether a double-click edits this message in its bubble: our own text,
+/// inside the edit window. A mentioning message edits through the composer,
+/// which keeps its mentions.
+fn can_edit_inline(view: &View<'_>, message: &Message) -> bool {
+    message.from_me
+        && matches!(message.content, Content::Text { .. })
+        && message.mentions.is_empty()
+        && view.now - message.timestamp <= crate::app::EDIT_WINDOW.as_secs() as i64
+}
+
+/// Opens the message's text for editing in its bubble.
+fn start_inline_edit(ctx: &egui::Context, view: &View<'_>, message: &Message) {
+    let Content::Text { text, .. } = &message.content else {
+        return;
+    };
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            inline_edit_slot(&view.chat.id),
+            (message.id.clone(), text.clone()),
+        );
+    });
+    ctx.request_repaint();
+}
+
+/// Draws the editor in place of the message's text when it is being edited.
+/// Enter saves, Shift+Enter breaks the line, Escape or a click elsewhere
+/// puts the old text back. Returns whether it drew the editor.
+fn inline_editor(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    width: f32,
+    actions: &mut Vec<Action>,
+) -> bool {
+    let slot = inline_edit_slot(&view.chat.id);
+    let Some((id, mut text)) = ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, String)>(slot))
+    else {
+        return false;
+    };
+    if id != message.id {
+        return false;
+    }
+    let palette = view.palette;
+    let editor = bubble_id(&view.chat.id, &message.id).with("inline-editor");
+    let focused = ui.memory(|memory| memory.has_focus(editor));
+    let (save, cancel) = if focused {
+        ui.input_mut(|input| {
+            (
+                input.consume_key(Modifiers::NONE, Key::Enter),
+                input.consume_key(Modifiers::NONE, Key::Escape),
+            )
+        })
+    } else {
+        (false, false)
+    };
+    let output = egui::TextEdit::multiline(&mut text)
+        .id(editor)
+        .frame(Frame::NONE)
+        .margin(Margin::ZERO)
+        .font(theme::regular(BODY_SIZE))
+        .text_color(palette.text)
+        .desired_rows(1)
+        .desired_width(width)
+        .show(ui);
+    let first = !ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(editor.with("seen")).unwrap_or(false));
+    if first {
+        // Start with the caret after the text, and keep the field up to date
+        // with the focus from here on.
+        output.response.request_focus();
+        let mut state = output.state.clone();
+        let end = egui::text::CCursor::new(text.chars().count());
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        state.store(ui.ctx(), editor);
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(editor.with("seen"), true));
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(slot, (id.clone(), text.clone())));
+    let finish = |ctx: &egui::Context| {
+        ctx.data_mut(|data| {
+            data.remove::<(String, String)>(slot);
+            data.remove::<bool>(editor.with("seen"));
+        });
+    };
+    let lost = output.response.lost_focus() && !save && !cancel;
+    if save {
+        let saved = text.trim().to_owned();
+        let unchanged = matches!(&message.content, Content::Text { text, .. } if *text == saved);
+        if !saved.is_empty() && !unchanged {
+            actions.push(Action::SaveEdit {
+                chat: view.chat.id.clone(),
+                id: message.id.clone(),
+                text: saved,
+            });
+        }
+        finish(ui.ctx());
+    } else if cancel || lost {
+        finish(ui.ctx());
+    }
+    true
 }
 
 /// Stable message-bubble id used by interaction tests.
@@ -5466,7 +5662,7 @@ fn bubble_frame(
     let reacting = view.reaction_menu && view.reaction == Some(message.id.as_str());
     // Inner widgets own their clicks, so this fires only on the bubble's padding
     // and footer. Double-click on the body keeps selecting the word.
-    reply_on_double_click(&bubble, message, actions);
+    reply_on_double_click(&bubble, view, message, actions);
 
     reaction_affordance(ui, view, message, &bubble, actions);
     // Read right-click from input because inner widgets own their responses.
@@ -7487,6 +7683,9 @@ fn content(
             if let Some(preview) = preview {
                 preview_card(ui, view, message, preview, width, actions);
             }
+            if inline_editor(ui, view, message, width, actions) {
+                return None;
+            }
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
             rich_body(
                 ui,
@@ -9081,7 +9280,7 @@ fn rich_body(
         .interact_pointer_pos()
         .is_some_and(|pointer| !rect.contains(pointer));
     if padding {
-        reply_on_double_click(&response, message, actions);
+        reply_on_double_click(&response, view, message, actions);
         if response.clicked() && !response.double_clicked() {
             let modifiers = ui.input(|input| input.modifiers);
             if view.selecting {
@@ -9094,6 +9293,10 @@ fn rich_body(
                 actions.push(Action::SelectMessage(message.id.clone()));
             }
         }
+    }
+    // On our own editable text a double-click edits it, on the words too.
+    if !padding && can_edit_inline(view, message) && response.double_clicked() {
+        start_inline_edit(ui.ctx(), view, message);
     }
     // Store the body rect for selection tests.
     ui.ctx().data_mut(|data| {

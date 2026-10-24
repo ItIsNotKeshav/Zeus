@@ -2729,6 +2729,12 @@ pub enum Action {
     DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
+    /// Saves a text message edited in its own bubble.
+    SaveEdit {
+        chat: ChatId,
+        id: String,
+        text: String,
+    },
     /// Opens the group sender's direct chat with this message quoted.
     ReplyPrivately {
         chat: ChatId,
