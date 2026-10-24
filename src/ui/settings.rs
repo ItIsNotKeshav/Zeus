@@ -495,6 +495,13 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         halloween_switch,
     );
+    if app.settings.halloween {
+        for part in crate::settings::HalloweenPart::ALL {
+            appearance.row(translated(locale, part.label()), "", move |ui, app| {
+                halloween_part_switch(ui, app, part)
+            });
+        }
+    }
     appearance.block(
         vec![translated(locale, "Preview"), translated(locale, "Theme")],
         chat_preview,
@@ -1775,6 +1782,31 @@ fn halloween_switch(ui: &mut egui::Ui, app: &mut App) {
             app.actions.push(Action::RevealThemeFrom(origin));
         }
         app.actions.push(Action::SetHalloween(on));
+    }
+}
+
+/// The switch of one part of the Halloween look.
+fn halloween_part_switch(ui: &mut egui::Ui, app: &mut App, part: crate::settings::HalloweenPart) {
+    let palette = app.palette;
+    let label = crate::i18n::gettext(app.locale, part.label()).into_owned();
+    let parts = app.settings.halloween_parts;
+    let mut on = match part {
+        crate::settings::HalloweenPart::Colors => parts.colors,
+        crate::settings::HalloweenPart::Wallpaper => parts.wallpaper,
+        crate::settings::HalloweenPart::Doodles => parts.doodles,
+        crate::settings::HalloweenPart::Icons => parts.icons,
+        crate::settings::HalloweenPart::Sounds => parts.sounds,
+    };
+    let response = widgets::switch(ui, &palette, &mut on);
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, &label)
+    });
+    if response.changed() {
+        if let Some(origin) = ui.ctx().pointer_interact_pos() {
+            app.actions.push(Action::RevealThemeFrom(origin));
+        }
+        app.actions.push(Action::SetHalloweenPart(part, on));
     }
 }
 

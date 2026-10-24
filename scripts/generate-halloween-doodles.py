@@ -54,7 +54,16 @@ ICONS = {
     "potion": '<path d="M9.5 3h5M10.2 3v6.2L4.7 18.5a2 2 0 0 0 1.7 3h11.2a2 2 0 0 0 1.7-3l-5.5-9.3V3"/><path d="M7.4 15.4c1.5-.9 3-.9 4.6 0s3.1.9 4.6 0"/><circle cx="10.4" cy="18.6" r=".5"/><circle cx="14" cy="17.9" r=".5"/>',
     "candycorn": '<path d="M12 3.2c3.2 0 5.7 7.6 7.2 14.6A1.6 1.6 0 0 1 17.6 20H6.4a1.6 1.6 0 0 1-1.6-2.2C6.3 10.8 8.8 3.2 12 3.2Z"/><path d="M8 11.8h8M6.4 16.2h11.2"/>',
 }
-ICON_FILES = {"pumpkin": "pumpkin", "ghost": "ghost"}
+# Halloween versions of the interface's own icons.
+ICONS.update({
+    "search-halloween": '<circle cx="10.5" cy="10.5" r="7"/><path d="m21 21-5.1-5.1"/><path d="M10.5 3.5v14M3.5 10.5h14M5.6 5.6l9.8 9.8M15.4 5.6l-9.8 9.8" stroke-width="1" stroke-opacity="0.7"/>',
+    "video-halloween": '<rect x="2" y="6" width="14" height="12" rx="3"/><path d="m22 8-6 4 6 4Z"/><path d="m6 9.5 1.5 2.3h-3ZM11 9.5l1.5 2.3h-3Z"/><path d="M6.6 15c1.6.8 3.2.8 4.8 0"/>',
+    "phone-halloween": '<path d="M5.2 3.5h3.3l1.8 4.4-2.3 1.5a11.5 11.5 0 0 0 5.6 5.6l1.5-2.3 4.4 1.8v3.3a2 2 0 0 1-2.2 2A16.8 16.8 0 0 1 3.2 5.7a2 2 0 0 1 2-2.2Z"/><path d="m17 2 .6 1.9 1.9.6-1.9.6L17 7l-.6-1.9-1.9-.6 1.9-.6Z"/>',
+    "ellipsis-halloween": '<circle cx="5" cy="13" r="1.9"/><circle cx="12" cy="13" r="1.9"/><circle cx="19" cy="13" r="1.9"/><path d="M5 11V9.4M12 11V9.4M19 11V9.4"/>',
+    "mic-halloween": '<rect x="8.5" y="2.5" width="7" height="12" rx="3.5"/><path d="M10.6 7.5h.01M13.4 7.5h.01"/><path d="M10.8 10.4c.8.6 1.6.6 2.4 0"/><path d="M5 11.5a7 7 0 0 0 14 0M12 18.5V22M8.5 22h7"/>',
+    "send-halloween": '<g transform="translate(4.2 1.6) scale(0.82)"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/></g><path d="m5 3.2.5 1.6 1.6.5-1.6.5L5 7.4l-.5-1.6-1.6-.5 1.6-.5ZM3 14.5v.01M5.4 18v.01"/>',
+})
+ICON_FILES = {n: n for n in ["pumpkin", "ghost"] + [k for k in ICONS if k.endswith("-halloween")]}
 
 def icon_svg(body):
     return ('<svg\n  xmlns="http://www.w3.org/2000/svg"\n  width="24"\n  height="24"\n  viewBox="0 0 24 24"\n'

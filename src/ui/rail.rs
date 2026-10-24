@@ -304,7 +304,7 @@ fn destination_button(
             ),
         ),
         Destination::Calls => (
-            Icon::Phone,
+            theme::phone_icon(),
             Stop::Calls,
             format!(
                 "{} ({})",

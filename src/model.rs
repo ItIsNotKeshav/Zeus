@@ -2997,6 +2997,8 @@ pub enum Action {
     SetMode(crate::chat_themes::Mode),
     /// The Halloween look on or off, with the doodles and sounds it brings.
     SetHalloween(bool),
+    /// One part of the Halloween look on or off.
+    SetHalloweenPart(crate::settings::HalloweenPart, bool),
     /// An accent over the chat theme's own.
     SetAccent(crate::chat_themes::Accent),
     /// Draws the interface in the platform's font or in the bundled Inter.

@@ -1224,6 +1224,12 @@ fastframe_icons::icons! {
         Maximize => lucide "maximize-2",
         MessageCircle => "message-circle",
         Pumpkin => "pumpkin",
+        SearchHw => "search-halloween",
+        VideoHw => "video-halloween",
+        PhoneHw => "phone-halloween",
+        EllipsisHw => "ellipsis-halloween",
+        MicHw => "mic-halloween",
+        SendHw => "send-halloween",
         Ghost => "ghost",
         Mic => lucide "mic",
         MicOff => "mic-off",
@@ -1293,6 +1299,46 @@ pub fn chats_icon() -> Icon {
         Icon::Pumpkin
     } else {
         Icon::MessageCircle
+    }
+}
+
+/// The icons that change at Halloween, each its usual one or its own.
+pub fn search_icon() -> Icon {
+    if halloween() {
+        Icon::SearchHw
+    } else {
+        Icon::Search
+    }
+}
+pub fn video_icon() -> Icon {
+    if halloween() {
+        Icon::VideoHw
+    } else {
+        Icon::Video
+    }
+}
+pub fn phone_icon() -> Icon {
+    if halloween() {
+        Icon::PhoneHw
+    } else {
+        Icon::Phone
+    }
+}
+pub fn ellipsis_icon() -> Icon {
+    if halloween() {
+        Icon::EllipsisHw
+    } else {
+        Icon::Ellipsis
+    }
+}
+pub fn mic_icon() -> Icon {
+    if halloween() { Icon::MicHw } else { Icon::Mic }
+}
+pub fn send_icon() -> Icon {
+    if halloween() {
+        Icon::SendHw
+    } else {
+        Icon::Send
     }
 }
 

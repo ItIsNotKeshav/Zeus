@@ -42,7 +42,7 @@ def echo(x, delay, gain, repeats):
 
 def save(name, x):
     x = x / max(1e-9, np.max(np.abs(x))) * 0.85
-    x = x[: np.nonzero(np.abs(x) > 0.004)[0][-1] + 1].copy()
+    x = x[: np.nonzero(np.abs(x) > 0.03)[0][-1] + 1].copy()
     fade = int(0.02 * RATE)
     x[-fade:] *= np.linspace(1, 0, fade)
     with wave.open(f"assets/sounds/{name}.wav", "wb") as f:
@@ -51,18 +51,18 @@ def save(name, x):
 
 # Spooky: a music-box phrase in E minor that sinks into a ghostly "oooo".
 m = np.zeros(int(RATE * 1.9))
-for at, hz in [(0.00, 659.3), (0.11, 783.99), (0.22, 987.77), (0.36, 932.33)]:
-    place(m, bell(hz, 0.9, decay=0.22) * 0.7, at)
-place(m, glide(520, 330, 0.9) * 0.28, 0.42)
-save("spooky", echo(m, 0.17, 0.35, 3))
+for at, hz in [(0.00, 659.3), (0.08, 783.99), (0.16, 987.77), (0.26, 932.33)]:
+    place(m, bell(hz, 0.5, decay=0.12) * 0.7, at)
+place(m, glide(520, 330, 0.42) * 0.28, 0.3)
+save("spooky", echo(m, 0.12, 0.3, 2))
 
 # Witching: a bat's rising squeaks over a low gong, for mentions.
 w = np.zeros(int(RATE * 2.2))
-for at, f0, f1 in [(0.0, 1500, 2600), (0.13, 1800, 3000), (0.26, 2100, 3400)]:
+for at, f0, f1 in [(0.0, 1500, 2600), (0.09, 1800, 3000), (0.18, 2100, 3400)]:
     x = t(0.09)
     sweep = np.sin(2 * np.pi * np.cumsum(np.linspace(f0, f1, len(x))) / RATE)
     place(w, sweep * np.sin(np.pi * np.linspace(0, 1, len(x))) * 0.25, at)
 for hz, gain in [(146.8, 0.9), (155.6, 0.7), (220.0, 0.35), (329.6, 0.2)]:
-    place(w, bell(hz, 2.0, ratio=2.76, index=1.4, decay=0.7) * gain, 0.36)
-place(w, glide(260, 200, 0.7, vibrato=5, depth=0.03) * 0.18, 0.5)
-save("witching", echo(w, 0.21, 0.3, 2))
+    place(w, bell(hz, 0.9, ratio=2.76, index=1.4, decay=0.22) * gain, 0.24)
+place(w, glide(260, 200, 0.4, vibrato=5, depth=0.03) * 0.18, 0.3)
+save("witching", echo(w, 0.14, 0.3, 1))

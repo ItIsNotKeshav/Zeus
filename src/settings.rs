@@ -158,6 +158,64 @@ impl FontChoice {
     }
 }
 
+/// What the Halloween look is made of, each part switchable on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HalloweenParts {
+    /// The orange colours.
+    pub colors: bool,
+    /// The night sky and skyline behind the chat.
+    pub wallpaper: bool,
+    /// The Halloween doodles and their orange ink.
+    pub doodles: bool,
+    /// The pumpkin, ghost and other Halloween icons.
+    pub icons: bool,
+    /// The spooky notification sounds.
+    pub sounds: bool,
+}
+
+impl Default for HalloweenParts {
+    fn default() -> Self {
+        Self {
+            colors: true,
+            wallpaper: true,
+            doodles: true,
+            icons: true,
+            sounds: true,
+        }
+    }
+}
+
+/// One part of the Halloween look.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HalloweenPart {
+    Colors,
+    Wallpaper,
+    Doodles,
+    Icons,
+    Sounds,
+}
+
+impl HalloweenPart {
+    pub const ALL: [Self; 5] = [
+        Self::Colors,
+        Self::Wallpaper,
+        Self::Doodles,
+        Self::Icons,
+        Self::Sounds,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Colors => "Orange colours",
+            Self::Wallpaper => "Night wallpaper",
+            Self::Doodles => "Halloween doodles",
+            Self::Icons => "Halloween icons",
+            Self::Sounds => "Spooky sounds",
+        }
+    }
+}
+
 /// The doodle pattern drawn over the wallpaper colour. Each is a tile of
 /// Lucide icons (ISC), see `assets/doodles` and `scripts/generate-doodles.py`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -628,6 +686,8 @@ pub struct Settings {
     /// sounds. Turning it on or off also swaps the doodles and sounds it set;
     /// see [`Settings::set_halloween`].
     pub halloween: bool,
+    /// Which parts of the Halloween look apply while it is on.
+    pub halloween_parts: HalloweenParts,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Which doodles `show_wallpaper` draws.
@@ -766,6 +826,7 @@ impl Default for Settings {
             send_typing: true,
             auto_download: true,
             halloween: true,
+            halloween_parts: HalloweenParts::default(),
             show_wallpaper: true,
             doodle_style: DoodleStyle::Halloween,
             doodle_color: DoodleColor::Accent,
@@ -960,31 +1021,55 @@ impl Settings {
             .unwrap_or_else(|| self.chat_theme.palette(dark, self.accent))
     }
 
-    /// Whether the Halloween look is drawn: switched on, over Zeus's or
+    /// Whether the Halloween colours are drawn: switched on, over Zeus's or
     /// WhatsApp's own Dark and Light. A ready-made or custom theme chosen on
     /// purpose keeps its colours.
     pub fn halloween_active(&self) -> bool {
-        self.halloween && self.chat_theme.takes_accent() && self.cached_palette().is_none()
+        self.halloween
+            && self.halloween_parts.colors
+            && self.chat_theme.takes_accent()
+            && self.cached_palette().is_none()
     }
 
-    /// Turns the Halloween look on or off together with what it brings: its
-    /// doodles, orange doodle ink and sounds on; the classic doodles, grey ink
-    /// and Pidgin's sounds back off. Anything the reader picked in their
-    /// place stays.
+    /// Whether the Halloween night wallpaper is drawn.
+    pub fn halloween_wallpaper(&self) -> bool {
+        self.halloween && self.halloween_parts.wallpaper
+    }
+
+    /// Whether the Halloween icons are drawn.
+    pub fn halloween_icons(&self) -> bool {
+        self.halloween && self.halloween_parts.icons
+    }
+
+    /// Turns the Halloween look on or off as a whole.
     pub fn set_halloween(&mut self, on: bool) {
         self.halloween = on;
-        if on {
+        self.sync_halloween();
+    }
+
+    /// Turns one part of the Halloween look on or off.
+    pub fn set_halloween_part(&mut self, part: HalloweenPart, on: bool) {
+        match part {
+            HalloweenPart::Colors => self.halloween_parts.colors = on,
+            HalloweenPart::Wallpaper => self.halloween_parts.wallpaper = on,
+            HalloweenPart::Doodles => self.halloween_parts.doodles = on,
+            HalloweenPart::Icons => self.halloween_parts.icons = on,
+            HalloweenPart::Sounds => self.halloween_parts.sounds = on,
+        }
+        self.sync_halloween();
+    }
+
+    /// Brings the doodles and sounds in line with the look: its doodles,
+    /// orange doodle ink and sounds when they are on; the classic doodles,
+    /// grey ink and Pidgin's sounds back when they are off. Anything the
+    /// reader picked in their place stays.
+    fn sync_halloween(&mut self) {
+        if self.halloween && self.halloween_parts.doodles {
             if self.doodle_style == DoodleStyle::Classic {
                 self.doodle_style = DoodleStyle::Halloween;
             }
             if self.doodle_color == DoodleColor::Gray {
                 self.doodle_color = DoodleColor::Accent;
-            }
-            if self.message_sound == NotificationSound::Receive {
-                self.message_sound = NotificationSound::Spooky;
-            }
-            if self.mention_sound == NotificationSound::Alert {
-                self.mention_sound = NotificationSound::Witching;
             }
         } else {
             if self.doodle_style == DoodleStyle::Halloween {
@@ -993,6 +1078,15 @@ impl Settings {
             if self.doodle_color == DoodleColor::Accent {
                 self.doodle_color = DoodleColor::Gray;
             }
+        }
+        if self.halloween && self.halloween_parts.sounds {
+            if self.message_sound == NotificationSound::Receive {
+                self.message_sound = NotificationSound::Spooky;
+            }
+            if self.mention_sound == NotificationSound::Alert {
+                self.mention_sound = NotificationSound::Witching;
+            }
+        } else {
             if self.message_sound == NotificationSound::Spooky {
                 self.message_sound = NotificationSound::Receive;
             }
@@ -1384,6 +1478,24 @@ mod tests {
         settings.set_halloween(true);
         assert_eq!(settings.doodle_style, DoodleStyle::Halloween);
         assert_eq!(settings.mention_sound, NotificationSound::Witching);
+    }
+
+    #[test]
+    fn each_halloween_part_switches_on_its_own() {
+        let mut settings = Settings::default();
+        settings.set_halloween_part(HalloweenPart::Colors, false);
+        assert!(!settings.halloween_active());
+        assert!(settings.halloween_wallpaper() && settings.halloween_icons());
+        assert_eq!(settings.doodle_style, DoodleStyle::Halloween);
+        settings.set_halloween_part(HalloweenPart::Doodles, false);
+        assert_eq!(settings.doodle_style, DoodleStyle::Classic);
+        settings.set_halloween_part(HalloweenPart::Sounds, false);
+        assert_eq!(settings.message_sound, NotificationSound::Receive);
+        settings.set_halloween_part(HalloweenPart::Icons, false);
+        assert!(!settings.halloween_icons());
+        settings.set_halloween(false);
+        settings.set_halloween(true);
+        assert_eq!(settings.doodle_style, DoodleStyle::Classic);
     }
 
     #[test]
