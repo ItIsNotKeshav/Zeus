@@ -307,28 +307,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         None
     };
     if step != 0 || number.is_some() {
-        let visible = app.visible_chats();
-        if !visible.is_empty() {
-            let current = app
-                .open_chat
-                .as_ref()
-                .and_then(|open| visible.iter().position(|chat| chat.id == *open));
-            let next = number.unwrap_or_else(|| match current {
-                Some(index) => (index as i64 + step).rem_euclid(visible.len() as i64) as usize,
-                None => 0,
-            });
-            if let Some(next) = visible.get(next).map(|chat| chat.id.clone()) {
-                if number.is_some() {
-                    app.search_selected = None;
-                }
-                // Stepping through the Unread list must not shift it underfoot.
-                if app.search.trim().is_empty() && !app.show_archived {
-                    actions.push(Action::KeepUnread(next.clone()));
-                }
-                app.scroll_chat_into_view = Some(next.clone());
-                actions.push(Action::OpenChat(next));
-            }
-        }
+        step_chat(app, step, number, &mut actions);
     }
     // Arrow Up in an empty composer edits the user's most recent message, as
     // WhatsApp does: when the composer is focused, or nothing is, as after a
@@ -370,6 +349,39 @@ fn is_copy_event(event: &egui::Event) -> bool {
 }
 
 /// Takes an exact Command/Ctrl+1..9 press, leaving modified number keys alone.
+/// Opens the chat `step` places below the open one in the list (above it
+/// when negative, wrapping around), or the list's `number`th chat.
+pub(crate) fn step_chat(
+    app: &mut App,
+    step: i64,
+    number: Option<usize>,
+    actions: &mut Vec<Action>,
+) {
+    let visible = app.visible_chats();
+    if visible.is_empty() {
+        return;
+    }
+    let current = app
+        .open_chat
+        .as_ref()
+        .and_then(|open| visible.iter().position(|chat| chat.id == *open));
+    let next = number.unwrap_or_else(|| match current {
+        Some(index) => (index as i64 + step).rem_euclid(visible.len() as i64) as usize,
+        None => 0,
+    });
+    if let Some(next) = visible.get(next).map(|chat| chat.id.clone()) {
+        if number.is_some() {
+            app.search_selected = None;
+        }
+        // Stepping through the Unread list must not shift it underfoot.
+        if app.search.trim().is_empty() && !app.show_archived {
+            actions.push(Action::KeepUnread(next.clone()));
+        }
+        app.scroll_chat_into_view = Some(next.clone());
+        actions.push(Action::OpenChat(next));
+    }
+}
+
 fn take_chat_number(input: &mut egui::InputState) -> Option<usize> {
     let keys = [
         Key::Num1,

@@ -2405,6 +2405,9 @@ struct View<'a> {
     time_inside: bool,
     video: &'a crate::video::Player,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
+    /// What touchpad swipes do in the open chat; only a reply is the
+    /// message rows' to do.
+    swipes: crate::settings::Swipes,
 }
 
 /// Protocol album parent carried by pictures and ordinary videos.
@@ -2795,12 +2798,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         // text-selection annotator reinterpret them as drawn body text.
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
             .then_some(app.copy_rows.as_ref()),
+        swipes: app.settings.swipes,
     };
     let mut actions = Vec::new();
-    super::swipe::update(ui.ctx(), ui.rect_contains_pointer(ui.max_rect()));
-    if super::swipe::back(ui.ctx()) {
-        actions.push(Action::CloseChat);
-    }
     let mut anchored = false;
     // The first unread message is the count-th incoming one from the end.
     let divider = app
@@ -3767,6 +3767,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             explicit,
         });
     }
+    swipe_chat(app, ui, chat, output.inner_rect, &mut actions);
     app.actions.extend(actions);
     if edge_scrolled_up {
         // Scrolling up releases stick-to-bottom.
@@ -4123,7 +4124,11 @@ fn reaction_affordance(
     } else {
         rect
     };
-    let revealed = reaction_affordance_visible(pointer, shown, reach);
+    // Not while the row slides for a swipe.
+    let swiping = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(bubble_id(&view.chat.id, &message.id).with("swiping")));
+    let revealed = !swiping.unwrap_or(false) && reaction_affordance_visible(pointer, shown, reach);
     if ui.is_rect_visible(rect) && (response.has_focus() || (uncovered && revealed)) {
         floating_circle(ui, &view.palette, rect, response.hovered());
         theme::paint_icon(
@@ -4284,9 +4289,10 @@ fn bubble(
     response
 }
 
-/// Two fingers swiped left across a message: the row follows them with a
-/// rubber band while a reply icon grows in the space it leaves, and past the
-/// threshold the reply starts. Letting go eases the row back.
+/// Two fingers swiped across a message the way Settings give a reply: the
+/// row follows them with a rubber band while a reply icon grows in the space
+/// it leaves, and letting go past the threshold starts the reply. Short of
+/// it the row eases back.
 fn swipe_to_reply(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -4295,56 +4301,58 @@ fn swipe_to_reply(
     rect: Rect,
     actions: &mut Vec<Action>,
 ) {
+    use crate::settings::{SwipeAction, SwipeSlot};
     let ctx = ui.ctx().clone();
-    let id = bubble_id(&view.chat.id, &message.id).with("swipe");
-    let (pulled, fired) = super::swipe::reply(&ctx, rect.expand2(vec2(4000.0, 4.0)));
-    let eased = if pulled > 0.0 {
-        ctx.animate_value_with_time(id, pulled, 0.0)
-    } else {
-        let time = if crate::motion::screen_reader_attached(&ctx) {
-            0.0
-        } else {
-            0.18
-        };
-        ctx.animate_value_with_time(id, 0.0, time)
+    let clip = ui.clip_rect();
+    let area = Rect::from_x_y_ranges(clip.x_range(), rect.expand2(vec2(0.0, 4.0)).y_range());
+    let pull = super::swipe::over(&ctx, area);
+    let reply = |right| {
+        (view.swipes.get(SwipeSlot::of(true, right)) == SwipeAction::Reply && view.chat.can_send())
+            .then_some(Icon::Reply)
     };
-    if fired {
+    if let Some(pull) = pull
+        && pull.fired
+        && reply(pull.right).is_some()
+    {
         actions.push(Action::Reply(message.id.clone()));
     }
-    if eased <= 0.0 {
-        return;
-    }
-    let shift = super::swipe::pull(eased);
-    let layer = ui.layer_id();
-    ctx.graphics_mut(|graphics| {
-        let list = graphics.entry(layer);
-        for index in start.0..list.next_idx().0 {
-            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
-                clipped.shape.translate(vec2(-shift, 0.0));
-            });
-        }
-    });
-    let palette = view.palette;
-    let size = 30.0 * eased.sqrt();
-    let center = pos2(
-        ui.clip_rect().right().min(rect.right() + 12.0) - shift / 2.0 - 6.0,
-        rect.center().y,
+    let lane = Rect::from_x_y_ranges(
+        (rect.left() - 12.0).max(clip.left())..=(rect.right() + 12.0).min(clip.right()),
+        rect.y_range(),
     );
-    let badge = Rect::from_center_size(center, Vec2::splat(size));
-    let painter = ui.painter();
-    painter.circle_filled(
-        center,
-        size / 2.0,
-        palette.surface_active.gamma_multiply(eased),
-    );
-    theme::paint_icon(
+    let id = bubble_id(&view.chat.id, &message.id);
+    let pulled = super::swipe::slide_row(
         ui,
-        Icon::Reply,
-        badge,
-        16.0 * eased.sqrt(),
-        palette.accent.gamma_multiply(eased),
+        id.with("swipe"),
+        start,
+        lane,
+        pull,
+        reply,
+        &view.palette,
     );
-    ctx.request_repaint();
+    // The hover buttons would ride along into the badge's space.
+    ctx.data_mut(|data| data.insert_temp(id.with("swiping"), pulled > 0.0));
+}
+
+/// A sideways swipe across the open chat whose action is on the whole chat
+/// (a reply is the message rows'): a badge slides in at the side the
+/// fingers come from, and letting go past the threshold acts.
+fn swipe_chat(app: &mut App, ui: &egui::Ui, chat: &Chat, area: Rect, actions: &mut Vec<Action>) {
+    use crate::settings::SwipeAction;
+    let pull = super::swipe::over(ui.ctx(), area);
+    if let Some(pull) = pull.filter(|pull| pull.fired) {
+        let action = super::swipe::action(app, true, pull.right);
+        if action != SwipeAction::Reply {
+            actions.extend(super::swipe::actions(app, action, chat, None));
+        }
+    }
+    let whole = |right| {
+        let action = super::swipe::action(app, true, right);
+        (action != SwipeAction::Reply && super::swipe::available(app, action, chat, false))
+            .then(|| super::swipe::icon(action, chat))
+    };
+    let id = egui::Id::new(("swipe-open-chat", &chat.id));
+    super::swipe::edge_badge(ui, id, area, pull, whole, &app.palette);
 }
 
 /// Draws a message row. A message just sent flies there from the composer,
@@ -6923,6 +6931,7 @@ pub(crate) fn list_menu(
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
+        swipes: app.settings.swipes,
         selecting: false,
         selected: &[],
         motion_playing: None,
@@ -8373,6 +8382,7 @@ fn carousel(
             }
             visible
         });
+    super::swipe::yield_to(ui.ctx(), output.inner_rect);
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("carousel-viewport"), output.inner));
 }
@@ -12404,6 +12414,7 @@ mod tests {
             video: &app.video,
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
+            swipes: app.settings.swipes,
             selecting: false,
             selected: &[],
             motion_playing: None,

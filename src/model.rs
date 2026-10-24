@@ -2445,6 +2445,20 @@ pub struct Toast {
     pub message: String,
     pub kind: ToastKind,
     pub created: Instant,
+    /// What its Undo button does; empty when it has none.
+    pub undo: Vec<Action>,
+}
+
+impl Toast {
+    /// How long an info toast stays, including its fade: one with Undo
+    /// longer, to leave time to reach the button.
+    pub fn lifetime(&self) -> std::time::Duration {
+        if self.undo.is_empty() {
+            crate::app::INFO_TOAST_LIFETIME
+        } else {
+            crate::app::UNDO_TOAST_LIFETIME
+        }
+    }
 }
 
 /// A scroll request for the open chat's message list, from the keyboard.
@@ -3011,6 +3025,13 @@ pub enum Action {
     SetAccent(crate::chat_themes::Accent),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
+    /// Shows an info toast whose Undo button applies `undo`.
+    ToastUndo {
+        message: String,
+        undo: Vec<Action>,
+    },
+    /// Sets what one of the four touchpad swipes does.
+    SetSwipe(crate::settings::SwipeSlot, crate::settings::SwipeAction),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),

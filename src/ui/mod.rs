@@ -84,7 +84,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         accounts::corner(app, ctx);
         dialogs::show(app, ctx);
         update::show(app, ctx);
-        toasts(app, ctx);
+        toasts(app, ctx, ctx.content_rect().bottom(), None);
         focus_ring(app, ctx);
         announce(app, ctx);
         return;
@@ -115,8 +115,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     call::show(app, ctx);
     image_editor::show(app, ctx);
     drop_target(app, ctx);
-    banner(app, ctx, floor);
-    toasts(app, ctx);
+    let status = banner(app, ctx, floor);
+    toasts(app, ctx, floor, status);
     carry::show(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
@@ -564,8 +564,9 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Connection and history-sync status, a small toast at the bottom left
-/// above `floor`, clear of the rail's account and settings buttons.
-fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
+/// above `floor`, clear of the rail's account and settings buttons. Returns
+/// where it was drawn, if it was.
+fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> {
     let palette = app.palette;
     let update = app.update.clone();
     let (icon, text, color, retry, download) = match &app.link {
@@ -594,7 +595,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
                 Some(update.url.clone()),
             )
         }
-        LinkStatus::Connected => return,
+        LinkStatus::Connected => return None,
         LinkStatus::Starting | LinkStatus::Connecting => (
             Icon::Refresh,
             "Connecting to WhatsApp…".to_owned(),
@@ -627,12 +628,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
     // One row at the bottom left of the side columns (or of the chat when
     // they are hidden), lifted above the composer if it would cover it.
     let content = ctx.content_rect();
-    let side = ctx.data(|data| data.get_temp::<bool>(side_columns_id()));
-    let left = content.left()
-        + match side {
-            Some(_) => rail::PANE_WIDTH,
-            None => 12.0,
-        };
+    let left = bottom_left(ctx);
     let mut bottom = floor - 12.0;
     let width = (content.right() - left - 12.0).max(120.0);
     let row = Frame::new()
@@ -652,7 +648,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
     {
         bottom = bottom.min(composer.top() - 8.0);
     }
-    egui::Area::new(egui::Id::new("banner"))
+    let shown = egui::Area::new(egui::Id::new("banner"))
         .pivot(Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, bottom))
         .order(egui::Order::Foreground)
@@ -696,6 +692,18 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) {
                 });
             });
         });
+    Some(shown.response.rect)
+}
+
+/// Where the status banner and the toasts start: the left of the side
+/// columns, past the rail, or of the chat when they are hidden.
+fn bottom_left(ctx: &egui::Context) -> f32 {
+    let side = ctx.data(|data| data.get_temp::<bool>(side_columns_id()));
+    ctx.content_rect().left()
+        + match side {
+            Some(_) => rail::PANE_WIDTH,
+            None => 12.0,
+        }
 }
 
 /// Whether the rail was drawn this frame, and the chat list beside it.
@@ -713,29 +721,39 @@ pub fn toast_close_id(index: usize) -> egui::Id {
     egui::Id::new(("toast-close", index))
 }
 
-fn toasts(app: &mut App, ctx: &egui::Context) {
+/// Toasts stack at the bottom left, above the status banner when it shows
+/// (`status`), and above the composer where they would cover it.
+fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::Rect>) {
     if app.toasts.is_empty() {
         return;
     }
     let palette = app.palette;
-    let lifetime = crate::app::INFO_TOAST_LIFETIME.as_secs_f32();
-    // Errors carry buttons, so the area must take clicks while one is shown.
-    let has_error = app
+    // Errors and undoable changes carry buttons, so the area must take
+    // clicks while one is shown.
+    let has_buttons = app
         .toasts
         .iter()
-        .any(|toast| toast.kind == ToastKind::Error);
+        .any(|toast| toast.kind == ToastKind::Error || !toast.undo.is_empty());
     let mut actions = Vec::new();
+    let left = bottom_left(ctx);
+    let mut bottom = status.map_or(floor - 12.0, |status| status.top() - 8.0);
     // Stay clear of the composer: an error waiting to be dismissed must not
-    // cover the send button.
-    let bottom = ctx
-        .data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
-        .map_or(20.0, |composer| {
-            ctx.content_rect().bottom() - composer.top() + 12.0
-        });
+    // cover the send button. Last frame's width tells whether it reaches.
+    let reach = ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("toasts")))
+        .map_or(360.0, |rect| rect.width());
+    if let Some(composer) = ctx.data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
+        && composer
+            .x_range()
+            .intersects(egui::Rangef::new(left, left + reach))
+    {
+        bottom = bottom.min(composer.top() - 8.0);
+    }
     egui::Area::new(egui::Id::new("toasts"))
-        .anchor(Align2::RIGHT_BOTTOM, vec2(-20.0, -bottom))
+        .pivot(Align2::LEFT_BOTTOM)
+        .fixed_pos(egui::pos2(left, bottom))
         .order(egui::Order::Tooltip)
-        .interactable(has_error)
+        .interactable(has_buttons)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
             for (index, toast) in app.toasts.iter().enumerate() {
@@ -745,6 +763,7 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                 let alpha = if error {
                     1.0
                 } else {
+                    let lifetime = toast.lifetime().as_secs_f32();
                     let age = toast.created.elapsed().as_secs_f32();
                     if age < 0.15 {
                         age / 0.15
@@ -770,7 +789,14 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                             palette.text,
                             (ctx.content_rect().width() - 150.0).clamp(80.0, 360.0),
                         );
-                        let buttons = if error { 2.0 * 26.0 + 12.0 } else { 0.0 };
+                        let undo = crate::i18n::gettext(app.locale, "Undo");
+                        let buttons = if error {
+                            2.0 * 26.0 + 12.0
+                        } else if !toast.undo.is_empty() {
+                            theme::soft_button_width(ui, &undo, true) + 12.0
+                        } else {
+                            0.0
+                        };
                         let text = widgets::line(
                             ui,
                             &toast.message,
@@ -795,6 +821,25 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                             ui.ctx().data_mut(|data| {
                                 data.insert_temp(toast_close_id(index).with("text"), rect);
                             });
+                            if !error && !toast.undo.is_empty() {
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if theme::soft_button(
+                                            ui,
+                                            &palette,
+                                            Some(Icon::RotateLeft),
+                                            &undo,
+                                            true,
+                                        )
+                                        .clicked()
+                                        {
+                                            actions.extend(toast.undo.iter().cloned());
+                                            actions.push(Action::DismissToast(index));
+                                        }
+                                    },
+                                );
+                            }
                             if error {
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -965,7 +1010,9 @@ mod idle_tests {
                     )),
                     ..Default::default()
                 },
-                |ui| banner(&mut app, ui.ctx(), 780.0),
+                |ui| {
+                    banner(&mut app, ui.ctx(), 780.0);
+                },
             );
             delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
             output.textures_delta.clear();
