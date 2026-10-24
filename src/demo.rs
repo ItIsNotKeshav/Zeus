@@ -3148,6 +3148,24 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // Zeus's Halloween look, which ships on, put back or taken away.
             "halloween-off" => app.settings.set_halloween(false),
             "halloween-on" => app.settings.set_halloween(true),
+            "halloween-colors-off" => app
+                .settings
+                .set_halloween_part(crate::settings::HalloweenPart::Colors, false),
+            // A surprise held at a percentage of its time, such as ghost-at-40.
+            part if let Some(percent) = part
+                .strip_prefix("ghost-at-")
+                .and_then(|percent| percent.parse::<f32>().ok()) =>
+            {
+                app.surprise
+                    .hold(crate::surprise::Kind::Ghost, percent / 100.0);
+            }
+            part if let Some(percent) = part
+                .strip_prefix("candy-at-")
+                .and_then(|percent| percent.parse::<f32>().ok()) =>
+            {
+                app.surprise
+                    .hold(crate::surprise::Kind::Candy, percent / 100.0);
+            }
             // A dropdown held open, by its salt, such as dropdown-open=interface_font.
             part if let Some(salt) = part.strip_prefix("dropdown-open=") => {
                 crate::ui::controls::set_demo_open(&format!("{salt:?}"));

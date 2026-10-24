@@ -402,6 +402,8 @@ pub struct App {
     theme_transition: fastframe_theme::Transition,
     /// A chat theme picked in Settings, opening from its card.
     theme_reveal: crate::theme_reveal::Reveal,
+    /// The Halloween ghost or candy on screen.
+    pub(crate) surprise: crate::surprise::Surprise,
     /// Whether palette changes are revealed. Off in tests, whose frames send
     /// no screenshots and would hold the old palette.
     pub reveal_theme_changes: bool,
@@ -1324,6 +1326,7 @@ impl App {
             applied_dark: None,
             theme_transition: fastframe_theme::Transition::default(),
             theme_reveal: crate::theme_reveal::Reveal::default(),
+            surprise: crate::surprise::Surprise::default(),
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
             wallpaper_image: crate::wallpaper::CustomImage::default(),
@@ -5509,6 +5512,31 @@ impl App {
     }
 
     /// Dispatches composed text with its explicit quote target and restores it on refusal.
+    /// Sometimes a ghost jumps out or candy falls when a message is sent, if
+    /// Halloween asks for it. Never during a call, while a screen reader is
+    /// attached, or from an account that is not on screen.
+    fn halloween_surprise(&mut self, ctx: &egui::Context) {
+        if self.call.is_some()
+            || self.events_hidden
+            || self.surprise.running()
+            || crate::motion::screen_reader_attached(ctx)
+        {
+            return;
+        }
+        let Some(kind) = crate::surprise::pick(
+            self.settings.halloween_ghost(),
+            self.settings.halloween_candies(),
+            rand::random::<f64>(),
+            rand::random::<f64>(),
+        ) else {
+            return;
+        };
+        self.surprise.start(ctx, kind);
+        if kind == crate::surprise::Kind::Ghost && self.settings.halloween_parts.sounds {
+            crate::notify::play_boo();
+        }
+    }
+
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -6522,8 +6550,12 @@ impl App {
                 text,
                 quoting,
             } => {
+                let sent = !text.trim().is_empty();
                 self.send_text(chat, text, quoting);
                 self.reply_to = None;
+                if sent {
+                    self.halloween_surprise(ctx);
+                }
             }
             Action::SendLocation {
                 chat,
@@ -9568,6 +9600,7 @@ impl App {
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         self.theme_reveal.paint(ctx);
+        self.surprise.paint(ctx);
         // Release the image caches of everything that scrolled away.
         crate::image_cache::sweep(ctx);
         // Only fading info toasts animate. Errors wait for the reader.

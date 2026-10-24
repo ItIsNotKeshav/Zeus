@@ -280,8 +280,8 @@ impl Palette {
 
     /// Zeus's Halloween palette: Dark's glass in a night of plum and ember, or
     /// Light's in candlelit cream, with a bright pumpkin orange for the
-    /// accent unless `accent` is a colour the reader chose.
-    pub fn halloween(dark: bool, accent: Option<[u8; 3]>) -> Self {
+    /// accent.
+    pub fn halloween(dark: bool) -> Self {
         let rgb = |value: u32| {
             let [_, r, g, b] = value.to_be_bytes();
             Color32::from_rgb(r, g, b)
@@ -318,7 +318,7 @@ impl Palette {
             p.chat = rgb(0xffefdb);
             p.bubble_in = rgb(0xfffdf9);
         }
-        p.with_accent(accent.unwrap_or([0xff, 0x7a, 0x1a]))
+        p.with_accent([0xff, 0x7a, 0x1a])
     }
 
     /// Nothing OS inspired paper-white palette with translucent panels.
