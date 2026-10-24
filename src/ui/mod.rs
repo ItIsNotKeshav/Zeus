@@ -575,8 +575,8 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 /// where it was drawn, if it was.
 fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> {
     let palette = app.palette;
-    let update = app.update.clone();
-    let (icon, text, color, retry, download) = match &app.link {
+    // An available release is the rail's ellipse, not this toast.
+    let (icon, text, color, retry) = match &app.link {
         LinkStatus::Connected if app.syncing => (
             Icon::Refresh,
             match app.sync_percent {
@@ -588,32 +588,13 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
             },
             palette.accent,
             false,
-            None,
         ),
-        LinkStatus::Connected if update.is_some() => {
-            let update = update.as_ref().expect("checked above");
-            let ready = matches!(app.update_download, crate::updates::DownloadState::Ready(_));
-            (
-                if ready { Icon::Download } else { Icon::Info },
-                if ready {
-                    crate::i18n::gettext(app.locale, "Zeus {version} is ready to install")
-                        .replace("{version}", &update.version)
-                } else {
-                    crate::i18n::gettext(app.locale, "Zeus {version} is available")
-                        .replace("{version}", &update.version)
-                },
-                palette.accent,
-                false,
-                Some(update.url.clone()),
-            )
-        }
         LinkStatus::Connected => return None,
         LinkStatus::Starting | LinkStatus::Connecting => (
             Icon::Refresh,
             crate::i18n::gettext(app.locale, "Connecting to WhatsApp…").into_owned(),
             palette.secondary,
             false,
-            None,
         ),
         LinkStatus::Disconnected { reason } => (
             Icon::WifiOff,
@@ -621,21 +602,13 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
                 .replace("{reason}", reason),
             palette.warning,
             true,
-            None,
         ),
-        LinkStatus::Failed(message) => (
-            Icon::CircleAlert,
-            message.clone(),
-            palette.danger,
-            true,
-            None,
-        ),
+        LinkStatus::Failed(message) => (Icon::CircleAlert, message.clone(), palette.danger, true),
         LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
             crate::i18n::gettext(app.locale, "Not linked to a phone").into_owned(),
             palette.warning,
             false,
-            None,
         ),
     };
     // One row at the bottom left of the side columns (or of the chat when
@@ -665,7 +638,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
         .pivot(Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, bottom))
         .order(egui::Order::Foreground)
-        .interactable(retry || download.is_some())
+        .interactable(retry)
         .show(ctx, |ui| {
             row.show(ui, |ui| {
                 ui.set_max_width(width - 20.0);
@@ -684,19 +657,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
                         .wrap()
                         .selectable(false),
                     );
-                    if download.is_some() {
-                        if theme::soft_button(
-                            ui,
-                            &palette,
-                            Some(Icon::ExternalLink),
-                            &crate::i18n::gettext(app.locale, "Update"),
-                            false,
-                        )
-                        .clicked()
-                        {
-                            app.actions.push(Action::ShowUpdate);
-                        }
-                    } else if retry
+                    if retry
                         && theme::soft_button(
                             ui,
                             &palette,

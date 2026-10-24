@@ -19690,6 +19690,29 @@ mod rail_tests {
         size: egui::Vec2,
         events: Vec<egui::Event>,
     ) -> Vec<String> {
+        let output = shown(app, ctx, size, events);
+        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
+                _ => {}
+            }
+        }
+        let mut drawn = Vec::new();
+        for clipped in &output.shapes {
+            texts(&clipped.shape, &mut drawn);
+        }
+        drawn
+    }
+
+    /// One frame at `size`, as [`frame_at`], keeping what the frame asked the
+    /// platform to do.
+    fn shown(
+        app: &mut App,
+        ctx: &egui::Context,
+        size: egui::Vec2,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
         ctx.data_mut(|data| {
             data.remove::<egui::Rect>(rail::rect_id());
             data.remove::<egui::Rect>(crate::ui::chats::header_row_id());
@@ -19711,18 +19734,7 @@ mod rail_tests {
             },
         );
         output.textures_delta.clear();
-        fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
-            match shape {
-                egui::Shape::Text(text) => out.push(text.galley.text().to_owned()),
-                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| texts(shape, out)),
-                _ => {}
-            }
-        }
-        let mut drawn = Vec::new();
-        for clipped in &output.shapes {
-            texts(&clipped.shape, &mut drawn);
-        }
-        drawn
+        output
     }
 
     /// The demo on `page`, laid out wide, in the macOS chrome when `macos`.
@@ -19809,6 +19821,91 @@ mod rail_tests {
             repeat: false,
             modifiers: egui::Modifiers::NONE,
         }
+    }
+
+    /// An available release is a filled ellipse above Archived (or in
+    /// Archived's place). It does not toast, and a tap opens the release page.
+    #[test]
+    fn an_update_sits_above_archived_and_opens_its_release() {
+        let (mut app, ctx) = open("chat", false);
+        assert!(
+            ctx.read_response(rail::update_id()).is_none(),
+            "no ellipse without a release"
+        );
+        let url = "https://github.com/ItIsNotKeshav/Zeus/releases/tag/v99.0.0";
+        app.update = Some(crate::updates::Release {
+            version: "99.0.0".into(),
+            url: url.into(),
+        });
+        let texts = frame_at(&mut app, &ctx, egui::vec2(1180.0, 780.0), Vec::new());
+        assert!(
+            texts.iter().all(|text| !text.contains("is available")),
+            "the update pill is gone: {texts:?}"
+        );
+        // A moved rail button keeps its previous rect for one frame.
+        frame(&mut app, &ctx, 1180.0, Vec::new());
+        let button = ctx
+            .read_response(rail::update_id())
+            .expect("the update ellipse is drawn");
+        let rail = rail_rect(&ctx).expect("the rail is drawn");
+        assert!(rail.contains_rect(button.rect));
+        let starred = destination_rect(&ctx, Destination::Starred);
+        let below = if Destination::Archived.offered(&app) {
+            destination_rect(&ctx, Destination::Archived)
+        } else if Destination::Locked.offered(&app) {
+            destination_rect(&ctx, Destination::Locked)
+        } else {
+            destination_rect(&ctx, Destination::Settings)
+        };
+        assert!(
+            (button.rect.top() - starred.bottom() - 8.0).abs() < 0.5,
+            "directly under Starred: {:?} {:?}",
+            starred,
+            button.rect
+        );
+        assert!(
+            (below.top() - button.rect.bottom() - 8.0).abs() < 0.5,
+            "directly above the next bottom button: {:?} {:?}",
+            button.rect,
+            below
+        );
+        let center = button.rect.center();
+        frame(
+            &mut app,
+            &ctx,
+            1180.0,
+            vec![egui::Event::PointerMoved(center)],
+        );
+        frame(
+            &mut app,
+            &ctx,
+            1180.0,
+            vec![egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let output = shown(
+            &mut app,
+            &ctx,
+            egui::vec2(1180.0, 780.0),
+            vec![egui::Event::PointerButton {
+                pos: center,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(
+            output.platform_output.commands.iter().any(|command| {
+                matches!(command, egui::OutputCommand::OpenUrl(open) if open.url.contains("v99.0.0"))
+            }),
+            "tap opens the release: {:?}",
+            output.platform_output.commands
+        );
+        assert!(!app.show_update, "tap does not open the update window");
     }
 
     /// The rail stands at the window's left edge beside the list, with Chats

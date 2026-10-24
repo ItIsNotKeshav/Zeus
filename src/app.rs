@@ -6291,19 +6291,13 @@ impl App {
         }
     }
 
-    /// Takes a newer release GitHub named. A release not offered before
-    /// opens the update window, as does any the reader asked for; during a
-    /// call, over another dialog, or from an account not on screen it waits
-    /// in the banner and a toast instead.
+    /// Stores a newer release GitHub named. The rail shows it. A check the
+    /// reader asked for also opens the update window.
     fn offer_update(&mut self, release: crate::updates::Release, asked: bool) {
-        let new = self.update.as_ref() != Some(&release);
-        let version = release.version.clone();
         self.update = Some(release);
-        if asked || (new && !self.events_hidden && !self.call_live() && self.dialog.is_none()) {
+        if asked {
             self.show_update = true;
             self.inspect_update();
-        } else if new {
-            self.toast(format!("Zeus {version} is available"));
         }
     }
 
@@ -16536,7 +16530,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_release_opens_the_update_window_once() {
+    fn a_new_release_waits_on_the_rail() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -16545,11 +16539,14 @@ mod tests {
             url: "https://github.com/ItIsNotKeshav/Zeus/releases/tag/v99.0.0".into(),
         };
         app.apply_backend_event(Event::UpdateChecked(Ok(Some(release.clone()))), true);
-        assert!(app.show_update, "a new release prompts");
-        assert!(matches!(commands.try_recv(), Ok(Command::InspectUpdate)));
-        app.show_update = false;
+        assert!(!app.show_update, "a new release waits on the rail");
+        assert!(app.update.is_some());
+        assert!(
+            commands.try_recv().is_err(),
+            "finding a release does not open or inspect it"
+        );
         app.apply_backend_event(Event::UpdateChecked(Ok(Some(release.clone()))), true);
-        assert!(!app.show_update, "a dismissed release waits in the banner");
+        assert!(!app.show_update, "the same release still waits on the rail");
         app.update = None;
         app.dialog = Some(Dialog::Shortcuts);
         app.apply_backend_event(Event::UpdateChecked(Ok(Some(release))), true);

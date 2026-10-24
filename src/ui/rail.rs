@@ -53,6 +53,11 @@ pub fn destination_id(destination: Destination) -> egui::Id {
     egui::Id::new(("nav-rail-destination", destination as u8))
 }
 
+/// Stable id of the update ellipse, for tests.
+pub fn update_id() -> egui::Id {
+    egui::Id::new("nav-rail-update")
+}
+
 /// How far the macOS traffic lights reach past the rail: what a header
 /// beside the rail leaves free at its left. Zero elsewhere and in full
 /// screen.
@@ -199,7 +204,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             .into_iter()
             .filter(|destination| destination.offered(app))
             .collect();
-            let foot = bottom.len() as f32 * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
+            let update = if app.update.is_some() { 1.0 } else { 0.0 };
+            let foot = (bottom.len() as f32 + update) * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
             let minimum = 2.0 * CELL
                 + foot
                 + if hidden {
@@ -243,7 +249,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                     }
                     let rest = (ui.available_height() - foot).max(0.0);
                     ui.add_space(rest);
+                    let archive_shown = bottom.contains(&Destination::Archived);
+                    let mut update_drawn = false;
                     for destination in bottom {
+                        // Above Archived, or in Archived's place when that
+                        // icon is hidden.
+                        let update_here = app.update.is_some()
+                            && !update_drawn
+                            && if archive_shown {
+                                destination == Destination::Archived
+                            } else {
+                                matches!(destination, Destination::Locked | Destination::Settings)
+                            };
+                        if update_here {
+                            update_button(app, ui, &palette);
+                            update_drawn = true;
+                        }
                         ui.add_space(GAP);
                         destination_button(app, ui, &palette, destination, HIT_AREA);
                     }
@@ -260,6 +281,50 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
     // beside the conversation the rail ends as the list does.
     if hidden {
         widgets::paint_edge_beside(ui, &palette, rect);
+    }
+}
+
+/// Filled ellipse above Archived while a release is waiting. Opens that
+/// release's page, where the update is downloaded.
+fn update_button(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let Some(release) = app.update.clone() else {
+        return;
+    };
+    ui.add_space(GAP);
+    let (cell, _) = ui.allocate_exact_size(vec2(ui.available_width(), HIT_AREA), Sense::hover());
+    let hit = Rect::from_center_size(cell.center(), Vec2::splat(HIT_AREA));
+    let response = ui
+        .interact(hit, update_id(), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    theme::reveal_focus(&response);
+    let label = gettext(app.locale, "Update available, version {current} to {next}")
+        .replace("{current}", env!("CARGO_PKG_VERSION"))
+        .replace("{next}", &release.version);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+    });
+    if ui.is_rect_visible(hit) {
+        let hovered = response.hovered() || response.has_focus();
+        let fill = if hovered {
+            palette.accent_hover
+        } else {
+            palette.accent
+        };
+        let scale = if response.is_pointer_button_down_on() {
+            0.92
+        } else {
+            1.0
+        };
+        let ellipse = Rect::from_center_size(cell.center(), vec2(32.0, 24.0) * scale);
+        ui.painter().add(egui::Shape::ellipse_filled(
+            ellipse.center(),
+            ellipse.size() * 0.5,
+            fill,
+        ));
+        theme::paint_icon(ui, Icon::ArrowUp, ellipse, 14.0 * scale, palette.on_accent);
+    }
+    if response.on_hover_text(label).clicked() {
+        app.actions.push(Action::OpenUrl(release.url));
     }
 }
 
