@@ -822,6 +822,8 @@ pub struct App {
     /// When the call on screen was placed here, while the worker has not
     /// said anything about it yet.
     call_placed: Option<Instant>,
+    /// A placed or linked call waiting for macOS to grant microphone or camera access.
+    call_access: Option<calls::PendingCallAccess>,
     /// The newest camera preview and peer picture of a video call.
     pub call_local_frame: Option<std::sync::Arc<egui::ColorImage>>,
     pub call_remote_frame: Option<std::sync::Arc<egui::ColorImage>>,
@@ -1582,6 +1584,7 @@ impl App {
             call_dismissed: None,
             call_cancel: None,
             call_placed: None,
+            call_access: None,
             call_local_frame: None,
             call_remote_frame: None,
             call_local_texture: None,
@@ -9639,6 +9642,7 @@ impl App {
         self.wallpaper_image.sync(wallpaper.as_deref(), &self.waker);
         self.handle_notification_opens();
         self.handle_events();
+        self.poll_call_access();
         for uri in std::mem::take(&mut self.stale_images) {
             crate::image_cache::forget(ctx, &uri);
         }

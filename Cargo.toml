@@ -290,6 +290,10 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 libc = "0.2"
 # The camera for video calls, through AVFoundation.
 nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
+# Microphone permission for placed calls, through AVFoundation.
+objc2-av-foundation = { version = "0.3", default-features = false, features = ["AVCaptureDevice", "AVMediaFormat", "block2"] }
+# The completion block for the microphone permission prompt.
+block2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }

@@ -15,6 +15,7 @@ pub mod backend;
 pub mod benchmark;
 pub mod bidi;
 pub mod brand;
+pub mod call_access;
 pub mod call_audio;
 pub mod call_diag;
 pub mod call_tones;

@@ -482,7 +482,9 @@ Starting a reply before recording includes the quoted message.
 
 The phone and camera buttons in a one-to-one chat's header start a voice or a
 video call; while that chat has a call, a hang-up button takes their place.
-The call screen opens as soon as you press the button and says
+On macOS, a call waits until the microphone is allowed, and a video call also
+waits for the camera; if either needed permission is refused, the call does not
+start. The call screen opens as soon as you press the button and says
 **Connecting…** while the call is set up, **Calling…** once it is sent, and
 **Ringing…** once the other phone rings, when you also hear a ringback tone.
 Hanging up before then cancels the call before it reaches them. An incoming call takes over the

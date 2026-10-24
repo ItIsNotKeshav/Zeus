@@ -23,6 +23,19 @@ use crate::calls::{CallPhase, CallUpdate};
 use crate::model::{AccountId, Action, CallDirection, Chat, ChatId};
 use crate::settings::NotificationSound;
 
+/// A placed or linked call waiting for macOS to answer a permission prompt.
+pub(super) struct PendingCallAccess {
+    account: AccountId,
+    video: bool,
+    kind: PendingCallAccessKind,
+    rx: std::sync::mpsc::Receiver<bool>,
+}
+
+pub(super) enum PendingCallAccessKind {
+    Place(ChatId),
+    Link(String),
+}
+
 /// One person on a group call, as the call screen draws them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallPerson {
@@ -371,6 +384,11 @@ impl App {
     /// and the worker's updates move it on once its offer is out. A group's
     /// chat starts a call in the group, drawn as a group call from the start.
     fn place_call(&mut self, chat: ChatId, video: bool) {
+        let account = self.account().id.clone();
+        self.try_begin_outgoing_call(account, video, PendingCallAccessKind::Place(chat));
+    }
+
+    fn place_call_now(&mut self, chat: ChatId, video: bool) {
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
         let group = crate::model::ChatKind::from_id(&chat) == crate::model::ChatKind::Group;
@@ -399,6 +417,11 @@ impl App {
             ));
             return;
         }
+        let account = self.account().id.clone();
+        self.try_begin_outgoing_call(account, video, PendingCallAccessKind::Link(token));
+    }
+
+    fn join_call_link_now(&mut self, token: String, video: bool) {
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
         self.backend.send(Command::JoinCallLink {
@@ -415,6 +438,71 @@ impl App {
         self.handle_call_update(placing);
         self.call_cancel = Some(cancel);
         self.call_placed = Some(Instant::now());
+    }
+
+    /// On macOS, asks for microphone and camera access before the command and
+    /// the placing screen. Elsewhere, or when everything is already granted,
+    /// places in the same turn as always.
+    fn try_begin_outgoing_call(
+        &mut self,
+        account: AccountId,
+        video: bool,
+        kind: PendingCallAccessKind,
+    ) {
+        if self.call_access.is_some() {
+            return;
+        }
+        match crate::call_access::begin(video, &self.waker) {
+            crate::call_access::Begin::Ready => self.place_after_access(account, video, kind),
+            crate::call_access::Begin::Stop => {}
+            crate::call_access::Begin::Wait(rx) => {
+                self.call_access = Some(PendingCallAccess {
+                    account,
+                    video,
+                    kind,
+                    rx,
+                });
+            }
+        }
+    }
+
+    fn place_after_access(&mut self, account: AccountId, video: bool, kind: PendingCallAccessKind) {
+        if self.call_live() {
+            self.toast_error(crate::i18n::gettext(
+                self.locale,
+                "Hang up the current call first",
+            ));
+            return;
+        }
+        let Some(index) = self.accounts.iter().position(|entry| entry.id == account) else {
+            return;
+        };
+        let saved = self.active;
+        self.active = index;
+        match kind {
+            PendingCallAccessKind::Place(chat) => self.place_call_now(chat, video),
+            PendingCallAccessKind::Link(token) => self.join_call_link_now(token, video),
+        }
+        self.active = saved;
+    }
+
+    /// Finishes a permission wait started when the reader placed or joined a call.
+    pub(super) fn poll_call_access(&mut self) {
+        let Some(pending) = &self.call_access else {
+            return;
+        };
+        match pending.rx.try_recv() {
+            Ok(granted) => {
+                let pending = self.call_access.take().expect("still waiting");
+                if granted {
+                    self.place_after_access(pending.account, pending.video, pending.kind);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.call_access = None;
+            }
+        }
     }
 
     /// Takes down the call the reader hung up or declined here at once: they
@@ -1244,6 +1332,56 @@ mod tests {
             crate::calls::GROUP_CALLS_NOT_ENABLED,
             "translated"
         );
+    }
+
+    #[test]
+    fn a_refused_call_permission_does_nothing() {
+        let _gate = crate::call_access::GateGuard::denied();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(Action::StartCall(ADA.into()), &ctx);
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        app.apply(Action::StartVideoCall(ADA.into()), &ctx);
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn a_call_waits_for_permission_then_starts() {
+        let _gate = crate::call_access::GateGuard::hold();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(Action::StartVideoCall(ADA.into()), &ctx);
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        crate::call_access::answer(true);
+        app.poll_call_access();
+        let sent = sent(&mut commands);
+        assert!(
+            matches!(sent.as_slice(), [Command::StartCall { video: true, .. }]),
+            "{sent:?}"
+        );
+        let call = app.call.clone().expect("the call is on screen");
+        assert_eq!(call.phase, CallPhase::Placing);
+        assert!(call.video);
+    }
+
+    #[test]
+    fn a_denied_permission_answer_does_nothing() {
+        let _gate = crate::call_access::GateGuard::hold();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(Action::StartCall(ADA.into()), &ctx);
+        crate::call_access::answer(false);
+        app.poll_call_access();
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        assert!(app.toasts.is_empty());
     }
 
     #[test]

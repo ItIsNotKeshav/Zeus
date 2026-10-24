@@ -58,6 +58,12 @@ pub fn cameras() -> Vec<(String, String)> {
     cameras
 }
 
+/// Whether the camera may be used for a placed video call. Refusal is not a
+/// hardware failure: the call simply does not start.
+pub(crate) fn camera_allowed() -> bool {
+    backend::authorize().is_ok()
+}
+
 /// One open camera, delivering YUV 4:2:0 frames of [`Source::size`].
 pub struct Source {
     camera: backend::Camera,
@@ -512,6 +518,10 @@ mod backend {
         modes
     }
 
+    pub(crate) fn authorize() -> Result<(), String> {
+        Ok(())
+    }
+
     pub struct Camera {
         stream: linuxvideo::stream::ReadStream,
         mode: Mode,
@@ -519,6 +529,7 @@ mod backend {
 
     impl Camera {
         pub fn open(id: &str, budget: (usize, usize), fps: u32) -> Result<Self, String> {
+            authorize()?;
             let device = Device::open(id)
                 .map_err(|error| format!("the camera could not be opened: {error}"))?;
             let chosen = super::choose_mode(&modes(&device, budget), budget, fps)
@@ -651,7 +662,7 @@ mod backend {
 
     /// Asks macOS for the camera, once, and waits for the answer.
     #[cfg(target_os = "macos")]
-    fn authorize() -> Result<(), String> {
+    pub(crate) fn authorize() -> Result<(), String> {
         if nokhwa::nokhwa_check() {
             return Ok(());
         }
@@ -670,7 +681,7 @@ mod backend {
     }
 
     #[cfg(not(target_os = "macos"))]
-    fn authorize() -> Result<(), String> {
+    pub(crate) fn authorize() -> Result<(), String> {
         Ok(())
     }
 
