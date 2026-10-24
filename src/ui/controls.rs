@@ -101,13 +101,6 @@ pub fn dropdown(
         info
     });
     popup.show_frosted(ui.ctx(), |ui| {
-        let appear = ui.ctx().animate_bool_with_time_and_easing(
-            id.with("appear"),
-            true,
-            EASE,
-            egui::emath::easing::quadratic_out,
-        );
-        ui.multiply_opacity(appear);
         ui.set_min_width(width - 12.0);
         egui::ScrollArea::vertical()
             .max_height(LIST_HEIGHT)
@@ -117,10 +110,6 @@ pub fn dropdown(
                 options(ui);
             });
     });
-    if !open {
-        ui.ctx()
-            .animate_bool_with_time(id.with("appear"), false, 0.0);
-    }
     if enabled {
         response.on_hover_cursor(egui::CursorIcon::PointingHand)
     } else {
