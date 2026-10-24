@@ -1246,6 +1246,15 @@ impl Settings {
         self.sync_halloween();
     }
 
+    /// The defaults with the Halloween look off, for tests of the plain Dark
+    /// and Light looks and Pidgin's sounds.
+    #[cfg(test)]
+    pub fn plain() -> Self {
+        let mut settings = Self::default();
+        settings.set_halloween(false);
+        settings
+    }
+
     /// Turns one part of the Halloween look on or off.
     pub fn set_halloween_part(&mut self, part: HalloweenPart, on: bool) {
         match part {
@@ -1841,7 +1850,7 @@ mod tests {
     fn each_style_returns_to_the_look_or_theme_it_last_had() {
         let mut settings = Settings {
             accent: Accent::Red,
-            ..Settings::default()
+            ..Settings::plain()
         };
         assert_eq!(settings.style(), Style::Custom);
         settings.choose_chat_theme(ChatTheme::Zeus);

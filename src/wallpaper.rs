@@ -702,7 +702,12 @@ mod tests {
         let grey = ink(&look(1.5, None));
         let tinted = ink(&look(1.5, Some(accent)));
         assert_eq!(ink_alpha(tinted), ink_alpha(grey));
-        assert_eq!(tinted.to_srgba_unmultiplied()[..3], [0x20, 0x90, 0xf0]);
+        // The ink is stored premultiplied at a low alpha, so each channel
+        // comes back within a few steps of the accent.
+        let rgb = tinted.to_srgba_unmultiplied();
+        for (channel, want) in rgb[..3].iter().zip([0x20u8, 0x90, 0xf0]) {
+            assert!(channel.abs_diff(want) <= 3, "{rgb:?}");
+        }
         assert_ne!(
             tinted.to_srgba_unmultiplied()[..3],
             grey.to_srgba_unmultiplied()[..3]

@@ -4225,7 +4225,7 @@ mod tests {
             .prefix("zapfast-demo-")
             .tempdir()
             .unwrap();
-        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::plain());
         ROOTS.with(|roots| roots.borrow_mut().push(root));
         populate(&mut app);
         app

@@ -10351,7 +10351,7 @@ mod tests {
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
-        App::headless(AppDirs::under(&root), Settings::default()).0
+        App::headless(AppDirs::under(&root), Settings::plain()).0
     }
 
     /// While recording, the light, the timer and the waveform ask for a
@@ -15941,7 +15941,7 @@ mod tests {
 
     #[test]
     fn mentions_sound_even_in_quiet_groups_and_chat_sounds_win() {
-        let mut settings = Settings::default();
+        let mut settings = Settings::plain();
         let sound = |settings: &Settings, chat, group, for_us| {
             notification_sound(settings, chat, group, for_us)
         };
