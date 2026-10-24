@@ -1582,9 +1582,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 pending_strip(app, ui);
             }
             if app.recording.is_some() {
-                widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
-                    recording_strip(app, ui)
-                });
+                composer_glass(ui, &palette, |ui| recording_strip(app, ui));
                 return;
             }
             emoji_suggestions(app, ui, id);
@@ -1649,7 +1647,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
-            let pill = widgets::raised(ui, &palette, composer_pill(&palette), |ui| {
+            let pill = composer_glass(ui, &palette, |ui| {
             ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), row_height),
                 Layout::left_to_right(Align::Max),
@@ -2100,7 +2098,10 @@ fn last_line<R>(ui: &mut egui::Ui, line: f32, add: impl FnOnce(&mut egui::Ui) ->
 fn composer_pill(palette: &Palette) -> Frame {
     // Glass over a vibrant conversation, as the header's.
     let (fill, edge) = if palette.vibrant() {
-        (palette.frosted(palette.chat), palette.glass_edge())
+        (
+            palette.frosted(palette.chat),
+            Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
+        )
     } else {
         (palette.bubble_in, Stroke::NONE)
     };
@@ -2116,6 +2117,24 @@ fn composer_pill(palette: &Palette) -> Frame {
             top: COMPOSER_INSET,
             bottom: COMPOSER_INSET,
         })
+}
+
+/// The composer's field over blurred glass: what scrolls on under it is
+/// frosted within its rounded ends, under its see-through fill.
+fn composer_glass<R>(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    let glass = ui.painter().add(egui::Shape::Noop);
+    let shown = widgets::raised(ui, palette, composer_pill(palette), add);
+    if palette.vibrant() {
+        ui.painter().set(
+            glass,
+            super::glass::rounded(shown.response.rect, f32::from(COMPOSER_RADIUS)),
+        );
+    }
+    shown
 }
 
 /// The plus menu beside the composer: send files, documents or a location,
@@ -2179,6 +2198,8 @@ fn strip_gap(ui: &mut egui::Ui) {
 /// Corner radius of the strips above the composer and of its suggestion
 /// lists: rounder than a bubble, closer to the composer's own ends.
 const STRIP_RADIUS: u8 = 22;
+/// Space between a reply strip's edge and the quoted block inside it.
+const REPLY_INSET: i8 = 6;
 
 /// The frame of a strip above the composer (reply, edit, unsent voice).
 /// Like the composer it takes the incoming bubble's colour, which in the
@@ -2280,37 +2301,57 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
         app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
     };
     let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
-    let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+    // The quoted message sits in a block inset by REPLY_INSET, its corners
+    // concentric with the strip's, its bar cut to them.
+    let frame = strip_frame(&palette).inner_margin(Margin::same(REPLY_INSET));
+    let strip = widgets::raised(ui, &palette, frame, |ui| {
         ui.set_width(ui.available_width().max(0.0));
-        ui.horizontal(|ui| {
-            let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
-            ui.painter().rect_filled(bar, 2.0, palette.accent);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.set_max_width((ui.available_width() - 40.0).max(0.0));
-                widgets::rich_text(
-                    ui,
-                    &format!("Replying to {who}"),
-                    theme::semibold(12.5),
-                    palette.accent,
-                );
-                widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
+        let block = Frame::new()
+            .fill(palette.accent.gamma_multiply(0.12))
+            .corner_radius(CornerRadius::same(STRIP_RADIUS - REPLY_INSET as u8))
+            .inner_margin(Margin {
+                left: QUOTE_BAR as i8 + 8,
+                right: 6,
+                top: 4,
+                bottom: 4,
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width().max(0.0));
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.set_max_width((ui.available_width() - 40.0).max(0.0));
+                        widgets::rich_text(
+                            ui,
+                            &format!("Replying to {who}"),
+                            theme::semibold(12.5),
+                            palette.accent,
+                        );
+                        widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
+                    });
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if theme::icon_button(
+                            ui,
+                            Icon::X,
+                            16.0,
+                            palette.secondary,
+                            palette.text,
+                            "Cancel reply (Esc)",
+                        )
+                        .clicked()
+                        {
+                            app.actions.push(Action::CancelReply);
+                        }
+                    });
+                });
             });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if theme::icon_button(
-                    ui,
-                    Icon::X,
-                    16.0,
-                    palette.secondary,
-                    palette.text,
-                    "Cancel reply (Esc)",
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::CancelReply);
-                }
-            });
-        });
+        widgets::quote_bar(
+            ui.painter(),
+            block.response.rect,
+            f32::from(STRIP_RADIUS - REPLY_INSET as u8),
+            QUOTE_BAR,
+            palette.accent,
+        );
     });
     ui.ctx()
         .data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
@@ -5759,20 +5800,11 @@ fn quote_block(
         )
     });
     let (bleed, radius) = edge_card(ui, &palette, QUOTE_RADIUS);
-    let padding = if radius == QUOTE_RADIUS {
-        Margin {
-            left: QUOTE_BAR as i8 + 7,
-            right: 10,
-            top: 5,
-            bottom: 6,
-        }
-    } else {
-        Margin {
-            left: 6 + QUOTE_BAR as i8 + 7,
-            right: 12,
-            top: 7,
-            bottom: 8,
-        }
+    let padding = Margin {
+        left: QUOTE_BAR as i8 + 8,
+        right: 12,
+        top: 6,
+        bottom: 7,
     };
     let response = Frame::new()
         .fill(colours.fill)
@@ -5796,27 +5828,14 @@ fn quote_block(
         })
         .response;
     let card = response.rect - bleed;
-    if radius == QUOTE_RADIUS {
-        // The bar runs the quote's full height along its rounded left edge.
-        let bar = Rect::from_min_size(card.min, vec2(QUOTE_BAR, card.height()));
-        ui.painter().rect_filled(
-            bar,
-            CornerRadius {
-                nw: radius,
-                sw: radius,
-                ne: 0,
-                se: 0,
-            },
-            colours.bar,
-        );
-    } else {
-        // A round card's edge curves away from a flush bar: it stands inside.
-        let bar = Rect::from_min_size(
-            card.min + vec2(6.0, 6.0),
-            vec2(QUOTE_BAR - 1.0, (card.height() - 12.0).max(0.0)),
-        );
-        ui.painter().rect_filled(bar, 2, colours.bar);
-    }
+    // The bar is the card's own left edge, cut to its rounded corners.
+    widgets::quote_bar(
+        ui.painter(),
+        card,
+        f32::from(radius),
+        QUOTE_BAR,
+        colours.bar,
+    );
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("quote"), card);
     });

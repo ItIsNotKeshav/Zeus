@@ -716,6 +716,53 @@ pub fn raised<R>(
     shown
 }
 
+/// The accent bar down the left edge of a quote or reply preview: the
+/// slice of `card`, a rectangle with corners rounded by `radius`, that lies
+/// within `width` of its left side. It follows the card's curve, so the
+/// colour never reaches past the corners.
+pub fn quote_bar(painter: &egui::Painter, card: Rect, radius: f32, width: f32, colour: Color32) {
+    let radius = radius.min(card.height() / 2.0).min(card.width() / 2.0);
+    let width = width.min(card.width());
+    // How far in from the left edge the corner's arc stands at height `dy`
+    // above (or below) the straight part of the edge.
+    let inset = |dy: f32| radius - (radius * radius - dy * dy).max(0.0).sqrt();
+    // Where along the left edge the bar's right side meets the arc.
+    let reach = if width >= radius {
+        radius
+    } else {
+        (radius * radius - (radius - width).powi(2)).sqrt()
+    };
+    const STEPS: usize = 8;
+    let mut points = Vec::with_capacity(2 * STEPS + 4);
+    // A bar wider than the corner reaches past where the arc ends.
+    if width > radius {
+        points.push(pos2(card.left() + width, card.top()));
+    }
+    // Top corner, from the bar's right side out to the straight edge.
+    for step in 0..=STEPS {
+        let dy = reach * (1.0 - step as f32 / STEPS as f32);
+        let x = card.left() + inset(dy);
+        points.push(pos2(x.min(card.left() + width), card.top() + radius - dy));
+    }
+    // Bottom corner, from the straight edge back to the bar's right side.
+    for step in 0..=STEPS {
+        let dy = reach * step as f32 / STEPS as f32;
+        let x = card.left() + inset(dy);
+        points.push(pos2(
+            x.min(card.left() + width),
+            card.bottom() - radius + dy,
+        ));
+    }
+    if width > radius {
+        points.push(pos2(card.left() + width, card.bottom()));
+    }
+    painter.add(egui::Shape::convex_polygon(
+        points,
+        colour,
+        egui::Stroke::NONE,
+    ));
+}
+
 /// Frosted glass at the bottom of a layer, reserved before anything in it
 /// paints and placed once the surface over it knows where it is: what lies
 /// under a menu or dialog is blurred, within its rounded corners, under its
