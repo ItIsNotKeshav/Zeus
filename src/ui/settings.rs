@@ -2583,26 +2583,28 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
 fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let current = app.settings.doodle_color;
-    ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::gettext(app.locale, "Doodle colour").into_owned(),
-            theme::medium(13.5),
-            palette.text,
-        );
-        ui.add_space(6.0);
-        let options: Vec<_> = DoodleColor::ALL
-            .into_iter()
-            .map(|color| (color, crate::i18n::gettext(app.locale, color.label())))
-            .collect();
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+    let locale = app.locale;
+    let options: Vec<_> = DoodleColor::ALL
+        .into_iter()
+        .map(|color| (color, crate::i18n::gettext(locale, color.label())))
+        .collect();
+    let actions = &mut app.actions;
+    widgets::setting_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(locale, "Doodle colour"),
+        &crate::i18n::gettext(
+            locale,
+            "Gray stands out softly from the wallpaper; Accent tints the doodles with your accent colour.",
+        ),
+        |ui| {
             if let Some(color) =
                 segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0)
             {
-                app.actions.push(Action::SetDoodleColor(color));
+                actions.push(Action::SetDoodleColor(color));
             }
-        });
-    });
+        },
+    );
     ui.add_space(10.0);
     let range = DOODLE_INTENSITY;
     let intensity = app
