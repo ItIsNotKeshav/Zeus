@@ -295,7 +295,7 @@ fn destination_button(
     let mut badge = 0;
     let (icon, stop, label) = match destination {
         Destination::Chats => (
-            Icon::MessageCircle,
+            theme::chats_icon(),
             Stop::Chats,
             format!(
                 "{} ({})",

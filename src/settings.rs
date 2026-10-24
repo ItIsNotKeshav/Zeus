@@ -171,10 +171,13 @@ pub enum DoodleStyle {
     Food,
     Travel,
     Play,
+    /// Pumpkins, bats, ghosts and webs, drawn for Zeus.
+    Halloween,
 }
 
 impl DoodleStyle {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
+        Self::Halloween,
         Self::Classic,
         Self::Nature,
         Self::Space,
@@ -185,6 +188,7 @@ impl DoodleStyle {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::Halloween => "Halloween",
             Self::Classic => "Classic",
             Self::Nature => "Nature",
             Self::Space => "Space",
@@ -544,6 +548,10 @@ pub enum NotificationSound {
     System,
     /// No sound.
     None,
+    /// Zeus's Halloween message sound: a music box that sinks into a ghost.
+    Spooky,
+    /// Zeus's Halloween mention sound: bat squeaks over a low gong.
+    Witching,
     /// An audio file ZapFast plays itself.
     Custom(std::path::PathBuf),
 }
@@ -615,6 +623,11 @@ pub struct Settings {
     /// Download attachments when they enter view instead of on click.
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
+    /// Zeus's Halloween look: an orange theme, a night wallpaper with
+    /// pumpkins, bats and ghosts, a pumpkin for the chat icon, and spooky
+    /// sounds. Turning it on or off also swaps the doodles and sounds it set;
+    /// see [`Settings::set_halloween`].
+    pub halloween: bool,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Which doodles `show_wallpaper` draws.
@@ -752,9 +765,10 @@ impl Default for Settings {
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
+            halloween: true,
             show_wallpaper: true,
-            doodle_style: DoodleStyle::Classic,
-            doodle_color: DoodleColor::Gray,
+            doodle_style: DoodleStyle::Halloween,
+            doodle_color: DoodleColor::Accent,
             doodle_intensity: 1.0,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
@@ -768,8 +782,8 @@ impl Default for Settings {
             keep_running_in_background: true,
             notifications: true,
             notification_content: true,
-            message_sound: NotificationSound::Receive,
-            mention_sound: NotificationSound::Alert,
+            message_sound: NotificationSound::Spooky,
+            mention_sound: NotificationSound::Witching,
             group_sounds: true,
             download_folder: None,
             keep_chats_archived: true,
@@ -806,7 +820,7 @@ impl Default for Settings {
 ///    mode) become [`WallpaperColor::Theme`], the new default.
 /// 2. The one theme menu becomes a chat theme, a mode and an accent
 ///    ([`Settings::set_theme`]).
-pub const SETTINGS_VERSION: u32 = 2;
+pub const SETTINGS_VERSION: u32 = 3;
 
 /// The key push to talk starts on.
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
@@ -939,8 +953,53 @@ impl Settings {
 
     /// The palette to draw with, given whether the window is dark.
     pub fn palette(&self, dark: bool) -> crate::theme::Palette {
+        if self.halloween_active() {
+            return crate::theme::Palette::halloween(dark, self.accent.rgb());
+        }
         self.cached_palette()
             .unwrap_or_else(|| self.chat_theme.palette(dark, self.accent))
+    }
+
+    /// Whether the Halloween look is drawn: switched on, over Zeus's or
+    /// WhatsApp's own Dark and Light. A ready-made or custom theme chosen on
+    /// purpose keeps its colours.
+    pub fn halloween_active(&self) -> bool {
+        self.halloween && self.chat_theme.takes_accent() && self.cached_palette().is_none()
+    }
+
+    /// Turns the Halloween look on or off together with what it brings: its
+    /// doodles, orange doodle ink and sounds on; the classic doodles, grey ink
+    /// and Pidgin's sounds back off. Anything the reader picked in their
+    /// place stays.
+    pub fn set_halloween(&mut self, on: bool) {
+        self.halloween = on;
+        if on {
+            if self.doodle_style == DoodleStyle::Classic {
+                self.doodle_style = DoodleStyle::Halloween;
+            }
+            if self.doodle_color == DoodleColor::Gray {
+                self.doodle_color = DoodleColor::Accent;
+            }
+            if self.message_sound == NotificationSound::Receive {
+                self.message_sound = NotificationSound::Spooky;
+            }
+            if self.mention_sound == NotificationSound::Alert {
+                self.mention_sound = NotificationSound::Witching;
+            }
+        } else {
+            if self.doodle_style == DoodleStyle::Halloween {
+                self.doodle_style = DoodleStyle::Classic;
+            }
+            if self.doodle_color == DoodleColor::Accent {
+                self.doodle_color = DoodleColor::Gray;
+            }
+            if self.message_sound == NotificationSound::Spooky {
+                self.message_sound = NotificationSound::Receive;
+            }
+            if self.mention_sound == NotificationSound::Witching {
+                self.mention_sound = NotificationSound::Alert;
+            }
+        }
     }
 
     /// Whether the window should let the desktop show through it.
@@ -1083,6 +1142,11 @@ impl Settings {
         }
         if self.version < 2 {
             self.set_theme(self.legacy_theme);
+        }
+        if self.version < 3 {
+            // Halloween ships on: older files keep the look they had until
+            // now, so it brings its doodles and sounds in as turning it on does.
+            self.set_halloween(true);
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -1304,6 +1368,62 @@ mod tests {
     use super::*;
 
     #[test]
+    fn halloween_ships_on_and_turning_it_off_restores_the_classic_look() {
+        let mut settings = Settings::default();
+        assert!(settings.halloween && settings.halloween_active());
+        assert_eq!(settings.doodle_style, DoodleStyle::Halloween);
+        assert_eq!(settings.message_sound, NotificationSound::Spooky);
+        let spooky = settings.palette(true);
+        settings.set_halloween(false);
+        assert!(!settings.halloween_active());
+        assert_eq!(settings.doodle_style, DoodleStyle::Classic);
+        assert_eq!(settings.doodle_color, DoodleColor::Gray);
+        assert_eq!(settings.message_sound, NotificationSound::Receive);
+        assert_eq!(settings.mention_sound, NotificationSound::Alert);
+        assert_ne!(settings.palette(true).accent, spooky.accent);
+        settings.set_halloween(true);
+        assert_eq!(settings.doodle_style, DoodleStyle::Halloween);
+        assert_eq!(settings.mention_sound, NotificationSound::Witching);
+    }
+
+    #[test]
+    fn turning_halloween_off_keeps_what_the_reader_chose() {
+        let mut settings = Settings::default();
+        settings.doodle_style = DoodleStyle::Space;
+        settings.message_sound = NotificationSound::None;
+        settings.set_halloween(false);
+        assert_eq!(settings.doodle_style, DoodleStyle::Space);
+        assert_eq!(settings.message_sound, NotificationSound::None);
+        settings.set_halloween(true);
+        assert_eq!(settings.doodle_style, DoodleStyle::Space);
+        assert_eq!(settings.message_sound, NotificationSound::None);
+    }
+
+    #[test]
+    fn halloween_is_orange_in_light_and_dark_and_yields_to_a_chosen_accent() {
+        let settings = Settings::default();
+        for dark in [true, false] {
+            let palette = settings.palette(dark);
+            assert!(
+                palette.accent.r() > 200 && palette.accent.b() < 80,
+                "{dark}"
+            );
+        }
+        let blue = Settings {
+            accent: Accent::Blue,
+            ..Settings::default()
+        };
+        assert!(blue.palette(true).accent.b() > 200);
+    }
+
+    #[test]
+    fn a_ready_made_theme_chosen_on_purpose_keeps_its_colours() {
+        let mut settings = Settings::default();
+        settings.chat_theme = ChatTheme::Dracula;
+        assert!(!settings.halloween_active());
+    }
+
+    #[test]
     fn earlier_bundled_sound_names_still_load() {
         let settings: Settings =
             serde_json::from_str(r#"{"message_sound":"chime","mention_sound":"ripple"}"#).unwrap();
@@ -1318,7 +1438,7 @@ mod tests {
         let settings: Settings =
             serde_json::from_str(r#"{"message_sound":"system","group_sound":"none"}"#).unwrap();
         assert_eq!(settings.message_sound, NotificationSound::System);
-        assert_eq!(settings.mention_sound, NotificationSound::Alert);
+        assert_eq!(settings.mention_sound, NotificationSound::Witching);
         assert!(settings.group_sounds);
     }
 

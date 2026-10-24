@@ -308,8 +308,14 @@ const CATEGORY_ROW: f32 = 44.0;
 /// The icon beside a settings category, by its English name.
 fn category_icon(source: &str) -> Icon {
     match source {
-        "Appearance" => Icon::Sun,
-        "Chats" => Icon::MessageCircle,
+        "Appearance" => {
+            if theme::halloween() {
+                Icon::Ghost
+            } else {
+                Icon::Sun
+            }
+        }
+        "Chats" => theme::chats_icon(),
         "Calls and voice" => Icon::Phone,
         "Notifications" => Icon::Bell,
         "Privacy" => Icon::Lock,
@@ -481,6 +487,14 @@ fn sections(app: &App) -> Vec<Section> {
     // The language first: it is what a reader who cannot read the rest
     // looks for.
     appearance.row(translated(locale, "Language"), "", language_picker);
+    appearance.row(
+        translated(locale, "Halloween"),
+        translated(
+            locale,
+            "An orange theme with a night wallpaper, pumpkin icons, spooky doodles and sounds. Off puts back the doodles and sounds it changed.",
+        ),
+        halloween_switch,
+    );
     appearance.block(
         vec![translated(locale, "Preview"), translated(locale, "Theme")],
         chat_preview,
@@ -1743,6 +1757,25 @@ fn segmented<T: Copy + PartialEq>(
         }
     }
     clicked
+}
+
+/// The Halloween look's switch. The colours change from where it was clicked,
+/// as a theme card's do.
+fn halloween_switch(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let label = crate::i18n::gettext(app.locale, "Halloween").into_owned();
+    let mut on = app.settings.halloween;
+    let response = widgets::switch(ui, &palette, &mut on);
+    theme::reveal_focus(&response);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, &label)
+    });
+    if response.changed() {
+        if let Some(origin) = ui.ctx().pointer_interact_pos() {
+            app.actions.push(Action::RevealThemeFrom(origin));
+        }
+        app.actions.push(Action::SetHalloween(on));
+    }
 }
 
 /// Custom or Themes: a look made your own, or a ready-made theme.
@@ -3242,6 +3275,11 @@ fn sound_control(ui: &mut egui::Ui, app: &mut App, mention: bool) {
         app.settings.message_sound.clone()
     };
     let choices = [
+        (NotificationSound::Spooky, gettext(locale, "Spooky")),
+        (
+            NotificationSound::Witching,
+            gettext(locale, "Witching hour"),
+        ),
         (NotificationSound::Receive, "Pidgin".into()),
         (NotificationSound::Alert, gettext(locale, "Pidgin alert")),
         (NotificationSound::System, gettext(locale, "System default")),

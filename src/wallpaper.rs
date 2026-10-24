@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
-use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2};
+use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2, vec2};
 
 pub use crate::settings::DoodleStyle;
 
@@ -20,6 +20,7 @@ fn svg(style: DoodleStyle) -> &'static [u8] {
         DoodleStyle::Food => include_bytes!("../assets/doodles/food.svg"),
         DoodleStyle::Travel => include_bytes!("../assets/doodles/travel.svg"),
         DoodleStyle::Play => include_bytes!("../assets/doodles/play.svg"),
+        DoodleStyle::Halloween => include_bytes!("../assets/doodles/halloween.svg"),
     }
 }
 
@@ -53,6 +54,8 @@ pub struct Look {
     pub intensity: f32,
     /// The accent they are drawn in, or nothing for the grey ink.
     pub accent: Option<Color32>,
+    /// Halloween's night sky, moon and skyline under the doodles.
+    pub scene: bool,
     /// A decoded image of the reader's, which wins over colour and doodles.
     pub image: Option<(u64, Arc<ColorImage>)>,
 }
@@ -84,9 +87,144 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
         None => forget_image(ui.ctx()),
     }
 
+    if look.scene {
+        paint_sky(&painter, rect, look.color);
+    }
     if look.doodles {
         paint_doodles(ui, rect, look, look.style);
     }
+    if look.scene {
+        paint_skyline(ui.ctx(), &painter, rect, look.color);
+    }
+}
+
+/// Whether `color` is a dark background, for tinting what is drawn over it.
+fn is_dark(color: Color32) -> bool {
+    0.2126 * f32::from(color.r()) + 0.7152 * f32::from(color.g()) + 0.0722 * f32::from(color.b())
+        < 128.0
+}
+
+/// Halloween's sky: the background colour warming towards an ember glow at
+/// the horizon, and a moon with a soft halo high on the right.
+fn paint_sky(painter: &egui::Painter, rect: Rect, color: Color32) {
+    let dark = is_dark(color);
+    let horizon = if dark {
+        color.lerp_to_gamma(Color32::from_rgb(0xff, 0x6a, 0x10), 0.22)
+    } else {
+        color.lerp_to_gamma(Color32::from_rgb(0xff, 0x9a, 0x3c), 0.45)
+    };
+    let mid = color.lerp_to_gamma(horizon, 0.18);
+    let mut mesh = egui::Mesh::default();
+    for (fraction, tone) in [(0.0, color), (0.55, mid), (1.0, horizon)] {
+        let y = rect.top() + rect.height() * fraction;
+        mesh.colored_vertex(pos2(rect.left(), y), tone);
+        mesh.colored_vertex(pos2(rect.right(), y), tone);
+    }
+    for step in 0..2 {
+        let at = step * 2;
+        mesh.add_triangle(at, at + 1, at + 2);
+        mesh.add_triangle(at + 1, at + 2, at + 3);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+
+    let radius = (rect.width().min(rect.height()) * 0.055).clamp(16.0, 40.0);
+    let center = pos2(
+        rect.right() - (rect.width() * 0.2).max(radius * 2.4),
+        rect.top() + (rect.height() * 0.17).max(radius * 2.2),
+    );
+    let (disc, halo) = if dark {
+        (
+            Color32::from_rgb(0xe9, 0xc9, 0x8f),
+            Color32::from_rgb(0xff, 0x9a, 0x3c),
+        )
+    } else {
+        (
+            Color32::from_rgb(0xff, 0xd2, 0x8a),
+            Color32::from_rgb(0xff, 0xd8, 0x9c),
+        )
+    };
+    for ring in (1..=8).rev() {
+        let grow = ring as f32 / 8.0;
+        let alpha = (if dark { 5.0 } else { 7.0 } * (1.0 - grow) + 1.0) as u8;
+        painter.circle_filled(
+            center,
+            radius * (1.0 + 2.2 * grow),
+            Color32::from_rgba_unmultiplied(halo.r(), halo.g(), halo.b(), alpha),
+        );
+    }
+    painter.circle_filled(center, radius, disc);
+    let crater = Color32::from_rgba_unmultiplied(0xc9, 0x8a, 0x3a, if dark { 70 } else { 60 });
+    painter.circle_filled(
+        center + vec2(-radius * 0.3, -radius * 0.2),
+        radius * 0.2,
+        crater,
+    );
+    painter.circle_filled(
+        center + vec2(radius * 0.25, radius * 0.3),
+        radius * 0.28,
+        crater,
+    );
+    painter.circle_filled(
+        center + vec2(radius * 0.35, -radius * 0.35),
+        radius * 0.12,
+        crater,
+    );
+}
+
+/// The skyline along the bottom edge: hills, a bare tree, graves, a patch of
+/// pumpkins, in near-black at night and umber by day.
+fn paint_skyline(ctx: &egui::Context, painter: &egui::Painter, rect: Rect, color: Color32) {
+    let Some(texture) = scene_texture(ctx) else {
+        return;
+    };
+    let size = texture.size_vec2();
+    let width = rect.width();
+    let height = width * size.y / size.x;
+    // A tall window crops the sky out of the picture rather than stretching it.
+    let shown = height.min(rect.height() * 0.42);
+    let uv = Rect::from_min_max(pos2(0.0, 1.0 - shown / height), pos2(1.0, 1.0));
+    let area = Rect::from_min_max(
+        pos2(rect.left(), rect.bottom() - shown),
+        rect.right_bottom(),
+    );
+    let tint = if is_dark(color) {
+        Color32::from_rgba_unmultiplied(0x07, 0x03, 0x06, 0xf2)
+    } else {
+        Color32::from_rgba_unmultiplied(0x5a, 0x24, 0x08, 0xd8)
+    };
+    painter.image(texture.id(), area, uv, tint);
+}
+
+/// The skyline's mask, rendered once per window.
+fn scene_texture(ctx: &egui::Context) -> Option<TextureHandle> {
+    let id = egui::Id::new("halloween-scene");
+    if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
+        return Some(texture);
+    }
+    let tree = resvg::usvg::Tree::from_data(
+        include_bytes!("../assets/halloween-scene.svg"),
+        &resvg::usvg::Options::default(),
+    )
+    .ok()?;
+    let (width, height) = (tree.size().width() as u32, tree.size().height() as u32);
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    let rgba = pixmap
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let color = pixel.demultiply();
+            [color.red(), color.green(), color.blue(), color.alpha()]
+        })
+        .collect::<Vec<u8>>();
+    let image = ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
+    let texture = ctx.load_texture("halloween-scene", image, TextureOptions::LINEAR);
+    ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
+    Some(texture)
 }
 
 /// The doodles of `style` over `rect`, inked as `look` says for its
@@ -528,6 +666,7 @@ mod tests {
         Look {
             color: Color32::from_rgb(22, 23, 23),
             doodles: true,
+            scene: false,
             style: DoodleStyle::Classic,
             intensity,
             accent,
