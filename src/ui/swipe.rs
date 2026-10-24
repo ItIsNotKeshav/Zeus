@@ -39,9 +39,10 @@ const SLOP: f32 = 6.0;
 /// decides its axis lock.
 const SIDEWAYS: f32 = 1.2;
 /// A pause this long between events is the fingers lifting, where the
-/// platform does not say (Windows, X11). Windows' glide after a lift keeps
-/// events coming more often than this.
-const QUIET: f64 = 0.25;
+/// platform does not say (Windows, X11). A touchpad moving, or gliding
+/// after the lift, sends events every few milliseconds, and a slow drag on
+/// a Windows touchpad came no more than 20 ms apart.
+const QUIET: f64 = 0.12;
 /// Where the platform reports lifts, a gesture that went this long without
 /// one (a lost end event) ends anyway.
 const STRANDED: f64 = 0.8;
@@ -52,8 +53,12 @@ const TAIL_GAP: f64 = 0.12;
 const FRESH_TOUCH: f64 = 0.08;
 /// The most a row follows the fingers.
 const MAX_PULL: f32 = 56.0;
-/// How long a row takes to ease back.
-const EASE_BACK: f32 = 0.18;
+/// How quickly a row catches up with the fingers, as the time constant of
+/// an exponential ease-out in seconds. Windows touchpads move in coarse
+/// steps, a fifth of the threshold or more each; this glides between them.
+const FOLLOW: f32 = 0.04;
+/// How quickly a row settles back once the fingers let go.
+const SETTLE: f32 = 0.06;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Axis {
@@ -430,30 +435,26 @@ pub fn action(app: &App, in_chat: bool, right: bool) -> SwipeAction {
     app.settings.swipes.get(SwipeSlot::of(in_chat, right))
 }
 
-/// Follows the fingers exactly, and eases back to rest once they let go.
-/// Remembers which way the row went, to ease back the same way.
+/// Glides after the fingers, and eases back to rest once they let go, with
+/// an exponential ease-out that a new movement picks up from wherever the
+/// row is. Remembers which way the row went, to ease back the same way.
 fn ease(ctx: &Context, id: Id, pull: Option<Pull>) -> (f32, bool) {
-    let right_id = id.with("right");
-    match pull {
-        Some(pull) => {
-            ctx.data_mut(|data| data.insert_temp(right_id, pull.right));
-            (
-                ctx.animate_value_with_time(id, pull.progress, 0.0),
-                pull.right,
-            )
-        }
-        None => {
-            let time = if crate::motion::screen_reader_attached(ctx) {
-                0.0
-            } else {
-                EASE_BACK
-            };
-            let right = ctx
-                .data(|data| data.get_temp::<bool>(right_id))
-                .unwrap_or(false);
-            (ctx.animate_value_with_time(id, 0.0, time), right)
-        }
+    let (shown, right) = ctx
+        .data(|data| data.get_temp::<(f32, bool)>(id))
+        .unwrap_or((0.0, false));
+    let (target, right) = pull.map_or((0.0, right), |pull| (pull.progress, pull.right));
+    let time = if target > shown { FOLLOW } else { SETTLE };
+    let dt = ctx.input(|input| input.stable_dt).clamp(0.0, 0.05);
+    let shown = if crate::motion::screen_reader_attached(ctx) || (target - shown).abs() < 0.004 {
+        target
+    } else {
+        shown + (target - shown) * (1.0 - (-dt / time).exp())
+    };
+    if shown != target {
+        ctx.request_repaint();
     }
+    ctx.data_mut(|data| data.insert_temp(id, (shown, right)));
+    (shown, right)
 }
 
 /// Where a row's shapes begin, for [`slide_row`].
