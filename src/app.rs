@@ -162,6 +162,8 @@ impl ScrollRoute {
 const COMPOSING_TIMEOUT: Duration = Duration::from_secs(4);
 /// How long an info toast stays, including its fade.
 pub const INFO_TOAST_LIFETIME: Duration = Duration::from_millis(3200);
+/// How long a toast with an Undo button stays.
+pub const UNDO_TOAST_LIFETIME: Duration = Duration::from_millis(6000);
 /// Error toasts kept on screen at once; older ones give way to newer ones.
 const MAX_ERROR_TOASTS: usize = 3;
 /// Typing-state timeout when no stop event arrives.
@@ -5830,7 +5832,7 @@ impl App {
         }
         self.typing.retain(|_, typers| !typers.is_empty());
         self.toasts.retain(|toast| {
-            toast.kind == ToastKind::Error || toast.created.elapsed() < INFO_TOAST_LIFETIME
+            toast.kind == ToastKind::Error || toast.created.elapsed() < toast.lifetime()
         });
         if crate::brand::UPDATES
             && self.settings.check_for_updates
@@ -8311,6 +8313,7 @@ impl App {
                 crate::theme::set_font(ctx, choice);
                 ctx.request_repaint();
             }
+            Action::ToastUndo { message, undo } => self.toast_with_undo(message, undo),
             Action::SetSwipe(slot, action) => {
                 self.settings.swipes.set(slot, action);
                 self.mark_settings_dirty();
@@ -8703,13 +8706,18 @@ impl App {
     }
 
     pub fn toast(&mut self, message: impl Into<String>) {
-        let message = message.into();
+        self.toast_with_undo(message.into(), Vec::new());
+    }
+
+    /// An info toast whose Undo button applies `undo`, when there is any.
+    pub fn toast_with_undo(&mut self, message: String, undo: Vec<Action>) {
         let said = self.toast_said(&message);
         self.announcer.say(crate::announcer::Category::Toast, said);
         self.toasts.push(Toast {
             message,
             kind: ToastKind::Info,
             created: Instant::now(),
+            undo,
         });
         while self
             .toasts
@@ -8755,6 +8763,7 @@ impl App {
             message,
             kind: ToastKind::Error,
             created: Instant::now(),
+            undo: Vec::new(),
         });
     }
 
@@ -15962,6 +15971,44 @@ mod tests {
         // A second click while joining sends nothing more.
         app.apply(Action::JoinGroup, &ctx);
         assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_swiped_archive_offers_undo_and_undo_brings_the_chat_back() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let chat = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        app.chats.push(chat.clone());
+        let actions = crate::ui::swipe::actions(
+            &mut app,
+            crate::settings::SwipeAction::ToggleArchive,
+            &chat,
+            None,
+        );
+        for action in actions {
+            app.apply(action, &ctx);
+        }
+        assert!(app.chat("1@s.whatsapp.net").unwrap().archived);
+        let toast = app.toasts.last().unwrap();
+        assert_eq!(toast.message, "Ada archived");
+        for action in toast.undo.clone() {
+            app.apply(action, &ctx);
+        }
+        assert!(!app.chat("1@s.whatsapp.net").unwrap().archived);
+        // Opening a chat is not a change to undo.
+        let open = crate::ui::swipe::actions(
+            &mut app,
+            crate::settings::SwipeAction::OpenChat,
+            &chat,
+            None,
+        );
+        assert!(
+            !open
+                .iter()
+                .any(|action| matches!(action, Action::ToastUndo { .. }))
+        );
     }
 
     #[test]

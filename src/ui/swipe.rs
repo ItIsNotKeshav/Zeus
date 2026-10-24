@@ -332,16 +332,76 @@ pub fn actions(
             super::keys::step_chat(app, step, None, &mut actions);
             actions
         }
-        SwipeAction::ToggleRead if chat.looks_unread() => vec![Action::MarkRead(id)],
-        SwipeAction::ToggleRead => vec![Action::MarkUnread(id)],
-        SwipeAction::TogglePin => vec![Action::SetPinned(id, !chat.pinned)],
-        SwipeAction::ToggleArchive => vec![Action::SetArchived(id, !chat.archived)],
-        SwipeAction::ToggleMute if chat.muted(crate::util::now()) => {
-            vec![Action::SetMuted(id, None)]
-        }
-        SwipeAction::ToggleMute => vec![Action::SetMuted(id, Some(0))],
-        SwipeAction::ToggleFavorite => vec![Action::SetFavorite(id, !chat.favorite)],
         SwipeAction::Delete => vec![Action::ShowDialog(Dialog::ConfirmDeleteChat(id))],
+        SwipeAction::ToggleRead
+        | SwipeAction::TogglePin
+        | SwipeAction::ToggleArchive
+        | SwipeAction::ToggleMute
+        | SwipeAction::ToggleFavorite => {
+            let (done, undo, said) = change(app, action, chat);
+            let title = app.chat_title(chat);
+            let message = format!("{title} {}", crate::i18n::gettext(app.locale, said));
+            vec![done, Action::ToastUndo { message, undo }]
+        }
+    }
+}
+
+/// A change to the chat's state: the action, what undoes it, and what to
+/// say it did, after the chat's name.
+fn change(app: &App, action: SwipeAction, chat: &Chat) -> (Action, Vec<Action>, &'static str) {
+    let id = chat.id.clone();
+    match action {
+        SwipeAction::ToggleRead if chat.looks_unread() => (
+            Action::MarkRead(id.clone()),
+            vec![Action::MarkUnread(id)],
+            "marked as read",
+        ),
+        SwipeAction::ToggleRead => (
+            Action::MarkUnread(id.clone()),
+            vec![Action::MarkRead(id)],
+            "marked as unread",
+        ),
+        SwipeAction::TogglePin => (
+            Action::SetPinned(id.clone(), !chat.pinned),
+            vec![Action::SetPinned(id, chat.pinned)],
+            if chat.pinned { "unpinned" } else { "pinned" },
+        ),
+        SwipeAction::ToggleArchive => {
+            let mut undo = vec![Action::SetArchived(id.clone(), chat.archived)];
+            // Archiving the open chat closes it; undoing opens it again.
+            if app.open_chat.as_deref() == Some(id.as_str()) {
+                undo.push(Action::OpenChat(id.clone()));
+            }
+            (
+                Action::SetArchived(id, !chat.archived),
+                undo,
+                if chat.archived {
+                    "unarchived"
+                } else {
+                    "archived"
+                },
+            )
+        }
+        SwipeAction::ToggleMute if chat.muted(crate::util::now()) => (
+            Action::SetMuted(id.clone(), None),
+            vec![Action::SetMuted(id, chat.muted_until)],
+            "unmuted",
+        ),
+        SwipeAction::ToggleMute => (
+            Action::SetMuted(id.clone(), Some(0)),
+            vec![Action::SetMuted(id, None)],
+            "muted",
+        ),
+        // The favorite, the one change left.
+        _ => (
+            Action::SetFavorite(id.clone(), !chat.favorite),
+            vec![Action::SetFavorite(id, chat.favorite)],
+            if chat.favorite {
+                "removed from favorites"
+            } else {
+                "added to favorites"
+            },
+        ),
     }
 }
 
