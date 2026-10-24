@@ -820,12 +820,18 @@ impl FrostedPopup for egui::Popup<'_> {
             egui::LayerId::new(egui::Order::Foreground, id),
             theme::RADIUS_MENU,
         );
-        let appear = ctx.animate_bool_with_time_and_easing(
-            id.with("appear"),
-            true,
-            theme::POPUP_OPEN,
-            egui::emath::easing::quadratic_out,
-        );
+        // Only an open popup runs its animation: a closed one asking for it
+        // each frame would start it anew and keep the window repainting.
+        let appear = if self.is_open() {
+            ctx.animate_bool_with_time_and_easing(
+                id.with("appear"),
+                true,
+                theme::POPUP_OPEN,
+                egui::emath::easing::quadratic_out,
+            )
+        } else {
+            0.0
+        };
         let shown = self.show(|ui| {
             ui.multiply_opacity(appear);
             add(ui)

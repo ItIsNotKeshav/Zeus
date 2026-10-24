@@ -1024,7 +1024,7 @@ mod idle_tests {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::headless(
             crate::paths::AppDirs::under(root.path()),
-            crate::settings::Settings::default(),
+            crate::settings::Settings::plain(),
         )
         .0;
         app.link = LinkStatus::Connected;
