@@ -1731,6 +1731,45 @@ fn person_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// How quickly a row's hover fill catches the pointer, and how long it
+/// takes to leave. The leave is slower, so a fast pass down the list
+/// trails the fill behind the pointer instead of blinking each row.
+const HOVER_IN: f32 = 0.07;
+const HOVER_OUT: f32 = 0.12;
+
+/// Moves `amount` (0 off, 1 on) toward `on` over `dt` seconds.
+/// The bool is whether it has arrived.
+fn approach_hover(amount: f32, on: bool, dt: f32) -> (f32, bool) {
+    let target = if on { 1.0 } else { 0.0 };
+    let tau = if on { HOVER_IN } else { HOVER_OUT };
+    let step = 1.0 - (-dt.clamp(0.0, 0.05) / tau).exp();
+    let next = (amount + (target - amount) * step).clamp(0.0, 1.0);
+    if (target - next).abs() < 0.012 {
+        (target, true)
+    } else {
+        (next, false)
+    }
+}
+
+/// The row's hover fill, eased. A screen reader gets it at once: the
+/// animation would otherwise ask for a frame every step of the way.
+fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
+    if crate::motion::screen_reader_attached(ui.ctx()) {
+        return if on { 1.0 } else { 0.0 };
+    }
+    let id = id.with("hover-fill");
+    let previous = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
+    let dt = ui.input(|input| input.stable_dt);
+    let (amount, settled) = approach_hover(previous, on, dt);
+    if amount > 0.0 {
+        ui.data_mut(|data| data.insert_temp(id, amount));
+    }
+    if !settled {
+        ui.ctx().request_repaint();
+    }
+    amount
+}
+
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -1760,11 +1799,15 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             unread_announcement(&title, chat),
         )
     });
+    let hover = row_hover_amount(ui, response.id, response.hovered() && !selected);
     if ui.is_rect_visible(rect) {
         if selected {
             widgets::row_highlight(ui, &palette, rect, palette.surface_active);
-        } else if response.hovered() {
-            widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+        } else if hover > 0.0 {
+            ui.scope(|ui| {
+                ui.multiply_opacity(hover);
+                widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+            });
         }
         let avatar_rect = Rect::from_center_size(
             pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
@@ -2300,13 +2343,18 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
             unread_announcement(&title, chat),
         )
     });
+    let hover = row_hover_amount(ui, response.id, response.hovered());
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            ui.painter().rect_filled(
-                Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0)),
-                egui::CornerRadius::same(theme::RADIUS),
-                palette.surface_hover,
-            );
+        if hover > 0.0 {
+            let plate = Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_CELL - 4.0));
+            ui.scope(|ui| {
+                ui.multiply_opacity(hover);
+                ui.painter().rect_filled(
+                    plate,
+                    egui::CornerRadius::same(theme::RADIUS),
+                    palette.surface_hover,
+                );
+            });
         }
         let avatar_rect = Rect::from_center_size(rect.center(), Vec2::splat(COMPACT_AVATAR));
         let picture = app.avatar(&chat.id);
@@ -2640,6 +2688,36 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hover_fill_arrives_quickly_and_leaves_a_trail() {
+        let (arrived, _) = approach_hover(0.0, true, 0.07);
+        let (left, _) = approach_hover(1.0, false, 0.07);
+        assert!(arrived > 0.5, "{arrived}");
+        assert!(left > 0.5, "{left}");
+        assert!(
+            arrived > 1.0 - left,
+            "turning on ({arrived}) should outrun turning off ({left})"
+        );
+    }
+
+    #[test]
+    fn hover_fill_settles_at_either_end() {
+        let mut amount = 0.0;
+        for _ in 0..40 {
+            let (next, _) = approach_hover(amount, true, 0.016);
+            amount = next;
+        }
+        assert_eq!(amount, 1.0);
+        let (held, settled) = approach_hover(amount, true, 0.016);
+        assert!(settled);
+        assert_eq!(held, 1.0);
+        for _ in 0..80 {
+            let (next, _) = approach_hover(amount, false, 0.016);
+            amount = next;
+        }
+        assert_eq!(amount, 0.0);
+    }
 
     /// A header title shows only when it fits before its buttons, whatever
     /// the language makes of it.
