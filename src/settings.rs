@@ -669,7 +669,7 @@ pub struct Settings {
     /// Proxy for WhatsApp, media, and updates, such as
     /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
     pub proxy: String,
-    /// Ask GitHub once a day whether a newer release exists.
+    /// Ask GitHub every two hours whether a newer release exists.
     pub check_for_updates: bool,
     /// Whether updates follow stable releases or betas too.
     pub update_channel: crate::updates::Channel,

@@ -6,13 +6,16 @@
 //! Zeus keeps its names, its key, its proxy and its interface.
 
 pub use fastframe_update::{
-    CHECK_INTERVAL, DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported,
-    Updater,
+    DownloadState, Installation, Kind, Prepared, Release, Source, Unsupported, Updater,
 };
 use fastframe_update::{MacConfig, Prereleases, ReqwestTransport, UpdateConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// How often a running copy asks GitHub for a newer release.
+pub const CHECK_INTERVAL: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// Zeus's releases, signed with Zeus's own key, so a Zeus copy never takes a
 /// ZapFast release or the other way round. The repository is its name as
