@@ -685,11 +685,20 @@ pub fn hue(seed: &str) -> f32 {
 const MARK: &[u8] = include_bytes!("../packaging/icons/zeus.svg");
 /// The same mark without its rim and shading, which blur below this size.
 const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-small.svg");
+/// The Halloween pumpkin that takes the logo's place while that look is on,
+/// and its small form.
+const HALLOWEEN_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-halloween.svg");
+const HALLOWEEN_SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-halloween-small.svg");
 const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.
 pub fn app_icon_rgba(size: usize) -> Vec<u8> {
-    let mark = if size < SMALL_BELOW { SMALL_MARK } else { MARK };
+    let mark = match (crate::theme::halloween(), size < SMALL_BELOW) {
+        (false, true) => SMALL_MARK,
+        (false, false) => MARK,
+        (true, true) => HALLOWEEN_SMALL_MARK,
+        (true, false) => HALLOWEEN_MARK,
+    };
     match render_mark(mark, size) {
         Some(rgba) => rgba,
         // Fall back to an accent disc if the embedded SVG cannot render.

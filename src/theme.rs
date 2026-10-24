@@ -278,6 +278,49 @@ impl Palette {
         self
     }
 
+    /// Zeus's Halloween palette: Dark's glass in a night of plum and ember, or
+    /// Light's in candlelit cream, with a bright pumpkin orange for the
+    /// accent unless `accent` is a colour the reader chose.
+    pub fn halloween(dark: bool, accent: Option<[u8; 3]>) -> Self {
+        let rgb = |value: u32| {
+            let [_, r, g, b] = value.to_be_bytes();
+            Color32::from_rgb(r, g, b)
+        };
+        let mut p = if dark {
+            Self::nothing_dark()
+        } else {
+            Self::nothing_light()
+        };
+        if dark {
+            p.window = rgb(0x0b0609);
+            p.panel = rgb(0x170d12);
+            p.surface = rgb(0x28171d);
+            p.surface_hover = rgb(0x362029);
+            p.surface_active = rgb(0x442b35);
+            p.outline = rgb(0x4a3039);
+            p.text = rgb(0xfff3e8);
+            p.secondary = rgb(0xe3c7b6);
+            p.dim = rgb(0xbc9d8c);
+            p.overlay = rgb(0x1f1218);
+            p.chat = rgb(0x100a0e);
+            p.bubble_in = rgb(0x2b1a22);
+        } else {
+            p.window = rgb(0xfbe9d3);
+            p.panel = rgb(0xfff6ea);
+            p.surface = rgb(0xffe6cc);
+            p.surface_hover = rgb(0xffdab5);
+            p.surface_active = rgb(0xffcc99);
+            p.outline = rgb(0xf0c79d);
+            p.text = rgb(0x2b1408);
+            p.secondary = rgb(0x6a4630);
+            p.dim = rgb(0x7d5a44);
+            p.overlay = rgb(0xfffaf3);
+            p.chat = rgb(0xffefdb);
+            p.bubble_in = rgb(0xfffdf9);
+        }
+        p.with_accent(accent.unwrap_or([0xff, 0x7a, 0x1a]))
+    }
+
     /// Nothing OS inspired paper-white palette with translucent panels.
     pub fn nothing_light() -> Self {
         let mut p = Self::light();
@@ -1180,6 +1223,14 @@ fastframe_icons::icons! {
         MapPin => "map-pin",
         Maximize => lucide "maximize-2",
         MessageCircle => "message-circle",
+        Pumpkin => "pumpkin",
+        SearchHw => "search-halloween",
+        VideoHw => "video-halloween",
+        PhoneHw => "phone-halloween",
+        EllipsisHw => "ellipsis-halloween",
+        MicHw => "mic-halloween",
+        SendHw => "send-halloween",
+        Ghost => "ghost",
         Mic => lucide "mic",
         MicOff => "mic-off",
         Minimize => lucide "minimize-2",
@@ -1227,6 +1278,67 @@ fastframe_icons::icons! {
         VolumeX => lucide "volume-x",
         WifiOff => "wifi-off",
         X => lucide "x",
+    }
+}
+
+static HALLOWEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the Halloween look is drawn, which `App` sets whenever it applies
+/// the theme: its chat icon is a pumpkin.
+pub fn set_halloween(on: bool) {
+    HALLOWEEN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn halloween() -> bool {
+    HALLOWEEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The icon for chats: a speech bubble, or a pumpkin at Halloween.
+pub fn chats_icon() -> Icon {
+    if halloween() {
+        Icon::Pumpkin
+    } else {
+        Icon::MessageCircle
+    }
+}
+
+/// The icons that change at Halloween, each its usual one or its own.
+pub fn search_icon() -> Icon {
+    if halloween() {
+        Icon::SearchHw
+    } else {
+        Icon::Search
+    }
+}
+pub fn video_icon() -> Icon {
+    if halloween() {
+        Icon::VideoHw
+    } else {
+        Icon::Video
+    }
+}
+pub fn phone_icon() -> Icon {
+    if halloween() {
+        Icon::PhoneHw
+    } else {
+        Icon::Phone
+    }
+}
+pub fn ellipsis_icon() -> Icon {
+    if halloween() {
+        Icon::EllipsisHw
+    } else {
+        Icon::Ellipsis
+    }
+}
+pub fn mic_icon() -> Icon {
+    if halloween() { Icon::MicHw } else { Icon::Mic }
+}
+pub fn send_icon() -> Icon {
+    if halloween() {
+        Icon::SendHw
+    } else {
+        Icon::Send
     }
 }
 
@@ -1351,9 +1463,7 @@ pub fn logo(ui: &egui::Ui, center: egui::Pos2, diameter: f32, disc: Color32, gly
         center + Vec2::new(diameter * 0.009, -diameter * 0.009),
         Vec2::splat(icon_size),
     );
-    Icon::MessageCircle
-        .image(glyph, icon_size)
-        .paint_at(ui, icon_rect);
+    chats_icon().image(glyph, icon_size).paint_at(ui, icon_rect);
 }
 
 /// A pill-shaped text button: filled for the primary action, outlined otherwise.

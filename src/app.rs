@@ -1877,6 +1877,10 @@ impl App {
             // Messages draws its conversations on a plain background.
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
+            scene: self.settings.halloween_wallpaper()
+                && self.settings.wallpaper_color_for(self.palette.dark)
+                    == crate::settings::WallpaperColor::Theme
+                && self.account().settings.wallpaper_image.is_none(),
             style: self.settings.doodle_style,
             intensity: self.settings.doodle_intensity,
             accent: (self.settings.doodle_color == crate::settings::DoodleColor::Accent)
@@ -6070,6 +6074,23 @@ impl App {
             }
         };
         crate::backdrop::set_blur(self.settings.blur);
+        let halloween = self.settings.halloween_icons();
+        if crate::theme::halloween() != halloween {
+            crate::theme::set_halloween(halloween);
+            // The window's picture changes with the look; macOS keeps the
+            // bundle's Dock icon.
+            #[cfg(not(target_os = "macos"))]
+            {
+                let icon = crate::util::app_icon_rgba(256);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
+                    egui::IconData {
+                        rgba: icon,
+                        width: 256,
+                        height: 256,
+                    },
+                ))));
+            }
+        }
         let palette = self.settings.palette(dark);
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
@@ -8211,6 +8232,16 @@ impl App {
             }
             Action::SetMode(mode) => {
                 self.settings.mode = mode;
+                self.mark_settings_dirty();
+                self.apply_theme(ctx);
+            }
+            Action::SetHalloweenPart(part, on) => {
+                self.settings.set_halloween_part(part, on);
+                self.mark_settings_dirty();
+                self.apply_theme(ctx);
+            }
+            Action::SetHalloween(on) => {
+                self.settings.set_halloween(on);
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
             }
