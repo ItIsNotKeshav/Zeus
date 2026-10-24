@@ -3342,9 +3342,11 @@ mod tests {
 
     fn window(locale: Locale) -> Section {
         let mut window = Section::new(translated(locale, "Notifications"));
-        window.toggle("Check for updates", "Ask GitHub once a day.", |settings| {
-            &mut settings.check_for_updates
-        });
+        window.toggle(
+            "Check for updates",
+            "Ask GitHub every two hours.",
+            |settings| &mut settings.check_for_updates,
+        );
         let (title, description) = sound_text(locale, false);
         window.row(title, description, |_, _| {});
         window.toggle(

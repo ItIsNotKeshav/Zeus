@@ -3867,7 +3867,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
         } else {
             0.0
         };
-        let avatar_gap = if show_avatars { 10.0 } else { 0.0 };
+        let avatar_gap = if show_avatars { 8.0 } else { 0.0 };
         let row_height = 36.0;
         ui.allocate_ui_with_layout(
             vec2(
@@ -3876,6 +3876,9 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
             ),
             Layout::left_to_right(Align::Center),
             |ui| {
+                // Message rows put the bubble the avatar's width plus 8 from
+                // the edge; the gaps here must add up to exactly that.
+                ui.spacing_mut().item_spacing.x = 0.0;
                 if show_avatars {
                     let (rect, _) =
                         ui.allocate_exact_size(vec2(avatars_width, row_height), Sense::hover());
@@ -6183,6 +6186,14 @@ fn footer_over_picture(
         + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
         + tick_width
         + marks;
+    // A narrow picture (a tall sticker, a small photo) cannot hold the whole
+    // time and ticks, so the bubble widens until it can.
+    let needed = width + OVER_PICTURE_INSET.x * 2.0;
+    let picture = Rect::from_min_size(
+        picture.min,
+        vec2(picture.width().max(needed), picture.height()),
+    );
+    ui.expand_to_include_x(picture.right());
     let row = Rect::from_min_max(
         pos2(
             picture.right() - OVER_PICTURE_INSET.x - width,

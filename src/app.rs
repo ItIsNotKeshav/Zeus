@@ -5799,6 +5799,10 @@ impl App {
             self.last_update_check = Some(now);
             self.backend.send(Command::CheckForUpdates);
         }
+        if crate::brand::UPDATES && self.settings.check_for_updates {
+            // An idle window paints nothing, so wake it for the next check.
+            ctx.request_repaint_after(crate::updates::CHECK_INTERVAL);
+        }
         self.maybe_download_update();
         if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
             self.save_settings();
