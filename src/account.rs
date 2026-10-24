@@ -144,8 +144,9 @@ impl Account {
         settings: AccountSettings,
         backend: Backend,
     ) -> Self {
-        // Zeus starts on its welcome page, not in the chat it was left in.
-        let open_chat = None;
+        // `App::new` clears it unless Settings asks to reopen the last chat:
+        // Zeus starts on its welcome page by default.
+        let open_chat = settings.last_chat.clone();
         let chat_filter = match settings
             .list_filter
             .as_deref()

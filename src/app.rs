@@ -1374,10 +1374,17 @@ impl App {
         dirs: AppDirs,
         settings: Settings,
         roster: AccountRoster,
-        accounts: Vec<Account>,
+        mut accounts: Vec<Account>,
         active: usize,
         waker: Waker,
     ) -> Self {
+        // Each account still remembers its last chat. A fresh start opens
+        // one only when asked; the default is the list with no chat.
+        if !settings.restore_last_chat {
+            for account in &mut accounts {
+                account.open_chat = None;
+            }
+        }
         // Until the window says, a theme that follows the system starts dark.
         let palette = settings.palette(settings.mode != crate::chat_themes::Mode::Light);
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -22554,6 +22561,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let settings = Settings {
             last_chat: Some("locked".into()),
+            restore_last_chat: true,
             ..Default::default()
         };
         let (mut app, events) = App::headless(AppDirs::under(root.path()), settings);
@@ -22563,6 +22571,27 @@ mod tests {
         app.handle_events();
         assert!(app.open_chat.is_none());
         assert!(app.conversations.is_empty());
+    }
+
+    #[test]
+    fn the_last_chat_stays_closed_unless_restore_is_on() {
+        let closed = Settings {
+            last_chat: Some("1@s.whatsapp.net".into()),
+            ..Default::default()
+        };
+        let root = tempfile::tempdir().unwrap();
+        let (app, _) = App::headless(AppDirs::under(root.path()), closed);
+        assert!(app.open_chat.is_none());
+        assert_eq!(app.settings.last_chat.as_deref(), Some("1@s.whatsapp.net"));
+
+        let open = Settings {
+            last_chat: Some("1@s.whatsapp.net".into()),
+            restore_last_chat: true,
+            ..Default::default()
+        };
+        let root = tempfile::tempdir().unwrap();
+        let (app, _) = App::headless(AppDirs::under(root.path()), open);
+        assert_eq!(app.open_chat.as_deref(), Some("1@s.whatsapp.net"));
     }
 
     #[test]

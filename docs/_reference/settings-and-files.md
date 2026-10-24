@@ -141,6 +141,10 @@ name or description, in the interface language or in English.
 
 **Chats**
 
+- **Open the last chat**: off by default. When on, quitting and opening Zeus
+  again reopens the chat that was open, for each number on its own. When off,
+  Zeus starts on the chat list with no chat open. Hiding the window still
+  shows the chat that was already open.
 - **Enter sends**: when off, Enter adds a line and `Ctrl+Enter` (Command+Enter
   on macOS) sends.
 - **Download files automatically**: attachments up to 64 MiB download as they

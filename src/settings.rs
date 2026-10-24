@@ -889,8 +889,13 @@ pub struct Settings {
     /// ZapFast's own copy of the chosen wallpaper image, drawn in place of the
     /// colour and doodles in light and dark mode alike.
     pub wallpaper_image: Option<std::path::PathBuf>,
-    /// Last open chat, restored at startup.
+    /// Last open chat. A fresh start reopens it only when
+    /// [`Self::restore_last_chat`] is on.
     pub last_chat: Option<String>,
+    /// Whether quitting and opening Zeus again reopens [`Self::last_chat`].
+    /// Off, the chat list starts with no chat open. Hiding the window leaves
+    /// the chat that was already open.
+    pub restore_last_chat: bool,
     /// The hint bar under the composer, hidden with its × and shown again
     /// from the Keyboard shortcuts dialog.
     pub show_shortcut_hints: bool,
@@ -1031,6 +1036,7 @@ impl Default for Settings {
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
             last_chat: None,
+            restore_last_chat: false,
             show_shortcut_hints: true,
             picker_mode: crate::model::PickerTab::default(),
             recent_emoji: Vec::new(),
@@ -1832,6 +1838,7 @@ mod tests {
         assert_eq!(parsed.window_x, None);
         assert_eq!(parsed.window_y, None);
         assert!(!parsed.window_maximized);
+        assert!(!parsed.restore_last_chat);
     }
 
     #[test]

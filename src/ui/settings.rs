@@ -618,6 +618,14 @@ fn sections(app: &App) -> Vec<Section> {
 
     let mut chats = Section::new(translated(locale, "Chats"));
     chats.toggle(
+        translated(locale, "Open the last chat"),
+        translated(
+            locale,
+            "When off, quitting and opening Zeus again starts with no chat open.",
+        ),
+        |settings| &mut settings.restore_last_chat,
+    );
+    chats.toggle(
         translated(locale, "Enter sends"),
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
