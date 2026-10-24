@@ -1714,9 +1714,11 @@ mod tests {
 
     #[test]
     fn turning_halloween_off_keeps_what_the_reader_chose() {
-        let mut settings = Settings::default();
-        settings.doodle_style = DoodleStyle::Space;
-        settings.message_sound = NotificationSound::None;
+        let mut settings = Settings {
+            doodle_style: DoodleStyle::Space,
+            message_sound: NotificationSound::None,
+            ..Settings::default()
+        };
         settings.set_halloween(false);
         assert_eq!(settings.doodle_style, DoodleStyle::Space);
         assert_eq!(settings.message_sound, NotificationSound::None);
@@ -1744,8 +1746,10 @@ mod tests {
 
     #[test]
     fn halloween_colours_cover_a_ready_made_theme_until_their_switch_is_off() {
-        let mut settings = Settings::default();
-        settings.chat_theme = ChatTheme::Vercel;
+        let mut settings = Settings {
+            chat_theme: ChatTheme::Vercel,
+            ..Settings::default()
+        };
         assert!(settings.halloween_active());
         settings.set_halloween_part(HalloweenPart::Colors, false);
         assert!(!settings.halloween_active());

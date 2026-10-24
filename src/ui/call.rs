@@ -782,7 +782,7 @@ impl Picker<'_> {
             });
             controls::dropdown(
                 ui,
-                &self.palette,
+                self.palette,
                 self.salt,
                 self.title,
                 &label,
@@ -790,7 +790,7 @@ impl Picker<'_> {
                 |ui| {
                     if controls::option(
                         ui,
-                        &self.palette,
+                        self.palette,
                         self.default_label,
                         self.current.is_none(),
                     ) {
@@ -799,7 +799,7 @@ impl Picker<'_> {
                     for (id, name) in self.devices {
                         if controls::option(
                             ui,
-                            &self.palette,
+                            self.palette,
                             name,
                             self.current == Some(id.as_str()),
                         ) {

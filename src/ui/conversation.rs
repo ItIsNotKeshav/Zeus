@@ -4274,23 +4274,23 @@ fn bubble(
     {
         swipe_to_reply(ui, view, message, start, rect, actions);
     }
-    if !view.selecting || view.selected.contains(&message.id) {
-        if let Some(rect) = rect {
-            let fill = if message.from_me {
-                view.palette.bubble_out
-            } else {
-                view.palette.bubble_in
-            };
-            super::carry::watch(
-                ui,
-                &view.chat.id,
-                album.unwrap_or(std::slice::from_ref(message)),
-                view.selected,
-                start,
-                rect,
-                fill,
-            );
-        }
+    if (!view.selecting || view.selected.contains(&message.id))
+        && let Some(rect) = rect
+    {
+        let fill = if message.from_me {
+            view.palette.bubble_out
+        } else {
+            view.palette.bubble_in
+        };
+        super::carry::watch(
+            ui,
+            &view.chat.id,
+            album.unwrap_or(std::slice::from_ref(message)),
+            view.selected,
+            start,
+            rect,
+            fill,
+        );
     }
     response
 }

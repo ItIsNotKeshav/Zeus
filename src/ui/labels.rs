@@ -268,7 +268,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 .hint(&hint)
                 .char_limit(crate::archive::NAME_LIMIT)
                 .width(180.0)
-                .show(ui, &palette);
+                .show(ui, palette);
             if field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
                 create(app);
             }
