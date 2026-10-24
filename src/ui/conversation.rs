@@ -8397,10 +8397,14 @@ fn album_download_button(
     let disc = Rect::from_center_size(button.center(), button.size() * scale);
     let painter = ui.painter();
     let alpha = |value: f32| (value * appear).round() as u8;
+    // Frosted over the pictures it floats on, as the other floating controls
+    // are; a darker tint stands in while Blur is off.
+    painter.add(super::glass::rounded(disc, disc.width() / 2.0));
+    let tint = if crate::backdrop::blur() { 85.0 } else { 170.0 };
     painter.circle_filled(
         disc.center(),
         disc.width() / 2.0,
-        Color32::from_black_alpha(alpha(125.0 + 40.0 * hover)),
+        Color32::from_black_alpha(alpha(tint + 40.0 * hover)),
     );
     painter.circle_stroke(
         disc.center(),
