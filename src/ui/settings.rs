@@ -2612,14 +2612,23 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
             palette.text,
         );
         ui.add_space(6.0);
-        let value = format!("{:.0}%", intensity * 100.0);
+        // The slider shows a share of the strongest doodles, not a multiple
+        // of the default, so it ends at 100%.
+        let mut percent = intensity / range.end();
+        let value = format!("{:.0}%", percent * 100.0);
         let value_width = 48.0;
-        ui.spacing_mut().slider_width =
-            (ui.available_width() - value_width - ui.spacing().item_spacing.x).max(60.0);
-        let slider = ui.add(egui::Slider::new(&mut intensity, range).show_value(false));
+        let width = ui.available_width() - value_width - ui.spacing().item_spacing.x;
+        let slider = widgets::glass_slider(
+            ui,
+            &palette,
+            &mut percent,
+            range.start() / range.end()..=1.0,
+            width,
+        );
         theme::text(ui, value, theme::medium(13.0), palette.secondary);
         if slider.changed() {
-            app.actions.push(Action::SetDoodleIntensity(intensity));
+            app.actions
+                .push(Action::SetDoodleIntensity(percent * range.end()));
         }
     });
 }
