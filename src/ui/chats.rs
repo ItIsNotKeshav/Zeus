@@ -1409,6 +1409,45 @@ fn person_row(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Two fingers swiped right across a chat: the row follows them while an
+/// arrow grows in the space it leaves, and letting go past the threshold
+/// opens the chat. Letting go short of it eases the row back.
+fn swipe_to_open(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    rect: Rect,
+    shapes: egui::layers::ShapeIdx,
+) {
+    let ctx = ui.ctx().clone();
+    let (pulled, fired) = super::swipe::pull_of(&ctx, rect.expand2(vec2(4000.0, 0.0)), 1.0);
+    let eased = super::swipe::ease(&ctx, egui::Id::new(("swipe-open", &chat.id)), pulled);
+    if fired {
+        app.actions.push(Action::OpenChat(chat.id.clone()));
+    }
+    if eased <= 0.0 {
+        return;
+    }
+    let shift = super::swipe::pull(eased);
+    super::swipe::shift_since(ui, shapes, shift);
+    let size = 28.0 * eased.sqrt();
+    let center = pos2(rect.left() + shift / 2.0, rect.center().y);
+    let badge = Rect::from_center_size(center, Vec2::splat(size));
+    ui.painter().circle_filled(
+        center,
+        size / 2.0,
+        app.palette.surface_active.gamma_multiply(eased),
+    );
+    theme::paint_icon(
+        ui,
+        Icon::ChevronRight,
+        badge,
+        16.0 * eased.sqrt(),
+        app.palette.accent.gamma_multiply(eased),
+    );
+    ctx.request_repaint();
+}
+
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -1422,6 +1461,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         .is_some_and(|selected| *selected == chat.id);
     let now = crate::util::now();
     let muted = chat.muted(now);
+    let shapes = super::swipe::mark(ui);
     let (rect, response) = ui.allocate_exact_size(
         vec2(ui.available_width(), theme::ROW_HEIGHT),
         Sense::click(),
@@ -1641,6 +1681,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     if response.clicked() {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     }
+    swipe_to_open(app, ui, chat, rect, shapes);
     let menu_palette = palette;
     // The favorite item is translated, so its width counts in the reader's
     // language.

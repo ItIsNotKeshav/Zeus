@@ -2797,10 +2797,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .then_some(app.copy_rows.as_ref()),
     };
     let mut actions = Vec::new();
-    super::swipe::update(ui.ctx(), ui.rect_contains_pointer(ui.max_rect()));
-    if super::swipe::back(ui.ctx()) {
-        actions.push(Action::CloseChat);
-    }
     let mut anchored = false;
     // The first unread message is the count-th incoming one from the end.
     let divider = app
@@ -4123,7 +4119,13 @@ fn reaction_affordance(
     } else {
         rect
     };
-    let revealed = reaction_affordance_visible(pointer, shown, reach);
+    // Not while the row slides for a swipe: they would ride along into the
+    // space the reply badge grows in.
+    let swiping = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(bubble.id.with("swiping")))
+        .unwrap_or(false);
+    let revealed = !swiping && reaction_affordance_visible(pointer, shown, reach);
     if ui.is_rect_visible(rect) && (response.has_focus() || (uncovered && revealed)) {
         floating_circle(ui, &view.palette, rect, response.hovered());
         theme::paint_icon(
@@ -4297,17 +4299,14 @@ fn swipe_to_reply(
 ) {
     let ctx = ui.ctx().clone();
     let id = bubble_id(&view.chat.id, &message.id).with("swipe");
-    let (pulled, fired) = super::swipe::reply(&ctx, rect.expand2(vec2(4000.0, 4.0)));
-    let eased = if pulled > 0.0 {
-        ctx.animate_value_with_time(id, pulled, 0.0)
-    } else {
-        let time = if crate::motion::screen_reader_attached(&ctx) {
-            0.0
-        } else {
-            0.18
-        };
-        ctx.animate_value_with_time(id, 0.0, time)
-    };
+    let (pulled, fired) = super::swipe::pull_of(&ctx, rect.expand2(vec2(4000.0, 4.0)), -1.0);
+    let eased = super::swipe::ease(&ctx, id, pulled);
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            bubble_id(&view.chat.id, &message.id).with("swiping"),
+            eased > 0.0,
+        )
+    });
     if fired {
         actions.push(Action::Reply(message.id.clone()));
     }
@@ -4315,15 +4314,7 @@ fn swipe_to_reply(
         return;
     }
     let shift = super::swipe::pull(eased);
-    let layer = ui.layer_id();
-    ctx.graphics_mut(|graphics| {
-        let list = graphics.entry(layer);
-        for index in start.0..list.next_idx().0 {
-            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
-                clipped.shape.translate(vec2(-shift, 0.0));
-            });
-        }
-    });
+    super::swipe::shift_since(ui, start, -shift);
     let palette = view.palette;
     let size = 30.0 * eased.sqrt();
     let center = pos2(

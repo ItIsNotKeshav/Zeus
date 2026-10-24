@@ -9558,6 +9558,7 @@ impl App {
         } else {
             self.scrolling.apply(ctx);
             self.route_scroll(ctx);
+            crate::ui::swipe::update(ctx);
             self.take_drops_and_pastes(ctx);
         }
         crate::ui::show(self, ui);
