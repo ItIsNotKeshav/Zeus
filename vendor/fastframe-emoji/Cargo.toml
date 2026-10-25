@@ -1,0 +1,62 @@
+[package]
+name = "fastframe-emoji"
+description = "Colour emoji in the platform's own style, inline in egui text"
+version = "0.14.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+authors = ["Carmine Paolino <carmine@paolino.me>"]
+repository = "https://github.com/crmne/fastframe"
+homepage = "https://github.com/crmne/fastframe"
+readme = "README.md"
+keywords = ["egui", "emoji", "fonts", "colour", "text"]
+categories = ["gui"]
+
+[dependencies]
+egui = { version = "0.36.2", default-features = false }
+# Reads the emoji fonts' bitmap strikes and metrics. The parser epaint 0.36
+# already uses, at its version.
+skrifa = "0.44"
+# Joins emoji sequences: GSUB ligatures (Noto) and AAT `morx` (Apple). The
+# shaper epaint 0.36 already uses, at its version.
+harfrust = "0.12"
+# Decodes the PNGs inside CBDT and sbix strikes. Already in the apps' trees
+# (egui_extras, resvg) at this version.
+png = "0.18"
+# Grapheme clusters, so a joined sequence is one emoji. Already in egui's tree.
+unicode-segmentation = "1"
+# Maps the system emoji font (Apple's is 190 MB) instead of reading it.
+memmap2 = "0.9"
+# The platform's font directories, for the Linux emoji font scan.
+fastframe-fonts = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0", default-features = false }
+log = { version = "0.4", features = ["std"] }
+
+[target.'cfg(windows)'.dependencies]
+# DirectWrite and Direct2D draw Segoe UI Emoji's COLR glyphs. The version cpal
+# and ZapFast already use; windows-sys has no COM interfaces.
+windows = { version = "0.62", features = ["Win32_Graphics_Direct2D", "Win32_Graphics_Direct2D_Common", "Win32_Graphics_DirectWrite", "Win32_Graphics_Dxgi_Common", "Win32_Graphics_Imaging", "Win32_System_Com"] }
+# COM implementation support and the vector type Direct2D takes. Already in
+# the tree through `windows`.
+windows-core = "0.62"
+windows-numerics = "0.3"
+
+[dev-dependencies]
+egui = { version = "0.36.2", default-features = false, features = ["default_fonts"] }
+tempfile = "3"
+
+# The workspace lints, except that unsafe code is denied rather than
+# forbidden: memory-mapping font files and asking DirectWrite need it. Each
+# use carries an `allow` with its reason and a SAFETY comment.
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "warn"
+print_stdout = "warn"
+print_stderr = "warn"

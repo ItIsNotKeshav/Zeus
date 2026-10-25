@@ -361,6 +361,49 @@ pub(crate) fn clear_media(dir: &Path) -> io::Result<()> {
     failed.map_or(Ok(()), Err)
 }
 
+/// Files used more recently than this are never pruned: what is on screen,
+/// or was just downloaded, stays.
+const PRUNE_GRACE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Deletes the files under `dir`, the account's media cache, last used
+/// before `max_age` ago, then the ones used longest ago until the rest
+/// weigh no more than `max_bytes`. A file's last use is the later of when it
+/// was written and when it was last read. Returns the files deleted.
+pub(crate) fn prune_media(
+    dir: &Path,
+    max_age: Option<std::time::Duration>,
+    max_bytes: Option<u64>,
+    now: std::time::SystemTime,
+) -> io::Result<Vec<PathBuf>> {
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    walk_media(dir, &mut |path, metadata| {
+        let modified = metadata.modified().unwrap_or(now);
+        let used = metadata
+            .accessed()
+            .map_or(modified, |accessed| accessed.max(modified));
+        files.push((used, metadata.len(), path.to_path_buf()));
+        Ok(())
+    })?;
+    // Oldest first.
+    files.sort_by_key(|(used, ..)| *used);
+    let mut total: u64 = files.iter().map(|(_, len, _)| len).sum();
+    let mut removed = Vec::new();
+    for (used, len, path) in files {
+        let age = now.duration_since(used).unwrap_or_default();
+        let expired = max_age.is_some_and(|max| age > max);
+        let over = max_bytes.is_some_and(|max| total > max);
+        // Every file after this one was used more recently still.
+        if age < PRUNE_GRACE || (!expired && !over) {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= len;
+            removed.push(path);
+        }
+    }
+    Ok(removed)
+}
+
 /// Visits every finished file under `dir`, an absent folder being empty.
 fn walk_media(
     dir: &Path,
@@ -1994,6 +2037,23 @@ impl Worker {
                 token,
                 cleared: clear,
             });
+        });
+    }
+
+    /// Runs the automatic cleanup off the runtime and hands what it deleted
+    /// back as `Command::MediaPruned`.
+    fn prune_storage(&mut self, max_age: Option<std::time::Duration>, max_bytes: Option<u64>) {
+        let dir = self.dirs.media_cache_dir();
+        let commands = self.commands.clone();
+        tokio::task::spawn_blocking(move || {
+            match prune_media(&dir, max_age, max_bytes, std::time::SystemTime::now()) {
+                Ok(removed) if !removed.is_empty() => {
+                    log::info!("the media cache cleanup deleted {} files", removed.len());
+                    let _ = commands.send(Command::MediaPruned(removed));
+                }
+                Ok(_) => {}
+                Err(_) => log::warn!("could not clean up the attachment cache"),
+            }
         });
     }
 
@@ -6298,6 +6358,15 @@ impl Worker {
             }
             Command::LoadStorageStats { token } => self.measure_storage(token, false),
             Command::ClearMediaCache { token } => self.measure_storage(token, true),
+            Command::PruneMediaCache { max_age, max_bytes } => {
+                self.prune_storage(max_age, max_bytes);
+            }
+            Command::MediaPruned(removed) => {
+                // The archive forgets the files that are gone, so they
+                // download again instead of drawing as broken.
+                self.relocate_media();
+                self.emit(Event::MediaPruned(removed));
+            }
             Command::StorageMeasured {
                 stats,
                 token,
@@ -19052,6 +19121,67 @@ mod receipt_tests {
         assert_eq!(
             read.read_at, None,
             "\"Message info\" says the time was not recorded"
+        );
+    }
+
+    /// The cleanup deletes what has gone unused too long, then the files used
+    /// longest ago until the rest fit, and never a file used in the last hour
+    /// or a download still being written.
+    #[test]
+    fn the_media_cache_cleanup_deletes_old_files_first() {
+        let root = tempfile::tempdir().expect("temp");
+        let dir = root.path().join("media");
+        std::fs::create_dir_all(&dir).expect("dirs");
+        let now = std::time::SystemTime::now();
+        let day = std::time::Duration::from_secs(24 * 60 * 60);
+        for (name, days, bytes) in [
+            ("old.jpg", 100, 10),
+            ("older.mp4", 200, 20),
+            ("week.jpg", 7, 30),
+            ("day.pdf", 1, 40),
+            ("fresh.jpg", 0, 50),
+            (".mid.part", 300, 99),
+        ] {
+            let path = dir.join(name);
+            std::fs::write(&path, vec![0u8; bytes]).expect("write");
+            let used = now - day * days;
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| {
+                    file.set_times(
+                        std::fs::FileTimes::new()
+                            .set_accessed(used)
+                            .set_modified(used),
+                    )
+                })
+                .expect("dated");
+        }
+        let names = |removed: Vec<PathBuf>| -> Vec<String> {
+            removed
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+
+        let removed = prune_media(&dir, Some(day * 91), None, now).expect("pruned");
+        assert_eq!(names(removed), ["older.mp4", "old.jpg"]);
+
+        // 120 bytes left; fitting 60 takes the week-old and day-old files,
+        // but the one written just now stays even though the rest are over.
+        let removed = prune_media(&dir, None, Some(60), now).expect("pruned");
+        assert_eq!(names(removed), ["week.jpg", "day.pdf"]);
+        let removed = prune_media(&dir, None, Some(10), now).expect("pruned");
+        assert!(removed.is_empty(), "a file used in the last hour stays");
+        assert!(dir.join("fresh.jpg").exists());
+        assert!(
+            dir.join(".mid.part").exists(),
+            "a download still being written stays"
+        );
+        assert!(
+            prune_media(&root.path().join("absent"), Some(day), Some(0), now)
+                .expect("an absent cache has nothing to prune")
+                .is_empty()
         );
     }
 

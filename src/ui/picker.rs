@@ -1054,7 +1054,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                             ui.painter()
                                 .rect_filled(rect, theme::RADIUS_SMALL, palette.surface);
                             if let Some(still) = &gif.still {
-                                widgets::file_image(ui, still)
+                                widgets::fitted_image(ui, still, size)
                                     .fit_to_exact_size(size)
                                     .corner_radius(theme::RADIUS_SMALL)
                                     .paint_at(ui, rect);

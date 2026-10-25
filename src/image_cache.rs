@@ -4,14 +4,25 @@
 //! it has loaded. It only ever evicts the textures of `.svg` files, so left
 //! alone a session that scrolls through photos holds every one of them for
 //! good. Each draw site registers its URI here, and [`sweep`] forgets the ones
-//! that fall out of the resident window.
+//! that fall out of the resident window, by count and by the bytes their
+//! textures take.
+//!
+//! Chat pictures go through [`fit_uri`]: a [`FitLoader`] decodes them off the
+//! interface thread at the size they are drawn, so a 12-megapixel photo in a
+//! bubble takes a few megabytes of texture rather than 48.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::path::Path;
+use std::sync::{Arc, Mutex, mpsc};
 
 /// Image URIs kept resident. Anything the current frame drew is always kept,
 /// so this only bounds what has scrolled away.
-const RESIDENT: usize = 96;
+const RESIDENT: usize = 256;
+
+/// The most texture memory the resident images may take, in bytes. On a Mac
+/// the GPU shares the system's memory, so this is memory the app is seen to
+/// use. Anything the current frame drew is always kept.
+const BUDGET: usize = 256 * 1024 * 1024;
 
 struct Entry {
     /// Frame the image was last drawn on.
@@ -83,45 +94,345 @@ pub fn touch(ctx: &egui::Context, uri: &str) {
 
 /// Forgets one image now rather than once it falls out of the resident
 /// window: the info panel frees its thumbnails when it closes. A later draw
-/// registers the bytes again.
+/// registers the bytes again. Forgetting a file's URI also forgets the
+/// pictures [`fit_uri`] made of it, so a changed avatar is read again.
 pub fn forget(ctx: &egui::Context, uri: &str) {
-    let registry = registry(ctx);
-    registry
-        .0
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .remove(uri);
+    let fitted: Vec<String> = {
+        let registry = registry(ctx);
+        let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
+        entries.remove(uri);
+        let fitted: Vec<String> = entries
+            .keys()
+            .filter(|key| fitted_source(key) == Some(uri))
+            .cloned()
+            .collect();
+        for key in &fitted {
+            entries.remove(key);
+        }
+        fitted
+    };
     ctx.forget_image(uri);
+    for key in fitted {
+        ctx.forget_image(&key);
+    }
 }
 
-/// Forgets the images that have not been drawn for the longest.
+/// Forgets the images that have not been drawn for the longest, until no
+/// more than `RESIDENT` are kept and their textures fit in `BUDGET`.
 ///
 /// Images the current frame drew are never forgotten, so a frame that shows
-/// more than `RESIDENT` images does not reload them on the next one.
+/// more than the window holds does not reload them on the next one.
 pub fn sweep(ctx: &egui::Context) {
     let frame = ctx.cumulative_frame_nr();
     let stale: Vec<String> = {
         let registry = registry(ctx);
         let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
-        let over = entries.len().saturating_sub(RESIDENT);
-        if over == 0 {
+        if entries.is_empty() {
             return;
         }
-        let mut idle: Vec<(u64, String)> = entries
+        // egui names each texture it loads after its URI.
+        let mut sizes: HashMap<&str, usize> = HashMap::new();
+        let mut total = 0;
+        {
+            let manager = ctx.tex_manager();
+            let manager = manager.read();
+            for (_, meta) in manager.allocated() {
+                if let Some((uri, _)) = entries.get_key_value(meta.name.as_str()) {
+                    *sizes.entry(uri.as_str()).or_default() += meta.bytes_used();
+                    total += meta.bytes_used();
+                }
+            }
+        }
+        let mut count = entries.len();
+        if count <= RESIDENT && total <= BUDGET {
+            return;
+        }
+        let mut idle: Vec<(u64, &str)> = entries
             .iter()
             .filter(|(_, entry)| entry.frame < frame)
-            .map(|(uri, entry)| (entry.frame, uri.clone()))
+            .map(|(uri, entry)| (entry.frame, uri.as_str()))
             .collect();
         idle.sort_unstable();
-        idle.truncate(over);
-        for (_, uri) in &idle {
+        let mut stale = Vec::new();
+        for (_, uri) in idle {
+            if count <= RESIDENT && total <= BUDGET {
+                break;
+            }
+            count -= 1;
+            total -= sizes.get(uri).copied().unwrap_or(0);
+            stale.push(uri.to_owned());
+        }
+        drop(sizes);
+        for uri in &stale {
             entries.remove(uri);
         }
-        idle.into_iter().map(|(_, uri)| uri).collect()
+        stale
     };
     for uri in stale {
         ctx.forget_image(&uri);
     }
+}
+
+/// The scheme [`FitLoader`] serves: `fit://{side}/{file URI}`.
+const FIT: &str = "fit://";
+
+/// The sides a fitted picture's shorter edge is decoded at, in pixels. A
+/// picture drawn at a size between two steps uses the larger, so one drawn a
+/// little bigger or smaller (a resized window) keeps its texture.
+const SIDES: [u32; 8] = [128, 192, 256, 384, 512, 768, 1024, 1536];
+
+/// The longest a fitted picture's longer edge is, so a panorama stays small.
+const LONGEST: u32 = 4096;
+
+/// A URI for the picture at `path`, decoded no larger than it is drawn at
+/// `size` points on this display, and registered as drawn this frame. A file
+/// [`FitLoader`] cannot decode (an animated GIF or WebP, an SVG) keeps its
+/// plain file URI. Full-size viewers use [`crate::util::image_uri`] instead.
+pub fn fit_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
+    let file = crate::util::image_uri(path);
+    let uri = if fits(path) {
+        let pixels = (size.x.max(size.y) * ctx.pixels_per_point()).ceil() as u32;
+        let side = SIDES
+            .iter()
+            .copied()
+            .find(|side| *side >= pixels)
+            .unwrap_or(SIDES[SIDES.len() - 1]);
+        format!("{FIT}{side}/{file}")
+    } else {
+        file
+    };
+    touch(ctx, &uri);
+    uri
+}
+
+/// Whether [`FitLoader`] decodes the file: the still formats photos come in.
+fn fits(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["jpg", "jpeg", "png"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        })
+}
+
+/// The file URI a [`fit_uri`] was made from, and the side it asks for.
+fn parse_fit(uri: &str) -> Option<(u32, &str)> {
+    let (side, file) = uri.strip_prefix(FIT)?.split_once('/')?;
+    Some((side.parse().ok()?, file))
+}
+
+fn fitted_source(uri: &str) -> Option<&str> {
+    parse_fit(uri).map(|(_, file)| file)
+}
+
+/// The path a file URI names, as [`crate::util::image_uri`] writes it.
+fn uri_path(file: &str) -> Option<&str> {
+    let path = file.strip_prefix("file://")?;
+    if cfg!(windows) {
+        Some(path.strip_prefix('/').unwrap_or(path))
+    } else {
+        Some(path)
+    }
+}
+
+/// Decodes `path` so its shorter edge is at least `side` pixels (when the
+/// picture is that big) and its longer edge at most [`LONGEST`]. The image
+/// keeps the picture's own size as its source size, so layouts that read it
+/// see the photo's real shape and dimensions.
+fn decode_fitted(path: &Path, side: u32) -> Result<egui::ColorImage, String> {
+    use image::ImageDecoder as _;
+    let reader = image::ImageReader::open(path)
+        .and_then(image::ImageReader::with_guessed_format)
+        .map_err(|error| error.to_string())?;
+    let mut decoder = reader.into_decoder().map_err(|error| error.to_string())?;
+    let orientation = decoder.orientation().map_err(|error| error.to_string())?;
+    let mut picture =
+        image::DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
+    picture.apply_orientation(orientation);
+    let (width, height) = (picture.width().max(1), picture.height().max(1));
+    let (short, long) = (width.min(height), width.max(height));
+    let scale = (f64::from(side) / f64::from(short))
+        .min(f64::from(LONGEST) / f64::from(long))
+        .min(1.0);
+    let picture = if scale < 1.0 {
+        let fitted = |edge: u32| ((f64::from(edge) * scale).round() as u32).max(1);
+        picture.thumbnail_exact(fitted(width), fitted(height))
+    } else {
+        picture
+    };
+    let rgba = picture.to_rgba8();
+    let mut image = egui::ColorImage::from_rgba_unmultiplied(
+        [rgba.width() as usize, rgba.height() as usize],
+        rgba.as_flat_samples().as_slice(),
+    );
+    image.source_size = egui::vec2(width as f32, height as f32);
+    Ok(image)
+}
+
+/// Where a fitted picture is in [`FitLoader`].
+#[derive(Clone)]
+enum Fitted {
+    Pending,
+    Ready(Arc<egui::ColorImage>),
+    Failed(String),
+}
+
+type Fits = Arc<Mutex<HashMap<String, Fitted>>>;
+
+/// Serves [`fit_uri`]s: reads and decodes each picture on a worker thread,
+/// scaled to the size it is drawn at.
+///
+/// One thread decodes, newest request first, so pictures that scrolled past
+/// before their turn and were forgotten are skipped rather than decoded.
+pub struct FitLoader {
+    fits: Fits,
+    jobs: Mutex<Option<mpsc::Sender<(String, egui::Context)>>>,
+}
+
+impl Default for FitLoader {
+    fn default() -> Self {
+        Self {
+            fits: Fits::default(),
+            jobs: Mutex::new(None),
+        }
+    }
+}
+
+impl FitLoader {
+    fn queue(&self, uri: &str, ctx: &egui::Context) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(|p| p.into_inner());
+        if jobs.is_none() {
+            let (sender, receiver) = mpsc::channel::<(String, egui::Context)>();
+            let fits = Arc::clone(&self.fits);
+            let started = std::thread::Builder::new()
+                .name("fit-pictures".into())
+                .spawn(move || decode_jobs(&receiver, &fits));
+            if let Err(error) = started {
+                log::warn!("cannot start the picture decoder: {error}");
+                self.fits
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(uri.to_owned(), Fitted::Failed(error.to_string()));
+                return;
+            }
+            *jobs = Some(sender);
+        }
+        if let Some(sender) = jobs.as_ref() {
+            let _ = sender.send((uri.to_owned(), ctx.clone()));
+        }
+    }
+}
+
+/// The decoder thread: takes every waiting request, decodes the newest still
+/// wanted, and puts the rest back.
+fn decode_jobs(receiver: &mpsc::Receiver<(String, egui::Context)>, fits: &Fits) {
+    let mut waiting: Vec<(String, egui::Context)> = Vec::new();
+    loop {
+        if waiting.is_empty() {
+            match receiver.recv() {
+                Ok(job) => waiting.push(job),
+                Err(_) => return,
+            }
+        }
+        waiting.extend(receiver.try_iter());
+        let Some((uri, ctx)) = waiting.pop() else {
+            continue;
+        };
+        let wanted = matches!(
+            fits.lock().unwrap_or_else(|p| p.into_inner()).get(&uri),
+            Some(Fitted::Pending)
+        );
+        if !wanted {
+            continue;
+        }
+        let result = parse_fit(&uri)
+            .and_then(|(side, file)| Some((side, uri_path(file)?)))
+            .ok_or_else(|| "not a fitted picture".to_owned())
+            .and_then(|(side, path)| decode_fitted(Path::new(path), side));
+        let mut fits = fits.lock().unwrap_or_else(|p| p.into_inner());
+        // Forgotten while it was being decoded: nobody draws it any more.
+        if let Some(entry @ Fitted::Pending) = fits.get_mut(&uri) {
+            *entry = match result {
+                Ok(image) => Fitted::Ready(Arc::new(image)),
+                Err(error) => Fitted::Failed(error),
+            };
+            drop(fits);
+            ctx.request_repaint();
+        }
+    }
+}
+
+impl egui::load::ImageLoader for FitLoader {
+    fn id(&self) -> &str {
+        "zeus::image_cache::FitLoader"
+    }
+
+    fn load(
+        &self,
+        ctx: &egui::Context,
+        uri: &str,
+        _size_hint: egui::load::SizeHint,
+    ) -> egui::load::ImageLoadResult {
+        if parse_fit(uri).is_none() {
+            return Err(egui::load::LoadError::NotSupported);
+        }
+        let known = self
+            .fits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(uri)
+            .cloned();
+        match known {
+            Some(Fitted::Ready(image)) => Ok(egui::load::ImagePoll::Ready { image }),
+            Some(Fitted::Failed(error)) => Err(egui::load::LoadError::Loading(error)),
+            Some(Fitted::Pending) => Ok(egui::load::ImagePoll::Pending { size: None }),
+            None => {
+                self.fits
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .insert(uri.to_owned(), Fitted::Pending);
+                self.queue(uri, ctx);
+                Ok(egui::load::ImagePoll::Pending { size: None })
+            }
+        }
+    }
+
+    fn forget(&self, uri: &str) {
+        self.fits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(uri);
+    }
+
+    fn forget_all(&self) {
+        self.fits.lock().unwrap_or_else(|p| p.into_inner()).clear();
+    }
+
+    fn byte_size(&self) -> usize {
+        self.fits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .map(|fitted| match fitted {
+                Fitted::Ready(image) => image.pixels.len() * 4,
+                Fitted::Pending | Fitted::Failed(_) => 0,
+            })
+            .sum()
+    }
+
+    fn has_pending(&self) -> bool {
+        self.fits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .values()
+            .any(|fitted| matches!(fitted, Fitted::Pending))
+    }
+}
+
+/// Installs [`FitLoader`] ahead of egui's own loaders.
+pub fn install(ctx: &egui::Context) {
+    ctx.add_image_loader(Arc::new(FitLoader::default()));
 }
 
 #[cfg(test)]
@@ -177,6 +488,63 @@ mod tests {
         }
     }
 
+    /// Answers every URI with a 1024-pixel square: 4 MB of texture.
+    struct LargeLoader;
+
+    impl egui::load::ImageLoader for LargeLoader {
+        fn id(&self) -> &str {
+            "zeus::image_cache::tests::LargeLoader"
+        }
+
+        fn load(
+            &self,
+            _ctx: &egui::Context,
+            _uri: &str,
+            _size_hint: egui::load::SizeHint,
+        ) -> egui::load::ImageLoadResult {
+            Ok(egui::load::ImagePoll::Ready {
+                image: std::sync::Arc::new(egui::ColorImage::filled(
+                    [1024, 1024],
+                    egui::Color32::WHITE,
+                )),
+            })
+        }
+
+        fn forget(&self, _uri: &str) {}
+
+        fn forget_all(&self) {}
+
+        fn byte_size(&self) -> usize {
+            0
+        }
+    }
+
+    #[test]
+    fn big_textures_that_scroll_away_are_released_past_the_budget() {
+        let ctx = context();
+        ctx.add_image_loader(std::sync::Arc::new(LargeLoader));
+        let uris: Vec<String> = (0..80).map(uri).collect();
+        for uri in &uris {
+            include(&ctx, uri, b"image bytes");
+        }
+        let mut output = draw(&ctx, &uris);
+        output.textures_delta.clear();
+        let used = |ctx: &egui::Context| -> usize {
+            let manager = ctx.tex_manager();
+            let manager = manager.read();
+            manager
+                .allocated()
+                .filter(|(_, meta)| meta.name.starts_with("bytes://test-"))
+                .map(|(_, meta)| meta.bytes_used())
+                .sum()
+        };
+        assert!(used(&ctx) > BUDGET, "what is on screen stays");
+        let mut output = draw(&ctx, &[]);
+        output.textures_delta.clear();
+        assert!(used(&ctx) <= BUDGET, "kept {} bytes", used(&ctx));
+        assert!(used(&ctx) > BUDGET - 8 * 1024 * 1024, "kept too little");
+    }
+
     /// Draws `shown` and then sweeps, the way a frame of the app does.
     fn draw(ctx: &egui::Context, shown: &[String]) -> egui::FullOutput {
         ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -190,6 +558,98 @@ mod tests {
     fn allocated(ctx: &egui::Context) -> usize {
         let manager = ctx.tex_manager();
         manager.read().num_allocated()
+    }
+
+    fn picture(dir: &Path, name: &str, width: u32, height: u32) -> std::path::PathBuf {
+        let path = dir.join(name);
+        image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]))
+            .save(&path)
+            .expect("saved");
+        path
+    }
+
+    #[test]
+    fn a_fitted_picture_is_decoded_no_larger_than_drawn() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = picture(dir.path(), "wide.png", 2000, 1000);
+        let image = decode_fitted(&path, 256).expect("decoded");
+        assert_eq!(image.size, [512, 256], "the shorter edge covers the side");
+        assert_eq!(
+            image.source_size,
+            egui::vec2(2000.0, 1000.0),
+            "layouts still see the photo's own size"
+        );
+        let small = picture(dir.path(), "small.png", 100, 50);
+        let image = decode_fitted(&small, 256).expect("decoded");
+        assert_eq!(image.size, [100, 50], "a small picture is never enlarged");
+    }
+
+    #[test]
+    fn a_picture_is_fitted_to_the_next_side_up_and_an_animation_is_not() {
+        let ctx = egui::Context::default();
+        let path = Path::new("/tmp/photo.JPG");
+        let file = crate::util::image_uri(path);
+        assert_eq!(
+            fit_uri(&ctx, path, egui::vec2(200.0, 120.0)),
+            format!("fit://256/{file}")
+        );
+        assert_eq!(
+            fit_uri(&ctx, path, egui::vec2(5000.0, 120.0)),
+            format!("fit://1536/{file}"),
+            "huge sizes stop at the largest side"
+        );
+        let gif = Path::new("/tmp/moving.gif");
+        assert_eq!(
+            fit_uri(&ctx, gif, egui::vec2(200.0, 120.0)),
+            crate::util::image_uri(gif)
+        );
+        assert_eq!(
+            parse_fit(&format!("fit://256/{file}")),
+            Some((256, file.as_str()))
+        );
+    }
+
+    #[test]
+    fn forgetting_a_file_forgets_the_pictures_fitted_from_it() {
+        let ctx = egui::Context::default();
+        let path = Path::new("/tmp/avatar.jpg");
+        let small = fit_uri(&ctx, path, egui::vec2(40.0, 40.0));
+        let large = fit_uri(&ctx, path, egui::vec2(400.0, 400.0));
+        let other = fit_uri(&ctx, Path::new("/tmp/other.jpg"), egui::vec2(40.0, 40.0));
+        forget(&ctx, &crate::util::image_uri(path));
+        let registry = registry(&ctx);
+        let entries = registry.0.lock().unwrap();
+        assert!(!entries.contains_key(&small) && !entries.contains_key(&large));
+        assert!(entries.contains_key(&other));
+    }
+
+    #[test]
+    fn a_fitted_picture_loads_off_the_interface_thread() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = picture(dir.path(), "photo.png", 1200, 900);
+        let ctx = context();
+        install(&ctx);
+        let uri = fit_uri(&ctx, &path, egui::vec2(100.0, 100.0));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let texture = loop {
+            match ctx.try_load_texture(
+                &uri,
+                egui::TextureOptions::LINEAR,
+                egui::load::SizeHint::default(),
+            ) {
+                Ok(egui::load::TexturePoll::Ready { texture }) => break texture,
+                Ok(egui::load::TexturePoll::Pending { .. }) => {
+                    assert!(std::time::Instant::now() < deadline, "never decoded");
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        assert_eq!(texture.size, egui::vec2(1200.0, 900.0));
+        let manager = ctx.tex_manager();
+        let manager = manager.read();
+        let meta = manager.meta(texture.id).expect("allocated");
+        assert_eq!(meta.size, [171, 128], "decoded at the drawn size");
     }
 
     #[test]

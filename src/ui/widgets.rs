@@ -305,6 +305,13 @@ pub fn file_image(ui: &Ui, path: &Path) -> egui::Image<'static> {
     egui::Image::new(uri)
 }
 
+/// An image for a local picture drawn at about `size` points, decoded no
+/// larger than that rather than at full size. Viewers that zoom use
+/// [`file_image`].
+pub fn fitted_image(ui: &Ui, path: &Path, size: Vec2) -> egui::Image<'static> {
+    egui::Image::new(crate::image_cache::fit_uri(ui.ctx(), path, size))
+}
+
 /// Round profile picture, or id-colored initials when no picture is available.
 pub fn avatar(
     ui: &mut Ui,
@@ -357,7 +364,7 @@ pub fn paint_avatar(
     let size = rect.width();
     let mut painted = false;
     if let Some(picture) = picture {
-        let image = file_image(ui, picture)
+        let image = fitted_image(ui, picture, Vec2::splat(size))
             .fit_to_exact_size(Vec2::splat(size))
             .corner_radius(size / 2.0);
         if let Ok(egui::load::TexturePoll::Ready { .. }) =

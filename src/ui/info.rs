@@ -1137,7 +1137,7 @@ fn thumbnail(
         }
         (_, _, Content::Image { media, .. }) if media.path.is_some() => {
             let path = media.path.as_deref().expect("checked");
-            widgets::file_image(ui, path)
+            widgets::fitted_image(ui, path, rect.size())
         }
         _ => return false,
     };
