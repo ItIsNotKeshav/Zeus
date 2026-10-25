@@ -339,4 +339,9 @@ jobs:
     uses: ./.github/workflows/packaging.yml
     with:
       version: ${{ github.ref_name }}
-    secrets: inherit
+    # Only the publishing secrets, never the whole set: the signing key stays out.
+    secrets:
+      AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+      AUR_KNOWN_HOSTS: ${{ secrets.AUR_KNOWN_HOSTS }}
+      HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+      HOMEBREW_TAP_SSH_KEY: ${{ secrets.HOMEBREW_TAP_SSH_KEY }}
