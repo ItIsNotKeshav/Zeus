@@ -318,6 +318,7 @@ fn run() -> eframe::Result<()> {
     logging
         .init()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    contain_panics();
     // Moving a single-account setup into its account folder needs the
     // keyring; when it cannot finish, the log says why.
     if !demo && let Err(error) = dirs.adopt_single_account() {
@@ -483,6 +484,30 @@ fn run() -> eframe::Result<()> {
         })?;
     drop(instance);
     Ok(())
+}
+
+/// Threads that catch their own panics. Each wraps its work in
+/// `catch_unwind` and turns a panic into an "unsupported file" result, so a
+/// malformed image or video cannot close the app.
+const CONTAINED_THREADS: &[&str] = &["animation-decode", "video-decode"];
+
+/// Keeps release builds' old crash behavior for every thread but the
+/// decoders. The release profile unwinds so their guards work, but a panic
+/// anywhere else (the UI, the backend worker, a tokio task) must still end
+/// the process instead of quietly leaving a dead thread behind. Chains the
+/// panic log hook, so the panic is recorded first.
+fn contain_panics() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        previous(info);
+        if !is_contained(std::thread::current().name()) {
+            std::process::abort();
+        }
+    }));
+}
+
+fn is_contained(thread: Option<&str>) -> bool {
+    thread.is_some_and(|name| CONTAINED_THREADS.contains(&name))
 }
 
 /// Whether eframe stopped because the graphics driver gave it no usable
@@ -1053,6 +1078,27 @@ mod tests {
             ])
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod panic_tests {
+    use super::*;
+
+    #[test]
+    fn only_the_decoder_threads_survive_a_panic() {
+        assert!(is_contained(Some("animation-decode")));
+        assert!(is_contained(Some("video-decode")));
+        assert!(!is_contained(Some("main")));
+        assert!(!is_contained(Some("tokio-runtime-worker")));
+        assert!(!is_contained(None));
+    }
+
+    #[test]
+    fn the_contained_names_match_the_decoder_threads() {
+        // A renamed thread would silently lose its guard.
+        assert!(include_str!("animation.rs").contains(r#".name("animation-decode".into())"#));
+        assert!(include_str!("video.rs").contains(r#".name("video-decode".into())"#));
     }
 }
 

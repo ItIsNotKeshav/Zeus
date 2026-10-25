@@ -325,7 +325,10 @@ demo = []
 lto = "thin"
 codegen-units = 1
 strip = true
-panic = "abort"
+# Unwind so the media decoder threads can catch a decoder panic and report the
+# file as unsupported. Every other panic still ends the process at once; see
+# `contain_panics` in src/main.rs.
+panic = "unwind"
 
 # Optimize dependencies in development for usable decryption and UI layout.
 # Keep the application crate incremental.
