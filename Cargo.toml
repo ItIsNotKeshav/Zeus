@@ -202,13 +202,6 @@ fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" 
 # Self-update from GitHub releases with signed checksums, a helper and rollback.
 fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0", features = ["reqwest"] }
 
-# fastframe-emoji v0.14.0 with a bound on its picture cache: upstream keeps
-# every emoji picture it ever drew on the GPU for good. See
-# vendor/fastframe-emoji/src/paint.rs, `RESIDENT`. Drop this once fastframe
-# bounds it itself.
-[patch."https://github.com/crmne/fastframe"]
-fastframe-emoji = { path = "vendor/fastframe-emoji" }
-
 [patch.crates-io]
 # crmne/egui apps-0.36.2, shared with Spotifast, RekordFlash and TonePush: egui
 # 0.36.2 with right-to-left shaping and glyph clusters from crmne/zapfast#144
