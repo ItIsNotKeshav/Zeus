@@ -488,8 +488,9 @@ fn run() -> eframe::Result<()> {
 
 /// Threads that catch their own panics. Each wraps its work in
 /// `catch_unwind` and turns a panic into an "unsupported file" result, so a
-/// malformed image or video cannot close the app.
-const CONTAINED_THREADS: &[&str] = &["animation-decode", "video-decode"];
+/// malformed image or video cannot close the app. `video-sound` reads a
+/// video's sound track header off the UI thread (the mp4 hang fix).
+const CONTAINED_THREADS: &[&str] = &["animation-decode", "video-decode", "video-sound"];
 
 /// Keeps release builds' old crash behavior for every thread but the
 /// decoders. The release profile unwinds so their guards work, but a panic
@@ -1089,6 +1090,7 @@ mod panic_tests {
     fn only_the_decoder_threads_survive_a_panic() {
         assert!(is_contained(Some("animation-decode")));
         assert!(is_contained(Some("video-decode")));
+        assert!(is_contained(Some("video-sound")));
         assert!(!is_contained(Some("main")));
         assert!(!is_contained(Some("tokio-runtime-worker")));
         assert!(!is_contained(None));
