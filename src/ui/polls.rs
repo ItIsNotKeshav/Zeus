@@ -206,8 +206,10 @@ pub fn ballot(
                     (width - 58.0).max(50.0),
                     3,
                 );
+                // The ink of a short answer sits below the line box the row used
+                // to size itself from, and a click on the word missed the row.
                 let (rect, response) = ui.allocate_exact_size(
-                    vec2(width, label.size().y.max(18.0) + 34.0),
+                    vec2(width, label.size().y.max(18.0) + 50.0),
                     if enabled && state.can_vote && !pending {
                         Sense::click()
                     } else {

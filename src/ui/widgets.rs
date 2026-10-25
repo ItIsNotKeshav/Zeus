@@ -2658,6 +2658,9 @@ mod tests {
         );
 
         let ctx = egui::Context::default();
+        // Medium text uses the named inter-medium family, which exists only
+        // after the interface fonts are installed.
+        crate::theme::install(&ctx);
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             chip(ui, &light, "Thursday, 15 October 2026");
         });

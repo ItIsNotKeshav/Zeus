@@ -8010,14 +8010,26 @@ fn context_menu(
     if has_message_info(message) {
         widgets::menu_separator(ui, &palette);
     }
-    if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), "Delete for everyone") {
+    if can_revoke
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Trash),
+            &crate::i18n::gettext(view.locale, "Delete for everyone"),
+        )
+    {
         actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
             chat: view.chat.id.clone(),
             message: message.id.clone(),
             for_everyone: true,
         }));
     }
-    if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), "Delete for me") {
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::EyeOff),
+        &crate::i18n::gettext(view.locale, "Delete for me"),
+    ) {
         actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
             chat: view.chat.id.clone(),
             message: message.id.clone(),

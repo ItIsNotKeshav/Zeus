@@ -59,7 +59,9 @@ pub fn cameras() -> Vec<(String, String)> {
 }
 
 /// Whether the camera may be used for a placed video call. Refusal is not a
-/// hardware failure: the call simply does not start.
+/// hardware failure: the call simply does not start. Only the macOS permission
+/// ask calls this. Tests keep the ask linked on the other platforms.
+#[cfg(any(test, target_os = "macos"))]
 pub(crate) fn camera_allowed() -> bool {
     backend::authorize().is_ok()
 }

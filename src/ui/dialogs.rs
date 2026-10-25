@@ -393,7 +393,11 @@ fn unlock_locked_chats(app: &mut App, ui: &mut egui::Ui) {
         .hint(local_code_hint.as_ref())
         .width(f32::INFINITY)
         .show(ui, &app.palette);
-    if ui.memory(|memory| memory.focused().is_none()) {
+    // Once, when the dialog opens. Doing it whenever nothing is focused
+    // takes Tab back from Confirm in the same frame it was handed over.
+    let primed = ui.id().with("locked-code-primed");
+    if !ui.data(|data| data.get_temp::<bool>(primed).unwrap_or(false)) {
+        ui.data_mut(|data| data.insert_temp(primed, true));
         entry.request_focus();
     }
     if setup {
@@ -608,14 +612,25 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     // Lay out the real footer first, upwards from the bottom. Wrapped notes
     // and translated buttons then leave exactly their measured room for the
     // list, rather than relying on a guessed header/footer height.
+    // The search, its heading and a sliver of the recipient list stay above
+    // that note: a long translation in a short window used to eat the list.
+    let available = ui.available_rect_before_wrap();
+    let keep_above = 34.0 + 8.0 + 20.0 + 6.0 + 8.0 + 16.0 + 12.0;
+    let footer_top = (available.top() + keep_above).min(available.bottom());
     let mut footer = ui.new_child(
         egui::UiBuilder::new()
             .id_salt("forward-footer")
-            .max_rect(ui.available_rect_before_wrap())
+            .max_rect(Rect::from_min_max(
+                pos2(available.left(), footer_top),
+                available.max,
+            ))
             .layout(Layout::bottom_up(Align::Min)),
     );
     forward_footer(app, &mut footer);
-    let footer_rect = footer.min_rect();
+    let mut footer_rect = footer.min_rect();
+    // The note can lay out taller than the footer area. Keep the list's
+    // reserved band; the stored footer starts where that band ends.
+    footer_rect.set_top(footer_rect.top().max(footer_top));
     #[cfg(any(test, feature = "demo"))]
     ui.ctx().data_mut(|data| {
         data.insert_temp(egui::Id::new(("forward-layout", "footer")), footer_rect)

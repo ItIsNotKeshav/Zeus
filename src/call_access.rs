@@ -7,6 +7,9 @@ use std::sync::mpsc;
 
 use crate::backend::Waker;
 
+/// Used by the macOS ask, and by the tests. Other platforms grant the call
+/// without reading a permission.
+#[cfg(any(test, target_os = "macos"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Status {
     Granted,
@@ -15,11 +18,13 @@ pub(crate) enum Status {
 }
 
 /// Voice needs the microphone. Video needs the microphone and the camera.
+#[cfg(any(test, target_os = "macos"))]
 pub(crate) fn allowed(video: bool, mic: Status, camera: Status) -> bool {
     mic == Status::Granted && (!video || camera == Status::Granted)
 }
 
 /// A required permission is already refused, so asking further cannot help.
+#[cfg(any(test, target_os = "macos"))]
 pub(crate) fn blocked(video: bool, mic: Status, camera: Status) -> bool {
     mic == Status::Denied || (video && camera == Status::Denied)
 }
@@ -28,15 +33,17 @@ pub(crate) enum Begin {
     /// Every needed permission is already granted: place in this turn.
     Ready,
     /// A needed permission is refused, or the ask could not run: place nothing.
+    #[cfg(any(test, target_os = "macos"))]
     Stop,
     /// A background thread is asking; poll the receiver from the frame loop.
+    #[cfg(any(test, target_os = "macos"))]
     Wait(mpsc::Receiver<bool>),
 }
 
 pub(crate) fn begin(video: bool, waker: &Waker) -> Begin {
     #[cfg(test)]
     {
-        return test_gate::begin(video, waker);
+        test_gate::begin(video, waker)
     }
     #[cfg(not(test))]
     {
@@ -49,7 +56,7 @@ fn begin_os(video: bool, waker: &Waker) -> Begin {
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (video, waker);
-        return Begin::Ready;
+        Begin::Ready
     }
     #[cfg(target_os = "macos")]
     {
@@ -60,31 +67,32 @@ fn begin_os(video: bool, waker: &Waker) -> Begin {
             Status::Granted
         };
         if allowed(video, mic, camera) {
-            return Begin::Ready;
-        }
-        if blocked(video, mic, camera) {
-            return Begin::Stop;
-        }
-        let waker = waker.clone();
-        let (sender, receiver) = mpsc::channel();
-        let spawned = std::thread::Builder::new()
-            .name("call-permission".into())
-            .spawn(move || {
-                let granted = request(video);
-                let _ = sender.send(granted);
-                waker.wake();
-            });
-        match spawned {
-            Ok(_) => Begin::Wait(receiver),
-            Err(error) => {
-                log::warn!("[CALL] call permission could not be asked: {error}");
-                Begin::Stop
+            Begin::Ready
+        } else if blocked(video, mic, camera) {
+            Begin::Stop
+        } else {
+            let waker = waker.clone();
+            let (sender, receiver) = mpsc::channel();
+            let spawned = std::thread::Builder::new()
+                .name("call-permission".into())
+                .spawn(move || {
+                    let granted = request(video);
+                    let _ = sender.send(granted);
+                    waker.wake();
+                });
+            match spawned {
+                Ok(_) => Begin::Wait(receiver),
+                Err(error) => {
+                    log::warn!("[CALL] call permission could not be asked: {error}");
+                    Begin::Stop
+                }
             }
         }
     }
 }
 
 /// Asks the OS for every permission this call needs and waits for the answers.
+#[cfg(any(test, target_os = "macos"))]
 fn request(video: bool) -> bool {
     if !ensure_microphone() {
         return false;
@@ -95,6 +103,7 @@ fn request(video: bool) -> bool {
     true
 }
 
+#[cfg(any(test, target_os = "macos"))]
 fn ensure_microphone() -> bool {
     #[cfg(target_os = "macos")]
     {
@@ -167,10 +176,7 @@ mod macos {
                 unsafe {
                     AVCaptureDevice::requestAccessForMediaType_completionHandler(media, &handler);
                 }
-                match receiver.recv_timeout(PERMISSION_WAIT) {
-                    Ok(true) => true,
-                    _ => false,
-                }
+                matches!(receiver.recv_timeout(PERMISSION_WAIT), Ok(true))
             }
         }
     }

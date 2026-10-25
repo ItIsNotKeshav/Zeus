@@ -21890,9 +21890,10 @@ mod tests {
                 .collect()
         };
         assert_eq!(names(&app), ["Ada", "Bob"]);
-        // A newer message in another chat moves it back down.
+        // Parked drafts are their own group under the pins, so a newer
+        // message in another chat stays below the draft.
         app.chats[1].last_activity = 40;
-        assert_eq!(names(&app), ["Bob", "Ada"]);
+        assert_eq!(names(&app), ["Ada", "Bob"]);
         // Clearing the draft returns the chat to its normal place.
         app.chats[1].last_activity = 20;
         app.drafts.clear();

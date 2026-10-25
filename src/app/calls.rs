@@ -454,7 +454,9 @@ impl App {
         }
         match crate::call_access::begin(video, &self.waker) {
             crate::call_access::Begin::Ready => self.place_after_access(account, video, kind),
+            #[cfg(any(test, target_os = "macos"))]
             crate::call_access::Begin::Stop => {}
+            #[cfg(any(test, target_os = "macos"))]
             crate::call_access::Begin::Wait(rx) => {
                 self.call_access = Some(PendingCallAccess {
                     account,
