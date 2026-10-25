@@ -295,6 +295,11 @@ protocol. These notes are for coding agents and new contributors.
   thread and are dropped when unseen. A paused animation decodes only its
   first frame, the poster, and the rest once it plays: full decodes of a
   picker's paused stickers overran the frame budget and evicted each other.
+  Two decoders run at once; one still running after 10 s gives up its slot.
+- Every MP4 header goes through `mp4_guard::read_header`, never
+  `mp4::Mp4Reader::read_header` directly: `mp4` 0.14 loops forever on a
+  nested box of size 0 or smaller than its header, and the guard walks the
+  box tree first and refuses those.
 - `src/video.rs` plays other videos inside their message, one at a time,
   with the same `mp4` and `openh264` pieces: a thread decodes from the
   keyframe before the start (openh264 must not flush after each packet or
@@ -302,7 +307,8 @@ protocol. These notes are for coding agents and new contributors.
   interface thread shows the due frame in one texture. `mp4` reads the AAC
   track too, symphonia's AAC decoder decodes it, and a rodio player on the
   shared output plays it; its
-  position steers the clock. rodio's own MP4 reader (symphonia 0.5's isomp4)
+  position steers the clock. The sound track opens on its own thread
+  (`spawn_sound`), never on the interface thread. rodio's own MP4 reader (symphonia 0.5's isomp4)
   is not used for it: it refuses WhatsApp's videos, whose `esds` carries a
   custom SLConfigDescriptor (#265). Unsupported formats
   go to the system player. Playback reads a downloaded local file; the 64 MiB

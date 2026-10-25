@@ -38,6 +38,9 @@ const TICK: Duration = Duration::from_millis(40);
 /// sound is opened again, doubling up to the longest with each failure.
 const SOUND_RETRY: Duration = Duration::from_secs(1);
 const SOUND_RETRY_LONGEST: Duration = Duration::from_secs(30);
+/// How far the video may have moved on while its sound track opened for
+/// the sound to skip ahead rather than open again from there.
+const SOUND_LATE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum State {
@@ -269,10 +272,9 @@ fn queue_sound(sink: &rodio::Player, track: AacTrack, speed: f32) {
 }
 
 impl Sound {
-    /// Opens the file's sound, paused at `from`. A video without a sound
-    /// track, or a computer without an output device, plays silently.
-    fn open(path: &Path, from: Duration, muted: bool, speed: f32) -> Option<Self> {
-        let decoder = sound_decoder(path, from)?;
+    /// Plays `track` from `from`, paused. A computer without an output
+    /// device plays silently.
+    fn open(track: AacTrack, from: Duration, muted: bool, speed: f32) -> Option<Self> {
         let device = match crate::audio::open_output(None) {
             Ok(device) => device,
             Err(error) => {
@@ -280,29 +282,27 @@ impl Sound {
                 return None;
             }
         };
-        let sink = rodio::Player::connect_new(device.mixer());
-        sink.pause();
-        sink.set_volume(if muted { 0.0 } else { 1.0 });
-        queue_sound(&sink, decoder, speed);
-        Some(Self {
+        let mut sound = Self {
+            sink: paused_player(&device, muted),
             device,
-            sink,
             base: from,
             factor: speed.max(1.0),
-        })
+        };
+        sound.queue(track, from, muted, speed);
+        Some(sound)
     }
 
-    /// Queues the sound again from `from` at `speed`, paused. A fresh player
-    /// keeps the seek off the audio thread, which `Player::try_seek` would
-    /// wait for.
-    fn restart(&mut self, path: &Path, from: Duration, muted: bool, speed: f32) {
-        let sink = rodio::Player::connect_new(self.device.mixer());
-        sink.pause();
-        sink.set_volume(if muted { 0.0 } else { 1.0 });
-        if let Some(decoder) = sound_decoder(path, from) {
-            queue_sound(&sink, decoder, speed);
-        }
-        self.sink = sink;
+    /// Stops the sound until `queue` hands it the track from another place.
+    /// A fresh player keeps the seek off the audio thread, which
+    /// `Player::try_seek` would wait for.
+    fn clear(&mut self, muted: bool) {
+        self.sink = paused_player(&self.device, muted);
+    }
+
+    /// Queues `track`, opened at `from`, at `speed`, paused.
+    fn queue(&mut self, track: AacTrack, from: Duration, muted: bool, speed: f32) {
+        self.clear(muted);
+        queue_sound(&self.sink, track, speed);
         self.base = from;
         self.factor = speed.max(1.0);
     }
@@ -311,6 +311,35 @@ impl Sound {
     fn position(&self) -> Option<Duration> {
         (!self.sink.empty()).then(|| sound_position(self.base, self.sink.get_pos(), self.factor))
     }
+}
+
+fn paused_player(device: &crate::audio::Output, muted: bool) -> rodio::Player {
+    let sink = rodio::Player::connect_new(device.mixer());
+    sink.pause();
+    sink.set_volume(if muted { 0.0 } else { 1.0 });
+    sink
+}
+
+/// Opens `path`'s sound track from `from` on its own thread: reading the
+/// MP4 header can take a while, and the interface must not wait for it.
+/// The track, or `None` for a video without sound, arrives on the receiver.
+fn spawn_sound(path: &Path, from: Duration, waker: Waker) -> Receiver<Option<AacTrack>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    let path = path.to_owned();
+    let spawned = std::thread::Builder::new()
+        .name("video-sound".into())
+        .spawn(move || {
+            let track = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sound_decoder(&path, from)
+            }))
+            .unwrap_or(None);
+            let _ = sender.send(track);
+            waker.wake();
+        });
+    if let Err(error) = spawned {
+        log::warn!("could not open the video's sound: {error}");
+    }
+    receiver
 }
 
 /// The video time reached after `played` of sound queued from `base` at
@@ -361,8 +390,7 @@ impl AacTrack {
 
         let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
         let size = file.metadata().map_err(|error| error.to_string())?.len();
-        let mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size)
-            .map_err(|error| error.to_string())?;
+        let mp4 = crate::mp4_guard::read_header(std::io::BufReader::new(file), size)?;
         let track = mp4
             .tracks()
             .values()
@@ -441,6 +469,12 @@ impl AacTrack {
         let channels = sound.channels.get();
         sound.skip = early_frames as usize * usize::from(channels);
         Ok(sound)
+    }
+
+    /// Drops the first `time` of sound, for a track that opened late.
+    fn skip_ahead(&mut self, time: Duration) {
+        let frames = (time.as_secs_f64() * f64::from(self.rate.get())) as usize;
+        self.skip += frames * usize::from(self.channels.get());
     }
 
     /// Decodes the next packet into `pending`, skipping packets that do not
@@ -539,7 +573,7 @@ impl rodio::Source for AacTrack {
 fn sound_codec(path: &Path) -> Option<String> {
     let file = std::fs::File::open(path).ok()?;
     let size = file.metadata().ok()?.len();
-    let mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size).ok()?;
+    let mp4 = crate::mp4_guard::read_header(std::io::BufReader::new(file), size).ok()?;
     let track = mp4
         .tracks()
         .values()
@@ -566,6 +600,8 @@ struct Session {
     texture: Option<TextureHandle>,
     clock: Clock,
     sound: Option<Sound>,
+    /// The sound track opening on its own thread, and where it starts.
+    sound_load: Option<(Duration, Receiver<Option<AacTrack>>)>,
     /// When to open the sound again after its output failed (#507), and how
     /// long the wait after the next failure will be.
     sound_retry: Option<(Instant, Duration)>,
@@ -616,7 +652,7 @@ impl Session {
     /// Drops a sound whose output keeps failing (#507), and opens it again at
     /// the clock's position after a wait that doubles with each failure, so
     /// the video plays on silently in between.
-    fn recover_sound(&mut self, now: Instant, muted: bool, speed: f32) {
+    fn recover_sound(&mut self, now: Instant, waker: &Waker) {
         if self
             .sound
             .as_ref()
@@ -628,14 +664,68 @@ impl Session {
         let Some((at, _)) = self.sound_retry else {
             return;
         };
-        if self.sound.is_some() || now < at {
+        if self.sound.is_some() || self.sound_load.is_some() || now < at {
             return;
         }
-        self.sound = Sound::open(&self.path, self.clock.position(now), muted, speed);
-        match &self.sound {
-            Some(sound) if self.state == State::Playing => sound.sink.play(),
-            Some(_) => {}
-            None => self.retry_sound(now),
+        self.load_sound(self.clock.position(now), waker);
+    }
+
+    /// Opens the sound track again from `to`, silencing what plays until it
+    /// arrives.
+    fn load_sound(&mut self, to: Duration, waker: &Waker) {
+        self.sound_load = Some((to, spawn_sound(&self.path, to, waker.clone())));
+    }
+
+    /// Opens the sound track again from `to` if the video has one.
+    fn reload_sound(&mut self, to: Duration, muted: bool, waker: &Waker) {
+        if let Some(sound) = &mut self.sound {
+            sound.clear(muted);
+        }
+        if self.sound.is_some() || self.sound_load.is_some() {
+            self.load_sound(to, waker);
+        }
+    }
+
+    /// Plays the sound track once its thread has opened it. One that took
+    /// so long that the video moved on skips ahead to where it is, or opens
+    /// again from there when that is far.
+    fn take_sound(&mut self, now: Instant, muted: bool, speed: f32, waker: &Waker) {
+        let Some((from, receiver)) = &self.sound_load else {
+            return;
+        };
+        let from = *from;
+        let track = match receiver.try_recv() {
+            Ok(track) => track,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => None,
+        };
+        self.sound_load = None;
+        let Some(mut track) = track else {
+            // No sound to open again after a lost output, either.
+            if self.sound_retry.is_some() {
+                self.retry_sound(now);
+            }
+            return;
+        };
+        let position = self.clock.position(now);
+        if position < from || position - from > SOUND_LATE {
+            self.load_sound(position, waker);
+            return;
+        }
+        track.skip_ahead(position - from);
+        match &mut self.sound {
+            Some(sound) => sound.queue(track, position, muted, speed),
+            None => {
+                self.sound = Sound::open(track, position, muted, speed);
+                if self.sound.is_none() && self.sound_retry.is_some() {
+                    self.retry_sound(now);
+                }
+            }
+        }
+        if self.state == State::Playing
+            && let Some(sound) = &self.sound
+        {
+            sound.sink.play();
         }
     }
 
@@ -710,12 +800,7 @@ impl Player {
         let now = Instant::now();
         session.clock.set_speed(speed, now);
         let position = session.clock.position(now);
-        if let Some(sound) = &mut session.sound {
-            sound.restart(&session.path, position, muted, speed);
-            if session.state == State::Playing {
-                sound.sink.play();
-            }
-        }
+        session.reload_sound(position, muted, &self.waker);
     }
 
     /// Plays videos without opening the sound device.
@@ -779,10 +864,7 @@ impl Player {
         session.side = side;
         session.resize = None;
         session.frames = spawn_decoder(&session.path, to, side, self.waker.clone());
-        let speed = self.speed;
-        if let Some(sound) = &mut session.sound {
-            sound.restart(&session.path, to, muted, speed);
-        }
+        session.reload_sound(to, muted, &self.waker);
     }
 
     /// Decodes larger frames while the video covers the window, and the
@@ -917,10 +999,10 @@ impl Player {
             decoded: false,
             texture: None,
             clock,
-            sound: self
+            sound: None,
+            sound_load: self
                 .audible
-                .then(|| Sound::open(path, from, self.muted, self.speed))
-                .flatten(),
+                .then(|| (from, spawn_sound(path, from, self.waker.clone()))),
             sound_retry: None,
             total: Duration::ZERO,
             side: self.side,
@@ -977,6 +1059,7 @@ impl Player {
                 Err(TryRecvError::Empty) => break,
             }
         }
+        session.take_sound(now, self.muted, self.speed, &self.waker);
         if session.state == State::Loading {
             if let Some((_, image)) = session.queue.pop_front() {
                 session.show(ctx, image);
@@ -993,7 +1076,7 @@ impl Player {
                 return None;
             }
         }
-        session.recover_sound(now, self.muted, self.speed);
+        session.recover_sound(now, &self.waker);
         if session.state != State::Playing {
             return None;
         }
@@ -1195,7 +1278,7 @@ fn decode(
 ) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
     let size = file.metadata().map_err(|error| error.to_string())?.len();
-    let mut mp4 = mp4::Mp4Reader::read_header(std::io::BufReader::new(file), size)
+    let mut mp4 = crate::mp4_guard::read_header(std::io::BufReader::new(file), size)
         .map_err(|error| format!("not a readable MP4: {error}"))?;
     let (track_id, count, timeline, sps, pps, turns) = {
         let track = mp4

@@ -36,6 +36,7 @@ pub mod media_pause;
 pub mod mentions;
 pub mod model;
 pub mod motion;
+pub mod mp4_guard;
 pub mod nav;
 pub mod notify;
 pub mod opener;
