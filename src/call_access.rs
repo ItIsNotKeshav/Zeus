@@ -3,6 +3,7 @@
 //! decides when to ask, when to wait off the interface thread, and when a
 //! refusal means the call must not start at all.
 
+#[cfg(any(test, target_os = "macos"))]
 use std::sync::mpsc;
 
 use crate::backend::Waker;
