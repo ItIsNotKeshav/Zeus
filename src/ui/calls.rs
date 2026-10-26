@@ -243,10 +243,10 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
         .collect();
     let mut actions = Vec::new();
     super::chats::under_header(ui, |ui, inset| {
-        egui::ScrollArea::vertical()
+        super::chats::scroll_area(ui, inset)
             .id_salt("call-history")
-            .auto_shrink([false, false])
             .show(ui, |ui| {
+                super::chats::plain_rows(ui);
                 ui.add_space(inset);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if rows.is_empty() {
@@ -526,10 +526,10 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
     };
     let mut actions = Vec::new();
     super::chats::under_header(ui, |ui, inset| {
-        egui::ScrollArea::vertical()
+        super::chats::scroll_area(ui, inset)
             .id_salt("new-call-contacts")
-            .auto_shrink([false, false])
             .show(ui, |ui| {
+                super::chats::plain_rows(ui);
                 ui.add_space(inset);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if !frequent.is_empty() {

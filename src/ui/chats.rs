@@ -67,6 +67,12 @@ pub(crate) const CARD_RADIUS: u8 = 24;
 /// picture and buttons sit on the same line as the list's title.
 pub(crate) const HEADER_DROP: f32 = 12.0;
 
+/// How far below the list's header its frost and veil carry on, easing off.
+const FROST_TAIL: f32 = 36.0;
+/// How far up into the header the frost's ease reaches, so it is all but
+/// full at the header's bottom edge and the lightest blur stays under it.
+const FROST_OVERLAP: f32 = 8.0;
+
 /// The list pane's header and the list under it. On a vibrant window the
 /// header goes on a layer above the list, which scrolls on under it through a
 /// frost that is strongest at the top and eases to sharp towards the bottom,
@@ -100,10 +106,12 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
         header(app, ui);
         let bar = ui.min_rect();
         let reach = Rect::from_x_y_ranges(area.x_range(), top..=bar.bottom());
-        let frosted = reach.with_max_y(reach.bottom() + conversation::HEADER_TAIL);
-        let ease = conversation::HEADER_TAIL + reach.height() * conversation::HEADER_EASE;
+        // Fully frosted down to the filters, so no row under the header can
+        // be read, then easing off over the tail below them.
+        let frosted = reach.with_max_y(reach.bottom() + FROST_TAIL);
+        let ease = FROST_TAIL + FROST_OVERLAP;
         ui.painter()
-            .set(glass, super::glass::shape(frosted, ease, 0.0));
+            .set(glass, super::glass::progressive(frosted, ease));
         ui.painter().set(
             veil,
             conversation::header_veil(
@@ -143,15 +151,60 @@ pub(super) fn under_header<R>(
         .ctx()
         .data(|data| data.get_temp::<f32>(header_inset_id()))
         .unwrap_or(0.0);
-    if inset <= 0.0 {
-        return contents(ui, 0.0);
+    // The scroll bar's handle takes the accent; the rows put the plain
+    // colours back (see [`scroll_area`]).
+    let accent = ui.visuals().selection.stroke.color;
+    let plain = widget_visuals(ui.visuals_mut()).map(|widget| {
+        let color = widget.fg_stroke.color;
+        widget.fg_stroke.color = accent;
+        color
+    });
+    let inner = if inset <= 0.0 {
+        contents(ui, 0.0)
+    } else {
+        let mut rect = ui.available_rect_before_wrap();
+        rect.min.y -= inset;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            contents(ui, inset)
+        })
+        .inner
+    };
+    for (widget, color) in widget_visuals(ui.visuals_mut()).into_iter().zip(plain) {
+        widget.fg_stroke.color = color;
     }
-    let mut rect = ui.available_rect_before_wrap();
-    rect.min.y -= inset;
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        contents(ui, inset)
-    })
-    .inner
+    inner
+}
+
+/// The widget states egui paints a scroll bar's handle in.
+fn widget_visuals(visuals: &mut egui::Visuals) -> [&mut egui::style::WidgetVisuals; 3] {
+    let widgets = &mut visuals.widgets;
+    [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+    ]
+}
+
+/// A vertical scroll area for a list drawn by [`under_header`]: its bar
+/// runs from the first row down, clear of the header, rather than from the
+/// panel's top.
+pub(super) fn scroll_area(ui: &egui::Ui, inset: f32) -> egui::ScrollArea {
+    let rect = ui.available_rect_before_wrap();
+    let top = (rect.top() + inset).min(rect.bottom());
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .scroll_bar_rect(Rect::from_x_y_ranges(rect.x_range(), top..=rect.bottom()))
+}
+
+/// Puts back, inside a list's [`scroll_area`], the colours its accent scroll
+/// bar took, so the rows' own widgets keep the theme's.
+pub(super) fn plain_rows(ui: &mut egui::Ui) {
+    let global = ui.ctx().global_style();
+    let mut plain = global.visuals.clone();
+    let plain = widget_visuals(&mut plain).map(|widget| widget.fg_stroke.color);
+    for (widget, color) in widget_visuals(ui.visuals_mut()).into_iter().zip(plain) {
+        widget.fg_stroke.color = color;
+    }
 }
 
 /// [`egui::ScrollArea::show_rows`] with `inset` points of space above the
@@ -179,6 +232,7 @@ fn show_rows_under(
         let y_max = ui.max_rect().top() + inset + last as f32 * step;
         let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), y_min..=y_max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |rows_ui| {
+            plain_rows(rows_ui);
             rows_ui.skip_ahead_auto_ids(first);
             add_rows(rows_ui, first..last);
         });
@@ -806,28 +860,27 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
     // the actions are collected here and applied once the list is drawn.
     let mut actions = Vec::new();
     under_header(ui, |ui, inset| {
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.add_space(inset);
-                for entry in &app.starred {
-                    if app
-                        .chat(&entry.message.chat)
-                        .is_some_and(|chat| chat.locked)
-                    {
-                        continue;
-                    }
-                    starred_row(
-                        app,
-                        ui,
-                        &palette,
-                        &entry.message,
-                        entry.starred_at,
-                        conversation::Marks { starred: true },
-                        &mut actions,
-                    );
+        scroll_area(ui, inset).show(ui, |ui| {
+            plain_rows(ui);
+            ui.add_space(inset);
+            for entry in &app.starred {
+                if app
+                    .chat(&entry.message.chat)
+                    .is_some_and(|chat| chat.locked)
+                {
+                    continue;
                 }
-            });
+                starred_row(
+                    app,
+                    ui,
+                    &palette,
+                    &entry.message,
+                    entry.starred_at,
+                    conversation::Marks { starred: true },
+                    &mut actions,
+                );
+            }
+        });
     });
     app.actions.append(&mut actions);
 }
@@ -1076,9 +1129,7 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
     ui.spacing_mut().item_spacing.y = 0.0;
     let row_height = theme::ROW_HEIGHT;
     let total = chats.len();
-    let mut scroll_area = egui::ScrollArea::vertical()
-        .id_salt("chat-list")
-        .auto_shrink([false, false]);
+    let mut scroll_area = scroll_area(ui, inset).id_salt("chat-list");
     if to_top && near_top(ui, "chat-list", row_height) {
         scroll_area = scroll_area.vertical_scroll_offset(0.0);
     }
@@ -1247,9 +1298,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
     let chats: Vec<Chat> = chats.into_iter().cloned().collect();
     under_header(ui, |ui, inset| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        let mut scroll_area = egui::ScrollArea::vertical()
-            .id_salt("locked-chats")
-            .auto_shrink([false, false]);
+        let mut scroll_area = scroll_area(ui, inset).id_salt("locked-chats");
         let target_row = app
             .scroll_chat_into_view
             .as_ref()
@@ -1328,10 +1377,10 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.spacing_mut().item_spacing.y = 0.0;
     under_header(ui, |ui, inset| {
-        egui::ScrollArea::vertical()
+        scroll_area(ui, inset)
             .id_salt("search-results")
-            .auto_shrink([false, false])
             .show(ui, |ui| {
+                plain_rows(ui);
                 ui.add_space(inset);
                 if !chats.is_empty() {
                     section(ui, &palette, "Chats");
@@ -2145,8 +2194,8 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
     response
 }
 
-/// Centre of the unread badge on a collapsed avatar. A "99+" badge, the
-/// widest, still ends inside the rail.
+/// Centre of the unread badge on a collapsed avatar. Longer counts widen it
+/// to the left, so it still ends inside the rail.
 fn compact_badge_center(avatar: Rect) -> egui::Pos2 {
     pos2(avatar.right() - 10.0, avatar.top() + 2.0)
 }
@@ -3152,11 +3201,12 @@ mod tests {
         let mut width = 0.0;
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
             let palette = Palette::dark();
-            width = widgets::badge(ui, &palette, compact_badge_center(avatar), 120, true);
+            width = widgets::badge(ui, &palette, compact_badge_center(avatar), 12_345, true);
         });
         output.textures_delta.clear();
         let center = compact_badge_center(avatar);
-        assert!(center.x + width / 2.0 <= rail.right(), "{width} too wide");
+        assert!(width > 20.0, "a long count widens the badge");
+        assert!(center.x + 10.0 <= rail.right(), "{width} too wide");
         assert!(center.y - 10.0 >= rail.top(), "the badge fits its cell");
     }
 }
