@@ -2452,6 +2452,9 @@ pub struct Toast {
     pub created: Instant,
     /// What its Undo button does; empty when it has none.
     pub undo: Vec<Action>,
+    /// A button that offers a way on, as an error's Show in Finder: its
+    /// label, to translate, and what it does.
+    pub offer: Option<(&'static str, Action)>,
 }
 
 impl Toast {

@@ -25,9 +25,6 @@ const CHEVRON: f32 = 34.0;
 const OPTION_HEIGHT: f32 = 34.0;
 /// The tallest an open list grows before it scrolls.
 const LIST_HEIGHT: f32 = 320.0;
-/// How long a control takes to ease between its states.
-const EASE: f32 = 0.14;
-
 /// The capsule behind a control, one step stronger when `lift` is raised.
 fn paint_field(ui: &Ui, palette: &Palette, rect: Rect, lift: f32) {
     let fill = palette.tint(theme::TINT_FIELD + theme::TINT_HOVER * lift);
@@ -65,8 +62,8 @@ pub fn dropdown(
     let lift = ui.ctx().animate_bool_with_time_and_easing(
         id.with("lift"),
         open || (enabled && response.hovered()),
-        EASE,
-        egui::emath::easing::quadratic_out,
+        theme::MOTION_QUICK,
+        theme::ease_out,
     );
     if ui.is_rect_visible(rect) {
         paint_field(ui, palette, rect, lift);
@@ -131,8 +128,8 @@ pub fn option(ui: &mut Ui, palette: &Palette, text: &str, selected: bool) -> boo
         let lift = ui.ctx().animate_bool_with_time_and_easing(
             response.id.with("lift"),
             response.hovered(),
-            0.1,
-            egui::emath::easing::quadratic_out,
+            theme::MOTION_QUICK,
+            theme::ease_out,
         );
         let strength = if selected {
             theme::TINT_SELECTED
@@ -231,8 +228,8 @@ impl<'a> Field<'a> {
         let lift = ui.ctx().animate_bool_with_time_and_easing(
             id.with("lift"),
             focused || (enabled && ui.rect_contains_pointer(rect)),
-            EASE,
-            egui::emath::easing::quadratic_out,
+            theme::MOTION_QUICK,
+            theme::ease_out,
         );
         paint_field(ui, palette, rect, lift);
         let inner = Rect::from_min_max(

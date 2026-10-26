@@ -406,9 +406,9 @@ impl Palette {
     /// it a little; without one, it is the panel's own colour.
     pub fn sidebar(&self) -> Color32 {
         if self.bubbles == BubbleStyle::Nothing && crate::backdrop::active() {
-            translucent(self.panel, if self.dark { 210 } else { 230 })
+            glass_fill(self.panel, if self.dark { 210 } else { 230 })
         } else if self.vibrant() && crate::backdrop::active() {
-            self.panel.gamma_multiply(SIDEBAR_TINT)
+            glass_multiply(self.panel, SIDEBAR_TINT)
         } else {
             self.panel
         }
@@ -442,9 +442,9 @@ impl Palette {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
-            translucent(color, if self.dark { 218 } else { 232 })
+            glass_fill(color, if self.dark { 218 } else { 232 })
         } else {
-            color.gamma_multiply(CHAT_TINT)
+            glass_multiply(color, CHAT_TINT)
         }
     }
 
@@ -457,15 +457,18 @@ impl Palette {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
-            return translucent(color, if self.dark { 184 } else { 210 });
+            return glass_fill(color, if self.dark { 184 } else { 210 });
         }
         // A light veil over dark content reads as fog where a dark one
         // reads as shade, so the light palette's is thinner.
-        color.gamma_multiply(if self.dark {
-            HEADER_TINT
-        } else {
-            LIGHT_HEADER_TINT
-        })
+        glass_multiply(
+            color,
+            if self.dark {
+                HEADER_TINT
+            } else {
+                LIGHT_HEADER_TINT
+            },
+        )
     }
 
     /// A glass pill under a vibrant header's name or buttons: much more of
@@ -475,14 +478,17 @@ impl Palette {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
-            return translucent(color, if self.dark { 224 } else { 238 });
+            return glass_fill(color, if self.dark { 224 } else { 238 });
         }
         // White glass reads as an opaque box well before dark glass does.
-        color.gamma_multiply(if self.dark {
-            PILL_TINT
-        } else {
-            LIGHT_PILL_TINT
-        })
+        glass_multiply(
+            color,
+            if self.dark {
+                PILL_TINT
+            } else {
+                LIGHT_PILL_TINT
+            },
+        )
     }
 
     /// A see-through tint of the text colour, for surfaces over a vibrant
@@ -514,7 +520,7 @@ impl Palette {
         }
         // White glass reads as an opaque box well before dark glass does,
         // so the light palettes keep more of their fill.
-        translucent(color, if self.dark { 176 } else { 200 })
+        glass_fill(color, if self.dark { 176 } else { 200 })
     }
 
     /// The faint edge around glass.
@@ -720,11 +726,39 @@ impl fastframe_theme::Palette for Palette {
     }
 }
 
+// Motion. Everything that moves takes one of three times and eases out on
+// one curve, so the interface keeps a single pace. Closing is quicker than
+// opening: a surface leaves the way it came, in `CLOSE` of the time, fading
+// and shrinking to `CLOSE_SCALE`.
+/// Seconds small controls take: hovers, presses, toggles, menus and popups.
+pub const MOTION_QUICK: f32 = 0.14;
+/// Seconds panels, dialogs and cards take, and what moves in the transcript.
+pub const MOTION_PANEL: f32 = 0.22;
+/// Seconds a change to the whole window takes, as a new chat theme.
+pub const MOTION_SCREEN: f32 = 0.35;
+/// The share of its opening time a surface takes to close.
+pub const CLOSE: f32 = 0.7;
+/// How far a closing surface shrinks, about its anchor.
+pub const CLOSE_SCALE: f32 = 0.96;
+
+/// The one easing curve: quick to start, settling softly, no overshoot.
+pub fn ease_out(t: f32) -> f32 {
+    egui::emath::easing::cubic_out(t.clamp(0.0, 1.0))
+}
+
+/// `ctx.animate_bool_with_time_and_easing` on [`ease_out`], at once while a
+/// screen reader is attached (see [`crate::motion`]).
+pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32 {
+    let seconds = if crate::motion::screen_reader_attached(ctx) {
+        0.0
+    } else {
+        seconds
+    };
+    ctx.animate_bool_with_time_and_easing(id, on, seconds, ease_out)
+}
+
 /// How strong the tint of a field over a vibrant window is, and of a row
 /// under the pointer and a selected one.
-/// Seconds a popup menu takes to open: the dropdown's ease.
-pub const POPUP_OPEN: f32 = 0.14;
-
 pub const TINT_FIELD: f32 = 0.08;
 pub const TINT_HOVER: f32 = 0.06;
 pub const TINT_SELECTED: f32 = 0.12;
@@ -787,9 +821,17 @@ fn denser(color: Color32, factor: f32) -> Color32 {
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
 }
 
-fn translucent(color: Color32, alpha: u8) -> Color32 {
+/// `color` at `alpha`, the opacity it has at Settings' default Glass,
+/// as Glass has it now: thinner towards Clear, opaque at Solid.
+fn glass_fill(color: Color32, alpha: u8) -> Color32 {
     let [r, g, b, _] = color.to_srgba_unmultiplied();
-    Color32::from_rgba_unmultiplied(r, g, b, alpha)
+    let alpha = crate::backdrop::tinted(f32::from(alpha) / 255.0);
+    Color32::from_rgba_unmultiplied(r, g, b, (alpha * 255.0).round() as u8)
+}
+
+/// `color.gamma_multiply(factor)` for glass, as [`glass_fill`] tints it.
+fn glass_multiply(color: Color32, factor: f32) -> Color32 {
+    color.gamma_multiply(crate::backdrop::tinted(factor))
 }
 
 /// Converts HSL to color bytes for non-egui drawing.
@@ -974,7 +1016,7 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     };
     style.interaction.selectable_labels = false;
     style.interaction.tooltip_delay = 0.4;
-    style.animation_time = 0.12;
+    style.animation_time = MOTION_QUICK;
     style.url_in_tooltip = false;
     ctx.set_global_style(style);
 }

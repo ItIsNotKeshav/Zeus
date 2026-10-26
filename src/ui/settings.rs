@@ -254,10 +254,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     let swap = ui.ctx().animate_value_with_time(
                         egui::Id::new("settings-halloween-page"),
                         if app.settings_halloween { 1.0 } else { 0.0 },
-                        0.2,
+                        theme::MOTION_PANEL,
                     );
                     let halloween = (swap >= 0.5) && !searching;
-                    ui.multiply_opacity(egui::emath::easing::cubic_out(
+                    ui.multiply_opacity(theme::ease_out(
                         ((swap - 0.5).abs() * 2.0).clamp(0.0, 1.0),
                     ));
                     let all = if halloween {
@@ -619,13 +619,13 @@ fn sections(app: &App) -> Vec<Section> {
             );
         }
     }
-    appearance.toggle(
-        translated(locale, "Blur"),
+    appearance.row(
+        translated(locale, "Glass"),
         translated(
             locale,
-            "Frosted glass under the chat header and the message field, and the desktop through the window where the system allows. Off keeps every surface solid.",
+            "How much shows through the frosted chat header, message field and menus, and the desktop through the window where the system allows. Solid keeps every surface opaque, as it is while the system reduces transparency.",
         ),
-        |settings| &mut settings.blur,
+        glass_slider,
     );
     appearance.toggle(
         translated(locale, "Always show time"),
@@ -1806,7 +1806,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
 }
 
 /// Seconds the pill's fill takes to reach a new segment.
-const SLIDE_SECONDS: f64 = 0.22;
+const SLIDE_SECONDS: f64 = theme::MOTION_PANEL as f64;
 
 /// Where the fill is, in segments, `target` being where it is going: it
 /// leaves where it was drawn last and eases out to `target`.
@@ -1816,7 +1816,7 @@ fn slide_position(ui: &egui::Ui, id: egui::Id, target: f32) -> f32 {
         .data(|data| data.get_temp::<(f32, f32, f64)>(id))
         .unwrap_or((target, target, now - SLIDE_SECONDS));
     let progress = (((now - since) / SLIDE_SECONDS) as f32).clamp(0.0, 1.0);
-    let here = from + (to - from) * egui::emath::easing::cubic_out(progress);
+    let here = from + (to - from) * theme::ease_out(progress);
     let (from, to, since) = if to == target {
         (from, to, since)
     } else {
@@ -1829,7 +1829,7 @@ fn slide_position(ui: &egui::Ui, id: egui::Id, target: f32) -> f32 {
     if to == target && progress >= 1.0 {
         target
     } else {
-        from + (to - from) * egui::emath::easing::cubic_out(((now - since) / SLIDE_SECONDS) as f32)
+        from + (to - from) * theme::ease_out(((now - since) / SLIDE_SECONDS) as f32)
     }
 }
 
@@ -2620,8 +2620,8 @@ fn wallpaper_color_button(
         let t = ui.ctx().animate_bool_with_time_and_easing(
             response.id,
             chosen,
-            0.16,
-            egui::emath::easing::quadratic_out,
+            theme::MOTION_QUICK,
+            theme::ease_out,
         );
         let painter = ui.painter_at(rect.expand(6.0));
         painter.rect_filled(rect, radius, fill);
@@ -2730,8 +2730,8 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             let t = ui.ctx().animate_bool_with_time_and_easing(
                 response.id,
                 chosen,
-                0.16,
-                egui::emath::easing::quadratic_out,
+                theme::MOTION_QUICK,
+                theme::ease_out,
             );
             let painter = ui.painter_at(rect.expand(6.0));
             let r = radius as u8;
@@ -3462,6 +3462,40 @@ fn toggle(
         *field(&mut app.settings) = value;
         app.actions.push(Action::SettingsChanged);
     }
+}
+
+/// Settings' Glass, from Clear to Solid. While the system reduces
+/// transparency it shows Solid and cannot be moved.
+fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let reduced = crate::backdrop::system_reduces_transparency();
+    let mut tint = if reduced { 1.0 } else { app.settings.glass };
+    let clear = crate::i18n::gettext(app.locale, "Clear");
+    let solid = crate::i18n::gettext(app.locale, "Solid");
+    ui.add_enabled_ui(!reduced, |ui| {
+        ui.horizontal(|ui| {
+            theme::text(
+                ui,
+                clear.into_owned(),
+                theme::medium(12.5),
+                palette.secondary,
+            );
+            let slider = widgets::glass_slider(ui, &palette, &mut tint, 0.0..=1.0, 150.0);
+            slider.widget_info(|| {
+                egui::WidgetInfo::slider(ui.is_enabled(), f64::from(tint), "Glass")
+            });
+            theme::text(
+                ui,
+                solid.into_owned(),
+                theme::medium(12.5),
+                palette.secondary,
+            );
+            if slider.changed() {
+                app.settings.set_glass(tint);
+                app.actions.push(Action::SettingsChanged);
+            }
+        });
+    });
 }
 
 fn account_toggle(

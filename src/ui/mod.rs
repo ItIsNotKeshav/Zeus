@@ -5,6 +5,7 @@ pub mod call;
 pub mod calls;
 pub(crate) mod carry;
 pub mod chats;
+pub mod closing;
 pub mod controls;
 pub mod conversation;
 pub mod dialogs;
@@ -256,7 +257,7 @@ enum NarrowView {
 }
 
 /// How long a narrow window takes to slide one view in over the other.
-const SLIDE_SECONDS: f64 = 0.22;
+const SLIDE_SECONDS: f64 = theme::MOTION_PANEL as f64;
 
 /// Follows the narrow window's view from frame to frame and returns how far
 /// the slide to it has come (0 to 1, eased) while one is under way. A view
@@ -289,8 +290,7 @@ fn narrow_slide(ctx: &egui::Context, view: Option<NarrowView>) -> Option<f32> {
         return None;
     }
     ctx.request_repaint();
-    // Ease out: quick to start, settling into place.
-    Some(1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3))
+    Some(theme::ease_out(t))
 }
 
 /// A narrow window's view mid-slide, as a stack: an opened chat or page
@@ -716,6 +716,19 @@ pub fn toast_close_id(index: usize) -> egui::Id {
     egui::Id::new(("toast-close", index))
 }
 
+/// The most toasts shown at once: the newest. Older ones wait their turn.
+const SHOWN_TOASTS: usize = 2;
+/// Every toast's width, whatever it says, so a stack reads as one.
+const TOAST_WIDTH: f32 = 360.0;
+/// How far below its place a toast starts as it slides in.
+const TOAST_RISE: f32 = 16.0;
+
+/// How far out an info toast `age` seconds into its `lifetime` is, 0 to 1,
+/// eased: it leaves as it came, sliding down as it fades, quicker.
+fn toast_leaving(age: f32, lifetime: f32) -> f32 {
+    theme::ease_out((lifetime - age) / (theme::MOTION_PANEL * theme::CLOSE))
+}
+
 /// Toasts stack at the bottom left, above the status banner when it shows
 /// (`status`), and above the composer where they would cover it.
 fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::Rect>) {
@@ -725,18 +738,16 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
     let palette = app.palette;
     // Errors and undoable changes carry buttons, so the area must take
     // clicks while one is shown.
-    let has_buttons = app
-        .toasts
-        .iter()
-        .any(|toast| toast.kind == ToastKind::Error || !toast.undo.is_empty());
+    let has_buttons = app.toasts.iter().any(|toast| {
+        toast.kind == ToastKind::Error || !toast.undo.is_empty() || toast.offer.is_some()
+    });
     let mut actions = Vec::new();
     let left = bottom_left(ctx);
     let mut bottom = status.map_or(floor - 12.0, |status| status.top() - 8.0);
     // Stay clear of the composer: an error waiting to be dismissed must not
     // cover the send button. Last frame's width tells whether it reaches.
-    let reach = ctx
-        .memory(|memory| memory.area_rect(egui::Id::new("toasts")))
-        .map_or(360.0, |rect| rect.width());
+    let width = TOAST_WIDTH.min(ctx.content_rect().width() - 2.0 * left.max(12.0));
+    let reach = width;
     if let Some(composer) = ctx.data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
         && composer
             .x_range()
@@ -751,126 +762,167 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
         .interactable(has_buttons)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            for (index, toast) in app.toasts.iter().enumerate() {
+            let skip = app.toasts.len().saturating_sub(SHOWN_TOASTS);
+            for (index, toast) in app.toasts.iter().enumerate().skip(skip) {
                 let error = toast.kind == ToastKind::Error;
-                // Errors appear at once: fading in needs frames that an idle
-                // window does not draw.
-                let alpha = if error {
+                // Errors stay until dismissed, so only info toasts leave.
+                // Slides in from below as it fades in, on the window's clock,
+                // which asks for the frames it takes and no more.
+                let arriving = theme::animate(
+                    ctx,
+                    egui::Id::new(("toast-in", toast.created)),
+                    true,
+                    theme::MOTION_PANEL,
+                );
+                let leaving = if error || crate::motion::screen_reader_attached(ctx) {
                     1.0
                 } else {
-                    let lifetime = toast.lifetime().as_secs_f32();
-                    let age = toast.created.elapsed().as_secs_f32();
-                    if age < 0.15 {
-                        age / 0.15
-                    } else if age > lifetime - 0.4 {
-                        ((lifetime - age) / 0.4).clamp(0.0, 1.0)
-                    } else {
-                        1.0
+                    let left = toast_leaving(
+                        toast.created.elapsed().as_secs_f32(),
+                        toast.lifetime().as_secs_f32(),
+                    );
+                    if left < 1.0 {
+                        ctx.request_repaint();
                     }
+                    left
                 };
-                ui.set_opacity(alpha);
-                Frame::new()
-                    .fill(palette.overlay)
-                    .stroke(Stroke::new(1.0, palette.outline))
-                    .corner_radius(CornerRadius::same(theme::RADIUS))
-                    .inner_margin(Margin::symmetric(14, 10))
-                    .shadow(palette.float_shadow())
-                    .show(ui, |ui| {
-                        // Size to the message up to a readable maximum.
-                        let font = theme::medium(13.5);
-                        let laid = ui.painter().layout(
-                            toast.message.clone(),
-                            font.clone(),
-                            palette.text,
-                            (ctx.content_rect().width() - 150.0).clamp(80.0, 360.0),
-                        );
-                        let undo = crate::i18n::gettext(app.locale, "Undo");
-                        let buttons = if error {
-                            2.0 * 26.0 + 12.0
-                        } else if !toast.undo.is_empty() {
-                            theme::soft_button_width(ui, &undo, true) + 12.0
-                        } else {
-                            0.0
-                        };
-                        let text = widgets::line(
-                            ui,
-                            &toast.message,
-                            font,
-                            palette.text,
-                            laid.size().x + 1.0,
-                            usize::MAX,
-                        );
-                        ui.set_width(laid.size().x + 26.0 + buttons);
-                        ui.horizontal(|ui| {
-                            ui.set_min_height(text.size().y.max(26.0));
-                            let (icon, color) = if error {
-                                (Icon::CircleAlert, palette.danger)
-                            } else {
-                                (Icon::CircleCheck, palette.accent)
-                            };
-                            theme::icon(ui, icon, 16.0, color);
-                            // Keep the text clear of the buttons beside it.
-                            let (rect, _) =
-                                ui.allocate_exact_size(text.size(), egui::Sense::hover());
-                            text.paint(ui, rect.min, palette.text);
-                            ui.ctx().data_mut(|data| {
-                                data.insert_temp(toast_close_id(index).with("text"), rect);
-                            });
-                            if !error && !toast.undo.is_empty() {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if theme::soft_button(
-                                            ui,
-                                            &palette,
-                                            Some(Icon::RotateLeft),
-                                            &undo,
-                                            true,
-                                        )
-                                        .clicked()
-                                        {
-                                            actions.extend(toast.undo.iter().cloned());
-                                            actions.push(Action::DismissToast(index));
-                                        }
-                                    },
-                                );
-                            }
-                            if error {
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        let close = theme::icon_button(
-                                            ui,
-                                            Icon::X,
-                                            14.0,
-                                            palette.secondary,
-                                            palette.text,
-                                            "Dismiss",
-                                        );
-                                        // Store the rect for interaction tests.
+                let shown = arriving.min(leaving);
+                ui.scope(|ui| {
+                    ui.set_opacity(shown);
+                    let rise = (1.0 - shown) * TOAST_RISE;
+                    ui.with_visual_transform(
+                        egui::emath::TSTransform::from_translation(vec2(0.0, rise)),
+                        |ui| {
+                            Frame::new()
+                                .fill(palette.overlay)
+                                .stroke(Stroke::new(1.0, palette.outline))
+                                .corner_radius(CornerRadius::same(theme::RADIUS))
+                                .inner_margin(Margin::symmetric(14, 10))
+                                .shadow(palette.float_shadow())
+                                .show(ui, |ui| {
+                                    // One width for all: the message wraps beside its
+                                    // buttons.
+                                    let font = theme::medium(13.5);
+                                    let inner = width - 28.0;
+                                    let undo = crate::i18n::gettext(app.locale, "Undo");
+                                    let offer = toast
+                                        .offer
+                                        .as_ref()
+                                        .map(|(label, _)| crate::i18n::gettext(app.locale, label));
+                                    let mut buttons = if error { 2.0 * 26.0 + 12.0 } else { 0.0 };
+                                    if !error && !toast.undo.is_empty() {
+                                        buttons += theme::soft_button_width(ui, &undo, true) + 12.0;
+                                    }
+                                    let text = widgets::line(
+                                        ui,
+                                        &toast.message,
+                                        font,
+                                        palette.text,
+                                        (inner - 26.0 - buttons).max(80.0),
+                                        usize::MAX,
+                                    );
+                                    ui.set_width(inner);
+                                    ui.horizontal(|ui| {
+                                        ui.set_min_height(text.size().y.max(26.0));
+                                        let (icon, color) = if error {
+                                            (Icon::CircleAlert, palette.danger)
+                                        } else {
+                                            (Icon::CircleCheck, palette.accent)
+                                        };
+                                        theme::icon(ui, icon, 16.0, color);
+                                        // Keep the text clear of the buttons beside it.
+                                        let (rect, _) = ui
+                                            .allocate_exact_size(text.size(), egui::Sense::hover());
+                                        text.paint(ui, rect.min, palette.text);
                                         ui.ctx().data_mut(|data| {
-                                            data.insert_temp(toast_close_id(index), close.rect)
+                                            data.insert_temp(
+                                                toast_close_id(index).with("text"),
+                                                rect,
+                                            );
                                         });
-                                        if close.clicked() {
-                                            actions.push(Action::DismissToast(index));
+                                        if !error && !toast.undo.is_empty() {
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if theme::soft_button(
+                                                        ui,
+                                                        &palette,
+                                                        Some(Icon::RotateLeft),
+                                                        &undo,
+                                                        true,
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        actions.extend(toast.undo.iter().cloned());
+                                                        actions.push(Action::DismissToast(index));
+                                                    }
+                                                },
+                                            );
                                         }
-                                        if theme::icon_button(
-                                            ui,
-                                            Icon::Copy,
-                                            14.0,
-                                            palette.secondary,
-                                            palette.text,
-                                            "Copy this message",
-                                        )
-                                        .clicked()
-                                        {
-                                            actions.push(Action::CopyText(toast.message.clone()));
+                                        if error {
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    let close = theme::icon_button(
+                                                        ui,
+                                                        Icon::X,
+                                                        14.0,
+                                                        palette.secondary,
+                                                        palette.text,
+                                                        "Dismiss",
+                                                    );
+                                                    // Store the rect for interaction tests.
+                                                    ui.ctx().data_mut(|data| {
+                                                        data.insert_temp(
+                                                            toast_close_id(index),
+                                                            close.rect,
+                                                        )
+                                                    });
+                                                    if close.clicked() {
+                                                        actions.push(Action::DismissToast(index));
+                                                    }
+                                                    if theme::icon_button(
+                                                        ui,
+                                                        Icon::Copy,
+                                                        14.0,
+                                                        palette.secondary,
+                                                        palette.text,
+                                                        "Copy this message",
+                                                    )
+                                                    .clicked()
+                                                    {
+                                                        actions.push(Action::CopyText(
+                                                            toast.message.clone(),
+                                                        ));
+                                                    }
+                                                },
+                                            );
                                         }
-                                    },
-                                );
-                            }
-                        });
-                    });
+                                    });
+                                    // The way on gets a row of its own, so the
+                                    // message keeps the width to read.
+                                    if let (Some(label), Some((_, action))) = (&offer, &toast.offer)
+                                    {
+                                        ui.add_space(4.0);
+                                        ui.allocate_ui_with_layout(
+                                            vec2(ui.available_width(), 28.0),
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                if theme::soft_button(
+                                                    ui, &palette, None, label, true,
+                                                )
+                                                .clicked()
+                                                {
+                                                    actions.push(action.clone());
+                                                    actions.push(Action::DismissToast(index));
+                                                }
+                                            },
+                                        );
+                                    }
+                                });
+                        },
+                    );
+                });
             }
         });
     app.actions.extend(actions);

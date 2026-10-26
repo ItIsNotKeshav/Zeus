@@ -2967,9 +2967,14 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.dialog = Some(Dialog::ConfirmLeaveGroup(channel));
             }
             "toasts" => {
+                app.toast("Contact saved");
                 app.toast("History loaded");
-                app.toast_error(
-                    "Could not open the attachment: No application knows how to open \"Notes on the Engine.pdf\" (error -10814)",
+                app.toast_error_offering(
+                    crate::util::no_app_opens(std::path::Path::new("Notes on the Engine.pdf")),
+                    Some((
+                        crate::util::REVEAL,
+                        crate::model::Action::OpenFolder(std::env::temp_dir()),
+                    )),
                 );
             }
             "delete-chat" => {
@@ -3131,7 +3136,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "uploads" => uploads_sample(app),
             "mode-light" => app.settings.mode = crate::chat_themes::Mode::Light,
             "mode-dark" => app.settings.mode = crate::chat_themes::Mode::Dark,
-            "noblur" => app.settings.blur = false,
+            "noblur" => app.settings.set_glass(1.0),
+            "clearglass" => app.settings.set_glass(0.0),
             "focus-composer" => app.focus_composer = true,
             "doodles-accent" => app.settings.doodle_color = crate::settings::DoodleColor::Accent,
             // The doodles' strength as a percentage, such as doodle-intensity-200.

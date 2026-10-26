@@ -8,20 +8,66 @@
 //! only whether the desktop shows through the window is decided here, once
 //! per frame, and [`active`] tells the rest of the interface.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
-static BLUR: AtomicBool = AtomicBool::new(true);
+/// [`glass`]'s bits.
+static GLASS: AtomicU32 = AtomicU32::new(GLASS_DEFAULT.to_bits());
 
-/// Whether glass is frosted, as Settings' Blur says. Off, the frosted header
-/// and composer, glass and window material give way to solid surfaces.
-pub fn blur() -> bool {
-    BLUR.load(Ordering::Relaxed)
+/// Settings' Glass where it starts: the see-through surfaces as they always
+/// were. 0 is Clear, 1 Solid.
+pub const GLASS_DEFAULT: f32 = 0.3;
+/// How much of its default opacity a see-through fill keeps at Clear.
+const CLEAREST: f32 = 0.6;
+
+/// How tinted glass is, from 0 (Clear) to 1 (Solid), as Settings' Glass
+/// says, or Solid while the system asks for less transparency.
+pub fn glass() -> f32 {
+    f32::from_bits(GLASS.load(Ordering::Relaxed))
 }
 
-/// Records Settings' Blur for [`blur`]; the app does so every frame.
-pub fn set_blur(on: bool) {
-    BLUR.store(on, Ordering::Relaxed);
+/// Whether glass is frosted: anything short of Solid. At Solid the frosted
+/// header and composer, glass and window material give way to solid
+/// surfaces, as the Blur switch's Off did.
+pub fn blur() -> bool {
+    glass() < 1.0
+}
+
+/// Records Settings' Glass for [`glass`]; the app does so every frame.
+pub fn set_glass(tint: f32) {
+    GLASS.store(tint.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+/// `alpha`, how opaque a see-through fill is at [`GLASS_DEFAULT`] (0 to 1),
+/// at the tint Glass has now: thinner towards Clear, opaque at Solid.
+pub fn tinted(alpha: f32) -> f32 {
+    tinted_at(alpha, glass())
+}
+
+fn tinted_at(alpha: f32, tint: f32) -> f32 {
+    if tint <= GLASS_DEFAULT {
+        alpha * (CLEAREST + (1.0 - CLEAREST) * tint / GLASS_DEFAULT)
+    } else {
+        alpha + (1.0 - alpha) * (tint - GLASS_DEFAULT) / (1.0 - GLASS_DEFAULT)
+    }
+}
+
+/// Whether the system asks apps for less transparency: macOS's Reduce
+/// transparency, or Windows' Transparency effects turned off. Read at most
+/// every two seconds, since the app asks every frame.
+pub fn system_reduces_transparency() -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static READ: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut read = READ.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match *read {
+        Some((at, reduced)) if at.elapsed() < Duration::from_secs(2) => reduced,
+        _ => {
+            let reduced = platform::reduces_transparency();
+            *read = Some((Instant::now(), reduced));
+            reduced
+        }
+    }
 }
 
 /// Whether the desktop shows through the window this frame: the Messages
@@ -53,6 +99,23 @@ mod platform {
         true
     }
 
+    /// Accessibility's Reduce transparency.
+    pub fn reduces_transparency() -> bool {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        // SAFETY: the shared workspace and this getter (macOS 10.10 and
+        // later) may be used from any thread; a missing workspace is null.
+        unsafe {
+            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            match workspace.as_ref() {
+                Some(workspace) => {
+                    msg_send![workspace, accessibilityDisplayShouldReduceTransparency]
+                }
+                None => false,
+            }
+        }
+    }
+
     pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, wanted: bool) -> bool {
         crate::macos::vibrancy(frame, palette, wanted);
         wanted
@@ -76,6 +139,33 @@ mod platform {
     /// and the window stays opaque.
     pub fn may_show_through() -> bool {
         true
+    }
+
+    /// Personalisation's Transparency effects, off. A missing value is on,
+    /// as Windows has it.
+    pub fn reduces_transparency() -> bool {
+        use windows_sys::Win32::System::Registry::{
+            HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW,
+        };
+        let key: Vec<u16> = "Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize\0"
+            .encode_utf16()
+            .collect();
+        let name: Vec<u16> = "EnableTransparency\0".encode_utf16().collect();
+        let mut value: u32 = 1;
+        let mut size = std::mem::size_of::<u32>() as u32;
+        // SAFETY: both names end in NUL, and `value` holds the DWORD asked for.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_DWORD,
+                std::ptr::null_mut(),
+                (&raw mut value).cast(),
+                &raw mut size,
+            )
+        };
+        status == 0 && value == 0
     }
 
     /// The window last given a backdrop, whether it was dark, and whether
@@ -161,6 +251,11 @@ mod platform {
                 .is_ok_and(|handle| matches!(handle.as_raw(), RawWindowHandle::Wayland(_)))
     }
 
+    /// No desktop here has a setting for less transparency.
+    pub fn reduces_transparency() -> bool {
+        false
+    }
+
     pub fn may_show_through() -> bool {
         blurs(
             std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
@@ -203,6 +298,10 @@ mod platform {
         false
     }
 
+    pub fn reduces_transparency() -> bool {
+        false
+    }
+
     pub fn apply(_frame: &eframe::Frame, _palette: &crate::theme::Palette, _wanted: bool) -> bool {
         false
     }
@@ -221,5 +320,18 @@ mod tests {
             transparent_window(true),
             cfg!(target_os = "macos") || platform::may_show_through()
         );
+    }
+
+    /// The default tint keeps every fill as it was; Solid makes it opaque,
+    /// and Clear thins it without making it vanish.
+    #[test]
+    fn glass_tints_from_clear_to_solid() {
+        assert_eq!(tinted_at(0.7, GLASS_DEFAULT), 0.7);
+        assert_eq!(tinted_at(0.7, 1.0), 1.0);
+        assert!((tinted_at(0.7, 0.0) - 0.7 * CLEAREST).abs() < 1e-6);
+        let steps: Vec<f32> = (0..=10)
+            .map(|step| tinted_at(0.5, step as f32 / 10.0))
+            .collect();
+        assert!(steps.windows(2).all(|pair| pair[0] <= pair[1]), "{steps:?}");
     }
 }

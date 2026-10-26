@@ -96,6 +96,13 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 });
         });
     frost.place(area.response.rect);
+    // Grows up from the button that opened it, and goes back the same way.
+    super::closing::surface(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, id),
+        pos2(anchor.center().x, area.response.rect.bottom()),
+        theme::MOTION_PANEL,
+    );
     // Close on outside clicks, except on the toggle button, a sticker menu, or
     // a dialog the picker opened.
     let rect = area.response.rect;
@@ -540,6 +547,12 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
         });
     frost.place(area.response.rect);
     let rect = area.response.rect;
+    super::closing::surface(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, id),
+        rect.left_top(),
+        theme::MOTION_QUICK,
+    );
     ctx.data_mut(|data| data.insert_temp(egui::Id::new("reaction-picker-rect"), rect));
     let clicked_outside = ctx.input(|input| {
         input.pointer.any_pressed()

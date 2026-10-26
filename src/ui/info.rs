@@ -90,6 +90,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
         |app, ui| contents(app, ui, false),
     ) {
         Docking::Docked { width, wanted } => {
+            // Widened from a page over the chat: the page does not linger.
+            super::closing::forget(
+                ui.ctx(),
+                egui::LayerId::new(egui::Order::Foreground, egui::Id::new(OVERLAY)),
+            );
             // Only a drag moves the edge off the width asked for.
             if (width - wanted).abs() > 1.0 {
                 app.settings.info_pane_width = width;
@@ -106,11 +111,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
 /// The panel as a page over the whole conversation in a narrow window.
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
     let width = region.width();
-    pane::overlay(app, ctx, "chat-info-overlay", width, region, |app, ui| {
+    pane::overlay(app, ctx, OVERLAY, width, region, |app, ui| {
         contents(app, ui, true)
     });
     ctx.data_mut(|data| data.insert_temp(docked_id(), false));
 }
+
+const OVERLAY: &str = "chat-info-overlay";
 
 /// Whether the panel was docked (`true`) or laid over the chat (`false`)
 /// this frame, for interaction tests.

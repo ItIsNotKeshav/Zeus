@@ -8,6 +8,7 @@ use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    let id = egui::Id::new("dialog");
     let Some(dialog) = app.dialog.clone() else {
         return;
     };
@@ -23,7 +24,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
         .inner_margin(Margin::same(22))
         .shadow(palette.modal_shadow());
-    let id = egui::Id::new("dialog");
     // Under the backdrop and the dialog, the window behind it frosted.
     let frost = super::widgets::Frost::reserve(
         ctx,
@@ -123,7 +123,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             content = Some(ui.min_rect());
         });
     if let Some(content) = content {
-        frost.place(frame.widget_rect(content));
+        let outline = frame.widget_rect(content);
+        frost.place(outline);
+        // Eases in about its middle as a panel, and leaves the same way.
+        super::closing::surface(
+            ctx,
+            egui::LayerId::new(egui::Order::Foreground, id),
+            outline.center(),
+            theme::MOTION_PANEL,
+        );
     }
     if response.should_close() {
         app.actions.push(Action::CloseDialog);
