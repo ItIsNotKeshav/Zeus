@@ -440,6 +440,9 @@ pub struct App {
     /// the next frame: it caches a picture by its URI for as long as it is
     /// on screen, and a chat's picture keeps one file name across changes.
     stale_images: Vec<String>,
+    /// The full-size picture the viewer showed last, let go of once it shows
+    /// another or closes ([`App::release_viewer_picture`]).
+    viewer_picture: Option<PathBuf>,
     pub composer: String,
     composer_mentions: Vec<ComposerMention>,
     /// Byte offset of the `:` starting the active emoji query.
@@ -1359,6 +1362,7 @@ impl App {
             wallpaper_image: crate::wallpaper::CustomImage::default(),
             scroll_chats_to_top: false,
             stale_images: Vec::new(),
+            viewer_picture: None,
             composer: String::new(),
             composer_mentions: Vec::new(),
             emoji_start: None,
@@ -9031,6 +9035,7 @@ impl App {
         self.tick_video(ctx);
         self.tick_voice_input();
         self.apply_actions(ctx);
+        self.release_viewer_picture();
         self.sync_push_to_talk();
         self.sync_prefetch();
         self.hold_media();
@@ -9368,6 +9373,25 @@ impl App {
             if !left.is_zero() {
                 self.waker.wake_after(left);
             }
+        }
+    }
+
+    /// Lets go of the full-size picture the viewer showed once it shows
+    /// another or closes, however it closed. Its texture counts toward the
+    /// image cache's budget but its decoded pixels do not, so left to the
+    /// sweep a few 12-megapixel photos held hundreds of megabytes after the
+    /// viewer closed. Bubbles draw their own fitted copies, so nothing
+    /// reloads.
+    fn release_viewer_picture(&mut self) {
+        let shown = self
+            .image_preview
+            .as_ref()
+            .and_then(|preview| preview.path())
+            .map(std::path::Path::to_path_buf);
+        if shown != self.viewer_picture
+            && let Some(old) = std::mem::replace(&mut self.viewer_picture, shown)
+        {
+            self.stale_images.push(crate::util::image_uri(&old));
         }
     }
 
@@ -13820,6 +13844,39 @@ mod tests {
             "1@s.whatsapp.net".into(),
             format!("m{index}"),
         ));
+    }
+
+    /// The viewer lets go of each full-size picture once it moves on or
+    /// closes, and keeps the one on screen.
+    #[test]
+    fn the_viewer_releases_the_pictures_it_leaves() {
+        let ctx = egui::Context::default();
+        let mut app = app_with_album(3);
+        let uri =
+            |index: usize| crate::util::image_uri(&PathBuf::from(format!("/fixture/{index}.png")));
+        open_viewer(&mut app, 0);
+        app.release_viewer_picture();
+        assert!(app.stale_images.is_empty(), "the picture on screen stays");
+
+        app.apply(Action::ViewerStep(1), &ctx);
+        app.release_viewer_picture();
+        assert_eq!(
+            app.stale_images,
+            [uri(0)],
+            "stepping on lets go of the last one"
+        );
+        app.stale_images.clear();
+
+        app.apply(Action::CloseImagePreview, &ctx);
+        app.release_viewer_picture();
+        assert_eq!(
+            app.stale_images,
+            [uri(1)],
+            "closing lets go of the one shown"
+        );
+        app.stale_images.clear();
+        app.release_viewer_picture();
+        assert!(app.stale_images.is_empty(), "once");
     }
 
     #[test]
