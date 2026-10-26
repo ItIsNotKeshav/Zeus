@@ -333,8 +333,7 @@ fn run() -> eframe::Result<()> {
     let settings = settings::Settings::load(&dirs.settings_file());
     // A Cargo build has no application bundle to supply its Dock icon.
     #[cfg(target_os = "macos")]
-    if let Err(error) = fastframe_dock::set_icon(include_bytes!("../packaging/macos/icon-1024.png"))
-    {
+    if let Err(error) = fastframe_dock::set_icon(DOCK_ICON) {
         log::warn!("could not set the Dock icon: {error}");
     }
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
@@ -1053,6 +1052,40 @@ mod tests {
             ])
             .is_err()
         );
+    }
+}
+
+/// The unbundled Dock icon: 512 pixels at 144 dpi, so 256 points, which
+/// covers the Dock fully magnified on a Retina screen. AppKit keeps a
+/// snapshot of the icon at its size in points times the screen's scale, and
+/// the 1024-pixel PNG at 72 dpi held one of 32 MB for the whole session.
+#[cfg(any(target_os = "macos", test))]
+const DOCK_ICON: &[u8] = include_bytes!("../packaging/macos/icon-dock.png");
+
+#[cfg(test)]
+mod dock_icon_tests {
+    use super::DOCK_ICON;
+
+    /// The big-endian `u32` at `at`.
+    fn word(at: usize) -> u32 {
+        u32::from_be_bytes(DOCK_ICON[at..at + 4].try_into().unwrap())
+    }
+
+    /// The icon stays small in points: a larger image or a lower density
+    /// brings back a snapshot several times the size.
+    #[test]
+    fn dock_icon_is_256_points() {
+        assert_eq!(&DOCK_ICON[..8], b"\x89PNG\r\n\x1a\n");
+        assert_eq!(&DOCK_ICON[12..16], b"IHDR");
+        assert_eq!((word(16), word(20)), (512, 512));
+        let physical = DOCK_ICON
+            .windows(4)
+            .position(|chunk| chunk == b"pHYs")
+            .expect("the icon states its density");
+        // 144 dpi in pixels per metre, the unit PNG uses.
+        assert_eq!(word(physical + 4), 5669);
+        assert_eq!(word(physical + 8), 5669);
+        assert_eq!(DOCK_ICON[physical + 12], 1, "the unit is the metre");
     }
 }
 
