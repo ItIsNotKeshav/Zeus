@@ -1236,7 +1236,8 @@ mod tests {
             .push(crate::model::Action::OpenChat(ada.clone()));
         frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
         super::super::apply_flags(&mut app, Some("info"));
-        for _ in 0..3 {
+        // Long enough for the info card to ease all the way in.
+        for _ in 0..30 {
             frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
         }
         let view = |app: &App| app.info.as_ref().map(|info| info.view);
@@ -1525,14 +1526,17 @@ mod tests {
             let ctx = egui::Context::default();
             app.attach(&ctx);
             let mut tour = Tour::new(None, None);
+            // Tall enough for Leave to show at the foot of the info card.
+            let size = vec2(1280.0, 1400.0);
             let id = super::super::sample_ids()[index].to_owned();
             app.open_chat = Some(id.clone());
             app.info = Some(crate::model::InfoPanel {
                 chat: id.clone(),
                 view: crate::model::InfoView::Overview,
             });
-            for _ in 0..3 {
-                frame(&mut app, &mut tour, &ctx, Vec::new());
+            // Long enough for the info card to ease all the way in.
+            for _ in 0..30 {
+                frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
             }
             // The controls are announced in the interface language, which
             // follows the system when Settings carries no choice of its own.
@@ -1541,7 +1545,7 @@ mod tests {
             let title = crate::i18n::gettext(locale, title).to_string();
             let archive = crate::i18n::gettext(locale, archive).to_string();
             assert!(tour.labels.contains_key(&leave), "chat info offers {leave}");
-            click(&mut app, &mut tour, &ctx, &leave);
+            click_sized(&mut app, &mut tour, &ctx, size, &leave);
             assert!(
                 matches!(
                     app.dialog,
@@ -1550,7 +1554,7 @@ mod tests {
                 "the button opens the confirm dialog for {id}"
             );
             for _ in 0..3 {
-                frame(&mut app, &mut tour, &ctx, Vec::new());
+                frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
             }
             assert!(tour.labels.contains_key(&title), "the dialog asks {title}");
             assert!(
@@ -1563,7 +1567,7 @@ mod tests {
             );
             // Cancelling leaves the chat alone.
             let cancel = crate::i18n::gettext(locale, "Cancel").to_string();
-            click(&mut app, &mut tour, &ctx, &cancel);
+            click_sized(&mut app, &mut tour, &ctx, size, &cancel);
             assert!(app.dialog.is_none(), "cancel closes the dialog");
             let chat = app.chat(&id).expect("chat");
             assert!(!chat.read_only, "cancelling does not leave the chat");

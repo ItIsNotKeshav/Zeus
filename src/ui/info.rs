@@ -323,30 +323,34 @@ fn side_card(app: &mut App, ui: &mut egui::Ui) {
     );
     let radius = f32::from(super::chats::CARD_RADIUS);
     let layer = card_layer();
-    ui.scope_builder(
-        egui::UiBuilder::new().layer_id(layer).max_rect(card),
-        |ui| {
-            ui.set_clip_rect(card.intersect(column).intersect(ui.clip_rect()));
-            ui.painter().rect(
-                card,
-                radius,
-                card_fill(&palette),
-                Stroke::new(1.25, palette.outline),
-                egui::StrokeKind::Inside,
-            );
-            // The lists end above the rounded corners.
-            Frame::new()
-                .inner_margin(Margin {
-                    bottom: 12,
-                    ..Margin::ZERO
-                })
-                .show(ui, |ui| {
-                    ui.set_min_size(card.size() - vec2(0.0, 12.0));
-                    ui.set_max_size(card.size() - vec2(0.0, 12.0));
-                    contents(app, ui, false, true);
-                });
-        },
-    );
+    // An area of its own, so it is ordered and hit like any other surface.
+    egui::Area::new(layer.id)
+        .order(layer.order)
+        .fixed_pos(card.min)
+        .constrain(false)
+        .show(&ctx, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
+                ui.set_clip_rect(card.intersect(column).intersect(ui.clip_rect()));
+                ui.painter().rect(
+                    card,
+                    radius,
+                    card_fill(&palette),
+                    Stroke::new(1.25, palette.outline),
+                    egui::StrokeKind::Inside,
+                );
+                // The lists end above the rounded corners.
+                Frame::new()
+                    .inner_margin(Margin {
+                        bottom: 12,
+                        ..Margin::ZERO
+                    })
+                    .show(ui, |ui| {
+                        ui.set_min_size(card.size() - vec2(0.0, 12.0));
+                        ui.set_max_size(card.size() - vec2(0.0, 12.0));
+                        contents(app, ui, false, true);
+                    });
+            });
+        });
     super::closing::surface(
         &ctx,
         layer,
