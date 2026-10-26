@@ -73,15 +73,24 @@ impl Pace {
 
 /// Whether a download error is the server's rate limit.
 pub(super) fn rate_limited(error: &str) -> bool {
-    error.contains("rate-overlimit") || error.contains("code=429") || error.contains("status: 429")
+    error.contains("rate-overlimit") || error.contains("code=429") || http_status(error, 429)
 }
 
 /// Whether a download error means the file is gone from the servers, so
 /// asking again soon cannot help.
 pub(super) fn gone(error: &str) -> bool {
-    ["status: 403", "status: 404", "status: 410"]
-        .iter()
-        .any(|status| error.contains(status))
+    [403, 404, 410]
+        .into_iter()
+        .any(|status| http_status(error, status))
+}
+
+/// Whether a download error carries this HTTP status. Older whatsapp-rust
+/// wrote `status: 410`; its media diagnostics now read
+/// `http_status: Some(410)`, which the old match missed, so every expired
+/// favorite was asked for again on each connection.
+fn http_status(error: &str, status: u16) -> bool {
+    error.contains(&format!("status: {status}"))
+        || error.contains(&format!("http_status: Some({status})"))
 }
 
 #[cfg(test)]
@@ -131,5 +140,28 @@ mod tests {
             "received a server error response: code=429, text='rate-overlimit'"
         ));
         assert!(!rate_limited("Download failed with status: 403"));
+    }
+
+    /// The media diagnostics the library writes now, as a log showed them.
+    #[test]
+    fn errors_are_read_from_the_media_diagnostics() {
+        let rejected = |status: u16| {
+            format!(
+                "the CDN rejected the media reference: MediaFailure {{ preparation: None, \
+                 iq_kind: None, iq_code: None, http_status: Some({status}), io_kind: None, \
+                 media_validation: false, .. }}"
+            )
+        };
+        assert!(gone(&rejected(403)));
+        assert!(gone(&rejected(404)));
+        assert!(gone(&rejected(410)));
+        assert!(!rate_limited(&rejected(410)));
+        assert!(rate_limited(&rejected(429)));
+        assert!(!gone(&rejected(429)));
+        let unreachable = "every media host failed: MediaFailure { preparation: None, \
+             iq_kind: None, iq_code: None, http_status: None, io_kind: Some(TimedOut), \
+             media_validation: false, .. }";
+        assert!(!gone(unreachable), "a network failure is worth another try");
+        assert!(!rate_limited(unreachable));
     }
 }
