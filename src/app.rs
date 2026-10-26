@@ -173,14 +173,11 @@ const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long other apps' media stays paused while the next voice message of a
 /// run downloads. A stalled download must not keep music paused for good.
 const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
-/// A reader with no more than this many messages below the view counts as
-/// near the end: what arrives, and what they send, brings them down to it.
-const FOLLOW_NEAR: usize = 25;
-/// A reply to one of this many newest messages still brings the reader to
-/// the end. Replying to anything older keeps their place: they most likely
-/// found it through search or by scrolling far up, and are still reading
-/// there (and scrolling through that much history would be slow besides).
-const FOLLOW_REPLY: usize = 50;
+/// A reply to one of this many newest messages brings the reader to the end
+/// even from further up. Replying to anything older keeps their place: they
+/// most likely found it through search or by scrolling far up, and are still
+/// reading there (and scrolling through that much history would be slow).
+const FOLLOW_REPLY: usize = 25;
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -209,8 +206,6 @@ pub struct Conversation {
     pub(crate) rows: HashMap<String, RowHeight>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
-    /// How many messages lay below the view when the list was last shown.
-    pub(crate) below: Option<usize>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -3463,8 +3458,10 @@ impl App {
                 if live && self.open_chat.as_deref() == Some(chat.as_str()) {
                     if !older && was_empty {
                         self.scroll_to_bottom = true;
-                    } else if !older && self.near_end(&chat) {
-                        self.scroll_to_end();
+                    } else if !older && self.at_bottom {
+                        // Only a reader already at the end follows arrivals;
+                        // anyone scrolled up keeps reading where they are.
+                        self.scroll_to_bottom = true;
                     }
                     // Someone reading the end as it arrives has nothing unread.
                     if !older && self.at_bottom && self.window_focused {
@@ -5537,7 +5534,7 @@ impl App {
         self.last_keystroke = None;
     }
 
-    /// Brings the reader to what they sent when they were near the end, or
+    /// Brings the reader to what they sent when they were at the end, or
     /// replied to one of the newest messages. Sending from older history, or
     /// replying to an old message found by search, keeps their place.
     fn follow_outgoing(&mut self, quoting: Option<&crate::model::ReplyTarget>) {
@@ -5551,21 +5548,11 @@ impl App {
                 .get(&chat)
                 .and_then(|conversation| conversation.newer_than(&target.id))
                 .is_some_and(|newer| newer < FOLLOW_REPLY),
-            None => self.near_end(&chat),
+            None => self.at_bottom,
         };
         if follow {
             self.scroll_to_end();
         }
-    }
-
-    /// Whether the reader of `chat` is at, or a few messages from, its end.
-    fn near_end(&self, chat: &str) -> bool {
-        self.at_bottom
-            || self
-                .conversations
-                .get(chat)
-                .and_then(|conversation| conversation.below)
-                .is_some_and(|below| below <= FOLLOW_NEAR)
     }
 
     /// Pins the open chat to its end: at once from the end itself, or with
@@ -17858,11 +17845,11 @@ mod tests {
         assert!(app.at_bottom);
     }
 
-    /// A reply to one of the newest messages, or a send or arrival while the
-    /// reader is a few messages from the end, eases down to the end; a reply
-    /// to an older message, or a send from far up, keeps the reader's place.
+    /// A reply to one of the 25 newest messages eases down to the end. A
+    /// reply to anything older, a plain send, or an arrival keeps the place
+    /// of a reader scrolled up even a few messages; at the end they follow.
     #[test]
-    fn replies_and_arrivals_follow_only_near_the_end() {
+    fn only_the_end_or_a_recent_reply_follows() {
         let mut app = app();
         let (backend, _commands, events) = Backend::recording_with_events();
         app.backend = backend;
@@ -17878,7 +17865,6 @@ mod tests {
                 .push(message(chat, &format!("m{index}"), index));
         }
         conversation.complete = true;
-        conversation.below = Some(120);
         app.conversations.insert(chat.into(), conversation);
         let send = |app: &mut App, quoting: Option<&str>| {
             app.scroll_page = None;
@@ -17899,27 +17885,21 @@ mod tests {
             "a reply to a recent message eases to the end"
         );
         assert_eq!(
-            send(&mut app, Some("m120")),
+            send(&mut app, Some("m170")),
             None,
-            "a reply to an older message keeps the reader's place"
+            "a reply beyond the 25 newest keeps the reader's place"
         );
         assert_eq!(
             send(&mut app, Some("missing")),
             None,
             "a reply to a message not loaded keeps the reader's place"
         );
-        assert_eq!(send(&mut app, None), None, "a send from far up stays put");
+        assert_eq!(send(&mut app, None), None, "a send from above stays put");
         assert!(!app.scroll_to_bottom);
-
-        app.conversations.get_mut(chat).unwrap().below = Some(10);
-        assert_eq!(
-            send(&mut app, None),
-            Some(Scroll::Bottom),
-            "a send from near the end eases down to it"
-        );
 
         let arrive = |app: &mut App, id: &str| {
             app.scroll_page = None;
+            app.scroll_to_bottom = false;
             events
                 .send(Event::Messages {
                     chat: chat.into(),
@@ -17929,19 +17909,14 @@ mod tests {
                 })
                 .unwrap();
             app.handle_events();
-            app.scroll_page
+            app.scroll_page.is_some() || app.scroll_to_bottom
         };
-        assert_eq!(
-            arrive(&mut app, "new-1"),
-            Some(Scroll::Bottom),
-            "a message arriving near the end is followed"
+        assert!(
+            !arrive(&mut app, "new-1"),
+            "a reader scrolled up is not pulled away"
         );
-        app.conversations.get_mut(chat).unwrap().below = Some(120);
-        assert_eq!(
-            arrive(&mut app, "new-2"),
-            None,
-            "a reader far up is not pulled away"
-        );
+        app.at_bottom = true;
+        assert!(arrive(&mut app, "new-2"), "a reader at the end follows");
     }
 
     #[test]

@@ -2446,6 +2446,16 @@ fn album_run(messages: &[Message], start: usize) -> Option<&[Message]> {
     (end > start + 1).then_some(&messages[start..end])
 }
 
+/// The colours egui paints a scroll bar's handle in, idle, hovered, and held.
+fn handle_colors(visuals: &mut egui::Visuals) -> [&mut egui::Color32; 3] {
+    let widgets = &mut visuals.widgets;
+    [
+        &mut widgets.inactive.fg_stroke.color,
+        &mut widgets.hovered.fg_stroke.color,
+        &mut widgets.active.fg_stroke.color,
+    ]
+}
+
 /// A row height to assume for a message that has not been laid out yet. Rows
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
@@ -2827,9 +2837,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         });
     let divider_first = divider.as_ref().map(|(first, ..)| first.clone());
     let mut divider_placed = false;
-    // The newest message whose row starts above the bottom of the view, to
-    // tell how far the reader is from the end.
-    let mut reached: Option<usize> = None;
     let selection: Option<Vec<String>> = app
         .selection
         .as_ref()
@@ -2955,6 +2962,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         clear.x_range(),
         (clear.top() + under)..=(clear.bottom() - over).max(clear.top() + under),
     );
+    // The scroll bar's handle takes the accent, as the chat list's does; the
+    // rows put the plain colours back for their own widgets.
+    let accent = ui.visuals().selection.stroke.color;
+    let plain = handle_colors(ui.visuals_mut()).map(|color| std::mem::replace(color, accent));
     let output = egui::ScrollArea::vertical()
         .id_salt(("messages", &chat.id))
         .scroll_bar_rect(bar_rect)
@@ -2967,6 +2978,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         })
         .animated(false)
         .show(ui, |ui| {
+            for (color, plain) in handle_colors(ui.visuals_mut()).into_iter().zip(plain) {
+                *color = plain;
+            }
             // Scroll while selecting near an edge. `scroll_with_delta` also
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
@@ -3069,9 +3083,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     });
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
-                        if ui.cursor().top() <= viewport.bottom() {
-                            reached = Some(message_index);
-                        }
                         // WhatsApp marks every item in a media album with the
                         // same parent id. Only its first item owns a row; the
                         // remaining consecutive items are painted in that row.
@@ -3614,6 +3625,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                 ui.ctx().request_repaint();
             }
         });
+    for (color, plain) in handle_colors(ui.visuals_mut()).into_iter().zip(plain) {
+        *color = plain;
+    }
     glide_new_message(ui, &chat.id, newest, &output, layer, first_shape);
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
@@ -3645,7 +3659,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     .interact_pos()
                     .is_some_and(|pos| bar.contains(pos)))
     });
-    conversation.below = reached.map(|index| conversation.messages.len() - 1 - index);
     let complete = conversation.complete;
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
