@@ -433,18 +433,18 @@ pub fn tick_icon(status: Delivery) -> Option<Icon> {
     })
 }
 
-/// Chat-row unread badge.
+/// Chat-row unread badge, showing the whole count. `at` is the centre of a
+/// one-digit round; a longer count widens the pill to the left from there,
+/// so it keeps its right edge where the round's is.
 pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool) -> f32 {
-    let label = if count > 99 {
-        "99+".to_owned()
-    } else {
-        count.to_string()
-    };
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label, theme::semibold(11.0), palette.on_accent);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(count.to_string(), theme::semibold(11.0), palette.on_accent);
     let width = (galley.size().x + 12.0).max(20.0);
-    let rect = Rect::from_center_size(at, vec2(width, 20.0));
+    let rect = Rect::from_min_max(
+        pos2(at.x + 10.0 - width, at.y - 10.0),
+        pos2(at.x + 10.0, at.y + 10.0),
+    );
     let fill = if muted { palette.dim } else { palette.accent };
     ui.painter().rect_filled(rect, 10.0, fill);
     ui.painter().galley(
