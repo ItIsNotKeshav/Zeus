@@ -6444,7 +6444,8 @@ impl Worker {
                 chat,
                 path,
                 quoting,
-            } => self.send_sticker(chat, path, quoting),
+                upload,
+            } => self.send_sticker(chat, path, quoting, upload),
             Command::SaveSticker { path } => self.favorite_sticker(&path),
             Command::RemoveRecentSticker { path } => self.remove_recent_sticker(&path),
             Command::ForgetSticker { path } => self.unfavorite_sticker(&path),
@@ -6817,7 +6818,7 @@ impl Worker {
                 chat,
                 quoting,
             } => match (result, chat) {
-                (Ok(path), Some(chat)) => self.send_sticker(chat, path, quoting),
+                (Ok(path), Some(chat)) => self.send_sticker(chat, path, quoting, None),
                 (Ok(path), None) => {
                     self.favorite_sticker(&path);
                     self.emit(Event::Info("Added to favorites".to_owned()));
@@ -10173,29 +10174,38 @@ impl Worker {
         chat: ChatId,
         path: PathBuf,
         quoting: Option<crate::model::ReplyTarget>,
+        upload: Option<crate::model::UploadId>,
     ) {
+        let uploads: Vec<_> = upload.into_iter().collect();
         let quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
+                self.end_uploads(&chat, &uploads);
                 self.refuse(chat, quoting, Unsent::Sticker, reason);
                 return;
             }
         };
         let Some(client) = self.connected_client() else {
+            self.end_uploads(&chat, &uploads);
             self.refuse(chat, quoting, Unsent::Sticker, Refusal::Offline);
             return;
         };
         let commands = self.commands.clone();
         let dir = self.dirs.media_cache_dir();
         let me = self.me();
+        let reporter = upload.map(|upload| UploadReporter {
+            commands: commands.clone(),
+            chat: chat.clone(),
+            upload,
+        });
         tokio::spawn(async move {
-            let outcome = async {
+            let outcome = follow_upload(reporter, async {
                 let bytes = tokio::fs::read(&path)
                     .await
                     .map_err(|error| error.to_string())?;
                 let prepared = prepare_sticker(&client, bytes).await?;
                 quoted_outbound(&client, &chat, &me, &dir, prepared, None, Vec::new(), quote).await
-            }
+            })
             .await;
             match outcome {
                 Ok((row, raw)) => {
@@ -10203,10 +10213,16 @@ impl Worker {
                         chat,
                         row: Box::new(row),
                         raw,
-                        upload: None,
+                        upload,
                     });
                 }
                 Err(error) => {
+                    if let Some(upload) = upload {
+                        let _ = commands.send(Command::UploadEnded {
+                            chat: chat.clone(),
+                            upload,
+                        });
+                    }
                     let _ = commands.send(Command::Sent {
                         chat,
                         id: String::new(),
@@ -20455,6 +20471,7 @@ mod receipt_tests {
                     chat: PEER.into(),
                     path: "/fixture/sticker.webp".into(),
                     quoting: quoting.clone(),
+                    upload: None,
                 },
                 Unsent::Sticker,
             ),

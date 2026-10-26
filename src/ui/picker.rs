@@ -1584,6 +1584,19 @@ pub fn first_tile_id() -> egui::Id {
     egui::Id::new("first-sticker-tile")
 }
 
+fn launch_id() -> egui::Id {
+    egui::Id::new("sticker-launch")
+}
+
+/// Where the sticker just picked was shown in the picker, once.
+pub fn take_launch(ctx: &egui::Context) -> Option<Rect> {
+    ctx.data_mut(|data| {
+        let launch = data.get_temp::<Rect>(launch_id());
+        data.remove::<Rect>(launch_id());
+        launch
+    })
+}
+
 /// What every sticker grid in the tab shares.
 struct GridContext<'a> {
     locale: crate::i18n::Locale,
@@ -1663,6 +1676,9 @@ fn sticker_grid(
                     .clicked()
                 {
                     choices.send = Some(path.clone());
+                    // The sticker flies from here into the chat.
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(launch_id(), rect.shrink(4.0)));
                 }
             }
         });
