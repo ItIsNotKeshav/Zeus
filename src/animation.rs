@@ -434,8 +434,10 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
         previous = i64::from(frame.timestamp());
         decoded.push((to_color_image(&image), Duration::from_millis(delay)));
     }
-    // Single-frame files use the static-image path.
-    if decoded.len() < 2 {
+    // Single-frame stills use the static-image path. A single frame in a file
+    // that says it moves, as many of WhatsApp's stickers do, is drawn as an
+    // animation, so it must give its picture.
+    if decoded.is_empty() || (decoded.len() < 2 && !webp_moves(&bytes[..bytes.len().min(64)])) {
         return None;
     }
     decoded.truncate(limit);
@@ -1313,6 +1315,63 @@ mod tests {
         assert!(webp_moves(&bytes));
         let decoded = decode(&path, MAX_FRAMES).expect("decodes");
         assert_eq!(decoded.frames.len(), 3);
+    }
+
+    /// An animated WebP of one 8x8 frame, laid out as WhatsApp's stickers
+    /// often are (`VP8X`, `ANIM`, one `ANMF`). libwebp's encoder writes a
+    /// still for a single frame, so the chunks are put together here.
+    fn one_frame_animation(dir: &Path, name: &str) -> PathBuf {
+        let still = dir.join("still-frame.webp");
+        image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 40, 90, 255]))
+            .save(&still)
+            .expect("saves");
+        let bitstream = std::fs::read(&still).expect("reads")[12..].to_vec();
+        let chunk = |tag: &[u8], payload: &[u8]| {
+            let mut chunk = tag.to_vec();
+            chunk.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+            chunk.extend_from_slice(payload);
+            if payload.len() % 2 == 1 {
+                chunk.push(0);
+            }
+            chunk
+        };
+        let side = [7u8, 0, 0];
+        let header = [&[0x12u8, 0, 0, 0][..], &side, &side].concat();
+        // Background colour and loop count.
+        let anim = [0u8; 6];
+        // Offset, size, 100 ms and no blending, then the frame itself.
+        let frame = [&[0u8; 6][..], &side, &side, &[100, 0, 0, 0], &bitstream].concat();
+        let body = [
+            &b"WEBP"[..],
+            &chunk(b"VP8X", &header),
+            &chunk(b"ANIM", &anim),
+            &chunk(b"ANMF", &frame),
+        ]
+        .concat();
+        let mut file = b"RIFF".to_vec();
+        file.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        file.extend_from_slice(&body);
+        let path = dir.join(name);
+        std::fs::write(&path, file).expect("writes");
+        path
+    }
+
+    /// A one-frame animation says it moves, so the sticker is drawn as an
+    /// animation; it must still give its picture rather than leave the
+    /// sticker's placeholder in the bubble.
+    #[test]
+    fn a_one_frame_animation_decodes_to_its_frame() {
+        let dir = std::env::temp_dir().join(format!("zapfast-one-frame-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let path = one_frame_animation(&dir, "one.webp");
+        let bytes = std::fs::read(&path).expect("reads");
+        assert!(webp_moves(&bytes[..bytes.len().min(64)]));
+        for limit in [1, MAX_FRAMES] {
+            let decoded = decode(&path, limit).expect("decodes");
+            assert_eq!(decoded.frames.len(), 1);
+            assert_eq!(decoded.frames[0].0.size, [8, 8]);
+        }
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
