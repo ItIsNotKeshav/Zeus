@@ -173,6 +173,14 @@ const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
 /// How long other apps' media stays paused while the next voice message of a
 /// run downloads. A stalled download must not keep music paused for good.
 const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
+/// A reader with no more than this many messages below the view counts as
+/// near the end: what arrives, and what they send, brings them down to it.
+const FOLLOW_NEAR: usize = 25;
+/// A reply to one of this many newest messages still brings the reader to
+/// the end. Replying to anything older keeps their place: they most likely
+/// found it through search or by scrolling far up, and are still reading
+/// there (and scrolling through that much history would be slow besides).
+const FOLLOW_REPLY: usize = 50;
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -201,6 +209,8 @@ pub struct Conversation {
     pub(crate) rows: HashMap<String, RowHeight>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
+    /// How many messages lay below the view when the list was last shown.
+    pub(crate) below: Option<usize>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -258,6 +268,14 @@ pub(crate) struct RowHeight {
 }
 
 impl Conversation {
+    /// How many messages came after the one with `id`, if it is loaded.
+    fn newer_than(&self, id: &str) -> Option<usize> {
+        self.messages
+            .iter()
+            .rposition(|message| message.id == id)
+            .map(|index| self.messages.len() - 1 - index)
+    }
+
     fn merge(&mut self, incoming: Vec<Message>, older: bool) {
         // Prepend new older rows, but refresh duplicates too: on-demand
         // history can supply edits and phone ordering absent from our archive.
@@ -3443,8 +3461,10 @@ impl App {
                     self.refresh_viewer_album(&chat);
                 }
                 if live && self.open_chat.as_deref() == Some(chat.as_str()) {
-                    if !older && (self.at_bottom || was_empty) {
+                    if !older && was_empty {
                         self.scroll_to_bottom = true;
+                    } else if !older && self.near_end(&chat) {
+                        self.scroll_to_end();
                     }
                     // Someone reading the end as it arrives has nothing unread.
                     if !older && self.at_bottom && self.window_focused {
@@ -5517,12 +5537,44 @@ impl App {
         self.last_keystroke = None;
     }
 
-    /// Keeps following outgoing messages only when the reader was already at
-    /// the newest edge. Sending from older history must not lose their place.
-    fn follow_outgoing(&mut self) {
+    /// Brings the reader to what they sent when they were near the end, or
+    /// replied to one of the newest messages. Sending from older history, or
+    /// replying to an old message found by search, keeps their place.
+    fn follow_outgoing(&mut self, quoting: Option<&crate::model::ReplyTarget>) {
         self.follow_sent_chat();
+        let Some(chat) = self.open_chat.clone() else {
+            return;
+        };
+        let follow = match quoting.filter(|target| target.source_chat(&chat) == chat) {
+            Some(target) => self
+                .conversations
+                .get(&chat)
+                .and_then(|conversation| conversation.newer_than(&target.id))
+                .is_some_and(|newer| newer < FOLLOW_REPLY),
+            None => self.near_end(&chat),
+        };
+        if follow {
+            self.scroll_to_end();
+        }
+    }
+
+    /// Whether the reader of `chat` is at, or a few messages from, its end.
+    fn near_end(&self, chat: &str) -> bool {
+        self.at_bottom
+            || self
+                .conversations
+                .get(chat)
+                .and_then(|conversation| conversation.below)
+                .is_some_and(|below| below <= FOLLOW_NEAR)
+    }
+
+    /// Pins the open chat to its end: at once from the end itself, or with
+    /// the eased End-key scroll from further up, which stays pinned after.
+    fn scroll_to_end(&mut self) {
         if self.at_bottom {
             self.scroll_to_bottom = true;
+        } else {
+            self.scroll_page = Some(Scroll::Bottom);
         }
     }
 
@@ -5544,13 +5596,14 @@ impl App {
         longitude: f64,
         quoting: Option<crate::model::ReplyTarget>,
     ) {
+        let quoted = quoting.clone();
         self.backend.send(Command::SendLocation {
             chat,
             latitude,
             longitude,
             quoting,
         });
-        self.follow_outgoing();
+        self.follow_outgoing(quoted.as_ref());
     }
 
     /// Dispatches composed text with its explicit quote target and restores it on refusal.
@@ -5618,13 +5671,14 @@ impl App {
         }
         // The text is on its way, so there is nothing left to restore.
         self.store_draft(&chat, "");
+        let quoted = quoting.clone();
         self.backend.send(Command::SendText {
             chat,
             text,
             quoting,
             mentions,
         });
-        self.follow_outgoing();
+        self.follow_outgoing(quoted.as_ref());
     }
 
     /// Snapshots selected mentions before the view queues an attachment send.
@@ -5759,6 +5813,7 @@ impl App {
         self.composer_mentions = selected;
         // The reply travels with the first attachment, like the caption.
         let mut quoting = self.reply_to.take();
+        let quoted = quoting.clone();
         let caption = caption.trim().to_owned();
         let (caption, mentions) = self.encode_composer_mentions(&chat, caption);
         let caption = Some(caption).filter(|text| !text.is_empty());
@@ -5833,7 +5888,7 @@ impl App {
         }
         // Everything staged has gone, so nothing is remembered about it.
         self.forget_unstaged_pictures();
-        self.follow_outgoing();
+        self.follow_outgoing(quoted.as_ref());
     }
 
     #[allow(dead_code)]
@@ -5859,7 +5914,7 @@ impl App {
             quoting: None,
             uploads: Vec::new(),
         });
-        self.follow_outgoing();
+        self.follow_outgoing(None);
     }
 
     /// Shows an attachment at the end of its chat while it goes, and names it
@@ -6655,13 +6710,14 @@ impl App {
             } => {
                 if self.link.is_connected() && self.chat(&chat).is_some_and(|chat| chat.can_send())
                 {
+                    let quoted = crate::model::ReplyTarget::from(message.clone());
                     self.backend.send(Command::ReplyInteractive {
                         chat,
                         message,
                         button,
                         choice,
                     });
-                    self.follow_outgoing();
+                    self.follow_outgoing(Some(&quoted));
                 }
             }
             Action::CreatePoll { chat, draft } => {
@@ -7816,13 +7872,14 @@ impl App {
             Action::SendSticker(path) => {
                 if let Some(chat) = self.open_chat.clone() {
                     let quoting = self.reply_to.take();
+                    let quoted = quoting.clone();
                     self.backend.send(Command::SendSticker {
                         chat,
                         path,
                         quoting,
                     });
                     self.picker = None;
-                    self.follow_outgoing();
+                    self.follow_outgoing(quoted.as_ref());
                     self.refocus_composer(ctx);
                 }
             }
@@ -7839,9 +7896,10 @@ impl App {
                 if let Some(chat) = self.open_chat.clone() {
                     self.toast("Sending GIF…");
                     let quoting = self.reply_to.take();
+                    let quoted = quoting.clone();
                     self.backend.send(Command::SendGif { chat, gif, quoting });
                     self.picker = None;
-                    self.follow_outgoing();
+                    self.follow_outgoing(quoted.as_ref());
                     self.refocus_composer(ctx);
                 }
             }
@@ -9596,12 +9654,13 @@ impl App {
                     return;
                 };
                 let quoting = self.reply_to.take();
+                let quoted = quoting.clone();
                 self.backend.send(Command::SendVoice {
                     chat,
                     samples,
                     quoting,
                 });
-                self.follow_outgoing();
+                self.follow_outgoing(quoted.as_ref());
             }
             return;
         };
@@ -9625,12 +9684,13 @@ impl App {
                     return;
                 }
                 let quoting = self.reply_to.take();
+                let quoted = quoting.clone();
                 self.backend.send(Command::SendVoice {
                     chat,
                     samples,
                     quoting,
                 });
-                self.follow_sent_chat();
+                self.follow_outgoing(quoted.as_ref());
             }
             Err(error) => self.recording_failed(&error),
         }
@@ -17796,6 +17856,92 @@ mod tests {
             "a reader at the newest edge keeps following outgoing messages"
         );
         assert!(app.at_bottom);
+    }
+
+    /// A reply to one of the newest messages, or a send or arrival while the
+    /// reader is a few messages from the end, eases down to the end; a reply
+    /// to an older message, or a send from far up, keeps the reader's place.
+    #[test]
+    fn replies_and_arrivals_follow_only_near_the_end() {
+        let mut app = app();
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.at_bottom = false;
+        app.scroll_to_bottom = false;
+        let mut conversation = Conversation::default();
+        for index in 0..200 {
+            conversation
+                .messages
+                .push(message(chat, &format!("m{index}"), index));
+        }
+        conversation.complete = true;
+        conversation.below = Some(120);
+        app.conversations.insert(chat.into(), conversation);
+        let send = |app: &mut App, quoting: Option<&str>| {
+            app.scroll_page = None;
+            app.apply(
+                Action::SendText {
+                    chat: chat.into(),
+                    text: "Reply fixture".into(),
+                    quoting: quoting.map(Into::into),
+                },
+                &ctx,
+            );
+            app.scroll_page
+        };
+
+        assert_eq!(
+            send(&mut app, Some("m189")),
+            Some(Scroll::Bottom),
+            "a reply to a recent message eases to the end"
+        );
+        assert_eq!(
+            send(&mut app, Some("m120")),
+            None,
+            "a reply to an older message keeps the reader's place"
+        );
+        assert_eq!(
+            send(&mut app, Some("missing")),
+            None,
+            "a reply to a message not loaded keeps the reader's place"
+        );
+        assert_eq!(send(&mut app, None), None, "a send from far up stays put");
+        assert!(!app.scroll_to_bottom);
+
+        app.conversations.get_mut(chat).unwrap().below = Some(10);
+        assert_eq!(
+            send(&mut app, None),
+            Some(Scroll::Bottom),
+            "a send from near the end eases down to it"
+        );
+
+        let arrive = |app: &mut App, id: &str| {
+            app.scroll_page = None;
+            events
+                .send(Event::Messages {
+                    chat: chat.into(),
+                    messages: vec![message(chat, id, 1_000)],
+                    older: false,
+                    complete: true,
+                })
+                .unwrap();
+            app.handle_events();
+            app.scroll_page
+        };
+        assert_eq!(
+            arrive(&mut app, "new-1"),
+            Some(Scroll::Bottom),
+            "a message arriving near the end is followed"
+        );
+        app.conversations.get_mut(chat).unwrap().below = Some(120);
+        assert_eq!(
+            arrive(&mut app, "new-2"),
+            None,
+            "a reader far up is not pulled away"
+        );
     }
 
     #[test]

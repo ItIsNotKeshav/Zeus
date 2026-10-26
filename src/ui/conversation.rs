@@ -2827,6 +2827,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         });
     let divider_first = divider.as_ref().map(|(first, ..)| first.clone());
     let mut divider_placed = false;
+    // The newest message whose row starts above the bottom of the view, to
+    // tell how far the reader is from the end.
+    let mut reached: Option<usize> = None;
     let selection: Option<Vec<String>> = app
         .selection
         .as_ref()
@@ -3066,6 +3069,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     });
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
+                        if ui.cursor().top() <= viewport.bottom() {
+                            reached = Some(message_index);
+                        }
                         // WhatsApp marks every item in a media album with the
                         // same parent id. Only its first item owns a row; the
                         // remaining consecutive items are painted in that row.
@@ -3639,6 +3645,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     .interact_pos()
                     .is_some_and(|pos| bar.contains(pos)))
     });
+    conversation.below = reached.map(|index| conversation.messages.len() - 1 - index);
     let complete = conversation.complete;
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
