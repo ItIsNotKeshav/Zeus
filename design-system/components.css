@@ -1,0 +1,241 @@
+/* Zeus components for the web: static renditions of the egui widgets in
+   src/theme.rs, src/ui/widgets.rs and src/ui/controls.rs. Every value comes
+   from tokens.css. Class prefix: z-. */
+
+.z-root, .z-root * { box-sizing: border-box; }
+.z-root {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 370;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+}
+.z-stage { background: var(--window); padding: var(--space-16); display: flex; flex-wrap: wrap; gap: var(--space-12); align-items: center; min-height: 100%; }
+.z-stage.chat { background: var(--chat); }
+.z-stage.panel { background: var(--panel); }
+.z-col { display: flex; flex-direction: column; gap: var(--space-8); }
+.z-label { font-size: 11.5px; line-height: 15px; color: var(--dim); }
+
+/* Focus: a 1px ring inside the control, in the accent (on-accent over an accent fill). */
+.z-focusable:focus-visible, .z-focus { outline: var(--focus-stroke) solid var(--accent); outline-offset: calc(-1 * var(--focus-stroke)); }
+.z-btn.primary:focus-visible, .z-btn.primary.z-focus { outline-color: var(--on-accent); }
+
+/* Pill button: theme::pill_button. 13 semibold, 18x8 padding, capsule. */
+.z-btn {
+  appearance: none; border: 0; margin: 0; cursor: pointer;
+  font: 570 13px/18px var(--font-sans);
+  padding: var(--space-8) 18px;
+  border-radius: var(--radius-pill);
+  background: transparent; color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--dim);
+  transition: background-color var(--duration-control) var(--ease-out), box-shadow var(--duration-control) var(--ease-out);
+}
+.z-btn:hover, .z-btn.hover { box-shadow: inset 0 0 0 1px var(--text); }
+.z-btn.primary { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.z-btn.primary:hover, .z-btn.primary.hover { background: var(--accent-hover); }
+.z-btn.danger { background: var(--danger); color: var(--window); box-shadow: none; }
+.z-btn:disabled, .z-btn.disabled { opacity: .45; cursor: default; }
+
+/* Soft button: theme::soft_button. 13 medium, 12x7 padding, surface capsule; active = accent tint. */
+.z-soft {
+  appearance: none; border: 0; cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--space-6);
+  font: 470 13px/18px var(--font-sans);
+  padding: 7px var(--space-12);
+  border-radius: var(--radius-pill);
+  background: var(--surface); color: var(--text);
+  transition: background-color var(--duration-control) var(--ease-out);
+}
+.z-soft:hover, .z-soft.hover { background: var(--surface-hover); }
+.z-soft.active { color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.z-soft svg { width: 15px; height: 15px; }
+
+/* Icon button: theme::icon_button. Frameless; icon + 12 = target; presses to 0.92. */
+.z-icon-btn {
+  appearance: none; border: 0; background: none; cursor: pointer; padding: 0;
+  width: calc(var(--z-icon, 20px) + var(--icon-button-pad)); height: calc(var(--z-icon, 20px) + var(--icon-button-pad));
+  display: inline-grid; place-items: center; color: var(--secondary); border-radius: var(--radius-small);
+  transition: color var(--duration-control) var(--ease-out), transform var(--duration-widget) var(--ease-out);
+}
+.z-icon-btn svg { width: var(--z-icon, 20px); height: var(--z-icon, 20px); }
+.z-icon-btn:hover, .z-icon-btn.hover { color: var(--text); }
+.z-icon-btn:active { transform: scale(.92); }
+
+/* Circle button: theme::circle_button. Filled disc, icon 46% of it, grows 5% on hover. */
+.z-circle {
+  appearance: none; border: 0; cursor: pointer; padding: 0;
+  width: var(--z-d, 36px); height: var(--z-d, 36px); border-radius: 50%;
+  display: inline-grid; place-items: center;
+  background: var(--accent); color: var(--on-accent);
+  transition: transform var(--duration-control) var(--ease-out), background-color var(--duration-control) var(--ease-out);
+}
+.z-circle svg { width: 46%; height: 46%; }
+.z-circle:hover, .z-circle.hover { transform: scale(1.05); background: var(--accent-hover); }
+.z-circle.danger { background: var(--danger); color: #fff; }
+.z-circle.quiet { background: var(--surface); color: var(--text); }
+
+/* Chip: widgets::chip / filter_chip. Glass capsule with a faint edge, 10x5 padding. */
+.z-chip {
+  display: inline-flex; align-items: center; gap: var(--space-4);
+  font: 470 12.5px/17px var(--font-sans);
+  padding: 5px var(--space-10);
+  border-radius: var(--radius-pill);
+  background: var(--glass); color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--glass-edge);
+  -webkit-backdrop-filter: blur(var(--blur-bar)) saturate(var(--blur-saturation));
+  backdrop-filter: blur(var(--blur-bar)) saturate(var(--blur-saturation));
+}
+.z-chip.selected { background: var(--accent); color: var(--on-accent); box-shadow: none; }
+.z-chip.dotted { box-shadow: none; background: transparent; outline: 1px dashed var(--dim); outline-offset: -1px; color: var(--secondary); }
+
+/* Badges: widgets::badge, mention_badge, unread_dot. */
+.z-badge {
+  display: inline-grid; place-items: center; min-width: var(--badge-height); height: var(--badge-height);
+  padding: 0 6px; border-radius: 10px;
+  font: 570 11px/14px var(--font-sans); background: var(--accent); color: var(--on-accent);
+}
+.z-badge.muted { background: var(--dim); }
+.z-badge.mention { width: var(--badge-height); padding: 0; border-radius: 50%; font-size: 12px; }
+.z-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.z-dot.muted { background: var(--dim); }
+
+/* Switch: widgets::switch. 40x22; off = outlined track + small grey knob; on = accent track + larger knob with a check. */
+.z-switch { position: relative; display: inline-block; width: var(--switch-width); height: 22px; border-radius: 11px; cursor: pointer;
+  background: var(--surface-active); box-shadow: inset 0 0 0 1.5px var(--secondary);
+  transition: background-color var(--duration-widget) linear, box-shadow var(--duration-widget) linear; }
+.z-switch::after { content: ""; position: absolute; top: 5px; left: 5px; width: 12px; height: 12px; border-radius: 50%; background: var(--secondary);
+  transition: transform var(--duration-widget) linear, width var(--duration-widget) linear, height var(--duration-widget) linear, top var(--duration-widget) linear, background-color var(--duration-widget) linear; }
+.z-switch.on { background: var(--accent); box-shadow: none; }
+.z-switch.on::after { top: 3px; left: 3px; width: 16px; height: 16px; transform: translateX(18px); background: var(--z-knob, #fff); }
+.z-switch .check { position: absolute; top: 5px; left: 23px; width: 12px; height: 12px; color: var(--accent); opacity: 0; z-index: 1; transition: opacity var(--duration-widget) linear; }
+.z-switch.on .check { opacity: 1; }
+
+/* Glass slider: widgets::glass_slider. 6pt track, accent fill, 30x20 glass capsule thumb. */
+.z-slider { position: relative; width: 220px; height: var(--slider-height); }
+.z-slider .track { position: absolute; left: 0; right: 0; top: 11px; height: 6px; border-radius: 3px; background: var(--surface-active); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--secondary) 18%, transparent); }
+.z-slider .fill { position: absolute; left: 0; top: 11px; height: 6px; border-radius: 3px; background: var(--accent); }
+.z-slider .thumb { position: absolute; top: 4px; width: 30px; height: 20px; margin-left: -15px; border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 45%, transparent), 0 2px 1.5px rgba(0,0,0,.09), 0 3px 3px rgba(0,0,0,.06), 0 4px 5px rgba(0,0,0,.04);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  transition: transform var(--duration-slider) var(--ease-out); }
+.z-slider .thumb::before { content: ""; position: absolute; left: 9px; right: 9px; top: 2.25px; height: 1.5px; border-radius: 1px; background: rgba(255,255,255,.7); }
+.z-slider .thumb.active { transform: scale(1.12); }
+
+/* Capsule controls: controls::dropdown / text_field. 36 tall, 16 text inset, flat tint, no border. */
+.z-field {
+  display: flex; align-items: center; gap: var(--space-8);
+  height: var(--control-height); width: var(--control-width); max-width: 100%;
+  padding: 0 var(--space-16); border-radius: var(--radius-pill);
+  background: var(--tint-field); color: var(--text);
+  font: 370 14px/20px var(--font-sans);
+  transition: background-color var(--duration-control) var(--ease-out);
+}
+.z-field:hover, .z-field.hover, .z-field.open { background: var(--tint-field-lift); }
+.z-field .value { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.z-field .placeholder { color: var(--dim); }
+.z-field svg { width: 16px; height: 16px; color: var(--secondary); flex: none; }
+.z-field.search { width: 100%; }
+
+/* Menus and popovers: widgets::menu_frame + FrostedPopup. */
+.z-menu {
+  min-width: 180px; padding: 6px;
+  border-radius: var(--radius-menu);
+  background: var(--menu-glass);
+  box-shadow: inset 0 0 0 1px var(--outline), var(--shadow-float);
+  -webkit-backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation));
+  backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation));
+  transform-origin: top left;
+  animation: z-pop var(--duration-popup) var(--ease-out) both;
+}
+@keyframes z-pop { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }
+.z-item { display: flex; align-items: center; gap: 10px; height: var(--menu-item-height); padding: 0 10px; border-radius: var(--radius-medium);
+  font: 370 13.5px/18px var(--font-sans); color: var(--text); cursor: pointer; }
+.z-item svg { width: 16px; height: 16px; color: var(--secondary); flex: none; }
+.z-item:hover, .z-item.hover { background: var(--surface-hover); }
+.z-item.selected::after { content: ""; margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.z-item.danger, .z-item.danger svg { color: var(--danger); }
+.z-item.disabled { color: var(--dim); cursor: default; }
+.z-item.disabled:hover { background: none; }
+.z-sep { height: 9px; position: relative; }
+.z-sep::after { content: ""; position: absolute; left: 6px; right: 6px; top: 4px; height: 1px; background: var(--outline); }
+.z-option { height: var(--option-height); }
+
+/* Dialog: the frosted modal in src/ui/dialogs.rs. 28 radius, 22 margin, modal shadow, backdrop in the shadow colour. */
+.z-backdrop { position: absolute; inset: 0; background: var(--backdrop); display: grid; place-items: center; padding: var(--space-16); }
+.z-dialog {
+  width: var(--dialog-width); max-width: 100%;
+  padding: var(--space-22); border-radius: var(--radius-dialog);
+  background: var(--menu-glass);
+  box-shadow: inset 0 0 0 1px var(--outline), var(--shadow-modal);
+  -webkit-backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation));
+  backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation));
+  display: flex; flex-direction: column; gap: var(--space-12);
+}
+.z-dialog h3 { margin: 0; font: 670 20px/26px var(--font-sans); text-wrap: balance; }
+.z-dialog p { margin: 0; color: var(--secondary); font: 370 13.5px/19px var(--font-sans); }
+.z-dialog .actions { display: flex; justify-content: flex-end; gap: var(--space-8); margin-top: var(--space-8); }
+
+/* Toast: src/ui/mod.rs toasts. Overlay fill, 14 radius, 14x10 padding, float shadow. */
+.z-toast { display: inline-flex; align-items: center; gap: var(--space-12); padding: 10px 14px; border-radius: var(--radius-medium);
+  background: var(--overlay); box-shadow: inset 0 0 0 1px var(--outline), var(--shadow-float); font: 470 13.5px/18px var(--font-sans); max-width: 360px; }
+.z-toast svg { width: 16px; height: 16px; color: var(--secondary); flex: none; }
+
+/* Settings row: widgets::setting_row. Label 14 medium, description 12.5 secondary, control right-aligned in a 220 column. */
+.z-setting { display: flex; align-items: center; gap: var(--space-24); padding-bottom: var(--space-10); }
+.z-setting .text { flex: 1; min-width: 120px; }
+.z-setting .label { font: 470 14px/20px var(--font-sans); }
+.z-setting .desc { font: 370 12.5px/17px var(--font-sans); color: var(--secondary); }
+.z-card { background: var(--panel); border-radius: var(--radius-card); padding: var(--space-16) var(--space-20); }
+
+/* Message bubbles: widgets::grouped_bubble_corners (Dark/Light style). */
+.z-thread { display: flex; flex-direction: column; gap: 2px; padding: var(--space-12); }
+.z-bubble { max-width: 72%; padding: 7px 10px 6px; font: 370 14.5px/20px var(--font-sans);
+  background: var(--bubble-in); color: var(--text); border-radius: var(--radius-bubble-grouped); align-self: flex-start; }
+.z-bubble .meta { float: right; margin: 6px 0 -4px 10px; font: 370 11px/14px var(--font-sans); color: var(--dim); }
+.z-bubble.own { align-self: flex-end; background: var(--bubble-out); }
+.z-bubble.own .meta { color: var(--secondary); }
+.z-bubble.first:not(.last) { border-bottom-left-radius: var(--radius-bubble-join); }
+.z-bubble.mid { border-top-left-radius: var(--radius-bubble-join); border-bottom-left-radius: var(--radius-bubble-join); }
+.z-bubble.last:not(.first) { border-top-left-radius: var(--radius-bubble-join); }
+.z-bubble.own.first:not(.last) { border-radius: var(--radius-bubble-grouped) var(--radius-bubble-grouped) var(--radius-bubble-join) var(--radius-bubble-grouped); }
+.z-bubble.own.mid { border-radius: var(--radius-bubble-grouped) var(--radius-bubble-join) var(--radius-bubble-join) var(--radius-bubble-grouped); }
+.z-bubble.own.last:not(.first) { border-radius: var(--radius-bubble-grouped) var(--radius-bubble-join) var(--radius-bubble-grouped) var(--radius-bubble-grouped); }
+.z-bubble.gap { margin-top: var(--space-8); }
+.z-quote { display: block; margin: 2px 0 6px; padding: 4px 8px; border-radius: var(--radius-small); background: color-mix(in srgb, var(--window) 35%, transparent);
+  box-shadow: inset 3px 0 0 var(--accent); font-size: 13px; line-height: 18px; color: var(--secondary); }
+.z-quote b { display: block; color: var(--text); font-weight: 570; }
+.z-day { align-self: center; margin: var(--space-8) 0; }
+
+/* Composer: conversation::composer. Glass field, 24 radius, raised like a bubble. */
+.z-composer { display: flex; align-items: center; gap: var(--space-4); padding: 2px; border-radius: var(--radius-panel);
+  background: var(--glass); box-shadow: inset 0 0 0 1px var(--glass-edge), var(--shadow-bubble);
+  -webkit-backdrop-filter: blur(var(--blur-bar)) saturate(var(--blur-saturation)); backdrop-filter: blur(var(--blur-bar)) saturate(var(--blur-saturation)); width: 100%; }
+.z-composer .input { flex: 1; min-width: 0; padding: 8px 6px; color: var(--dim); font: 370 14.5px/20px var(--font-sans); }
+.z-composer .z-icon-btn { --z-icon: 22px; width: var(--control-height); height: var(--control-height); }
+
+/* Chat-list row: chats.rs. 68 tall; highlight is a 14-radius card inset 8x2. */
+.z-row { position: relative; display: flex; align-items: center; gap: var(--space-12); height: var(--row-height); padding: 0 var(--space-16); }
+.z-row::before { content: ""; position: absolute; inset: 2px 8px; border-radius: var(--radius-medium); z-index: 0; transition: background-color var(--duration-control) var(--ease-out); }
+.z-row.hover::before, .z-row:hover::before { background: var(--tint-hover); }
+.z-row.selected::before { background: var(--tint-selected); }
+.z-row > * { position: relative; z-index: 1; }
+.z-avatar { width: 48px; height: 48px; border-radius: 50%; display: grid; place-items: center; flex: none; font: 570 17px/1 var(--font-sans); color: #fff; }
+.z-row .main { flex: 1; min-width: 0; }
+.z-row .top, .z-row .bottom { display: flex; align-items: center; gap: var(--space-8); }
+.z-row .name { flex: 1; min-width: 0; font: 570 15px/20px var(--font-sans); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.z-row .time { font: 370 12px/16px var(--font-sans); color: var(--dim); }
+.z-row .time.unread { color: var(--accent); }
+.z-row .preview { flex: 1; min-width: 0; font: 370 13.5px/18px var(--font-sans); color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Empty state: widgets::empty_state. 40 icon in dim, 16 semibold title, 13.5 secondary body. */
+.z-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-8); padding: var(--space-48) var(--space-24) var(--space-24); }
+.z-empty svg { width: 40px; height: 40px; color: var(--dim); }
+.z-empty .t { font: 570 16px/22px var(--font-sans); }
+.z-empty .b { font: 370 13.5px/19px var(--font-sans); color: var(--secondary); max-width: 32ch; margin-top: -6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .z-menu { animation: none; }
+  .z-root *, .z-root *::before, .z-root *::after { transition-duration: 0ms !important; }
+}
