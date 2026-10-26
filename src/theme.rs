@@ -871,6 +871,8 @@ fn tabular_family(weight: fastframe_fonts::Weight) -> egui::FontFamily {
 pub fn install(ctx: &egui::Context) {
     install_fonts(ctx);
     egui_extras::install_image_loaders(ctx);
+    // Chat pictures decoded at the size they are drawn.
+    crate::image_cache::install(ctx);
     // Served by a loader that never forgets them, so `reduce_texture_memory`
     // below cannot leave an icon drawn at two sizes without bytes.
     fastframe_icons::install::<Icon>(ctx);

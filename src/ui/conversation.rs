@@ -8716,11 +8716,7 @@ fn album_tile(
             .path
             .as_ref()
             .filter(|_| matches!(message.content, Content::Image { .. }))
-            .map(|path| {
-                let uri = crate::util::image_uri(path);
-                crate::image_cache::touch(ui.ctx(), &uri);
-                uri
-            })
+            .map(|path| crate::image_cache::fit_uri(ui.ctx(), path, size))
             .or_else(|| {
                 message.thumbnail.as_deref().map(|bytes| {
                     thumbnail_uri(
@@ -8844,11 +8840,7 @@ fn carousel_picture(
         let uri = media
             .path
             .as_ref()
-            .map(|path| {
-                let uri = crate::util::image_uri(path);
-                crate::image_cache::touch(ui.ctx(), &uri);
-                uri
-            })
+            .map(|path| crate::image_cache::fit_uri(ui.ctx(), path, size))
             .or_else(|| {
                 card.thumbnail.as_deref().map(|bytes| {
                     thumbnail_uri(
@@ -9732,7 +9724,8 @@ fn picture(
         if !ui.is_rect_visible(Rect::from_min_size(position, reserved)) {
             return ui.allocate_exact_size(reserved, Sense::hover()).0;
         }
-        let image = widgets::file_image(ui, path);
+        // Stickers are WebP, which keep egui's own loader and their motion.
+        let image = widgets::fitted_image(ui, path, vec2(max_width, max_height));
         return match image.load_for_size(ui.ctx(), vec2(max_width, max_height)) {
             Ok(egui::load::TexturePoll::Ready { texture }) => {
                 if drawn != Some(texture.size) {
@@ -11357,7 +11350,9 @@ fn upload_picture(
             Some(vec2(*w as f32, *h as f32)),
         ),
         crate::model::UploadPreview::File(path) => {
-            match widgets::file_image(ui, path).load_for_size(ui.ctx(), Vec2::splat(width)) {
+            match widgets::fitted_image(ui, path, Vec2::splat(width))
+                .load_for_size(ui.ctx(), Vec2::splat(width))
+            {
                 Ok(poll) => (poll.texture_id(), poll.size()),
                 Err(_) => (None, None),
             }
@@ -13199,7 +13194,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     }
                     crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
                         if !document && crate::app::Pending::is_picture_file(path) {
-                            widgets::file_image(ui, path)
+                            widgets::fitted_image(ui, path, media.size())
                                 .fit_to_exact_size(media.size())
                                 .corner_radius(inner_radius)
                                 .paint_at(ui, media);

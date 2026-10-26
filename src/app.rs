@@ -160,6 +160,8 @@ impl ScrollRoute {
 }
 /// Delay after the last keystroke before clearing typing state.
 const COMPOSING_TIMEOUT: Duration = Duration::from_secs(4);
+/// How often the media caches are cleaned up while the app runs.
+const CACHE_PRUNE_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// How long an info toast stays, including its fade.
 pub const INFO_TOAST_LIFETIME: Duration = Duration::from_millis(3200);
 /// How long a toast with an Undo button stays.
@@ -696,6 +698,9 @@ pub struct App {
     /// A newer release than this build, once GitHub has said so.
     pub update: Option<crate::updates::Release>,
     last_update_check: Option<Instant>,
+    /// When the media caches were last cleaned up on their own; `None` runs
+    /// the cleanup on the next frame.
+    last_cache_prune: Option<Instant>,
     /// The check the reader asked for from Settings, and what it found.
     pub update_check: crate::updates::Check,
     pub show_update: bool,
@@ -1467,6 +1472,7 @@ impl App {
             events_hidden: false,
             update: None,
             last_update_check: None,
+            last_cache_prune: None,
             update_check: crate::updates::Check::default(),
             show_update: false,
             update_download: Default::default(),
@@ -3229,6 +3235,20 @@ impl App {
                     if stats.is_some() {
                         self.storage_stats = stats;
                     }
+                }
+            }
+            Event::MediaPruned(removed) => {
+                let removed: std::collections::HashSet<PathBuf> = removed.into_iter().collect();
+                for conversation in self.conversations.values_mut() {
+                    for message in &mut conversation.messages {
+                        message.content.forget_files(&|path| removed.contains(path));
+                    }
+                }
+                // Settings shows the smaller cache.
+                if self.page == Page::Settings {
+                    self.storage_token += 1;
+                    let token = self.storage_token;
+                    self.backend.send(Command::LoadStorageStats { token });
                 }
             }
             Event::Link(status) => self.handle_link(status, live),
@@ -5865,6 +5885,30 @@ impl App {
         id
     }
 
+    /// Cleans up every account's media cache as Settings > Storage asks, at
+    /// start, when the choice changes, and every [`CACHE_PRUNE_INTERVAL`].
+    fn maybe_prune_caches(&mut self, ctx: &egui::Context) {
+        let max_age = self.settings.cache_age.max_age();
+        let max_bytes = self.settings.cache_limit.max_bytes();
+        if max_age.is_none() && max_bytes.is_none() {
+            return;
+        }
+        if self
+            .last_cache_prune
+            .is_some_and(|at| at.elapsed() < CACHE_PRUNE_INTERVAL)
+        {
+            return;
+        }
+        self.last_cache_prune = Some(Instant::now());
+        for account in &self.accounts {
+            account
+                .backend
+                .send(Command::PruneMediaCache { max_age, max_bytes });
+        }
+        // An idle window paints nothing, so wake it for the next cleanup.
+        ctx.request_repaint_after(CACHE_PRUNE_INTERVAL);
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         self.tick_call(ctx);
@@ -5897,6 +5941,7 @@ impl App {
             ctx.request_repaint_after(crate::updates::CHECK_INTERVAL);
         }
         self.maybe_download_update();
+        self.maybe_prune_caches(ctx);
         if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
             self.save_settings();
         }
@@ -8533,6 +8578,16 @@ impl App {
                         .backend
                         .send(Command::SetDownloadFolder(folder.clone()));
                 }
+            }
+            Action::SetCacheAge(age) => {
+                self.settings.cache_age = age;
+                self.mark_settings_dirty();
+                self.last_cache_prune = None;
+            }
+            Action::SetCacheLimit(limit) => {
+                self.settings.cache_limit = limit;
+                self.mark_settings_dirty();
+                self.last_cache_prune = None;
             }
             Action::SetMicrophone(device) => {
                 self.settings.microphone = device;

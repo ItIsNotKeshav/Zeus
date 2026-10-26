@@ -1496,8 +1496,13 @@ impl Content {
     /// carousel card's picture. Files elsewhere, such as a chosen download
     /// folder, are kept.
     pub fn forget_files_in(&mut self, dir: &std::path::Path) {
+        self.forget_files(&|path| path.starts_with(dir));
+    }
+
+    /// Forgets the files `gone` picks, as [`Self::forget_files_in`] does.
+    pub fn forget_files(&mut self, gone: &dyn Fn(&std::path::Path) -> bool) {
         let forget = |path: &mut Option<PathBuf>, state: &mut MediaState| {
-            if path.as_deref().is_some_and(|path| path.starts_with(dir)) {
+            if path.as_deref().is_some_and(gone) {
                 *path = None;
                 *state = MediaState::Idle;
             }
@@ -3100,6 +3105,10 @@ pub enum Action {
     RemoveGroupPicture(ChatId),
     /// Sets or resets (`None`) the folder for new downloads.
     SetDownloadFolder(Option<PathBuf>),
+    /// When unopened attachments leave the media cache.
+    SetCacheAge(crate::settings::CacheAge),
+    /// How big the media cache may grow.
+    SetCacheLimit(crate::settings::CacheLimit),
     /// Keeps archived chats archived when a new message comes, or not.
     SetKeepChatsArchived(bool),
     /// Picks the microphone calls and voice messages use; `None` follows the

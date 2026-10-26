@@ -1135,6 +1135,22 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         storage_usage,
     );
+    files.row(
+        translated(locale, "Remove unopened files"),
+        translated(
+            locale,
+            "Downloaded attachments you have not opened for this long are deleted from this computer. They download again when you open them.",
+        ),
+        cache_age_picker,
+    );
+    files.row(
+        translated(locale, "Cache size limit"),
+        translated(
+            locale,
+            "When downloads take more than this, the ones opened longest ago are deleted first.",
+        ),
+        cache_limit_picker,
+    );
     let log = app.dirs.log_file();
     files.row(
         translated(locale, "Log"),
@@ -2966,6 +2982,50 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
             storage_bar_row(ui, &palette, &label, count, bytes, total);
         }
     }
+}
+
+fn cache_age_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let selected = app.settings.cache_age;
+    controls::dropdown(
+        ui,
+        &palette,
+        "cache-age",
+        &crate::i18n::gettext(locale, "Remove unopened files"),
+        &crate::i18n::gettext(locale, selected.label()),
+        controls::WIDTH,
+        |ui| {
+            for choice in crate::settings::CacheAge::ALL {
+                let label = crate::i18n::gettext(locale, choice.label());
+                if controls::option(ui, &palette, &label, selected == choice) {
+                    app.actions.push(Action::SetCacheAge(choice));
+                }
+            }
+        },
+    );
+}
+
+fn cache_limit_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let selected = app.settings.cache_limit;
+    controls::dropdown(
+        ui,
+        &palette,
+        "cache-limit",
+        &crate::i18n::gettext(locale, "Cache size limit"),
+        &crate::i18n::gettext(locale, selected.label()),
+        controls::WIDTH,
+        |ui| {
+            for choice in crate::settings::CacheLimit::ALL {
+                let label = crate::i18n::gettext(locale, choice.label());
+                if controls::option(ui, &palette, &label, selected == choice) {
+                    app.actions.push(Action::SetCacheLimit(choice));
+                }
+            }
+        },
+    );
 }
 
 /// One labelled bar: the kind, how many files and how much they weigh, and

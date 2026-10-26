@@ -295,6 +295,83 @@ impl DoodleColor {
 /// How much of the default doodle strength the slider scales it by.
 pub const DOODLE_INTENSITY: std::ops::RangeInclusive<f32> = 0.2..=2.5;
 
+/// How long a downloaded attachment stays in the media cache without being
+/// opened before it is deleted on its own. It downloads again when opened.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheAge {
+    OneMonth,
+    ThreeMonths,
+    OneYear,
+    #[default]
+    Never,
+}
+
+impl CacheAge {
+    pub const ALL: [Self; 4] = [
+        Self::OneMonth,
+        Self::ThreeMonths,
+        Self::OneYear,
+        Self::Never,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OneMonth => "After 1 month",
+            Self::ThreeMonths => "After 3 months",
+            Self::OneYear => "After 1 year",
+            Self::Never => "Never",
+        }
+    }
+
+    /// The age past which a file goes, `None` for never.
+    pub fn max_age(self) -> Option<std::time::Duration> {
+        const DAY: u64 = 24 * 60 * 60;
+        match self {
+            Self::OneMonth => Some(std::time::Duration::from_secs(30 * DAY)),
+            Self::ThreeMonths => Some(std::time::Duration::from_secs(91 * DAY)),
+            Self::OneYear => Some(std::time::Duration::from_secs(365 * DAY)),
+            Self::Never => None,
+        }
+    }
+}
+
+/// The most the media cache may hold. Past it, the attachments opened
+/// longest ago are deleted until it fits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CacheLimit {
+    OneGb,
+    FiveGb,
+    TenGb,
+    #[default]
+    NoLimit,
+}
+
+impl CacheLimit {
+    pub const ALL: [Self; 4] = [Self::OneGb, Self::FiveGb, Self::TenGb, Self::NoLimit];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OneGb => "1 GB",
+            Self::FiveGb => "5 GB",
+            Self::TenGb => "10 GB",
+            Self::NoLimit => "No limit",
+        }
+    }
+
+    /// The limit in bytes, `None` for none.
+    pub fn max_bytes(self) -> Option<u64> {
+        const GB: u64 = 1_000_000_000;
+        match self {
+            Self::OneGb => Some(GB),
+            Self::FiveGb => Some(5 * GB),
+            Self::TenGb => Some(10 * GB),
+            Self::NoLimit => None,
+        }
+    }
+}
+
 /// Background colours offered by WhatsApp's wallpaper picker, after the
 /// active theme's own chat colour.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -919,6 +996,10 @@ pub struct Settings {
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
+    /// When unopened attachments leave the media cache on their own.
+    pub cache_age: CacheAge,
+    /// How big the media cache may grow before old attachments leave it.
+    pub cache_limit: CacheLimit,
     /// Archived chats stay archived when a message arrives or is sent, as
     /// with the phone's "Keep chats archived". Off, a new message brings the
     /// chat back to the list.
@@ -1033,6 +1114,8 @@ impl Default for Settings {
             group_sounds: true,
             notification_cooldown: true,
             download_folder: None,
+            cache_age: CacheAge::default(),
+            cache_limit: CacheLimit::default(),
             keep_chats_archived: true,
             proxy: String::new(),
             check_for_updates: true,
