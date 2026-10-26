@@ -891,8 +891,12 @@ pub struct Settings {
     /// The ready-made theme last used, to return to from Custom.
     pub last_theme: ChatTheme,
     /// Frosted glass under the header and composer, and the desktop through
-    /// the window where the platform offers it, for themes that draw glass.
+    /// the window where the platform offers it, for themes that draw glass:
+    /// Glass short of Solid. Kept in step with `glass` by
+    /// [`Settings::set_glass`], for releases that only know this switch.
     pub blur: bool,
+    /// How tinted glass is, from 0 (Clear) to 1 (Solid, as Blur off was).
+    pub glass: f32,
     /// Whether every bubble shows its time and ticks inside it. Zeus's own
     /// look otherwise shows them below the bubble on a click.
     pub always_show_time: bool,
@@ -1075,6 +1079,7 @@ impl Default for Settings {
             last_look: ChatTheme::WhatsApp,
             last_theme: ChatTheme::Catppuccin,
             blur: true,
+            glass: crate::backdrop::GLASS_DEFAULT,
             always_show_time: false,
             messages_theme: false,
             font: FontChoice::GoogleSansFlex,
@@ -1150,7 +1155,7 @@ impl Default for Settings {
 ///    mode) become [`WallpaperColor::Theme`], the new default.
 /// 2. The one theme menu becomes a chat theme, a mode and an accent
 ///    ([`Settings::set_theme`]).
-pub const SETTINGS_VERSION: u32 = 3;
+pub const SETTINGS_VERSION: u32 = 4;
 
 /// The key push to talk starts on.
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
@@ -1389,6 +1394,22 @@ impl Settings {
         }
     }
 
+    /// Sets Glass, and Blur with it for older releases: on short of Solid.
+    pub fn set_glass(&mut self, tint: f32) {
+        self.glass = tint.clamp(0.0, 1.0);
+        self.blur = self.glass < 1.0;
+    }
+
+    /// Glass as the window draws it: Solid while the system asks for less
+    /// transparency.
+    pub fn glass_shown(&self) -> f32 {
+        if !self.blur || crate::backdrop::system_reduces_transparency() {
+            1.0
+        } else {
+            self.glass
+        }
+    }
+
     /// Whether the window should let the desktop show through it.
     pub fn vibrant_window(&self) -> bool {
         self.blur && self.chat_theme.vibrant()
@@ -1534,6 +1555,14 @@ impl Settings {
             // Halloween ships on: older files keep the look they had until
             // now, so it brings its doodles and sounds in as turning it on does.
             self.set_halloween(true);
+        }
+        if self.version < 4 {
+            // Blur's switch became Glass: Off is its Solid end.
+            self.glass = if self.blur {
+                crate::backdrop::GLASS_DEFAULT
+            } else {
+                1.0
+            };
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -1995,6 +2024,20 @@ mod tests {
         assert_eq!(loaded.mode, Mode::Light);
         assert!(!loaded.blur);
         assert!(!loaded.vibrant_window());
+    }
+
+    #[test]
+    fn blur_off_becomes_solid_glass() {
+        let (off, _) = load_from(r#"{"version":3,"blur":false}"#);
+        assert_eq!(off.glass, 1.0);
+        assert_eq!(off.glass_shown(), 1.0);
+        let (on, _) = load_from(r#"{"version":3,"blur":true}"#);
+        assert_eq!(on.glass, crate::backdrop::GLASS_DEFAULT);
+        let mut chosen = on.clone();
+        chosen.set_glass(1.0);
+        assert!(!chosen.blur, "older releases read Solid as Blur off");
+        chosen.set_glass(0.0);
+        assert!(chosen.blur);
     }
 
     #[test]

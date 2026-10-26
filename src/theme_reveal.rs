@@ -15,7 +15,7 @@ use egui::{Color32, Context, Id, LayerId, Mesh, Order, Pos2, Rect, TextureHandle
 /// (a hidden window, or a renderer without screenshots), in seconds.
 const WAIT: f64 = 0.25;
 /// How long the circle takes to pass the farthest corner, in seconds.
-const DURATION: f64 = 0.55;
+const DURATION: f64 = crate::theme::MOTION_SCREEN as f64;
 /// How wide the soft edge of the circle is, in points.
 const FEATHER: f32 = 36.0;
 /// How many sides the circle has.
@@ -153,8 +153,7 @@ impl Reveal {
             return;
         }
         let t = (elapsed / DURATION) as f32;
-        // Quick to open, settling as it reaches the corners.
-        let progress = 1.0 - (1.0 - t).powi(3);
+        let progress = crate::theme::ease_out(t);
         let painter = ctx.layer_painter(LayerId::new(Order::Debug, Id::new("zeus-theme-reveal")));
         painter.add(circle(ctx.viewport_rect(), *origin, picture.id(), progress));
         ctx.request_repaint();

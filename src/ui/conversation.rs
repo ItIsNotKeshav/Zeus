@@ -167,9 +167,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let list = area.with_min_y(bar.top());
         // A strip opening over the field slides the messages up with it, so
         // the last one is never left behind it.
-        let over =
-            ui.ctx()
-                .animate_value_with_time(ui.id().with("composer-over"), foot.height(), 0.15);
+        let over = ui.ctx().animate_value_with_time(
+            ui.id().with("composer-over"),
+            foot.height(),
+            theme::MOTION_QUICK,
+        );
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
             messages(app, ui, &chat, bar.height(), over);
         });
@@ -1688,8 +1690,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     let mode_fade = ui.ctx().animate_bool_with_time_and_easing(
                         egui::Id::new(("picker-mode", app.settings.picker_mode as u8)),
                         true,
-                        0.18,
-                        egui::emath::easing::quadratic_out,
+                        theme::MOTION_QUICK,
+                        theme::ease_out,
                     );
                     let smile = last_line(ui, line, |ui| ui.scope(|ui| {
                         ui.multiply_opacity(mode_fade);
@@ -2414,6 +2416,10 @@ struct View<'a> {
     /// What touchpad swipes do in the open chat; only a reply is the
     /// message rows' to do.
     swipes: crate::settings::Swipes,
+    /// How strongly doodles show behind the bubbles and the colour under
+    /// them, when there are any: each bubble lays a soft scrim over them
+    /// (#29).
+    doodles: Option<(f32, Color32)>,
 }
 
 /// Protocol album parent carried by pictures and ordinary videos.
@@ -2552,7 +2558,7 @@ fn shows_sender_pictures(chat: &Chat) -> bool {
 /// How long the sticky date stays after the transcript stops moving.
 const STICKY_DATE_HOLD: f64 = 1.0;
 /// How long the sticky date takes to fade out.
-const STICKY_DATE_FADE: f32 = 0.25;
+const STICKY_DATE_FADE: f32 = theme::MOTION_PANEL;
 
 /// Keeps the first visible message's date at the top of the transcript once
 /// its day separator has scrolled away, while the reader scrolls: it fades
@@ -2616,7 +2622,7 @@ fn sticky_date<R>(
 }
 
 /// How long the list takes to slide up for a message that lands at its end.
-const GLIDE_SECONDS: f64 = 0.25;
+const GLIDE_SECONDS: f64 = theme::MOTION_PANEL as f64;
 
 /// Slides the list up into place when a new last message lands while the
 /// reader is at the bottom, instead of jumping by its height in one frame.
@@ -2645,7 +2651,7 @@ impl Glide {
         if t >= 1.0 || self.distance <= 0.0 {
             0.0
         } else {
-            self.distance * (1.0 - t).powi(3)
+            self.distance * (1.0 - theme::ease_out(t))
         }
     }
 }
@@ -2805,6 +2811,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         copy_rows: (!app.selection.as_ref().is_some_and(|(id, _)| *id == chat.id))
             .then_some(app.copy_rows.as_ref()),
         swipes: app.settings.swipes,
+        doodles: app.doodles_behind(),
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -3791,8 +3798,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let appear = ui.ctx().animate_bool_with_time_and_easing(
         ui.id().with("to-bottom"),
         !at_bottom,
-        if reduce_motion { 0.0 } else { 0.18 },
-        egui::emath::easing::quadratic_out,
+        if reduce_motion {
+            0.0
+        } else {
+            theme::MOTION_QUICK
+        },
+        theme::ease_out,
     );
     if appear > 0.0 {
         let rect = output.inner_rect;
@@ -4231,17 +4242,43 @@ pub(crate) fn flying_to(ctx: &egui::Context) -> Option<String> {
         .map(|(id, _)| id)
 }
 
+/// How far a bubble's scrim reaches past its edge, and fades over.
+const SCRIM_REACH: f32 = 24.0;
+
+/// A soft, wide wash behind a bubble, so doodles fade out before they reach
+/// its text at any intensity (#29): the wallpaper's colour leaning towards
+/// the bubble's `fill`, so it reads as the bubble's shadow, not a glow.
+/// Stronger doodles get a stronger wash; none, none.
+fn doodle_scrim(
+    bubble: Rect,
+    fill: Color32,
+    doodles: Option<(f32, Color32)>,
+) -> Option<egui::Shape> {
+    let (intensity, wall) = doodles.filter(|(intensity, _)| *intensity > 0.0)?;
+    let strength = (0.45 + 0.15 * intensity).clamp(0.45, 0.8);
+    let [r, g, b, _] = wall.lerp_to_gamma(fill, 0.12).to_srgba_unmultiplied();
+    let wash = Color32::from_rgba_unmultiplied(r, g, b, (strength * 255.0).round() as u8);
+    Some(egui::Shape::Rect(
+        egui::epaint::RectShape::filled(
+            bubble.expand(SCRIM_REACH / 2.0),
+            CornerRadius::same(theme::RADIUS_CARD),
+            wash,
+        )
+        .with_blur_width(SCRIM_REACH),
+    ))
+}
+
 /// How long a sent message takes to travel from the send button to its place.
-const FLIGHT_SECONDS: f64 = 0.28;
+const FLIGHT_SECONDS: f64 = theme::MOTION_PANEL as f64;
 /// How long a received message takes to settle in.
-const LANDING_SECONDS: f64 = 0.3;
+const LANDING_SECONDS: f64 = theme::MOTION_PANEL as f64;
 /// How old a message may be when first drawn and still be animated in: one
 /// just sent or received, not history or a chat opened later.
 const ARRIVAL_FRESH: i64 = 3;
 
 /// Ease out: quick at first, gentle at the end, no overshoot.
 fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+    theme::ease_out(t)
 }
 
 /// Draws a message row and returns its bubble response for scrolling. A
@@ -4756,13 +4793,13 @@ fn bubble_row(
         let animation_time = if reduce_motion {
             0.0
         } else {
-            ui.ctx().global_style().animation_time.min(0.24)
+            theme::MOTION_QUICK
         };
         let progress = ui.ctx().animate_bool_with_time_and_easing(
             metadata_id.with("reveal"),
             visible,
             animation_time,
-            egui::emath::easing::quadratic_out,
+            theme::ease_out,
         );
         if progress > 0.0 {
             let display_message = album.and_then(|members| members.last()).unwrap_or(message);
@@ -5497,7 +5534,8 @@ fn bubble_frame(
     let rect_id = bubble_id.with("rect");
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(rect_id));
     let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
-    // Painted once the contents are measured, beneath them.
+    // Painted once the contents are measured, beneath them, over a scrim.
+    let scrim = ui.painter().add(egui::Shape::Noop);
     let backdrop = ui.painter().add(egui::Shape::Noop);
     let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
         widgets::Side::Right
@@ -5610,6 +5648,9 @@ fn bubble_frame(
             }
         });
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
+        if let Some(shape) = doodle_scrim(inner.response.rect, fill, view.doodles) {
+            ui.painter().set(scrim, shape);
+        }
         ui.painter().set(
             backdrop,
             if palette.bubbles == theme::BubbleStyle::Nothing {
@@ -6769,9 +6810,9 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
         if crate::motion::screen_reader_attached(ui.ctx()) {
             0.0
         } else {
-            0.18
+            theme::MOTION_QUICK
         },
-        egui::emath::easing::quadratic_out,
+        theme::ease_out,
     );
     ui.multiply_opacity(arrived);
     let shown: Vec<&str> = counts
@@ -6950,6 +6991,7 @@ pub(crate) fn list_menu(
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
         swipes: app.settings.swipes,
+        doodles: app.doodles_behind(),
         selecting: false,
         selected: &[],
         motion_playing: None,
@@ -8616,8 +8658,12 @@ fn album_download_button(
     let appear = ui.ctx().animate_bool_with_time_and_easing(
         id,
         !missing.is_empty(),
-        if reduce_motion { 0.0 } else { 0.18 },
-        egui::emath::easing::quadratic_out,
+        if reduce_motion {
+            0.0
+        } else {
+            theme::MOTION_QUICK
+        },
+        theme::ease_out,
     );
     if appear <= 0.0 {
         return;
@@ -8640,8 +8686,12 @@ fn album_download_button(
     let hover = ui.ctx().animate_bool_with_time_and_easing(
         id.with("hover"),
         response.hovered() && !downloading,
-        if reduce_motion { 0.0 } else { 0.12 },
-        egui::emath::easing::quadratic_out,
+        if reduce_motion {
+            0.0
+        } else {
+            theme::MOTION_QUICK
+        },
+        theme::ease_out,
     );
     let scale = (0.7 + 0.3 * appear) * (1.0 + 0.06 * hover);
     let disc = Rect::from_center_size(button.center(), button.size() * scale);
@@ -8650,7 +8700,7 @@ fn album_download_button(
     // Frosted over the pictures it floats on, as the other floating controls
     // are; a darker tint stands in while Blur is off.
     painter.add(super::glass::rounded(disc, disc.width() / 2.0));
-    let tint = if crate::backdrop::blur() { 85.0 } else { 170.0 };
+    let tint = 170.0 * crate::backdrop::tinted(0.5);
     painter.circle_filled(
         disc.center(),
         disc.width() / 2.0,
@@ -9733,6 +9783,15 @@ fn picture(
         }
         // Stickers are WebP, which keep egui's own loader and their motion.
         let image = widgets::fitted_image(ui, path, vec2(max_width, max_height));
+        // While the picture decodes its blurred thumbnail stands in, and the
+        // sharp picture fades in over it once ready. One already decoded, as
+        // when scrolled back to, shows at once.
+        let placeholder = message
+            .thumbnail
+            .as_deref()
+            .filter(|_| sticker.is_none())
+            .map(|bytes| thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes));
+        let sharpen_id = pixels_id.with("sharpen");
         return match image.load_for_size(ui.ctx(), vec2(max_width, max_height)) {
             Ok(egui::load::TexturePoll::Ready { texture }) => {
                 if drawn != Some(texture.size) {
@@ -9740,10 +9799,31 @@ fn picture(
                         .data_mut(|data| data.insert_temp(pixels_id, texture.size));
                 }
                 let size = fit(texture.size);
+                let waited = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<bool>(sharpen_id))
+                    .is_some();
+                let sharp = if waited {
+                    theme::animate(ui.ctx(), sharpen_id, true, theme::MOTION_PANEL)
+                } else {
+                    1.0
+                };
+                if sharp >= 1.0 && waited {
+                    ui.ctx().data_mut(|data| data.remove::<bool>(sharpen_id));
+                }
+                if sharp < 1.0
+                    && let Some(uri) = &placeholder
+                {
+                    egui::Image::new(uri.clone())
+                        .fit_to_exact_size(size)
+                        .corner_radius(radius)
+                        .paint_at(ui, Rect::from_min_size(ui.next_widget_position(), size));
+                }
                 let response = ui.add(
                     image
                         .fit_to_exact_size(size)
                         .corner_radius(if sticker.is_some() { 0.0 } else { radius })
+                        .tint(Color32::WHITE.gamma_multiply(sharp))
                         .sense(Sense::click()),
                 );
                 let rect = response.rect;
@@ -9777,9 +9857,22 @@ fn picture(
                     None => frame_size(media, None, max_width, max_height),
                 };
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                if placeholder.is_some() {
+                    // The cross-fade starts from the thumbnail once ready.
+                    ui.ctx().animate_bool_with_time(sharpen_id, false, 0.0);
+                    ui.ctx().data_mut(|data| data.insert_temp(sharpen_id, true));
+                }
                 if ui.is_rect_visible(rect) {
-                    ui.painter().rect_filled(rect, radius, palette.surface);
-                    theme::paint_spinner(ui, rect, 22.0, palette.accent);
+                    match &placeholder {
+                        Some(uri) => egui::Image::new(uri.clone())
+                            .fit_to_exact_size(size)
+                            .corner_radius(radius)
+                            .paint_at(ui, rect),
+                        None => {
+                            ui.painter().rect_filled(rect, radius, palette.surface);
+                            theme::paint_spinner(ui, rect, 22.0, palette.accent);
+                        }
+                    }
                 }
                 rect
             }
@@ -11277,7 +11370,7 @@ fn chat_of(chat: &ChatId) -> &str {
 }
 
 /// How long an upload takes to rise into place when it is sent.
-const UPLOAD_ENTRANCE: f32 = 0.28;
+const UPLOAD_ENTRANCE: f32 = theme::MOTION_PANEL;
 /// How far below its place an upload starts its entrance.
 const UPLOAD_RISE: f32 = 14.0;
 /// The widest an upload's picture is drawn.
@@ -11301,10 +11394,10 @@ fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate::model::Up
         let id = ui.id().with(("upload", upload.id));
         let shown = ui.ctx().animate_bool_with_time(id, true, UPLOAD_ENTRANCE);
         // Eased out, so it settles softly.
-        let eased = 1.0 - (1.0 - shown).powi(3);
+        let eased = theme::ease_out(shown);
         let fraction = upload.fraction().map(|fraction| {
             ui.ctx()
-                .animate_value_with_time(id.with("progress"), fraction, 0.25)
+                .animate_value_with_time(id.with("progress"), fraction, theme::MOTION_PANEL)
         });
         let picture = upload.preview.as_ref().filter(|_| {
             matches!(
@@ -12428,6 +12521,7 @@ mod tests {
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
             swipes: app.settings.swipes,
+            doodles: None,
             selecting: false,
             selected: &[],
             motion_playing: None,
@@ -13056,7 +13150,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     let animation_time = if reduce_motion {
         0.0
     } else {
-        ui.ctx().global_style().animation_time.min(0.24)
+        theme::MOTION_QUICK
     };
     // One attachment gets most of the panel, so a photo can be seen before it
     // goes out. Several share the width in pairs. Neither is a fixed size: the

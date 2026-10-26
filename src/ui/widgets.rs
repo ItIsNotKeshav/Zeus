@@ -377,13 +377,18 @@ pub fn paint_avatar(
     if !painted {
         let fill = palette.avatar(crate::util::hue(id));
         ui.painter().circle_filled(rect.center(), size / 2.0, fill);
+        let initials = crate::util::initials(name);
         if crate::model::ChatKind::from_id(id) == crate::model::ChatKind::Group {
             theme::paint_icon(ui, Icon::Users, rect, size * 0.5, Color32::WHITE);
+        } else if initials.is_empty() {
+            // A name with no letters, as an unsaved contact's number: a
+            // person, not its digits.
+            theme::paint_icon(ui, Icon::User, rect, size * 0.5, Color32::WHITE);
         } else {
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
-                crate::util::initials(name),
+                initials,
                 theme::semibold(size * 0.38),
                 Color32::WHITE,
             );
@@ -833,8 +838,8 @@ impl FrostedPopup for egui::Popup<'_> {
             ctx.animate_bool_with_time_and_easing(
                 id.with("appear"),
                 true,
-                theme::POPUP_OPEN,
-                egui::emath::easing::quadratic_out,
+                theme::MOTION_QUICK,
+                theme::ease_out,
             )
         } else {
             0.0
@@ -850,13 +855,16 @@ impl FrostedPopup for egui::Popup<'_> {
         };
         if measured {
             frost.place(shown.response.rect);
-            // Grows from the corner it opened at, glass and all.
+            // Grows from the corner it opened at, glass and all, and
+            // shrinks back to it as it closes.
             let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
-            let pivot = shown.response.rect.left_top().to_vec2();
+            let pivot = shown.response.rect.left_top();
+            let layer = egui::LayerId::new(egui::Order::Foreground, id);
             ctx.transform_layer_shapes(
-                egui::LayerId::new(egui::Order::Foreground, id),
-                egui::emath::TSTransform::new(pivot * (1.0 - scale), scale),
+                layer,
+                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
             );
+            super::closing::keep(ctx, layer, pivot, theme::MOTION_QUICK, appear);
         }
         Some(shown)
     }
@@ -1003,7 +1011,7 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
         response.mark_changed();
     }
     if ui.is_rect_visible(rect) {
-        let t = ui.ctx().animate_bool(response.id, *on);
+        let t = theme::animate(ui.ctx(), response.id, *on, theme::MOTION_QUICK);
         let fill = egui::lerp(
             egui::Rgba::from(palette.surface_active)..=egui::Rgba::from(palette.accent),
             t,
@@ -1068,10 +1076,11 @@ pub fn glass_slider(
     }
     if ui.is_rect_visible(rect) {
         let t = ((*value - start) / (end - start)).clamp(0.0, 1.0);
-        let active = ui.ctx().animate_bool_with_time(
+        let active = theme::animate(
+            ui.ctx(),
             response.id,
             response.hovered() || response.dragged(),
-            0.15,
+            theme::MOTION_QUICK,
         );
         let painter = ui.painter();
         let x = egui::lerp(travel.clone(), t);

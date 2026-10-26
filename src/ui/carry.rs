@@ -46,9 +46,9 @@ const SMALLEST: f32 = 0.45;
 const OVER_TARGET: f32 = 0.9;
 /// How faint the bubble left behind is while its card is away.
 const GHOST: f32 = 0.3;
-const LIFT_SECONDS: f64 = 0.2;
-const LAND_SECONDS: f64 = 0.32;
-const RETURN_SECONDS: f64 = 0.3;
+const LIFT_SECONDS: f64 = theme::MOTION_PANEL as f64;
+const LAND_SECONDS: f64 = theme::MOTION_SCREEN as f64;
+const RETURN_SECONDS: f64 = theme::MOTION_SCREEN as f64;
 
 /// Set while a card is lifted, for the selection leash's input hook, which
 /// runs before the frame and must let the pointer leave the message view.
@@ -557,8 +557,8 @@ fn fade_glow(app: &App, ctx: &egui::Context, lit: Option<&Target>) {
     let strength = ctx.animate_bool_with_time_and_easing(
         glow_id(),
         now.is_some(),
-        0.16,
-        egui::emath::easing::quadratic_out,
+        theme::MOTION_QUICK,
+        theme::ease_out,
     );
     let Some(target) = now.or(previous) else {
         return;
@@ -623,8 +623,8 @@ fn paint(
     let shrink = ctx.animate_bool_with_time_and_easing(
         carry_id().with("over"),
         accepting && matches!(carry.phase, Phase::Lifted { .. }),
-        0.16,
-        egui::emath::easing::cubic_out,
+        theme::MOTION_QUICK,
+        theme::ease_out,
     );
     let mut opacity = 1.0;
     let (at, scale) = match carry.phase {
@@ -810,7 +810,7 @@ fn label(ui: &egui::Ui, palette: &Palette, card: Rect, target: &Target) {
 }
 
 fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
+    theme::ease_out(t)
 }
 
 fn ease_in_out(t: f32) -> f32 {

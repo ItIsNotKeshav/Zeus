@@ -112,9 +112,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
                 let own = reaction.from_me;
-                let hover =
-                    ui.ctx()
-                        .animate_bool_with_time(response.id, own && response.hovered(), 0.12);
+                let hover = ui.ctx().animate_bool_with_time_and_easing(
+                    response.id,
+                    own && response.hovered(),
+                    theme::MOTION_QUICK,
+                    theme::ease_out,
+                );
                 if hover > 0.0 {
                     ui.painter().rect_filled(
                         rect,
@@ -229,7 +232,7 @@ fn tab(
         emoji.size().x + GAP + digits + 24.0
     });
     let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
-    let on = ui.ctx().animate_bool_with_time(id, selected, 0.15);
+    let on = theme::animate(ui.ctx(), id, selected, theme::MOTION_QUICK);
     let fill = palette
         .surface_hover
         .lerp_to_gamma(palette.accent.gamma_multiply(0.35), on);
@@ -270,7 +273,7 @@ fn list_height(ctx: &egui::Context, rows: usize) -> f32 {
     let time = if crate::motion::screen_reader_attached(ctx) {
         0.0
     } else {
-        0.18
+        theme::MOTION_QUICK
     };
     ctx.animate_value_with_time(egui::Id::new("reaction-list-height"), target, time)
 }
@@ -309,9 +312,9 @@ pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
         if crate::motion::screen_reader_attached(ctx) {
             0.0
         } else {
-            0.16
+            theme::MOTION_QUICK
         },
-        egui::emath::easing::quadratic_out,
+        theme::ease_out,
     );
     let frost = super::widgets::Frost::reserve(
         ctx,
@@ -336,6 +339,13 @@ pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
                 })
         });
     frost.place(area.inner.response.rect);
+    super::closing::keep(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, area_id),
+        area.inner.response.rect.center_top(),
+        theme::MOTION_QUICK,
+        appear,
+    );
     let clicked_outside = shown
         && ctx.input(|input| input.pointer.any_pressed())
         && ctx

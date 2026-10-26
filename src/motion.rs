@@ -10,6 +10,10 @@
 //! about ten frames a second. Their phase follows the clock, so they move in
 //! steps rather than slow down. Without a reader every request is exactly
 //! what it was. Video and other content keep their own rate.
+//!
+//! While the window is minimised or another window has the focus, these
+//! animations ask for no frames at all: they hold still until something
+//! else draws the window, and move again as soon as it is back in front.
 
 use std::time::Duration;
 
@@ -26,10 +30,23 @@ pub fn screen_reader_attached(ctx: &egui::Context) -> bool {
         .is_some()
 }
 
+/// Whether the window is minimised or in the background, when looping
+/// decoration rests.
+pub fn window_resting(ctx: &egui::Context) -> bool {
+    ctx.input(|input| {
+        let viewport = input.viewport();
+        viewport.minimized == Some(true) || viewport.focused == Some(false)
+    })
+}
+
 /// Asks for the next frame of a decorative animation: at the next refresh,
-/// or a [`STEP`] later while a screen reader is attached.
+/// or a [`STEP`] later while a screen reader is attached; none while the
+/// window rests.
 #[track_caller]
 pub fn request_frame(ctx: &egui::Context) {
+    if window_resting(ctx) {
+        return;
+    }
     if screen_reader_attached(ctx) {
         ctx.request_repaint_after(STEP);
     } else {
@@ -38,9 +55,13 @@ pub fn request_frame(ctx: &egui::Context) {
 }
 
 /// Like [`request_frame`], for an animation that already waits `delay`
-/// between frames: at least a [`STEP`] while a screen reader is attached.
+/// between frames: at least a [`STEP`] while a screen reader is attached,
+/// none while the window rests.
 #[track_caller]
 pub fn request_frame_after(ctx: &egui::Context, delay: Duration) {
+    if window_resting(ctx) {
+        return;
+    }
     ctx.request_repaint_after(frame_delay(ctx, delay));
 }
 
@@ -56,7 +77,7 @@ pub fn frame_delay(ctx: &egui::Context, delay: Duration) -> Duration {
 /// egui's own spinner, which asks for every frame, stepped while a screen
 /// reader is attached. Without one this is exactly `ui.spinner()`.
 pub fn egui_spinner(ui: &mut egui::Ui) -> egui::Response {
-    if !screen_reader_attached(ui.ctx()) {
+    if !screen_reader_attached(ui.ctx()) && !window_resting(ui.ctx()) {
         return ui.spinner();
     }
     // The same size, node and stroke as `egui::Spinner`, but stepped.
@@ -172,6 +193,29 @@ pub(crate) mod tests {
         assert_eq!(plain, Duration::ZERO);
         let (stepped, _) = delay_after(&reading(true), 0.0, |ui| request_frame(ui.ctx()));
         assert!(is_a_step(stepped), "{stepped:?}");
+    }
+
+    #[test]
+    fn decoration_rests_while_the_window_is_in_the_background() {
+        for (focused, minimized) in [(false, false), (true, true)] {
+            let ctx = reading(false);
+            let mut input = egui::RawInput {
+                time: Some(0.0),
+                ..Default::default()
+            };
+            let viewport = input.viewports.entry(egui::ViewportId::ROOT).or_default();
+            viewport.focused = Some(focused);
+            viewport.minimized = Some(minimized);
+            let output = ctx.run_ui(input, |ui| {
+                request_frame(ui.ctx());
+                request_frame_after(ui.ctx(), Duration::from_millis(33));
+            });
+            assert_eq!(
+                output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+                Duration::MAX,
+                "focused {focused}, minimised {minimized}"
+            );
+        }
     }
 
     #[test]

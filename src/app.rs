@@ -170,6 +170,8 @@ pub const UNDO_TOAST_LIFETIME: Duration = Duration::from_millis(6000);
 const MAX_ERROR_TOASTS: usize = 3;
 /// Typing-state timeout when no stop event arrives.
 const TYPING_TIMEOUT: Duration = Duration::from_secs(12);
+/// How long the dots stay after someone pauses, in case they type again.
+const TYPING_HOLD: Duration = Duration::from_millis(2500);
 /// How long other apps' media stays paused while the next voice message of a
 /// run downloads. A stalled download must not keep music paused for good.
 const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
@@ -248,7 +250,7 @@ impl KeyScroll {
             return 1.0;
         }
         // Ease out: a scroll a held key restarts still moves at once.
-        let eased = egui::emath::easing::cubic_out(t);
+        let eased = crate::theme::ease_out(t);
         let fraction = (eased - self.progress) / (1.0 - self.progress);
         self.progress = eased;
         fraction
@@ -1903,6 +1905,14 @@ impl App {
         self.call_fullscreen = false;
     }
 
+    /// How strongly doodles show behind the open chat's bubbles, as a
+    /// multiple of the default, and the colour they are drawn over; none
+    /// when no doodles are drawn.
+    pub fn doodles_behind(&self) -> Option<(f32, egui::Color32)> {
+        let look = self.wallpaper();
+        (look.doodles && look.image.is_none()).then_some((look.intensity, look.color))
+    }
+
     /// What the conversation shows behind its bubbles, for the chat and the
     /// wallpaper preview alike.
     pub fn wallpaper(&self) -> crate::wallpaper::Look {
@@ -3178,6 +3188,21 @@ impl App {
         })
     }
 
+    /// A message in: whoever sent it has stopped typing it, without waiting
+    /// out the moment a pause keeps the dots for.
+    fn stop_typing_on_message(&mut self, chat: &str, message: &Message) {
+        if message.from_me {
+            return;
+        }
+        let direct = crate::model::ChatKind::from_id(chat) != crate::model::ChatKind::Group;
+        if let Some(typers) = self.typing.get_mut(chat) {
+            typers.retain(|(who, _)| !direct && *who != message.sender);
+            if typers.is_empty() {
+                self.typing.remove(chat);
+            }
+        }
+    }
+
     /// Active typers in a chat as id and display name.
     pub fn typing_in(&self, chat: &str) -> Vec<(String, String)> {
         self.typing
@@ -3565,7 +3590,10 @@ impl App {
                         .collect();
                 }
             }
-            Event::Incoming { chat, message } => self.maybe_notify(&chat, &message),
+            Event::Incoming { chat, message } => {
+                self.stop_typing_on_message(&chat, &message);
+                self.maybe_notify(&chat, &message);
+            }
             Event::Picked {
                 chat,
                 paths,
@@ -3735,9 +3763,20 @@ impl App {
                 composing,
             } => {
                 let typers = self.typing.entry(chat).or_default();
-                typers.retain(|(who, _)| *who != sender);
-                if composing {
-                    typers.push((sender, Instant::now()));
+                let now = Instant::now();
+                match typers.iter_mut().find(|(who, _)| *who == sender) {
+                    Some((_, since)) if composing => *since = now,
+                    // Someone who types a letter, stops, and types again
+                    // sends a pause between each: the dots stay a moment
+                    // after one, so they do not flicker on and off.
+                    Some((_, since)) => {
+                        let fading = now
+                            .checked_sub(TYPING_TIMEOUT - TYPING_HOLD)
+                            .unwrap_or(*since);
+                        *since = (*since).min(fading);
+                    }
+                    None if composing => typers.push((sender, now)),
+                    None => {}
                 }
             }
             Event::Presence {
@@ -6262,7 +6301,7 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        crate::backdrop::set_blur(self.settings.blur);
+        crate::backdrop::set_glass(self.settings.glass_shown());
         let halloween = self.settings.halloween_icons();
         if crate::theme::halloween() != halloween {
             crate::theme::set_halloween(halloween);
@@ -6993,7 +7032,13 @@ impl App {
             Action::OpenFile(path) => {
                 if crate::safety::can_open_attachment(&path) && path.is_file() {
                     if let Err(error) = open::that_detached(&path) {
-                        self.toast_error(format!("Could not open the attachment: {error}"));
+                        log::warn!("could not open an attachment: {error}");
+                        self.toast_error_offering(
+                            crate::util::no_app_opens(&path),
+                            path.parent().map(|folder| {
+                                (crate::util::REVEAL, Action::OpenFolder(folder.to_owned()))
+                            }),
+                        );
                     }
                 } else {
                     self.toast("For safety, open this file yourself from its folder");
@@ -8888,6 +8933,7 @@ impl App {
             kind: ToastKind::Info,
             created: Instant::now(),
             undo,
+            offer: None,
         });
         while self
             .toasts
@@ -8907,10 +8953,25 @@ impl App {
     }
 
     pub fn toast_error(&mut self, message: impl Into<String>) {
-        let message = message.into();
+        self.toast_error_offering(message, None);
+    }
+
+    /// An error toast with a button that offers a way on. A system's error
+    /// code is for the log: the toast says what happened in plain words.
+    pub fn toast_error_offering(
+        &mut self,
+        message: impl Into<String>,
+        offer: Option<(&'static str, Action)>,
+    ) {
+        let full = message.into();
+        let message = crate::util::without_error_codes(&full);
+        if message != full {
+            log::warn!("an operation failed: {full}");
+        } else {
+            log::warn!("an operation failed; details are shown in the window");
+        }
         let said = self.toast_said(&message);
         self.announcer.say(crate::announcer::Category::Error, said);
-        log::warn!("an operation failed; details are shown in the window");
         // Errors stay until dismissed: a repeat moves to the end instead of
         // stacking, and only the newest few are kept.
         self.toasts
@@ -8934,6 +8995,7 @@ impl App {
             kind: ToastKind::Error,
             created: Instant::now(),
             undo: Vec::new(),
+            offer,
         });
     }
 
@@ -9756,6 +9818,8 @@ impl App {
         // The key went down or up this frame: the call hears it now, not on
         // the next event.
         self.sync_push_to_talk();
+        // Menus and dialogs that closed this frame leave as they came.
+        crate::ui::closing::paint(ctx);
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         self.theme_reveal.paint(ctx);
@@ -10467,6 +10531,48 @@ mod tests {
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
         App::headless(AppDirs::under(&root), Settings::plain()).0
+    }
+
+    /// A contact who types a letter, stops, and types again pauses between
+    /// each: the dots hold through the pauses instead of flickering, and go
+    /// at once when the message arrives.
+    #[test]
+    fn typing_dots_hold_through_short_pauses() {
+        let mut app = app();
+        let chat = "15550001111@s.whatsapp.net";
+        let typing = |app: &mut App, composing: bool| {
+            app.apply_backend_event(
+                Event::Typing {
+                    chat: chat.into(),
+                    sender: chat.into(),
+                    composing,
+                },
+                true,
+            );
+        };
+        typing(&mut app, true);
+        typing(&mut app, false);
+        assert_eq!(app.typing_in(chat).len(), 1, "a pause keeps the dots");
+        let since = app.typing[chat][0].1;
+        let left = TYPING_TIMEOUT.saturating_sub(since.elapsed());
+        assert!(left <= TYPING_HOLD, "for a moment only: {left:?}");
+        typing(&mut app, true);
+        assert!(app.typing[chat][0].1.elapsed() < Duration::from_secs(1));
+        typing(&mut app, false);
+        app.apply_backend_event(
+            Event::Incoming {
+                chat: chat.into(),
+                message: Box::new(message(chat, "hello", 1)),
+            },
+            true,
+        );
+        assert!(
+            app.typing_in(chat).is_empty(),
+            "the message ends the typing"
+        );
+        // A pause from someone not shown typing shows nothing.
+        typing(&mut app, false);
+        assert!(app.typing_in(chat).is_empty());
     }
 
     /// While recording, the light, the timer and the waveform ask for a

@@ -170,6 +170,13 @@ pub(super) fn overlay(
                 Stroke::new(1.0, palette.outline),
             );
         });
+    // Eases in towards its edge as a panel, and leaves the same way.
+    super::closing::surface(
+        ctx,
+        egui::LayerId::new(egui::Order::Foreground, egui::Id::new(id)),
+        rect.right_center(),
+        theme::MOTION_PANEL,
+    );
 }
 
 /// Height of a pane's header row: its close button and title.
