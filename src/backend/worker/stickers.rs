@@ -1830,9 +1830,15 @@ mod tests {
                 crate::backend::sticker_store::content_hash(&bytes)
             })
             .collect();
+        // As the library reports an expired reference now.
         worker.favorite_fetched(
             &hashes[0],
-            Err("Download media not found/expired with status: 410".to_owned()),
+            Err(
+                "the CDN rejected the media reference: MediaFailure { preparation: None, \
+                 iq_kind: None, iq_code: None, http_status: Some(410), io_kind: None, \
+                 media_validation: false, .. }"
+                    .to_owned(),
+            ),
         );
         worker.sticker_pace = Default::default();
         worker.fetch_missing_favorites();
