@@ -37,6 +37,13 @@ that finishes it.
     and the composer (#13 tightened the gap above the composer, so this is a
     design call).
 
+## Bugs
+
+- [ ] Under a short message (for example a two-letter "do"), the time and
+  ticks drop below the bubble and the time is cut off with an ellipsis
+  ("1:11 ..."). Show the whole time: widen the row to fit it, or keep the
+  time inside or beside the bubble the way longer messages do.
+
 ## Audit (2026-10-25), still open
 
 - [ ] `session.db`, which holds the device identity keys, is plain SQLite,
