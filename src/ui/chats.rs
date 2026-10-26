@@ -1079,6 +1079,23 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
     let mut scroll_area = egui::ScrollArea::vertical()
         .id_salt("chat-list")
         .auto_shrink([false, false]);
+    // The copies a narrow window's slide draws have widget ids of their own:
+    // they show the real list's offset instead of keeping one.
+    let copy = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(slide_copy_id()))
+        .is_some();
+    // Chats reordered by new messages keep the rows on screen where they
+    // were; a request below to go somewhere else wins.
+    let list_id = ui.make_persistent_id(egui::IdSalt::new("chat-list"));
+    let view = list_view(app);
+    let step = row_height + ui.spacing().item_spacing.y;
+    if !copy
+        && let Some(offset) =
+            followed_offset(ui, list_id, rows_moved(ui, list_id, view, chats), step)
+    {
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+    }
     if to_top && near_top(ui, "chat-list", row_height) {
         scroll_area = scroll_area.vertical_scroll_offset(0.0);
     }
@@ -1086,12 +1103,6 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
         .scroll_chat_into_view
         .as_ref()
         .and_then(|target| chats.iter().position(|chat| chat.id == *target));
-    // The copies a narrow window's slide draws have widget ids of their own:
-    // they show the real list's offset instead of keeping one.
-    let copy = ui
-        .ctx()
-        .data(|data| data.get_temp::<bool>(slide_copy_id()))
-        .is_some();
     if copy
         && let Some(offset) = ui
             .ctx()
@@ -1130,6 +1141,9 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
                 egui::style::ScrollAnimation::none(),
             );
         }
+        if !copy {
+            remember_rows(ui, list_id, view, &chats[range.clone()], range.start);
+        }
         for index in range {
             let chat = &chats[index];
             // Key by chat so an open menu survives list reordering.
@@ -1159,6 +1173,84 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
         data.insert_temp(list_offset_id(), output.state.offset.y);
         data.insert_temp(list_offset_id().with("id"), output.id);
     });
+}
+
+/// The chats a list drew last frame, from the first on screen down, and the
+/// filter they were drawn under, so [`rows_moved`] can tell where they went.
+#[derive(Clone)]
+struct ShownRows {
+    view: egui::Id,
+    pass: u64,
+    first: usize,
+    ids: Vec<String>,
+}
+
+/// What the list under `view` shows: a change of filter or archive is a new
+/// list, not the old one moved.
+fn list_view(app: &App) -> egui::Id {
+    egui::Id::new((
+        std::mem::discriminant(&app.chat_filter),
+        &app.label_filter,
+        app.show_archived,
+        app.locked_folder_open(),
+    ))
+}
+
+/// How many rows the chats the list of scroll area `id` showed last frame
+/// moved since, so its offset can follow them: a message to a chat far
+/// down lifts it to the top, and every chat between moves a row down,
+/// which scrolled the list under the reader. The first pair of rows that
+/// still sit together says it; a chat that moved away from its neighbour
+/// is the one that jumped to the top. Nothing moved, or a list drawn under
+/// another filter, says zero.
+fn rows_moved(ui: &egui::Ui, id: egui::Id, view: egui::Id, chats: &[Chat]) -> isize {
+    let Some(shown) = ui
+        .ctx()
+        .data(|data| data.get_temp::<ShownRows>(id.with("shown")))
+    else {
+        return 0;
+    };
+    let passes = ui.ctx().options(|options| options.max_passes.get()) as u64;
+    if shown.view != view || ui.ctx().cumulative_pass_nr() > shown.pass + passes {
+        return 0;
+    }
+    let same = shown.ids.iter().enumerate().all(|(n, id)| {
+        chats
+            .get(shown.first + n)
+            .is_some_and(|chat| chat.id == *id)
+    });
+    if same {
+        return 0;
+    }
+    let position = |id: &str| chats.iter().position(|chat| chat.id == id);
+    for (n, pair) in shown.ids.windows(2).enumerate() {
+        if let (Some(at), Some(next)) = (position(&pair[0]), position(&pair[1]))
+            && next == at + 1
+        {
+            return at as isize - (shown.first + n) as isize;
+        }
+    }
+    0
+}
+
+/// Remembers the chats the list of scroll area `id` drew this frame.
+fn remember_rows(ui: &egui::Ui, id: egui::Id, view: egui::Id, chats: &[Chat], first: usize) {
+    let shown = ShownRows {
+        view,
+        pass: ui.ctx().cumulative_pass_nr(),
+        first,
+        ids: chats.iter().map(|chat| chat.id.clone()).collect(),
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(id.with("shown"), shown));
+}
+
+/// The offset that keeps the rows a scrolled list showed on screen when
+/// `moved` rows arrived above them (or left), or `None` at the top, where
+/// a chat lifted there by a new message shows up as it does on the phone.
+fn followed_offset(ui: &egui::Ui, id: egui::Id, moved: isize, step: f32) -> Option<f32> {
+    let offset = egui::scroll_area::State::load(ui.ctx(), id)?.offset.y;
+    (moved != 0 && offset > 0.5).then(|| (offset + moved as f32 * step).max(0.0))
 }
 
 /// Whether the list scrolled by `salt` is near enough its top to follow a sent
@@ -1938,6 +2030,18 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         .id_salt("chat-rail")
         .auto_shrink([false, false])
         .min_scrolled_height(0.0);
+    let rail_id = ui.make_persistent_id(egui::IdSalt::new("chat-rail"));
+    let view = list_view(app);
+    if !copy
+        && let Some(offset) = followed_offset(
+            ui,
+            rail_id,
+            rows_moved(ui, rail_id, view, &chats),
+            COMPACT_CELL + ui.spacing().item_spacing.y,
+        )
+    {
+        scroll_area = scroll_area.vertical_scroll_offset(offset);
+    }
     if to_top && near_top(ui, "chat-rail", COMPACT_CELL) {
         scroll_area = scroll_area.vertical_scroll_offset(0.0);
     }
@@ -1979,6 +2083,9 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     // Only the avatars on screen are laid out, however many chats there are.
     let output = scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
         let mut focused = None;
+        if !copy {
+            remember_rows(ui, rail_id, view, &chats[range.clone()], range.start);
+        }
         if carried != 0.0 {
             ui.scroll_with_delta_animation(
                 vec2(0.0, carried),

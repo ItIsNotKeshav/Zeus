@@ -201,6 +201,10 @@ pub struct Conversation {
     pub(crate) rows: HashMap<String, RowHeight>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
+    /// The first row whose top was in the message list's view last frame,
+    /// and that top's distance from the start of the transcript, which the
+    /// list keeps in place when rows above it change height or arrive.
+    pub(crate) top_row: Option<(String, f32)>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
