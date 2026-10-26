@@ -15,7 +15,7 @@
 //! done on frames that paint, and egui paints only when something changes,
 //! so an idle window spends nothing on it.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use eframe::egui_glow;
 use eframe::glow::{self, HasContext};
@@ -74,13 +74,12 @@ fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::
             let mut glass = GLASS.lock().unwrap_or_else(|p| p.into_inner());
             // A window made anew has a new context; the old one took its
             // objects with it. A context that cannot frost is asked once.
-            let context = Arc::as_ptr(gl) as usize;
             if glass
                 .as_ref()
-                .is_none_or(|(made_for, _)| *made_for != context)
+                .is_none_or(|(made_for, _)| !made_for_this(made_for, gl))
             {
                 // SAFETY: called on the painting thread with its context current.
-                *glass = Some((context, unsafe { Glass::new(gl) }));
+                *glass = Some((Arc::downgrade(gl), unsafe { Glass::new(gl) }));
             }
             if let Some((_, Some(glass))) = glass.as_mut() {
                 // SAFETY: as above.
@@ -92,7 +91,16 @@ fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::
 
 /// The objects for the current context, keyed by it, or nothing where it
 /// cannot run them.
-static GLASS: Mutex<Option<(usize, Option<Glass>)>> = Mutex::new(None);
+static GLASS: Mutex<Option<(Weak<glow::Context>, Option<Glass>)>> = Mutex::new(None);
+
+/// Whether the objects made for `made_for` belong to `context`. The weak
+/// reference keeps the old context's allocation, so a context made after it
+/// closes cannot take its address. A bare address often went to the next
+/// window's context, and the stale object names then drew over that
+/// window's own textures, garbling it after a close and reopen.
+fn made_for_this<T>(made_for: &Weak<T>, context: &Arc<T>) -> bool {
+    std::ptr::eq(made_for.as_ptr(), Arc::as_ptr(context))
+}
 
 /// The two programs, and the render targets for each size frosted lately.
 struct Glass {
@@ -405,5 +413,24 @@ unsafe fn program(gl: &glow::Context, header: &str, fragment: &str) -> Option<gl
             return None;
         }
         Some(program)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A context made after the old one closes is never taken for it, even
+    /// where the allocator would hand the new one the old address.
+    #[test]
+    fn a_reopened_window_gets_new_objects() {
+        let first = Arc::new([0u8; 64]);
+        let made_for = Arc::downgrade(&first);
+        assert!(made_for_this(&made_for, &first));
+        drop(first);
+        for _ in 0..64 {
+            let next = Arc::new([0u8; 64]);
+            assert!(!made_for_this(&made_for, &next));
+        }
     }
 }
