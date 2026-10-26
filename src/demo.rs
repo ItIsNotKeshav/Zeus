@@ -16898,6 +16898,63 @@ mod long_chat_tests {
         );
         assert_eq!(messages(&ctx), still, "and leaves the messages alone");
     }
+
+    /// Two fingers sideways at `pos`, as macOS reports them: a touch, steps
+    /// of `step` points, and the lift.
+    fn sideways(app: &mut App, ctx: &egui::Context, pos: egui::Pos2, step: f32) {
+        let wheel = |delta: f32, phase| egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(delta, 0.0),
+            modifiers: egui::Modifiers::NONE,
+            phase,
+        };
+        frame(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(pos),
+                wheel(0.0, egui::TouchPhase::Start),
+            ],
+        );
+        for _ in 0..4 {
+            frame(app, ctx, vec![wheel(step, egui::TouchPhase::Move)]);
+        }
+        frame(app, ctx, vec![wheel(0.0, egui::TouchPhase::End)]);
+        for _ in 0..30 {
+            frame(app, ctx, Vec::new());
+        }
+    }
+
+    /// By default a swipe right on a message replies to it, and a swipe
+    /// left in the open chat moves on to the next chat in the list.
+    #[test]
+    fn default_swipes_reply_to_a_message_and_go_to_the_next_chat() {
+        let (mut app, ctx, chat, _clock) = long_chat();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        let over_messages = egui::pos2(700.0, 400.0);
+
+        assert!(app.reply_to.is_none());
+        sideways(&mut app, &ctx, over_messages, 30.0);
+        assert!(app.reply_to.is_some(), "a swipe right replies");
+        assert_eq!(app.open_chat.as_deref(), Some(chat.as_str()));
+        app.reply_to = None;
+
+        let next = {
+            let visible = app.visible_chats();
+            let at = visible.iter().position(|row| row.id == chat).unwrap();
+            visible[(at + 1) % visible.len()].id.clone()
+        };
+        assert_ne!(next, chat, "the sample has more than one chat");
+        sideways(&mut app, &ctx, over_messages, -30.0);
+        assert_eq!(
+            app.open_chat,
+            Some(next),
+            "a swipe left opens the next chat"
+        );
+        assert!(app.reply_to.is_none(), "and replies to nothing");
+    }
 }
 
 /// A picture whose file does not have the proportions its message states

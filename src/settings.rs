@@ -697,14 +697,15 @@ pub struct Swipes {
 }
 
 impl Default for Swipes {
-    /// As on the phone: left archives a chat and replies to a message, right
-    /// marks a chat read or unread and goes back from the open chat.
+    /// Over the list, as on the phone: left archives a chat, right marks it
+    /// read or unread. In the open chat, right pulls a message out to reply
+    /// to it, and left moves on to the next chat; Escape still goes back.
     fn default() -> Self {
         Self {
             list_left: SwipeAction::ToggleArchive,
             list_right: SwipeAction::ToggleRead,
-            chat_left: SwipeAction::Reply,
-            chat_right: SwipeAction::CloseChat,
+            chat_left: SwipeAction::NextChat,
+            chat_right: SwipeAction::Reply,
         }
     }
 }
