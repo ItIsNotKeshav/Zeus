@@ -281,10 +281,6 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
 /// The columns [`searched_message`] reads, in its order.
 const SEARCH_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, history_order";
 
-/// The same columns without the preview blob, for rows whose preview is
-/// never drawn.
-const BARE_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, NULL AS thumbnail, mentions, forwarded, delivered_at, read_at, history_order";
-
 /// The lowercased text a search matches: text, captions, file names, poll
 /// questions, contact names and places, one per line.
 /// `Content::text_matching` previews from the same fields.
@@ -1411,7 +1407,7 @@ impl Archive {
         // address, and the reading stops at the newest `limit` of those, so
         // text such as "http://x" never takes the place of an older link.
         let sql = format!(
-            "SELECT {BARE_COLUMNS}
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND json_valid(content)
                AND json_extract(content, '$.kind') = 'text'
@@ -1424,8 +1420,19 @@ impl Archive {
         let mut statement = self.connection.prepare(&sql)?;
         let mut links = 0;
         for row in statement.query_map(params![chat], searched_message)? {
-            let row = row?;
+            let mut row = row?;
             if !row.content.web_links().is_empty() {
+                // A preview's picture is what the Links tab draws; the blob
+                // a text row without a preview holds is not.
+                if !matches!(
+                    row.content,
+                    Content::Text {
+                        preview: Some(_),
+                        ..
+                    }
+                ) {
+                    row.thumbnail = None;
+                }
                 rows.push(row);
                 links += 1;
                 if links == limit {
@@ -5658,10 +5665,11 @@ mod media_path_tests {
         }
         let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
         let rows = archive.media_docs_links(chat, 10).expect("rows");
-        // Text rows leave their preview blob behind: the panel never draws it.
+        // Only a link's preview keeps its picture: the panel draws it. Other
+        // text rows leave their blob behind.
         for row in &rows {
-            let text = matches!(row.content, Content::Text { .. });
-            assert_eq!(row.thumbnail.is_none(), text, "{}", row.id);
+            let kept = !matches!(row.content, Content::Text { preview: None, .. });
+            assert_eq!(row.thumbnail.is_some(), kept, "{}", row.id);
         }
         assert_eq!(ids(rows), ["preview", "clip", "link", "doc", "photo"]);
         // The limit applies to each kind, so a chat full of photos still

@@ -476,10 +476,10 @@ const NAME_GLASS_LINES: f32 = 32.0;
 /// How wide the round glass under each of a vibrant header's buttons is.
 const BUTTON_GLASS: f32 = 36.0;
 /// The space between two of a vibrant header's buttons, beyond their glass.
-const BUTTON_GAP: f32 = 10.0;
+pub(super) const BUTTON_GAP: f32 = 10.0;
 
 /// The round glass under one of a vibrant header's buttons.
-fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
+pub(super) fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
     glass(
         palette,
         Rect::from_center_size(button.center(), Vec2::splat(BUTTON_GLASS)),

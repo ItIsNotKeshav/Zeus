@@ -149,18 +149,29 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     }
     // A narrow window gives the open chat or page all of its width; the
     // conversation header's Back returns to the list, and the rail beside
-    // it. The info panel takes a column of its own, and when the list leaves
-    // too little room for it and the conversation, the list and the rail
-    // step aside while the panel is open. The Calls tab's history needs the
+    // it. The info card takes a column of its own, and when the list leaves
+    // too little room for it and the conversation, the list folds into the
+    // rail's avatars while the card is open. The Calls tab's history needs the
     // full list pane: only the chats collapse into the rail's avatars.
     let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
     let mut list_width = rail::PANE_WIDTH;
     if full_list {
         list_width += app.settings.sidebar_width;
     }
+    // The window grows for the info card when it can; when it cannot
+    // (maximized, full screen, tiled), the list steps aside before the chat
+    // gets too narrow for its header.
+    info::prepare(app, ui.ctx());
     let crowded = app.info_visible()
-        && ui.available_width() - list_width < pane::INFO_MIN + pane::INFO_CONVERSATION_MIN;
-    if !narrow(ui.ctx()) && !crowded {
+        && ui.available_width() + info::room_ahead(ui.ctx()) - list_width
+            < info::CARD_COLUMN + pane::INFO_CONVERSATION_MIN;
+    if !narrow(ui.ctx()) && crowded {
+        // The list folds into the rail's avatars, as when it is collapsed:
+        // the chats stay a click (or a drop) away.
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(side_columns_id(), false));
+        rail::show(app, ui, true);
+    } else if !narrow(ui.ctx()) {
         ui.ctx()
             .data_mut(|data| data.insert_temp(side_columns_id(), full_list));
         rail::show(app, ui, !full_list);

@@ -654,22 +654,26 @@ history replay leave archived chats in place.
 The search icon in a chat's header (`Ctrl+F`) opens a pane listing that
 chat's matches, newest first. Its calendar narrows them to one day.
 
-Click the chat header, or choose **Info** in its menu, to open the info panel
-beside the chat. It shows the picture, the number or the members, and the
-chat's actions. When WhatsApp lets you edit a group's info, rename it with the
-pencil beside its name and click its photo to change it. Clicking a
-`chat.whatsapp.com` invite link shows the group and joins it without leaving
-ZapFast.
+Click the chat header, or choose **Info** in its menu, to open the info card,
+which stands beside the chat as a rounded card of its own. The window grows
+to make room for it, so the chat keeps its width; when the window cannot grow
+(maximized, full screen, or tiled), the chat list folds into the rail's
+pictures first, and a window still too tight shows the card as a page over
+the chat. It shows the picture, the number or the members (ten, with **Show
+all** and a search for a large group), and the chat's actions. When WhatsApp
+lets you edit a group's info, rename it with the pencil beside its name and
+click its photo to change it. Clicking a `chat.whatsapp.com` invite link shows
+the group and joins it without leaving ZapFast.
 
-**Media, links and docs** in the panel lists the photos and videos, the
-documents, and the links shared in the chat, newest first: click a photo or a
-document to go to its message, or a link to open it in the browser. Press
-Escape to go back to the overview, and again to close the panel. Drag its edge
-to change its width. The conversation narrows beside the panel, and when the
-window is too tight for the chat list as well, the list steps aside until the
-panel closes. In a narrow window the panel is a page of its own: **Back**
-returns to the chat. A locked
-chat's media is listed only while the locked folder is open.
+**Media, links and docs** in the card lists the photos and videos, the
+documents, and the links shared in the chat, newest first, links with their
+preview's picture and summary: click a photo or a document to go to its
+message, or a link to open it in the browser. Drag a photo, a video or a
+document onto a chat in the list, or hold it still for a moment first, to
+forward it there. Press Escape to go back to the overview, and again to close
+the card. In a narrow window the card is a page of its own: **Back** returns
+to the chat. A locked chat's media is listed only while the locked folder is
+open.
 
 **Development builds** also show a group's description in the panel. You can
 select and copy its text, and a long description scrolls. To change the

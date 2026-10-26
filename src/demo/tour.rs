@@ -1179,8 +1179,8 @@ mod tests {
         assert_eq!(shown(&app), Some(ada), "the chat list's Info opens both");
     }
 
-    /// The panel shares the search pane's docking: beside the chat when the
-    /// window has room, over it when the chat list leaves too little.
+    /// The info card stands beside the chat when the window has room for it
+    /// and a readable chat, and is a page over the chat otherwise.
     #[test]
     fn the_info_panel_takes_a_column_and_is_a_page_in_a_narrow_window() {
         let mut app = super::super::tests::app();
@@ -1196,20 +1196,22 @@ mod tests {
         let docked = |ctx: &egui::Context| {
             ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id()))
         };
-        for _ in 0..2 {
-            frame_sized(&mut app, &mut tour, &ctx, vec2(1180.0, 780.0), Vec::new());
-        }
-        assert_eq!(docked(&ctx), Some(true), "docked in a wide window");
-        // Too tight for the list, the conversation and the panel: the list
-        // steps aside and the panel keeps its own column.
-        for _ in 0..2 {
-            frame_sized(&mut app, &mut tour, &ctx, vec2(760.0, 600.0), Vec::new());
-        }
-        assert_eq!(docked(&ctx), Some(true), "still a column of its own");
+        // The window is asked to grow for the card, and never does here: a
+        // second of frames lets the card stop waiting for it.
+        let settle = |app: &mut App, tour: &mut Tour, size| {
+            for _ in 0..60 {
+                frame_sized(app, tour, &ctx, size, Vec::new());
+            }
+        };
+        settle(&mut app, &mut tour, vec2(1180.0, 780.0));
+        assert_eq!(docked(&ctx), Some(true), "a card beside the chat");
+        // Too tight for the list, the conversation and the card, even with
+        // the list folded into the rail: the card is a page over the chat
+        // rather than squeezing the chat's header.
+        settle(&mut app, &mut tour, vec2(760.0, 600.0));
+        assert_eq!(docked(&ctx), Some(false), "a page when there is no room");
         // The narrow window mode shows it as a page over the chat.
-        for _ in 0..2 {
-            frame_sized(&mut app, &mut tour, &ctx, vec2(560.0, 600.0), Vec::new());
-        }
+        settle(&mut app, &mut tour, vec2(560.0, 600.0));
         assert_eq!(docked(&ctx), Some(false), "a page in a narrow window");
         assert!(app.info.is_some());
         app.actions.push(crate::model::Action::CloseInfo);
