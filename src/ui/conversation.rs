@@ -2905,9 +2905,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .collect();
         rows.retain(|id, _| ids.contains(id.as_str()));
     }
-    // How far rows entirely above the viewport grew this frame. The offset
-    // follows, so what the reader looks at stays put while rows scrolled past
-    // are measured for the first time.
+    // The row the reader's view started at last frame, and where its top lay
+    // in the transcript. Wherever it lies now, the offset follows by the
+    // difference, so what the reader looks at stays put while rows above it
+    // change: rows scrolled past measured for the first time, a page of older
+    // history arriving at the top as the reader scrolls up, or a picture
+    // above the view taking its height.
+    let last_top_row = conversation.top_row.take();
+    let mut top_row: Option<(String, f32)> = None;
     let mut grew_above = 0.0;
     // The offset the message list is about to load, the distance a Home
     // scroll still has to cover: the same id the `ScrollArea` below loads.
@@ -2918,6 +2923,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let scroll_state = egui::scroll_area::State::load(ui.ctx(), scroll_id);
     // The list has not been shown before: it starts at the top.
     let first_show = scroll_state.is_none();
+    let redo_scroll_id = scroll_id.with("redo-scroll");
     let offset = scroll_state.map_or(0.0, |state| state.offset.y);
     // A keyboard scroll under way stops for a jump to a message, for the
     // reaction bar, which holds the view still, and for a wheel or trackpad
@@ -2991,10 +2997,24 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             // Scroll while selecting near an edge. `scroll_with_delta` also
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
+            // Where the transcript starts, so a row's place in it does not
+            // depend on the offset.
+            let content_top = ui.max_rect().top();
             *app.selection_view.lock().unwrap_or_else(|p| p.into_inner()) = Some(viewport);
             if carried != 0.0 {
                 ui.scroll_with_delta_animation(
                     vec2(0.0, carried),
+                    egui::style::ScrollAnimation::none(),
+                );
+            }
+            // What the pass before this redo scrolled, once it is painted.
+            if let Some(scrolled) = ui
+                .ctx()
+                .data_mut(|data| data.remove_temp::<f32>(redo_scroll_id))
+                .filter(|_| redo)
+            {
+                ui.scroll_with_delta_animation(
+                    vec2(0.0, -scrolled),
                     egui::style::ScrollAnimation::none(),
                 );
             }
@@ -3130,6 +3150,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         });
                         if new_day {
                             day_separator_top = before + 8.0;
+                        }
+                        if top_row.is_none() && before >= viewport.top() - 0.5 {
+                            top_row = Some((message.id.clone(), before - content_top));
+                        }
+                        if let Some((id, was)) = &last_top_row
+                            && *id == message.id
+                        {
+                            grew_above = before - content_top - was;
                         }
                         let here = notices_above(&notices[placed..], message.timestamp);
                         let known = rows.get(&message.id).copied();
@@ -3527,9 +3555,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         {
                             visible_day = Some((message.timestamp, day_separator_top));
                         }
-                        if before + height <= viewport.top() {
-                            grew_above += measured - height;
-                        }
                         rows.insert(
                             message.id.clone(),
                             RowHeight {
@@ -3672,9 +3697,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let fetching_explicit = conversation.phone_explicit;
     let exhausted = conversation.phone_exhausted;
     conversation.rows = rows;
+    conversation.top_row = top_row;
     // Keep the rows on screen where they were when rows above them changed
-    // height, unless this frame scrolled on purpose (to the end, a jump, or
-    // the divider) or sticks to the end, where egui keeps the offset anyway.
+    // height or arrived, unless this frame scrolled on purpose (to the end, a
+    // jump, or the divider) or sticks to the end, where egui keeps the offset
+    // anyway.
     // Home targets an absolute offset (0), so it is skipped while Home
     // scrolls, rather than pushing the offset away from the top; PgUp/PgDn
     // steps are relative and still get it. The pass is redone at the new
@@ -3685,11 +3712,23 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         && !at_bottom
         && key_scroll.is_none_or(|scroll| scroll.kind != Scroll::Top)
     {
-        let mut state = output.state;
-        state.offset.y = (state.offset.y + grew_above).max(0.0);
-        state.store(ui.ctx(), output.id);
         ui.ctx()
             .request_discard("transcript rows above the viewport changed height");
+        let mut state = output.state;
+        if ui.ctx().will_discard() {
+            // The redo paints where this pass did, moved by the shift alone,
+            // and scrolls by what this pass scrolled only after painting, as
+            // every frame does. Started from the scrolled offset, it would
+            // paint this frame's scroll at once and the next frame's not at
+            // all: a stutter each time a row was measured mid-scroll.
+            let scrolled = state.offset.y - offset;
+            state.offset.y = (offset + grew_above).max(0.0);
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(redo_scroll_id, scrolled));
+        } else {
+            state.offset.y = (state.offset.y + grew_above).max(0.0);
+        }
+        state.store(ui.ctx(), output.id);
     }
     // A jump to the end moves the offset only after the rows were painted at
     // the old one. On a chat's first showing that is the top of its first

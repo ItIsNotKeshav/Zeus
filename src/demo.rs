@@ -16904,6 +16904,168 @@ mod long_chat_tests {
         );
         assert_eq!(messages(&ctx), still, "and leaves the messages alone");
     }
+
+    /// A steady trackpad scroll moves the view the same distance every
+    /// frame. Rows measured for the first time on the way redo the frame at
+    /// a corrected offset; the redo used to paint that frame's scroll at once
+    /// and the next frame's not at all, a double step and a pause.
+    #[test]
+    fn a_steady_trackpad_scroll_moves_evenly() {
+        let (mut app, ctx, _, _clock) = long_chat();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        let over_messages = egui::pos2(700.0, 400.0);
+        // The first frames release the view from the end.
+        frame(&mut app, &ctx, swipe(over_messages, &[3.0; 4]));
+        let mut before = painted_rows(&frame(&mut app, &ctx, swipe(over_messages, &[3.0; 4])));
+        let mut moves = Vec::new();
+        for _ in 0..40 {
+            let after = painted_rows(&frame(&mut app, &ctx, swipe(over_messages, &[3.0; 4])));
+            let moved = before
+                .iter()
+                .find_map(|(row, y)| Some(after.get(row)? - y))
+                .expect("some row stays on screen");
+            moves.push(moved);
+            before = after;
+        }
+        let step = moves[0];
+        assert!(step > 5.0, "the view scrolls up: {moves:?}");
+        assert!(
+            moves.iter().all(|moved| (moved - step).abs() < 1.5),
+            "every frame moves by the same step: {moves:?}"
+        );
+    }
+
+    /// A page of older history that arrives while the reader scrolls up
+    /// lands above what they are reading instead of pushing it down the
+    /// screen.
+    #[test]
+    fn older_history_arriving_keeps_the_rows_in_place() {
+        let (mut app, ctx, chat, _clock) = long_chat();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        for _ in 0..20 {
+            frame(&mut app, &ctx, wheel(150.0));
+        }
+        // Until any glide after the gesture has stopped.
+        for _ in 0..240 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        let before = painted_rows(&frame(&mut app, &ctx, Vec::new()));
+        let conversation = app.conversations.get_mut(&chat).unwrap();
+        let oldest = conversation.messages[0].clone();
+        let older: Vec<_> = (1..=40)
+            .rev()
+            .map(|n| {
+                let mut row = oldest.clone();
+                row.id = format!("older-{n}");
+                row.timestamp = oldest.timestamp - n * 3_000;
+                row.content = Content::text(format!("Row -{n} lorem ipsum dolor"));
+                row
+            })
+            .collect();
+        conversation.messages.splice(0..0, older);
+        for _ in 0..3 {
+            let after = painted_rows(&frame(&mut app, &ctx, Vec::new()));
+            let kept: Vec<_> = before
+                .iter()
+                .filter_map(|(row, y)| Some((row, *y, *after.get(row)?)))
+                .collect();
+            assert!(!kept.is_empty(), "the rows read stay on screen");
+            for (row, was, now) in kept {
+                assert!(
+                    (now - was).abs() < 1.0,
+                    "row {row} moved from {was} to {now}"
+                );
+            }
+        }
+    }
+
+    /// A message that lifts a chat from far down to the top of the list
+    /// leaves the chats a reader scrolled to where they are, where every
+    /// one of them used to move down a row.
+    #[test]
+    fn a_chat_lifted_to_the_top_leaves_the_scrolled_list_in_place() {
+        let (mut app, ctx, _, _clock) = long_chat();
+        let template = app.chats[1].clone();
+        for n in 0..60 {
+            let mut extra = template.clone();
+            extra.id = format!("39000000{n:04}@s.whatsapp.net");
+            app.chats.push(extra);
+        }
+        for _ in 0..3 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        let over_list = egui::pos2(150.0, 400.0);
+        for _ in 0..6 {
+            frame(&mut app, &ctx, swipe(over_list, &[-6.0; 6]));
+        }
+        frame(&mut app, &ctx, swipe(over_list, &[]));
+        // Until any glide after the gesture has stopped.
+        for _ in 0..180 {
+            frame(&mut app, &ctx, Vec::new());
+        }
+        let list = |ctx: &egui::Context| {
+            ctx.data(|data| data.get_temp::<f32>(crate::ui::chats::list_offset_id()))
+                .unwrap()
+        };
+        assert!(list(&ctx) > 100.0, "the list is scrolled down");
+        let rows = |app: &mut App, ctx: &egui::Context| {
+            let ids: Vec<String> = app.chats.iter().map(|chat| chat.id.clone()).collect();
+            ctx.data_mut(|data| {
+                for id in &ids {
+                    data.remove::<egui::Rect>(crate::ui::chats::chat_row_id(id));
+                }
+            });
+            frame(app, ctx, Vec::new());
+            ctx.data(|data| {
+                ids.iter()
+                    .filter_map(|id| {
+                        let rect =
+                            data.get_temp::<egui::Rect>(crate::ui::chats::chat_row_id(id))?;
+                        Some((id.clone(), rect.top()))
+                    })
+                    .collect::<std::collections::HashMap<_, _>>()
+            })
+        };
+        let before = rows(&mut app, &ctx);
+        let last = app.visible_chats().last().unwrap().id.clone();
+        assert!(!before.contains_key(&last), "the lifted chat is off screen");
+        let newest = app
+            .chats
+            .iter()
+            .map(|chat| chat.last_activity)
+            .max()
+            .unwrap();
+        app.chats
+            .iter_mut()
+            .find(|chat| chat.id == last)
+            .unwrap()
+            .last_activity = newest + 60;
+        let order: Vec<String> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        let lifted = order.iter().position(|id| *id == last).unwrap();
+        assert!(
+            before
+                .keys()
+                .all(|id| order.iter().position(|other| other == id).unwrap() > lifted),
+            "the chat goes above the ones on screen"
+        );
+        let after = rows(&mut app, &ctx);
+        let kept: Vec<_> = before
+            .iter()
+            .filter_map(|(id, was)| Some((id, *was, *after.get(id)?)))
+            .collect();
+        assert!(kept.len() > 3, "the chats on screen stay on screen");
+        for (id, was, now) in kept {
+            assert!((now - was).abs() < 1.0, "{id} moved from {was} to {now}");
+        }
+    }
 }
 
 /// A picture whose file does not have the proportions its message states
