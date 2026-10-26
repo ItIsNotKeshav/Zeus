@@ -1,0 +1,433 @@
+/* Zeus design tokens as CSS custom properties. Generated from src/theme.rs.
+ * Set data-theme on <html> to one of: dark, light, whatsapp-dark, whatsapp-light, messages-dark, messages-light, halloween-dark, halloween-light.
+ * Without one, Dark applies, or Light when the system prefers light. */
+
+:root, [data-theme="dark"] {
+  --window: #080808;
+  --panel: #131313;
+  --surface: #222222;
+  --surface-hover: #303030;
+  --surface-active: #3b3b3b;
+  --outline: #353535;
+  --text: #f5f5f5;
+  --secondary: #b8b8b8;
+  --dim: #9b9b9b;
+  --accent: #f4f4f4;
+  --accent-hover: #ffffff;
+  --on-accent: #121212;
+  --danger: #f15c6d;
+  --warning: #ffd279;
+  --overlay: #1a1a1a;
+  --chat: #0d0d0d;
+  --bubble-in: #252525;
+  --bubble-out: #4a4a4a;
+  --link: #d6d6d6;
+  --read: #d6d6d6;
+  --shadow: #0000008c;
+  --menu-glass: #1a1a1ab0;
+  --glass: #0d0d0de0;
+  --header-veil: #0d0d0db8;
+  --glass-edge: #f5f5f514;
+  --tint-field: #f5f5f514;
+  --tint-field-lift: #f5f5f524;
+  --tint-hover: #f5f5f50f;
+  --tint-selected: #f5f5f51f;
+  --selection: #f4f4f459;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.549);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.549);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --window: #f7f7f7;
+    --panel: #ffffff;
+    --surface: #efefef;
+    --surface-hover: #e4e4e4;
+    --surface-active: #d8d8d8;
+    --outline: #d9d9d9;
+    --text: #141414;
+    --secondary: #5e5e5e;
+    --dim: #6b6b6b;
+    --accent: #1a1a1a;
+    --accent-hover: #363636;
+    --on-accent: #ffffff;
+    --danger: #ea0038;
+    --warning: #a06b00;
+    --overlay: #ffffff;
+    --chat: #f7f7f7;
+    --bubble-in: #ffffff;
+    --bubble-out: #e2e2e2;
+    --link: #353535;
+    --read: #353535;
+    --shadow: #00000032;
+    --menu-glass: #ffffffc8;
+    --glass: #f7f7f7ee;
+    --header-veil: #f7f7f7d2;
+    --glass-edge: #14141414;
+    --tint-field: #14141414;
+    --tint-field-lift: #14141424;
+    --tint-hover: #1414140f;
+    --tint-selected: #1414141f;
+    --selection: #1a1a1a59;
+    --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+    --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.196);
+    --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.196);
+    color-scheme: light;
+  }
+}
+
+[data-theme="light"] {
+  --window: #f7f7f7;
+  --panel: #ffffff;
+  --surface: #efefef;
+  --surface-hover: #e4e4e4;
+  --surface-active: #d8d8d8;
+  --outline: #d9d9d9;
+  --text: #141414;
+  --secondary: #5e5e5e;
+  --dim: #6b6b6b;
+  --accent: #1a1a1a;
+  --accent-hover: #363636;
+  --on-accent: #ffffff;
+  --danger: #ea0038;
+  --warning: #a06b00;
+  --overlay: #ffffff;
+  --chat: #f7f7f7;
+  --bubble-in: #ffffff;
+  --bubble-out: #e2e2e2;
+  --link: #353535;
+  --read: #353535;
+  --shadow: #00000032;
+  --menu-glass: #ffffffc8;
+  --glass: #f7f7f7ee;
+  --header-veil: #f7f7f7d2;
+  --glass-edge: #14141414;
+  --tint-field: #14141414;
+  --tint-field-lift: #14141424;
+  --tint-hover: #1414140f;
+  --tint-selected: #1414141f;
+  --selection: #1a1a1a59;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.196);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.196);
+  color-scheme: light;
+}
+
+[data-theme="whatsapp-dark"] {
+  --window: #0b141a;
+  --panel: #111b21;
+  --surface: #202c33;
+  --surface-hover: #2a3942;
+  --surface-active: #35444d;
+  --outline: #222d34;
+  --text: #e9edef;
+  --secondary: #97a5ae;
+  --dim: #8a989f;
+  --accent: #00a884;
+  --accent-hover: #06cf9c;
+  --on-accent: #0b141a;
+  --danger: #f15c6d;
+  --warning: #ffd279;
+  --overlay: #233138;
+  --chat: #0b141a;
+  --bubble-in: #202c33;
+  --bubble-out: #005c4b;
+  --link: #53bdeb;
+  --read: #53bdeb;
+  --shadow: #0000008c;
+  --menu-glass: #233138b0;
+  --glass: #0b141ab8;
+  --header-veil: #0b141a4c;
+  --glass-edge: #e9edef14;
+  --tint-field: #e9edef14;
+  --tint-field-lift: #e9edef24;
+  --tint-hover: #e9edef0f;
+  --tint-selected: #e9edef1f;
+  --selection: #00a88459;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.549);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.549);
+  color-scheme: dark;
+}
+
+[data-theme="whatsapp-light"] {
+  --window: #f0f2f5;
+  --panel: #ffffff;
+  --surface: #f0f2f5;
+  --surface-hover: #e6e9ec;
+  --surface-active: #d9dde1;
+  --outline: #e9edef;
+  --text: #111b21;
+  --secondary: #515f67;
+  --dim: #636b72;
+  --accent: #008069;
+  --accent-hover: #006e5a;
+  --on-accent: #ffffff;
+  --danger: #ea0038;
+  --warning: #a06b00;
+  --overlay: #ffffff;
+  --chat: #efeae2;
+  --bubble-in: #ffffff;
+  --bubble-out: #d9fdd3;
+  --link: #027eb5;
+  --read: #027eb5;
+  --shadow: #00000032;
+  --menu-glass: #ffffffc8;
+  --glass: #efeae280;
+  --header-veil: #efeae233;
+  --glass-edge: #111b2114;
+  --tint-field: #111b2114;
+  --tint-field-lift: #111b2124;
+  --tint-hover: #111b210f;
+  --tint-selected: #111b211f;
+  --selection: #00806959;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.196);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.196);
+  color-scheme: light;
+}
+
+[data-theme="messages-dark"] {
+  --window: #1e1e1e;
+  --panel: #262627;
+  --surface: #323234;
+  --surface-hover: #3a3a3c;
+  --surface-active: #464649;
+  --outline: #38383a;
+  --text: #f5f5f7;
+  --secondary: #aeaeb2;
+  --dim: #a4a4a9;
+  --accent: #0091ff;
+  --accent-hover: #409cff;
+  --on-accent: #ffffff;
+  --danger: #ff453a;
+  --warning: #ffd60a;
+  --overlay: #2c2c2e;
+  --chat: #1e1e1e;
+  --bubble-in: #3b3b3d;
+  --bubble-out: #409cff;
+  --link: #64d2ff;
+  --read: #64d2ff;
+  --shadow: #00000096;
+  --menu-glass: #2c2c2eb0;
+  --glass: #1e1e1eb8;
+  --header-veil: #1e1e1e4c;
+  --glass-edge: #f5f5f714;
+  --tint-field: #f5f5f714;
+  --tint-field-lift: #f5f5f724;
+  --tint-hover: #f5f5f70f;
+  --tint-selected: #f5f5f71f;
+  --selection: #0091ff59;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.588);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.588);
+  color-scheme: dark;
+}
+
+[data-theme="messages-light"] {
+  --window: #ffffff;
+  --panel: #f2f2f4;
+  --surface: #e8e8ea;
+  --surface-hover: #dedee0;
+  --surface-active: #d1d1d6;
+  --outline: #d8d8dc;
+  --text: #1d1d1f;
+  --secondary: #5e5e63;
+  --dim: #646469;
+  --accent: #0088ff;
+  --accent-hover: #0068da;
+  --on-accent: #ffffff;
+  --danger: #d70015;
+  --warning: #a05a00;
+  --overlay: #ffffff;
+  --chat: #ffffff;
+  --bubble-in: #e9e9eb;
+  --bubble-out: #5ac8fa;
+  --link: #0066cc;
+  --read: #0066cc;
+  --shadow: #00000032;
+  --menu-glass: #ffffffc8;
+  --glass: #ffffff80;
+  --header-veil: #ffffff33;
+  --glass-edge: #1d1d1f14;
+  --tint-field: #1d1d1f14;
+  --tint-field-lift: #1d1d1f24;
+  --tint-hover: #1d1d1f0f;
+  --tint-selected: #1d1d1f1f;
+  --selection: #0088ff59;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.196);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.196);
+  color-scheme: light;
+}
+
+[data-theme="halloween-dark"] {
+  --window: #0b0609;
+  --panel: #170d12;
+  --surface: #28171d;
+  --surface-hover: #362029;
+  --surface-active: #442b35;
+  --outline: #4a3039;
+  --text: #fff3e8;
+  --secondary: #e3c7b6;
+  --dim: #bc9d8c;
+  --accent: #ff7a1a;
+  --accent-hover: #ff9548;
+  --on-accent: #ffffff;
+  --danger: #f15c6d;
+  --warning: #ffd279;
+  --overlay: #1f1218;
+  --chat: #100a0e;
+  --bubble-in: #2b1a22;
+  --bubble-out: #8a451e;
+  --link: #ffa96a;
+  --read: #ffa96a;
+  --shadow: #0000008c;
+  --menu-glass: #1f1218b0;
+  --glass: #100a0ee0;
+  --header-veil: #100a0eb8;
+  --glass-edge: #fff3e814;
+  --tint-field: #fff3e814;
+  --tint-field-lift: #fff3e824;
+  --tint-hover: #fff3e80f;
+  --tint-selected: #fff3e81f;
+  --selection: #ff7a1a59;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.549);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.549);
+  color-scheme: dark;
+}
+
+[data-theme="halloween-light"] {
+  --window: #fbe9d3;
+  --panel: #fff6ea;
+  --surface: #ffe6cc;
+  --surface-hover: #ffdab5;
+  --surface-active: #ffcc99;
+  --outline: #f0c79d;
+  --text: #2b1408;
+  --secondary: #6a4630;
+  --dim: #7d5a44;
+  --accent: #d96816;
+  --accent-hover: #b85813;
+  --on-accent: #ffffff;
+  --danger: #ea0038;
+  --warning: #a06b00;
+  --overlay: #fffaf3;
+  --chat: #ffefdb;
+  --bubble-in: #fffdf9;
+  --bubble-out: #ffdcc1;
+  --link: #ae5312;
+  --read: #ae5312;
+  --shadow: #00000032;
+  --menu-glass: #fffaf3c8;
+  --glass: #ffefdbee;
+  --header-veil: #ffefdbd2;
+  --glass-edge: #2b140814;
+  --tint-field: #2b140814;
+  --tint-field-lift: #2b140824;
+  --tint-hover: #2b14080f;
+  --tint-selected: #2b14081f;
+  --selection: #d9681659;
+  --shadow-bubble: 0 2px 6px rgba(0, 0, 0, 0.204);
+  --shadow-float: 0 6px 20px rgba(0, 0, 0, 0.196);
+  --shadow-modal: 0 12px 40px rgba(0, 0, 0, 0.196);
+  color-scheme: light;
+}
+
+:root {
+  --accent-red: #ff453a;
+  --accent-blue: #0a84ff;
+  --accent-green: #30d158;
+  --accent-pink: #ff378f;
+  --accent-purple: #bf5af2;
+  --accent-yellow: #ffd60a;
+  --font-sans: "Google Sans Flex", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-tabular: "Inter", "Google Sans Flex", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-6: 6px;
+  --space-8: 8px;
+  --space-10: 10px;
+  --space-12: 12px;
+  --space-14: 14px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-22: 22px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-48: 48px;
+  --radius-bubble-join: 4px;
+  --radius-small: 8px;
+  --radius-bubble: 10px;
+  --radius-control: 12px;
+  --radius-medium: 14px;
+  --radius-bubble-messages: 15px;
+  --radius-bubble-grouped: 18px;
+  --radius-menu: 20px;
+  --radius-card: 20px;
+  --radius-panel: 24px;
+  --radius-dialog: 28px;
+  --radius-pill: 999px;
+  --control-height: 36px;
+  --control-width: 220px;
+  --option-height: 34px;
+  --menu-item-height: 28px;
+  --list-height-max: 320px;
+  --row-height: 68px;
+  --top-bar-height: 60px;
+  --interact-height: 28px;
+  --icon-button-pad: 12px;
+  --switch-width: 40px;
+  --slider-height: 28px;
+  --badge-height: 20px;
+  --dialog-width: 380px;
+  --scroll-bar-width: 8px;
+  --focus-stroke: 1px;
+  --duration-popup: 140ms;
+  --duration-control: 140ms;
+  --duration-widget: 120ms;
+  --duration-slider: 150ms;
+  --duration-slide: 220ms;
+  --duration-glide: 250ms;
+  --duration-entrance: 280ms;
+  --duration-landing: 300ms;
+  --duration-carry-lift: 200ms;
+  --duration-carry-land: 320ms;
+  --duration-reveal: 550ms;
+  --duration-tooltip-delay: 400ms;
+  --duration-toast: 3200ms;
+  --duration-step: 100ms;
+  --ease-out: cubic-bezier(0.5, 1, 0.89, 1);
+  --ease-out-strong: cubic-bezier(0.33, 1, 0.68, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-linear: linear;
+  --blur-menu: 24px;
+  --blur-bar: 6px;
+  --blur-saturation: 1.3;
+}
+
+.zeus-display { font-family: var(--font-sans); font-size: 24px; line-height: 30px; font-weight: 670; }
+.zeus-heading { font-family: var(--font-sans); font-size: 22px; line-height: 28px; font-weight: 570; }
+.zeus-title { font-family: var(--font-sans); font-size: 20px; line-height: 26px; font-weight: 670; }
+.zeus-title-small { font-family: var(--font-sans); font-size: 18px; line-height: 24px; font-weight: 670; }
+.zeus-section { font-family: var(--font-sans); font-size: 16px; line-height: 22px; font-weight: 570; }
+.zeus-name { font-family: var(--font-sans); font-size: 15px; line-height: 20px; font-weight: 570; }
+.zeus-message { font-family: var(--font-sans); font-size: 14.5px; line-height: 20px; font-weight: 370; }
+.zeus-body { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 370; }
+.zeus-label { font-family: var(--font-sans); font-size: 14px; line-height: 20px; font-weight: 470; }
+.zeus-menu { font-family: var(--font-sans); font-size: 13.5px; line-height: 18px; font-weight: 370; }
+.zeus-control { font-family: var(--font-sans); font-size: 13px; line-height: 18px; font-weight: 570; }
+.zeus-caption { font-family: var(--font-sans); font-size: 12.5px; line-height: 17px; font-weight: 370; }
+.zeus-meta { font-family: var(--font-sans); font-size: 12px; line-height: 16px; font-weight: 370; }
+.zeus-small { font-family: var(--font-sans); font-size: 11.5px; line-height: 15px; font-weight: 370; }
+.zeus-badge { font-family: var(--font-sans); font-size: 11px; line-height: 14px; font-weight: 570; }
+.zeus-timer { font-family: var(--font-tabular); font-size: 13px; line-height: 18px; font-weight: 470; }
+.zeus-code { font-family: var(--font-mono); font-size: 13px; line-height: 18px; font-weight: 400; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration-popup: 0ms; --duration-control: 0ms; --duration-widget: 0ms; --duration-slider: 0ms; --duration-slide: 0ms; --duration-glide: 0ms; --duration-entrance: 0ms; --duration-landing: 0ms; --duration-carry-lift: 0ms; --duration-carry-land: 0ms; --duration-reveal: 0ms; }
+}
