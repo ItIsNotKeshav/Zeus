@@ -265,32 +265,8 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     // that misses a whole sweep interval undrawn is evicted. That trades up to
     // one extra `IDLE` of resident frames for a stable poster while the media
     // is visible.
-    if animations
-        .last_sweep
-        .is_none_or(|last| now.duration_since(last) >= IDLE)
-    {
-        animations.last_sweep = Some(now);
-        let previously_idle = std::mem::take(&mut animations.idle);
-        let mut idle = HashSet::new();
-        animations.entries.retain(|entry_path, entry| match entry {
-            Entry::Ready(playing) if now.duration_since(playing.last_drawn) >= IDLE => {
-                if previously_idle.contains(entry_path) {
-                    false
-                } else {
-                    idle.insert(entry_path.clone());
-                    true
-                }
-            }
-            _ => true,
-        });
-        animations.idle = idle;
-        let Animations {
-            entries, lengths, ..
-        } = &mut *animations;
-        lengths.retain(|path, _| entries.contains_key(path));
-        enforce_budget(&mut animations, path, now, ctx.cumulative_frame_nr());
-    } else if uploaded {
-        // New frames can exceed the budget between sweeps.
+    // New frames can also exceed the budget between sweeps.
+    if sweep_idle(&mut animations, now) || uploaded {
         enforce_budget(&mut animations, path, now, ctx.cumulative_frame_nr());
     }
     match animations.entries.get_mut(path) {
@@ -414,6 +390,51 @@ pub fn autoplay(
         fits
     });
     frame(ui, path, rect, plays)
+}
+
+/// One rate-limited two-strike sweep: marks animations undrawn for `IDLE`,
+/// and drops the ones already marked by the previous sweep. Returns whether
+/// a sweep ran.
+fn sweep_idle(animations: &mut Animations, now: Instant) -> bool {
+    if !animations
+        .last_sweep
+        .is_none_or(|last| now.duration_since(last) >= IDLE)
+    {
+        return false;
+    }
+    animations.last_sweep = Some(now);
+    let previously_idle = std::mem::take(&mut animations.idle);
+    let mut idle = HashSet::new();
+    animations.entries.retain(|entry_path, entry| match entry {
+        Entry::Ready(playing) if now.duration_since(playing.last_drawn) >= IDLE => {
+            if previously_idle.contains(entry_path) {
+                false
+            } else {
+                idle.insert(entry_path.clone());
+                true
+            }
+        }
+        _ => true,
+    });
+    animations.idle = idle;
+    let Animations {
+        entries, lengths, ..
+    } = animations;
+    lengths.retain(|path, _| entries.contains_key(path));
+    true
+}
+
+/// Frees animations nothing has drawn for a while, for frames that run without
+/// drawing any (the sticker picker closed, the chat left). Call it after the
+/// views have drawn, so whatever is on screen was just refreshed by `frame`.
+/// It shares `frame`'s two-strike rule and rate limit, makes no cache of its
+/// own and never asks for a repaint.
+pub fn sweep(ctx: &egui::Context) {
+    let Some(cache) = ctx.data(|data| data.get_temp::<Cache>(cache_id())) else {
+        return;
+    };
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    sweep_idle(&mut animations, Instant::now());
 }
 
 /// Whether a decoder thread could be started.
@@ -1322,6 +1343,39 @@ mod tests {
             !animations.entries.contains_key(&stale),
             "an unseen animation must be evicted once it misses a sweep"
         );
+    }
+
+    #[test]
+    fn sweep_frees_unseen_animations_without_any_frame_call() {
+        let ctx = egui::Context::default();
+        let path = PathBuf::from("closed-picker.gif");
+        let texture = ctx.load_texture(
+            "closed-picker",
+            ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+            TextureOptions::LINEAR,
+        );
+        {
+            let store = cache(&ctx);
+            store.0.lock().expect("animation cache").entries.insert(
+                path.clone(),
+                Entry::Ready(Playing {
+                    frames: vec![(texture, Duration::from_secs(60))],
+                    total: Duration::from_secs(60),
+                    started: Instant::now(),
+                    last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
+                    animating: false,
+                    played_in: 0,
+                    complete: true,
+                    upgrading: false,
+                }),
+            );
+        }
+        sweep(&ctx);
+        assert_eq!(resident_frames(&ctx), 1, "the first sweep only marks");
+        cache(&ctx).0.lock().expect("animation cache").last_sweep =
+            Some(Instant::now() - IDLE - Duration::from_secs(1));
+        sweep(&ctx);
+        assert_eq!(resident_frames(&ctx), 0, "the second sweep frees it");
     }
 
     #[test]

@@ -10455,6 +10455,8 @@ impl App {
         self.theme_reveal.paint(ctx);
         // Release the image caches of everything that scrolled away.
         crate::image_cache::sweep(ctx);
+        // Likewise the decoded frames of stickers and GIFs nothing draws now.
+        crate::animation::sweep(ctx);
         self.log_memory(ctx, true);
         // Only fading info toasts animate. Errors wait for the reader.
         if self
