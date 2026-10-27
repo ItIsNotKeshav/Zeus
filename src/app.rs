@@ -2441,6 +2441,8 @@ impl App {
         self.chats.retain(|chat| chat.id != id);
         self.recent_chats.retain(|recent| recent != id);
         self.conversations.remove(id);
+        self.left_chats.retain(|left| left != id);
+        self.phone_history.remove(id);
         // The recorded places belong to the account on screen, and chat ids
         // repeat across accounts.
         if !self.events_hidden {
@@ -3352,6 +3354,8 @@ impl App {
         for index in removed.into_iter().rev() {
             self.finish_removed(index);
         }
+        // A lock or a hidden account's event may have closed a chat.
+        self.settle_conversations();
     }
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
@@ -3583,7 +3587,15 @@ impl App {
                 {
                     self.backend.send(Command::LoadCallLog);
                 }
-                let conversation = self.conversations.entry(chat.clone()).or_default();
+                // Only a conversation in memory takes the message. Any other
+                // chat finds it in the archive when it opens; keeping it here
+                // would hold every chat's messages for good.
+                let Some(conversation) = self.resident_conversation(&chat) else {
+                    if !older {
+                        self.refresh_viewer_album(&chat);
+                    }
+                    return;
+                };
                 let was_empty = conversation.messages.is_empty();
                 if older && !messages.is_empty() {
                     conversation.phone_delivered = true;
@@ -4076,7 +4088,11 @@ impl App {
             }
             Event::SyncProgress(percent) => self.sync_percent = Some(percent),
             Event::OlderFetched { chat, more, silent } => {
-                let conversation = self.conversations.entry(chat).or_default();
+                // A chat not in memory pages the archive afresh when it opens,
+                // and the worker keeps what the phone said about it.
+                let Some(conversation) = self.resident_conversation(&chat) else {
+                    return;
+                };
                 if silent {
                     // A background page is not an answer to a request the
                     // reader made: it must not clear the spinner of a
@@ -4587,6 +4603,8 @@ impl App {
                 self.notifications.clear_account(&account);
                 self.chats.clear();
                 self.conversations.clear();
+                self.left_chats.clear();
+                self.phone_history.clear();
                 self.contacts.clear();
                 self.avatars.clear();
                 self.starred.clear();
@@ -4784,27 +4802,36 @@ impl App {
         let editing = self.editing.clone();
         let reply = self.reply_to.clone();
         let reaction = self.reaction_target.clone();
-        let (editing_gone, reply_gone, reaction_gone) = {
-            let conversation = self.conversations.entry(id.to_owned()).or_default();
-            conversation
-                .messages
-                .retain(|message| message.timestamp > through);
-            conversation.requested = true;
-            conversation.complete = true;
-            conversation.phone_exhausted = true;
-            conversation.loading_older = false;
-            (
-                editing
-                    .as_ref()
-                    .is_some_and(|edit| conversation.message(edit).is_none()),
-                reply.as_ref().is_some_and(|reply| {
-                    reply.source_chat(id) == id && conversation.message(&reply.id).is_none()
-                }),
-                reaction
-                    .as_ref()
-                    .is_some_and(|(_, target)| conversation.message(target).is_none()),
-            )
-        };
+        let (editing_gone, reply_gone, reaction_gone) =
+            if let Some(conversation) = self.resident_conversation(id) {
+                conversation
+                    .messages
+                    .retain(|message| message.timestamp > through);
+                conversation.requested = true;
+                conversation.complete = true;
+                conversation.phone_exhausted = true;
+                conversation.loading_older = false;
+                (
+                    editing
+                        .as_ref()
+                        .is_some_and(|edit| conversation.message(edit).is_none()),
+                    reply.as_ref().is_some_and(|reply| {
+                        reply.source_chat(id) == id && conversation.message(&reply.id).is_none()
+                    }),
+                    reaction
+                        .as_ref()
+                        .is_some_and(|(_, target)| conversation.message(target).is_none()),
+                )
+            } else {
+                // A chat not in memory reads what is left from the archive
+                // when it opens. Only the phone's word goes with it: what was
+                // cleared is not asked for again.
+                self.phone_history
+                    .entry(id.to_owned())
+                    .or_default()
+                    .exhausted = true;
+                (false, false, false)
+            };
         if open && live {
             if editing_gone {
                 self.editing = None;
@@ -4932,6 +4959,9 @@ impl App {
     fn set_open_chat(&mut self, id: Option<ChatId>) {
         if self.open_chat != id {
             self.close_info();
+            if let Some(left) = self.open_chat.clone() {
+                self.account_mut().note_left(&left);
+            }
         }
         self.open_chat = id;
     }
@@ -5436,10 +5466,17 @@ impl App {
 
     fn ensure_loaded(&mut self, chat: &str) {
         let request = {
-            let conversation = self.conversations.entry(chat.to_owned()).or_default();
+            let account = &mut self.accounts[self.active];
+            // A chat dropped from memory opens as it first did, knowing what
+            // the phone said about its history.
+            let phone = account.phone_history.remove(chat);
+            let conversation = account.conversations.entry(chat.to_owned()).or_default();
             if conversation.requested {
                 false
             } else {
+                if let Some(phone) = phone {
+                    conversation.resume_phone(phone);
+                }
                 conversation.requested = true;
                 true
             }
@@ -5660,6 +5697,7 @@ impl App {
             self.emoji_jump = None;
             self.jump_highlight = None;
             if let Some(previous) = self.open_chat.take() {
+                self.account_mut().note_left(&previous);
                 self.save_attachment_draft(&previous);
                 let draft = std::mem::take(&mut self.composer);
                 // Text a link brought, and the reader never changed, is not
@@ -6589,6 +6627,9 @@ impl App {
         // A frame with no queued action still fixes the opening place, so the
         // first navigation has somewhere to return to.
         self.record_location();
+        // After every action, so a quote started as its chat was left still
+        // holds its message when that chat is trimmed.
+        self.settle_conversations();
     }
 
     /// Applies one model action after drawing the views, respecting the app lock and account state.
@@ -6897,6 +6938,7 @@ impl App {
                 // call history.
                 self.picked_call = None;
                 if let Some(chat) = self.open_chat.take() {
+                    self.account_mut().note_left(&chat);
                     self.invalidate_composer_undo();
                     self.save_attachment_draft(&chat);
                     self.stop_composing(&chat);
@@ -11173,6 +11215,8 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 
 mod calls;
 pub use calls::CallPerson;
+mod conversations;
+pub(crate) use conversations::PhoneHistory;
 mod voice_input;
 #[cfg(any(test, feature = "demo"))]
 pub(crate) use voice_input::demo_microphones;

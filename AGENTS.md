@@ -76,6 +76,11 @@ protocol. These notes are for coding agents and new contributors.
   `AccountId`. `src/app.rs` is the process shell (theme, window, tray,
   updates). Each `Account` in `src/account.rs` owns a `Backend`/`Worker`.
   Views draw the active account through `App`'s `Deref` to `Account`.
+  Only the open chat keeps its whole conversation in memory: the two chats
+  left most recently are trimmed to their newest page and the rest dropped
+  (`app/conversations.rs`, settled when a chat is left, never on a timer).
+  Events for a chat not in memory create no conversation; reopening one
+  loads a page through `ensure_loaded` like a first open.
   A navigation rail (`src/ui/rail.rs`) runs down the left of the chat list
   on every platform, 52 points wide and a shade darker than the list:
   Chats and Calls at the top, the one on screen lit (Calls and Starred
