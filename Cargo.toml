@@ -19,6 +19,11 @@ name = "zeus"
 path = "src/main.rs"
 
 [dependencies]
+# Global allocator. libmalloc and glibc keep the high-water mark of transient
+# peaks such as history sync and image decode, while mimalloc returns freed
+# segments to the OS. Secure mode and debug stay off. The crate compiles its
+# C sources with cc, which openh264 and opus already require.
+mimalloc = { version = "0.1.52", default-features = false }
 anyhow = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"

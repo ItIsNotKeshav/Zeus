@@ -55,6 +55,10 @@ protocol. These notes are for coding agents and new contributors.
 
 ## Architecture
 
+- mimalloc is the global allocator (`#[global_allocator]` in `src/main.rs`)
+  because the system allocator keeps the high-water mark of transient peaks
+  such as history sync and image decode, while mimalloc returns freed
+  segments to the OS.
 - `src/ui/` draws views and pushes `model::Action`s; `src/app.rs` applies
   them after the frame. Never mutate application state from inside a view
   beyond the view's own fields (composer text, search text, flags).

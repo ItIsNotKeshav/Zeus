@@ -2,6 +2,11 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// The system allocator keeps the high-water mark of transient peaks such as
+// history sync and image decode. mimalloc returns freed segments to the OS.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use zeus::{app, backend, paths, settings, single_instance};
 
 use clap::Parser;
