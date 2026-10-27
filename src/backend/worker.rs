@@ -12487,7 +12487,7 @@ async fn prepare_document(
 }
 
 /// Uploads a WebP sticker and builds its message without a library builder.
-async fn prepare_sticker(client: &Client, mut bytes: Vec<u8>) -> Result<Prepared, String> {
+async fn prepare_sticker(client: &Client, bytes: Vec<u8>) -> Result<Prepared, String> {
     let (probe, returned) = tokio::task::spawn_blocking(move || {
         let probe = (|| {
             let decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&bytes))

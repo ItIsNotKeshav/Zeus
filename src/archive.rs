@@ -412,6 +412,9 @@ pub const GALLERY_PAGE: usize = 200;
 /// rather than an integer, so pages walk the table's implicit `rowid`.
 pub const BACKFILL_BATCH: usize = 256;
 
+/// One archived message for a backfill: its rowid, chat, id and raw protobuf.
+pub type RawRow = (i64, String, String, Vec<u8>);
+
 /// `meta` keys for the phone's "Keep chats archived" and when it changed.
 const UNARCHIVE_CHATS: &str = "unarchive_chats";
 const UNARCHIVE_CHATS_AT: &str = "unarchive_chats_at";
@@ -1683,7 +1686,7 @@ impl Archive {
     }
 
     /// One page of `(rowid, chat, id, raw)` after `after_rowid`, at most [`BACKFILL_BATCH`].
-    fn raw_page(&self, sql: &str, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+    fn raw_page(&self, sql: &str, after_rowid: i64) -> Result<Vec<RawRow>> {
         let mut statement = self.connection.prepare(sql)?;
         let rows = statement.query_map(params![after_rowid, BACKFILL_BATCH as i64], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
@@ -1692,7 +1695,7 @@ impl Archive {
     }
 
     /// Raw messages for re-deriving fields, in `rowid` order, after `after_rowid`.
-    pub fn rows_with_raw(&self, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+    pub fn rows_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
         self.raw_page(
             "SELECT rowid, chat, id, raw FROM messages
              WHERE raw IS NOT NULL AND rowid > ?1
@@ -1702,7 +1705,7 @@ impl Archive {
     }
 
     /// Video messages with their raw protobuf, in `rowid` order, after `after_rowid`.
-    pub fn videos_with_raw(&self, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+    pub fn videos_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
         self.raw_page(
             "SELECT rowid, chat, id, raw FROM messages
              WHERE raw IS NOT NULL AND json_valid(content)
@@ -1714,7 +1717,7 @@ impl Archive {
     }
 
     /// Photo, video, and audio messages with their raw protobuf, after `after_rowid`.
-    pub fn media_with_raw(&self, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+    pub fn media_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
         self.raw_page(
             "SELECT rowid, chat, id, raw FROM messages
              WHERE raw IS NOT NULL AND json_valid(content)
@@ -1726,10 +1729,7 @@ impl Archive {
     }
 
     /// Messages filed as unsupported without a named kind, with their raw protobuf.
-    pub fn unsupported_with_raw(
-        &self,
-        after_rowid: i64,
-    ) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+    pub fn unsupported_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
         self.raw_page(
             "SELECT rowid, chat, id, raw FROM messages
              WHERE raw IS NOT NULL AND json_valid(content)
@@ -1743,10 +1743,7 @@ impl Archive {
 
     /// Interactive messages eligible for a derived presentation upgrade.
     /// Deleted and edited rows are left intact; callers preserve local media paths.
-    pub fn interactive_placeholders(
-        &self,
-        after_rowid: i64,
-    ) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+    pub fn interactive_placeholders(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
         self.raw_page(
             "SELECT rowid, chat, id, raw FROM messages
              WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
