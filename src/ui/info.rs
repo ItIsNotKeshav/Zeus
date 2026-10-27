@@ -1,28 +1,45 @@
 //! The info panel beside the open chat: a contact's, group's or channel's
 //! picture, name and actions, its members, and the pictures, videos,
-//! documents and links shared in it. It takes a column at the right, and
-//! the conversation narrows beside it; when the chat list leaves too little
-//! room, the list steps aside. In the narrow window mode it is a page of its
-//! own over the chat, with Back.
+//! documents and links shared in it. It is the chat card's twin: a rounded
+//! card in its own column at the right, with the same gutter, corners,
+//! outline and header line as the chat, easing in and out with the theme's
+//! motion. The window grows by the column while it is open, so the chat keeps
+//! its width; a maximized window narrows the chat instead. In the narrow
+//! window mode it is a page of its own over the chat, with Back.
 
-use egui::{Align, Align2, Color32, CornerRadius, Frame, Margin, Rect, Sense, Stroke, Vec2};
+use egui::{
+    Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2,
+};
 use egui::{pos2, vec2};
 
 use super::widgets::FrostedPopup;
 use crate::app::{App, InfoFocus};
 use crate::model::{Action, ChatMedia, Content, Dialog, InfoView, MediaTab, Message};
-use crate::theme::{self, Icon};
+use crate::theme::{self, Icon, Palette};
 
 use super::focus::{Stop, TabStop};
-use super::pane::{self, Docking};
+use super::pane;
 use super::widgets;
 
 /// The panel's side margin.
-const MARGIN: f32 = 14.0;
+const MARGIN: f32 = 22.0;
 /// Space between the cells of the picture grid and strip.
 const GAP: f32 = 4.0;
+/// Space between the overview's sections, which no rule divides.
+const SECTION_GAP: f32 = 28.0;
 /// A document or link row.
-const ROW_HEIGHT: f32 = 60.0;
+const ROW_HEIGHT: f32 = 72.0;
+/// A member's row.
+const MEMBER_HEIGHT: f32 = 56.0;
+/// An action tile under the name.
+const TILE_HEIGHT: f32 = 62.0;
+/// The card's width, and the column it takes with the gutter at its right.
+const CARD_WIDTH: f32 = 400.0;
+pub(super) const CARD_COLUMN: f32 = CARD_WIDTH + super::chats::CARD_GAP;
+/// The members shown without a search field above them.
+const SEARCH_FROM: usize = 8;
+/// The members listed before "Show all".
+const MEMBERS_SHOWN: usize = 10;
 /// The panel's Tab stops after its close button, in reading order: the
 /// group photo, the rename pencil, the name editor's check, the action
 /// buttons, the media row, the media view's tabs, Leave, and Try again.
@@ -34,6 +51,7 @@ pub const MEDIA_ROW_STOP: u8 = 10;
 const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
+const MEMBERS_STOP: u8 = 32;
 
 /// The media view's title, and the overview row that opens it.
 fn media_title(app: &App) -> String {
@@ -62,49 +80,65 @@ pub fn release_thumbnails(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Docks the panel when there is room, before the conversation is laid out.
-/// Otherwise returns the conversation's rect for [`show_overlay`], drawn
-/// after the conversation so it lies on top.
+/// Draws the panel as a card in its own column at the right of the chat
+/// when the window is wide, and returns the rect of the chat it covers as a
+/// page of its own, for [`show_overlay`], when the window is narrow. Called
+/// before the conversation is laid out, so the column comes off its width.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
-    if !app.info_visible() {
-        ui.ctx().data_mut(|data| data.remove::<bool>(docked_id()));
+    let ctx = ui.ctx().clone();
+    let visible = app.info_visible();
+    // A narrow window, or one that has not grown and leaves no room for the
+    // card beside a readable chat, shows the panel as a page over the chat:
+    // the chat header's name and buttons never crowd each other.
+    let region = ui.available_rect_before_wrap();
+    let narrow = super::narrow(&ctx)
+        || region.width() + room_ahead(&ctx) - CARD_COLUMN < pane::INFO_CONVERSATION_MIN;
+    // The column opens with the card and closes after it, as quickly as a
+    // surface leaves, so a chat that gives way glides rather than jumps.
+    let seconds = if visible {
+        theme::MOTION_PANEL
+    } else {
+        theme::MOTION_PANEL * theme::CLOSE
+    };
+    let open = theme::animate(&ctx, column_id(), visible && !narrow, seconds);
+    if !visible {
+        ctx.data_mut(|data| {
+            data.remove::<bool>(docked_id());
+            data.remove::<(String, String)>(member_filter_id());
+            data.remove::<String>(members_open_id());
+        });
         // The thumbnails go with the panel, not with the resident window.
         for uri in std::mem::take(&mut app.info_textures) {
-            crate::image_cache::forget(ui.ctx(), &uri);
+            crate::image_cache::forget(&ctx, &uri);
+        }
+        if open > 0.0 && !narrow {
+            // The card is leaving over its column: the column stays until
+            // it has gone.
+            column(app, ui, open, |_, _| {});
+        } else {
+            // Then the window goes back to the width it had before.
+            widen_window(&ctx, false);
         }
         return None;
     }
-    // A narrow window shows the panel as a page of its own over the chat.
-    if super::narrow(ui.ctx()) {
-        return Some(ui.available_rect_before_wrap());
+    if narrow {
+        return Some(region);
     }
-    // Otherwise it takes a column beside the conversation, which narrows.
-    let wanted = app.settings.info_pane_width;
-    match pane::docked(
-        app,
-        ui,
-        "chat-info-pane",
-        wanted,
-        pane::INFO_MIN,
-        pane::INFO_CONVERSATION_MIN,
-        |app, ui| contents(app, ui, false),
-    ) {
-        Docking::Docked { width, wanted } => {
-            // Widened from a page over the chat: the page does not linger.
-            super::closing::forget(
-                ui.ctx(),
-                egui::LayerId::new(egui::Order::Foreground, egui::Id::new(OVERLAY)),
-            );
-            // Only a drag moves the edge off the width asked for.
-            if (width - wanted).abs() > 1.0 {
-                app.settings.info_pane_width = width;
-                app.actions.push(Action::SettingsChanged);
-            }
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(docked_id(), true));
-            None
-        }
-        Docking::Overlay(region) => Some(region),
+    // Widened from a page over the chat: the page does not linger.
+    super::closing::forget(
+        &ctx,
+        egui::LayerId::new(egui::Order::Foreground, egui::Id::new(OVERLAY)),
+    );
+    column(app, ui, open, side_card);
+    ctx.data_mut(|data| data.insert_temp(docked_id(), true));
+    None
+}
+
+/// Asks the window to grow for the card as it opens, before the side
+/// columns are laid out, so they can count on the room it is about to gain.
+pub(super) fn prepare(app: &App, ctx: &egui::Context) {
+    if app.info_visible() && !super::narrow(ctx) {
+        widen_window(ctx, true);
     }
 }
 
@@ -112,72 +146,353 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
     let width = region.width();
     pane::overlay(app, ctx, OVERLAY, width, region, |app, ui| {
-        contents(app, ui, true)
+        contents(app, ui, true, false)
     });
     ctx.data_mut(|data| data.insert_temp(docked_id(), false));
 }
 
 const OVERLAY: &str = "chat-info-overlay";
 
-/// Whether the panel was docked (`true`) or laid over the chat (`false`)
-/// this frame, for interaction tests.
+/// Whether the panel was a card beside the chat (`true`) or a page over it
+/// (`false`) this frame, for interaction tests.
 pub fn docked_id() -> egui::Id {
     egui::Id::new("chat-info-docked")
 }
 
-/// The panel's contents. Over a narrow conversation (`overlay`) an item
-/// that goes to a message closes the panel, so the message can be seen.
-fn contents(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
+/// How far open the card's column is.
+fn column_id() -> egui::Id {
+    egui::Id::new("chat-info-column")
+}
+
+/// The width the window grew by for the card, while it has.
+fn widened_id() -> egui::Id {
+    egui::Id::new("chat-info-widened")
+}
+
+/// The layer the card draws on, so it can leave the way it came.
+fn card_layer() -> egui::LayerId {
+    egui::LayerId::new(egui::Order::Middle, egui::Id::new("chat-info-card"))
+}
+
+/// The chat whose whole member list is open.
+fn members_open_id() -> egui::Id {
+    egui::Id::new("chat-info-members-open")
+}
+
+/// What is typed in the member search, for the chat shown.
+fn member_filter_id() -> egui::Id {
+    egui::Id::new("chat-info-member-filter")
+}
+
+/// Whether the window cannot grow for the card: maximized or full screen.
+pub(super) fn fixed_window(ctx: &egui::Context) -> bool {
+    ctx.input(|input| {
+        let viewport = input.viewport();
+        viewport.maximized == Some(true) || viewport.fullscreen == Some(true)
+    })
+}
+
+/// The window growing for the card: its inner width before, the width
+/// asked for, and when.
+#[derive(Clone, Copy)]
+struct Widened {
+    from: f32,
+    to: f32,
+    at: f64,
+}
+
+/// How long a window has to grow before the card stops waiting for it: a
+/// window manager that tiles or snaps it may never let it.
+const GROW_WAIT: f64 = 0.6;
+
+fn widened(ctx: &egui::Context) -> Option<Widened> {
+    ctx.data(|data| data.get_temp::<Widened>(widened_id()))
+}
+
+/// The window's inner width, in points.
+fn inner_width(ctx: &egui::Context) -> f32 {
+    ctx.input(|input| {
+        input
+            .viewport()
+            .inner_rect
+            .map_or_else(|| input.content_rect().width(), |rect| rect.width())
+    })
+}
+
+/// Whether the window grew by the card's column, as asked.
+fn grown(ctx: &egui::Context) -> bool {
+    widened(ctx).is_some_and(|widened| inner_width(ctx) >= widened.to - 1.0)
+}
+
+/// The width the window is still about to gain for the card, so the layout
+/// does not give way for the frames before it has grown.
+pub(super) fn room_ahead(ctx: &egui::Context) -> f32 {
+    let Some(widened) = widened(ctx) else {
+        return 0.0;
+    };
+    let now = ctx.input(|input| input.time);
+    if now - widened.at > GROW_WAIT {
+        return 0.0;
+    }
+    (widened.to - inner_width(ctx)).max(0.0)
+}
+
+/// Grows the window by the card's column while the card is open, and shrinks
+/// it back after, so the chat keeps its width. A maximized or full-screen
+/// window cannot grow, and a window manager may refuse: the chat gives way
+/// instead, and nothing is shrunk that did not grow.
+fn widen_window(ctx: &egui::Context, open: bool) {
+    let fixed = fixed_window(ctx);
+    let width = inner_width(ctx);
+    let height = ctx.input(|input| {
+        input
+            .viewport()
+            .inner_rect
+            .map_or_else(|| input.content_rect().height(), |rect| rect.height())
+    });
+    match (open, widened(ctx)) {
+        (true, None) if !fixed => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+                width + CARD_COLUMN,
+                height,
+            )));
+            let at = ctx.input(|input| input.time);
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    widened_id(),
+                    Widened {
+                        from: width,
+                        to: width + CARD_COLUMN,
+                        at,
+                    },
+                )
+            });
+        }
+        (false, Some(widened)) => {
+            // Only what it grew by, and only while it is not maximized.
+            let gained = (width - widened.from).clamp(0.0, CARD_COLUMN);
+            if !fixed && gained > 1.0 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
+                    width - gained,
+                    height,
+                )));
+            }
+            ctx.data_mut(|data| data.remove::<Widened>(widened_id()));
+        }
+        _ => {}
+    }
+}
+
+/// The card's column at the right, on the gutter's colour, `open` of the
+/// way open. A window that grew for it gives it its whole width at once;
+/// otherwise it eases open, and the chat narrows with it.
+fn column(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    open: f32,
+    contents: impl FnOnce(&mut App, &mut egui::Ui),
+) {
+    let width = if grown(ui.ctx()) {
+        CARD_COLUMN
+    } else {
+        (CARD_COLUMN * open).round()
+    };
+    let id = egui::Id::new("chat-info-side");
+    // egui would remember the width of each frame of the ease.
+    ui.ctx()
+        .data_mut(|data| data.remove::<egui::PanelState>(id));
+    egui::Panel::right(id)
+        .resizable(false)
+        .exact_size(width)
+        .show_separator_line(false)
+        .frame(Frame::new().fill(app.palette.rail()))
+        .show(ui, |ui| contents(app, ui));
+}
+
+/// The card itself: the chat card's corners, outline and gutter, at the
+/// column's right, so the chat card meets it as it slides open. It fades and
+/// grows in from its right edge, and leaves the same way.
+fn side_card(app: &mut App, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let palette = app.palette;
+    let gap = super::chats::CARD_GAP;
+    let column = ui.max_rect();
+    let card = Rect::from_min_max(
+        pos2(column.right() - gap - CARD_WIDTH, column.top() + gap),
+        pos2(column.right() - gap, column.bottom() - gap),
+    );
+    let radius = f32::from(super::chats::CARD_RADIUS);
+    let layer = card_layer();
+    // An area of its own, so it is ordered and hit like any other surface.
+    egui::Area::new(layer.id)
+        .order(layer.order)
+        .fixed_pos(card.min)
+        .constrain(false)
+        .show(&ctx, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
+                ui.set_clip_rect(card.intersect(column).intersect(ui.clip_rect()));
+                ui.painter().rect(
+                    card,
+                    radius,
+                    card_fill(&palette),
+                    Stroke::new(1.25, palette.outline),
+                    egui::StrokeKind::Inside,
+                );
+                // The lists end above the rounded corners.
+                Frame::new()
+                    .inner_margin(Margin {
+                        bottom: 12,
+                        ..Margin::ZERO
+                    })
+                    .show(ui, |ui| {
+                        ui.set_min_size(card.size() - vec2(0.0, 12.0));
+                        ui.set_max_size(card.size() - vec2(0.0, 12.0));
+                        contents(app, ui, false, true);
+                    });
+            });
+        });
+    super::closing::surface(
+        &ctx,
+        layer,
+        pos2(card.right(), card.center().y),
+        theme::MOTION_PANEL,
+    );
+}
+
+/// The card's own colour: the Settings page's, which shares the chat card's
+/// frosted glass on a vibrant window.
+fn card_fill(palette: &Palette) -> Color32 {
+    if palette.vibrant() {
+        palette.vibrant_chat(palette.panel)
+    } else {
+        palette.panel
+    }
+}
+
+/// What a tile, a field or a tab sits on: the faint tint of the text the
+/// chat list's search field and filters use, a little stronger under the
+/// pointer.
+fn tile_fill(palette: &Palette, hover: f32) -> Color32 {
+    palette.tint(theme::TINT_FIELD + theme::TINT_HOVER * hover)
+}
+
+/// The panel's contents. Over the conversation (`overlay`) an item that goes
+/// to a message closes the panel, so the message can be seen. As a `card`
+/// the header ends in a close button, as the chat's own header does.
+fn contents(app: &mut App, ui: &mut egui::Ui, overlay: bool, card: bool) {
     let (chat, view) = match &app.info {
         Some(info) => (info.chat.clone(), info.view),
         None => return,
     };
     match view {
-        InfoView::Overview => overview(app, ui, &chat, overlay),
+        InfoView::Overview => overview(app, ui, &chat, overlay, card),
         // A locked chat's media is never drawn: the overview shows instead.
         InfoView::Media(_) if !app.info_media_allowed() => {
             app.actions.push(Action::ShowInfo(InfoView::Overview));
-            overview(app, ui, &chat, overlay);
+            overview(app, ui, &chat, overlay, card);
         }
-        InfoView::Media(tab) => media_view(app, ui, &chat, tab, overlay),
+        InfoView::Media(tab) => media_view(app, ui, &chat, tab, overlay, card),
     }
 }
 
-/// The pane-style header: a button at the left, then the title. `focus`
-/// says whether the keyboard moves to the button this frame.
+/// A button in the header, on round glass on a vibrant window, as the chat
+/// header's buttons are.
+fn header_button(ui: &mut egui::Ui, palette: &Palette, icon: Icon, label: &str) -> egui::Response {
+    let glass = ui.painter().add(egui::Shape::Noop);
+    let button = theme::icon_button(ui, icon, 18.0, palette.secondary, palette.text, label);
+    if palette.vibrant() {
+        ui.painter().set(
+            glass,
+            super::conversation::glass_button(palette, button.rect),
+        );
+    }
+    button
+}
+
+/// The header, on the chat header's line: an optional `back` button at the
+/// left, the title, and on a card a close button at the right, where the
+/// chat header has its own. `focus` says whether the keyboard moves to the
+/// first button this frame.
 fn header(
     app: &mut App,
     ui: &mut egui::Ui,
-    icon: Icon,
-    label: &str,
+    back: Option<(Icon, &str, Action)>,
     title: &str,
-    action: Action,
     focus: bool,
+    card: bool,
 ) {
     let palette = app.palette;
-    Frame::new()
-        .inner_margin(pane::header_margin(ui.ctx()))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(32.0);
-                let button =
-                    theme::icon_button(ui, icon, 18.0, palette.secondary, palette.text, label)
-                        .tab_stop(Stop::InfoClose);
+    // As the chat header: dropped to the chat list's title line beside it,
+    // with the same room around its buttons.
+    let drop = (super::chats::HEADER_DROP - super::chats::CARD_GAP) as i8;
+    let margin = if card {
+        Margin {
+            left: if back.is_some() { 14 } else { MARGIN as i8 },
+            right: 14,
+            top: 8 + drop,
+            bottom: 8,
+        }
+    } else {
+        pane::header_margin(ui.ctx())
+    };
+    let mut first = true;
+    Frame::new().inner_margin(margin).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.set_min_height(if card {
+                super::conversation::HEADER_ROW
+            } else {
+                32.0
+            });
+            if let Some((icon, label, action)) = back {
+                let button = header_button(ui, &palette, icon, label).tab_stop(Stop::InfoClose);
+                first = false;
                 if focus {
                     button.request_focus();
                 }
                 if button.clicked() {
                     app.actions.push(action);
                 }
-                ui.add_space(6.0);
-                theme::text(ui, title, theme::semibold(16.0), palette.text);
-            });
+                ui.add_space(if palette.vibrant() && card { 10.0 } else { 6.0 });
+            }
+            theme::text(
+                ui,
+                title,
+                theme::semibold(if card { 17.0 } else { 16.0 }),
+                palette.text,
+            );
+            if card {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if palette.vibrant() {
+                        ui.add_space(super::conversation::BUTTON_GAP / 2.0);
+                    }
+                    let close = crate::i18n::gettext(app.locale, "Close");
+                    let mut button = header_button(ui, &palette, Icon::X, &close);
+                    if first {
+                        button = button.tab_stop(Stop::InfoClose);
+                        if focus {
+                            button.request_focus();
+                        }
+                    }
+                    if button.clicked() {
+                        app.actions.push(Action::CloseInfo);
+                    }
+                });
+            }
         });
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, palette.outline),
-    );
+    });
+}
+
+/// A section's title over the overview: the chat list's weight, with a
+/// count after it when there is one.
+fn section_title(ui: &mut egui::Ui, palette: &Palette, title: &str, count: Option<String>) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        theme::text(ui, title, theme::semibold(14.5), palette.text);
+        if let Some(count) = count {
+            theme::text(ui, count, theme::regular(13.0), palette.dim);
+        }
+    });
+    ui.add_space(10.0);
 }
 
 /// What the overview shows of the chat, read once per frame from the chat
@@ -244,7 +559,7 @@ impl Shown {
 }
 
 /// The chat's picture, name, details, actions and members.
-fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
+fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool, card: bool) {
     let shown = Shown::of(app, id);
     let title = if shown.group {
         crate::i18n::gettext(app.locale, "Group info")
@@ -253,21 +568,25 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool) {
     } else {
         crate::i18n::gettext(app.locale, "Contact info")
     };
-    // As a page of its own, the panel goes back to the chat it covers.
-    let (icon, close) = if overlay {
-        (Icon::ChevronLeft, crate::i18n::gettext(app.locale, "Back"))
-    } else {
-        (Icon::X, crate::i18n::gettext(app.locale, "Close"))
-    };
-    header(app, ui, icon, &close, &title, Action::CloseInfo, false);
+    // As a page of its own, the panel goes back to the chat it covers; a
+    // card closes from the right of its header instead.
+    let back = crate::i18n::gettext(app.locale, "Back");
+    let leading = (!card).then(|| (Icon::ChevronLeft, back.as_ref(), Action::CloseInfo));
+    header(app, ui, leading, &title, false, card);
     egui::ScrollArea::vertical()
         .id_salt(("chat-info", id))
         .auto_shrink([false, false])
+        .max_height(ui.available_height())
         .show(ui, |ui| {
             Frame::new()
-                .inner_margin(Margin::symmetric(MARGIN as i8, 12))
+                .inner_margin(Margin {
+                    left: MARGIN as i8,
+                    right: MARGIN as i8,
+                    top: 8,
+                    bottom: 20,
+                })
                 .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 8.0;
+                    ui.spacing_mut().item_spacing.y = 6.0;
                     identity(app, ui, &shown, overlay);
                 });
         });
@@ -278,9 +597,9 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     let palette = app.palette;
     let id = shown.id.as_str();
     let name = shown.name.as_str();
-    // The photo takes the panel's width, up to a portrait size.
-    let window = ui.ctx().content_rect().height();
-    let photo = (ui.available_width() * 0.55).clamp(120.0, 200.0);
+    // A portrait over the name, as on the phone, small enough that the
+    // actions and the first section show under it.
+    let photo = (ui.available_width() * 0.36).clamp(96.0, 120.0);
     let picture = app.avatar_full(id).or_else(|| app.avatar(id));
     let mine = app.me.as_deref() == Some(id);
     let editable = shown.phone.is_some() && !mine;
@@ -300,7 +619,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         } else {
             widgets::avatar(ui, &palette, name, id, photo, picture.as_deref());
         }
-        ui.add_space(6.0);
+        ui.add_space(10.0);
         if let Some(draft) = renaming.as_mut() {
             match group_name_field(app, ui, draft) {
                 Some(true) => {
@@ -518,17 +837,16 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     if let Some(action) = group_action {
         app.actions.push(action);
     }
-    ui.add_space(4.0);
+    ui.add_space(18.0);
     actions(app, ui, shown, mine, editable);
     if let Some(description) = shown.description.as_deref() {
-        ui.add_space(8.0);
-        theme::text(
+        ui.add_space(SECTION_GAP);
+        section_title(
             ui,
-            crate::i18n::gettext(app.locale, "Description"),
-            theme::medium(12.5),
-            palette.secondary,
+            &palette,
+            &crate::i18n::gettext(app.locale, "Description"),
+            None,
         );
-        ui.add_space(4.0);
         // A long description scrolls in place, so the media and the members
         // stay close under it.
         egui::ScrollArea::vertical()
@@ -536,34 +854,32 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
             .max_height(120.0)
             .auto_shrink([false, true])
             .show(ui, |ui| {
-                theme::selectable_text(ui, description, theme::regular(13.5), palette.text);
+                theme::selectable_text(ui, description, theme::regular(14.0), palette.secondary);
             });
     }
     // A locked chat's media stays in the locked folder: the section is not
     // there, rather than empty.
     if app.info_media_allowed() {
-        ui.add_space(8.0);
+        ui.add_space(SECTION_GAP);
         media_row(app, ui, id, overlay);
     }
     if shown.group && shown.members > 0 {
-        ui.add_space(8.0);
-        members(app, ui, id, window, photo);
+        ui.add_space(SECTION_GAP);
+        members(app, ui, id);
     }
     if shown.can_leave {
-        ui.add_space(8.0);
+        ui.add_space(SECTION_GAP);
         let leave_label = if shown.channel {
             crate::i18n::gettext(app.locale, "Leave channel")
         } else {
             crate::i18n::gettext(app.locale, "Leave group")
         };
-        ui.vertical_centered(|ui| {
-            if super::dialogs::danger_button(ui, app, leave_label.as_ref())
-                .tab_stop(Stop::InfoControl(LEAVE_STOP))
-                .clicked()
-            {
-                leave = true;
-            }
-        });
+        if leave_row(ui, &palette, &leave_label)
+            .tab_stop(Stop::InfoControl(LEAVE_STOP))
+            .clicked()
+        {
+            leave = true;
+        }
     }
     if leave {
         app.actions
@@ -571,7 +887,45 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
 }
 
-/// The actions the chat offers, as many per row as fit, centred.
+/// Leave, at the foot of the overview: a row on the same tint as the action
+/// tiles, in the danger colour, rather than a red slab under the rest.
+fn leave_row(ui: &mut egui::Ui, palette: &Palette, label: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 48.0), Sense::click());
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let hover = theme::animate(
+        ui.ctx(),
+        response.id,
+        response.hovered(),
+        theme::MOTION_QUICK,
+    );
+    if ui.is_rect_visible(rect) {
+        ui.painter()
+            .rect_filled(rect, theme::RADIUS, tile_fill(palette, hover));
+        let galley =
+            ui.painter()
+                .layout_no_wrap(label.to_owned(), theme::medium(14.0), palette.danger);
+        let width = 18.0 + 8.0 + galley.size().x;
+        let left = rect.center().x - width / 2.0;
+        theme::paint_icon(
+            ui,
+            Icon::LogOut,
+            Rect::from_center_size(pos2(left + 9.0, rect.center().y), Vec2::splat(18.0)),
+            18.0,
+            palette.danger,
+        );
+        ui.painter().galley(
+            pos2(left + 26.0, rect.center().y - galley.size().y / 2.0),
+            galley,
+            palette.danger,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The actions the chat offers, as tiles of equal width under the name: an
+/// icon over a short label, as on the phone.
 fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable: bool) {
     let palette = app.palette;
     let id = shown.id.as_str();
@@ -599,7 +953,7 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             .is_some_and(|full| !full.is_empty());
         buttons.push((
             Icon::User,
-            if known { "Rename" } else { "Add to contacts" },
+            if known { "Rename" } else { "Add contact" },
             vec![Action::EditContact {
                 id: id.to_owned(),
                 name: shown.name.trim_start_matches('~').to_owned(),
@@ -649,48 +1003,99 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
             ],
         ));
     }
-    let spacing = ui.spacing().item_spacing.x;
-    let available = ui.available_width();
+    if buttons.is_empty() {
+        return;
+    }
+    // Four to a row at most; five or six split into two even rows.
+    let per_row = if buttons.len() <= 4 {
+        buttons.len()
+    } else {
+        buttons.len().div_ceil(2)
+    };
+    let gap = 8.0;
+    let width = ((ui.available_width() - gap * (per_row - 1) as f32) / per_row as f32).floor();
     let mut fired: Option<Vec<Action>> = None;
-    let mut start = 0;
-    while start < buttons.len() {
-        // Fit and center as many buttons as each row allows.
-        let mut end = start;
-        let mut total = 0.0;
-        while end < buttons.len() {
-            let width = theme::soft_button_width(ui, buttons[end].1, true);
-            let grown = if end == start {
-                width
-            } else {
-                total + spacing + width
-            };
-            if end > start && grown > available {
-                break;
-            }
-            total = grown;
-            end += 1;
+    for (row, chunk) in buttons.chunks(per_row).enumerate() {
+        if row > 0 {
+            ui.add_space(gap - ui.spacing().item_spacing.y);
         }
         ui.horizontal(|ui| {
-            ui.add_space((available - total).max(0.0) / 2.0);
-            for (index, (icon, label, actions)) in buttons[start..end].iter().enumerate() {
-                if theme::soft_button(ui, &palette, Some(*icon), label, false)
-                    .tab_stop(Stop::InfoControl(ACTION_STOP + (start + index) as u8))
+            ui.spacing_mut().item_spacing.x = gap;
+            for (index, (icon, label, actions)) in chunk.iter().enumerate() {
+                let label = crate::i18n::gettext(app.locale, label);
+                if action_tile(ui, &palette, *icon, &label, width)
+                    .tab_stop(Stop::InfoControl(
+                        ACTION_STOP + (row * per_row + index) as u8,
+                    ))
                     .clicked()
                 {
                     fired = Some(actions.clone());
                 }
             }
         });
-        start = end;
     }
     if let Some(actions) = fired {
         app.actions.extend(actions);
     }
 }
 
+/// One action tile: the icon in the accent over its label, on the tint the
+/// chat list's search field sits on, easing lighter under the pointer.
+fn action_tile(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    icon: Icon,
+    label: &str,
+    width: f32,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(vec2(width, TILE_HEIGHT), Sense::click());
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let hover = theme::animate(
+        ui.ctx(),
+        response.id,
+        response.hovered(),
+        theme::MOTION_QUICK,
+    );
+    if ui.is_rect_visible(rect) {
+        // Pressed, it gives a little, as the header's buttons do.
+        let rect = if response.is_pointer_button_down_on() {
+            rect.shrink(1.5)
+        } else {
+            rect
+        };
+        ui.painter()
+            .rect_filled(rect, theme::RADIUS, tile_fill(palette, hover));
+        theme::paint_icon(
+            ui,
+            icon,
+            Rect::from_center_size(pos2(rect.center().x, rect.top() + 22.0), Vec2::splat(20.0)),
+            20.0,
+            palette.accent,
+        );
+        let line = widgets::line(
+            ui,
+            label,
+            theme::medium(12.0),
+            palette.text,
+            rect.width() - 12.0,
+            1,
+        );
+        line.paint(
+            ui,
+            pos2(rect.center().x - line.size().x / 2.0, rect.top() + 38.0),
+            palette.text,
+        );
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// The group's members, each opening their own panel. They are sorted once
-/// per change of the chat list or the contacts, not every frame.
-fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) {
+/// per change of the chat list or the contacts, not every frame. Ten are
+/// listed with "Show all" under them; a large group gets a search field that
+/// looks through everyone.
+fn members(app: &mut App, ui: &mut egui::Ui, id: &str) {
     let palette = app.palette;
     if app.info_members.as_ref().is_none_or(|(chat, _)| chat != id) {
         let list = app
@@ -703,74 +1108,140 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) 
     let Some((_, members)) = app.info_members.take() else {
         return;
     };
-    theme::text(
+    let (_, mut query) = ui
+        .ctx()
+        .data(|data| data.get_temp::<(String, String)>(member_filter_id()))
+        .filter(|(chat, _)| chat == id)
+        .unwrap_or_default();
+    section_title(
         ui,
-        format!("Members ({})", members.len()),
-        theme::medium(12.5),
-        palette.secondary,
+        &palette,
+        &crate::i18n::gettext(app.locale, "Members"),
+        Some(members.len().to_string()),
     );
-    ui.add_space(4.0);
-    // Limit the visible rows because groups can have thousands of members.
-    let row_height = 30.0;
-    let rows = ((window - photo - 300.0) / row_height)
-        .floor()
-        .clamp(2.0, 8.0);
+    if members.len() > SEARCH_FROM {
+        let width = ui.available_width();
+        widgets::search_field(
+            ui,
+            &palette,
+            egui::Id::new(("member-search", id)),
+            &mut query,
+            &crate::i18n::gettext(app.locale, "Search members"),
+            width,
+        );
+        ui.add_space(6.0);
+    }
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(member_filter_id(), (id.to_owned(), query.clone())));
+    let needle = query.trim().to_lowercase();
+    let shown: Vec<&(String, String)> = members
+        .iter()
+        .filter(|(member, name)| {
+            needle.is_empty()
+                || name.to_lowercase().contains(&needle)
+                || crate::model::phone_of(member).is_some_and(|phone| phone.contains(&needle))
+        })
+        .collect();
+    let all = ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(members_open_id()))
+        .is_some_and(|chat| chat == id);
+    let total = shown.len();
+    let capped = needle.is_empty() && !all && total > MEMBERS_SHOWN;
+    let listed = if capped { MEMBERS_SHOWN } else { total };
     let mut open = None;
-    // `show_rows` reads the spacing from outside its closure.
-    ui.spacing_mut().item_spacing.y = 0.0;
-    egui::ScrollArea::vertical()
-        .id_salt(("members", id))
-        .max_height(row_height * rows)
-        .auto_shrink([false, true])
-        .show_rows(ui, row_height, members.len(), |ui, range| {
-            for (member, name) in &members[range] {
-                let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), row_height),
-                    egui::Sense::click(),
-                );
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
-                });
-                if ui.is_rect_visible(rect) {
-                    if response.hovered() {
-                        ui.painter()
-                            .rect_filled(rect, theme::RADIUS, palette.surface_hover);
-                    }
-                    let picture = app.avatar(member);
-                    let avatar = egui::Rect::from_center_size(
-                        egui::pos2(rect.left() + 16.0, rect.center().y),
-                        egui::Vec2::splat(24.0),
-                    );
-                    widgets::paint_avatar(
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for (member, name) in &shown[..listed] {
+            let (rect, response) =
+                ui.allocate_exact_size(vec2(ui.available_width(), MEMBER_HEIGHT), Sense::click());
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+            let mine = app.me.as_deref() == Some(member.as_str());
+            if ui.is_rect_visible(rect) {
+                // The chat list's own hover, reaching a little past the
+                // margin the avatars line up on.
+                if response.hovered() && !mine {
+                    widgets::highlight_card(
                         ui,
                         &palette,
-                        avatar,
-                        name.trim_start_matches('~'),
-                        member,
-                        picture.as_deref(),
-                    );
-                    let line = widgets::line(
-                        ui,
-                        name,
-                        theme::regular(13.0),
-                        palette.text,
-                        rect.width() - 40.0,
-                        1,
-                    );
-                    line.paint(
-                        ui,
-                        egui::pos2(rect.left() + 34.0, rect.center().y - line.size().y / 2.0),
-                        palette.text,
+                        rect.expand2(vec2(10.0, -2.0)),
+                        palette.surface_hover,
                     );
                 }
-                if response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .clicked()
-                {
-                    open = Some(member.clone());
+                let picture = app.avatar(member);
+                let avatar = Rect::from_center_size(
+                    pos2(rect.left() + 20.0, rect.center().y),
+                    Vec2::splat(40.0),
+                );
+                widgets::paint_avatar(
+                    ui,
+                    &palette,
+                    avatar,
+                    name.trim_start_matches('~'),
+                    member,
+                    picture.as_deref(),
+                );
+                let left = rect.left() + 54.0;
+                let width = rect.right() - left;
+                let subtitle = crate::model::phone_of(member)
+                    .filter(|_| !name.starts_with('+'))
+                    .map(crate::util::phone);
+                let line = widgets::line(ui, name, theme::medium(14.5), palette.text, width, 1);
+                let top = if subtitle.is_some() {
+                    rect.center().y - line.size().y
+                } else {
+                    rect.center().y - line.size().y / 2.0
+                };
+                line.paint(ui, pos2(left, top), palette.text);
+                if let Some(subtitle) = subtitle {
+                    let detail =
+                        widgets::line(ui, &subtitle, theme::regular(12.5), palette.dim, width, 1);
+                    detail.paint(ui, pos2(left, rect.center().y + 2.0), palette.dim);
                 }
             }
+            let response = if mine {
+                response
+            } else {
+                response.on_hover_cursor(egui::CursorIcon::PointingHand)
+            };
+            if response.clicked() {
+                open = Some(member.clone());
+            }
+        }
+    });
+    if shown.is_empty() {
+        ui.add_space(8.0);
+        theme::text(
+            ui,
+            crate::i18n::gettext(app.locale, "No members found"),
+            theme::regular(13.0),
+            palette.dim,
+        );
+    }
+    if needle.is_empty() && total > MEMBERS_SHOWN {
+        ui.add_space(10.0);
+        let label = if capped {
+            crate::i18n::gettext(app.locale, "Show all {} members")
+                .replace("{}", &total.to_string())
+        } else {
+            crate::i18n::gettext(app.locale, "Show fewer").into_owned()
+        };
+        ui.vertical_centered(|ui| {
+            if theme::soft_button(ui, &palette, None, &label, false)
+                .tab_stop(Stop::InfoControl(MEMBERS_STOP))
+                .clicked()
+            {
+                ui.ctx().data_mut(|data| {
+                    if capped {
+                        data.insert_temp(members_open_id(), id.to_owned());
+                    } else {
+                        data.remove::<String>(members_open_id());
+                    }
+                });
+            }
         });
+    }
     app.info_members = Some((id.to_owned(), members));
     if let Some(member) = open
         && Some(member.as_str()) != app.me.as_deref()
@@ -779,9 +1250,10 @@ fn members(app: &mut App, ui: &mut egui::Ui, id: &str, window: f32, photo: f32) 
     }
 }
 
-/// The "Media, links and docs" row: its count once the listing is in, a
-/// chevron, and the newest pictures under it. The row opens the media view;
-/// a picture goes to its message.
+/// The "Media, links and docs" section: its title row, with the count once
+/// the listing is in and a chevron, and the newest pictures under it. The row
+/// opens the media view; a picture goes to its message, or is carried to
+/// another chat.
 fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
     let palette = app.palette;
     // Taken for the frame rather than cloned: the cells only push actions.
@@ -794,34 +1266,41 @@ fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
             media.truncated(),
         )
     });
-    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 36.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
     let response = response.tab_stop(Stop::InfoControl(MEDIA_ROW_STOP));
     if app.info_focus == Some(InfoFocus::MediaRow) {
         app.info_focus = None;
         response.request_focus();
     }
     theme::reveal_focus(&response);
-    theme::focus_outline(ui, response.id, rect, 6.0);
+    theme::focus_outline(
+        ui,
+        response.id,
+        rect.expand2(vec2(10.0, 2.0)),
+        f32::from(theme::RADIUS),
+    );
     let title = media_title(app);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &title));
     if ui.is_rect_visible(rect) {
         if response.hovered() {
-            // The label sits on the panel's margin, in line with the members
-            // header and the pictures under it; the highlight reaches past.
-            ui.painter()
-                .rect_filled(rect.expand2(vec2(6.0, 0.0)), 6.0, palette.surface_hover);
+            // The title sits on the margin, in line with the pictures under
+            // it; the hover reaches past, as a member's does.
+            widgets::highlight_card(
+                ui,
+                &palette,
+                rect.expand2(vec2(10.0, 4.0)),
+                palette.surface_hover,
+            );
         }
         ui.painter().text(
             pos2(rect.left(), rect.center().y),
             Align2::LEFT_CENTER,
             &title,
-            theme::regular(13.5),
-            palette.secondary,
+            theme::semibold(14.5),
+            palette.text,
         );
-        let chevron = Rect::from_center_size(
-            pos2(rect.right() - 15.0, rect.center().y),
-            Vec2::splat(18.0),
-        );
+        let chevron =
+            Rect::from_center_size(pos2(rect.right() - 9.0, rect.center().y), Vec2::splat(18.0));
         theme::paint_icon(ui, Icon::ChevronRight, chevron, 18.0, palette.dim);
         if let Some((count, cut)) = count {
             // A "+" says the lists were cut, so the count is a floor.
@@ -847,21 +1326,21 @@ fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
             .push(Action::ShowInfo(InfoView::Media(MediaTab::Media)));
     }
     if app.info_media_failed {
+        ui.add_space(6.0);
         failure_line(app, ui);
     }
     if let Some(media) = shown
         && !media.media.is_empty()
     {
-        let cell = ((ui.available_width() - 2.0 * GAP) / 3.0).min(110.0);
+        ui.add_space(8.0);
+        let cell = ((ui.available_width() - 2.0 * GAP) / 3.0).floor();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = GAP;
             for (index, message) in media.media.iter().take(3).enumerate() {
-                let (rect, response) = ui.allocate_exact_size(Vec2::splat(cell), Sense::click());
                 media_cell(
                     app,
                     ui,
-                    rect,
-                    response,
+                    Vec2::splat(cell),
                     message,
                     uris.get(index).map(String::as_str),
                     overlay,
@@ -899,7 +1378,14 @@ fn failure_line(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// The media view: a back header, the three tabs, and the tab's list.
-fn media_view(app: &mut App, ui: &mut egui::Ui, chat: &str, tab: MediaTab, overlay: bool) {
+fn media_view(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &str,
+    tab: MediaTab,
+    overlay: bool,
+    card: bool,
+) {
     let palette = app.palette;
     let back = crate::i18n::gettext(app.locale, "Back");
     let title = media_title(app);
@@ -910,18 +1396,26 @@ fn media_view(app: &mut App, ui: &mut egui::Ui, chat: &str, tab: MediaTab, overl
     header(
         app,
         ui,
-        Icon::ChevronLeft,
-        &back,
+        Some((
+            Icon::ChevronLeft,
+            back.as_ref(),
+            Action::ShowInfo(InfoView::Overview),
+        )),
         &title,
-        Action::ShowInfo(InfoView::Overview),
         focus_back,
+        card,
     );
     // Taken for the frame rather than cloned: the rows only push actions.
     let listing = app.info_media.take();
     let uris = std::mem::take(&mut app.info_uris);
     let shown = listing.as_ref().filter(|media| media.chat == chat);
     Frame::new()
-        .inner_margin(Margin::symmetric(MARGIN as i8, 10))
+        .inner_margin(Margin {
+            left: MARGIN as i8,
+            right: MARGIN as i8,
+            top: 4,
+            bottom: 10,
+        })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -945,11 +1439,6 @@ fn media_view(app: &mut App, ui: &mut egui::Ui, chat: &str, tab: MediaTab, overl
                 }
             });
         });
-    ui.painter().hline(
-        ui.max_rect().x_range(),
-        ui.cursor().top(),
-        Stroke::new(1.0, palette.outline),
-    );
     match shown {
         Some(media) => {
             let cut = match tab {
@@ -1013,7 +1502,7 @@ fn media_grid(
     } else {
         3
     };
-    let cell = (width - (columns - 1) as f32 * GAP) / columns as f32;
+    let cell = ((width - (columns - 1) as f32 * GAP) / columns as f32).floor();
     let rows = listing.media.len().div_ceil(columns);
     ui.add_space(6.0);
     // `show_rows` reads the spacing from outside its closure.
@@ -1030,13 +1519,10 @@ fn media_grid(
                         let Some(message) = listing.media.get(index) else {
                             break;
                         };
-                        let (rect, response) =
-                            ui.allocate_exact_size(Vec2::splat(cell), Sense::click());
                         media_cell(
                             app,
                             ui,
-                            rect,
-                            response,
+                            Vec2::splat(cell),
                             message,
                             uris.get(index).map(String::as_str),
                             overlay,
@@ -1047,13 +1533,58 @@ fn media_grid(
         });
 }
 
+/// Lays out a listed message's cell or row of `size`, drawn by `paint`, so
+/// it can be carried to a chat in the list and forwarded there, as a bubble
+/// can: dragged, or held still for a moment. It fades while it is away.
+fn carriable(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    message: &Message,
+    size: Vec2,
+    paint: impl FnOnce(&mut egui::Ui, Rect, &egui::Response),
+) -> egui::Response {
+    let layer = ui.layer_id();
+    let start = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    if ui.is_rect_visible(rect) {
+        match super::carry::ghost(ui.ctx(), &message.chat, &message.id) {
+            Some(opacity) => {
+                ui.scope(|ui| {
+                    ui.multiply_opacity(opacity);
+                    paint(ui, rect, &response);
+                });
+            }
+            None => paint(ui, rect, &response),
+        }
+    }
+    if super::carry::carriable(message) {
+        super::carry::watch(
+            ui,
+            &message.chat,
+            std::slice::from_ref(message),
+            &[],
+            start,
+            rect,
+            palette.surface,
+        );
+        if response.drag_started() {
+            super::carry::lift_on_drag(ui.ctx(), &message.chat, &message.id);
+        }
+    }
+    response
+}
+
 /// One square picture or video: its preview cropped to the square, with a
-/// play mark and the length on a video. Clicking it goes to the message.
+/// play mark and the length on a video. Clicking it goes to the message;
+/// dragging it carries it to another chat.
 fn media_cell(
     app: &mut App,
     ui: &mut egui::Ui,
-    rect: Rect,
-    response: egui::Response,
+    size: Vec2,
     message: &Message,
     uri: Option<&str>,
     overlay: bool,
@@ -1064,19 +1595,10 @@ fn media_cell(
         Content::Video { seconds, .. } => *seconds,
         _ => None,
     };
-    let stamp = crate::util::chat_stamp(app.locale, message.timestamp);
-    response.widget_info(|| {
-        let what = if video {
-            crate::i18n::gettext(app.locale, "Video")
-        } else {
-            crate::i18n::gettext(app.locale, "Photo")
-        };
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{what}, {stamp}"))
-    });
-    if ui.is_rect_visible(rect) {
+    let response = carriable(ui, &palette, message, size, |ui, rect, response| {
         if !thumbnail(ui, &palette, rect, message, uri) {
             ui.painter()
-                .rect_filled(rect, theme::RADIUS_SMALL, palette.surface);
+                .rect_filled(rect, theme::RADIUS_CONTROL, palette.surface);
             let icon = if video { Icon::Video } else { Icon::Image };
             theme::paint_icon(ui, icon, rect, 22.0, palette.dim);
         }
@@ -1091,21 +1613,42 @@ fn media_cell(
                     theme::medium(11.0),
                     Color32::WHITE,
                 );
-                let pad = vec2(4.0, 2.0);
+                let pad = vec2(5.0, 2.0);
                 let label = Rect::from_min_max(
-                    rect.max - galley.size() - pad * 2.0 - Vec2::splat(4.0),
-                    rect.max - Vec2::splat(4.0),
+                    rect.max - galley.size() - pad * 2.0 - Vec2::splat(6.0),
+                    rect.max - Vec2::splat(6.0),
                 );
-                ui.painter()
-                    .rect_filled(label, 3.0, Color32::from_black_alpha(140));
+                ui.painter().rect_filled(
+                    label,
+                    label.height() / 2.0,
+                    Color32::from_black_alpha(140),
+                );
                 ui.painter().galley(label.min + pad, galley, Color32::WHITE);
             }
         }
-        if response.hovered() {
-            ui.painter()
-                .rect_filled(rect, theme::RADIUS_SMALL, Color32::from_white_alpha(24));
+        let hover = theme::animate(
+            ui.ctx(),
+            response.id,
+            response.hovered(),
+            theme::MOTION_QUICK,
+        );
+        if hover > 0.0 {
+            ui.painter().rect_filled(
+                rect,
+                theme::RADIUS_CONTROL,
+                Color32::from_white_alpha((24.0 * hover) as u8),
+            );
         }
-    }
+    });
+    let stamp = crate::util::chat_stamp(app.locale, message.timestamp);
+    response.widget_info(|| {
+        let what = if video {
+            crate::i18n::gettext(app.locale, "Video")
+        } else {
+            crate::i18n::gettext(app.locale, "Photo")
+        };
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{what}, {stamp}"))
+    });
     if response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
@@ -1132,7 +1675,7 @@ fn go_to(app: &mut App, message: &Message, overlay: bool) {
 /// video without one keeps its placeholder: its file is not a picture.
 fn thumbnail(
     ui: &egui::Ui,
-    palette: &theme::Palette,
+    palette: &Palette,
     rect: Rect,
     message: &Message,
     uri: Option<&str>,
@@ -1148,13 +1691,19 @@ fn thumbnail(
         }
         _ => return false,
     };
+    cover(ui, palette, rect, image);
+    true
+}
+
+/// Paints `image` cropped to fill `rect`.
+fn cover(ui: &egui::Ui, palette: &Palette, rect: Rect, image: egui::Image<'_>) {
     // The texture's shape is known once it is decoded; until then the cell
     // is a plain surface rather than a stretched placeholder.
     let Ok(egui::load::TexturePoll::Ready { texture }) = image.load_for_size(ui.ctx(), rect.size())
     else {
         ui.painter()
-            .rect_filled(rect, theme::RADIUS_SMALL, palette.surface);
-        return true;
+            .rect_filled(rect, theme::RADIUS_CONTROL, palette.surface);
+        return;
     };
     // Cover the square: the longer side is cropped at both ends.
     let (width, height) = (texture.size.x.max(1.0), texture.size.y.max(1.0));
@@ -1167,13 +1716,13 @@ fn thumbnail(
     };
     image
         .uv(uv)
-        .corner_radius(theme::RADIUS_SMALL)
+        .corner_radius(theme::RADIUS_CONTROL)
         .paint_at(ui, rect);
-    true
 }
 
 /// The chat's documents, newest first: a file icon, the name, and its
-/// pages, size and day. A row goes to its message.
+/// pages, size and day. A row goes to its message, or is carried to another
+/// chat.
 fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: bool) {
     let palette = app.palette;
     if listing.docs.is_empty() {
@@ -1211,15 +1760,28 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
                 }
                 detail.push(crate::util::bytes(media.size));
                 detail.push(crate::util::chat_stamp(app.locale, message.timestamp));
-                if item_row(app, ui, Icon::FileText, file_name, &detail.join(" · ")).clicked() {
+                let detail = detail.join(" · ");
+                let row = Row {
+                    icon: Icon::FileText,
+                    title: file_name,
+                    description: None,
+                    detail: &detail,
+                    picture: None,
+                };
+                let size = vec2(ui.available_width(), ROW_HEIGHT);
+                let response = carriable(ui, &palette, message, size, |ui, rect, response| {
+                    paint_row(ui, &palette, rect, response, &row);
+                });
+                if row_response(response, &row).clicked() {
                     go_to(app, message, overlay);
                 }
             }
         });
 }
 
-/// The web links written in the chat, newest first: the preview's title or
-/// the address, and the site. A row opens the address in the browser.
+/// The web links written in the chat, newest first: the preview's picture,
+/// title and summary, or the address, and the site. A row opens the address
+/// in the browser.
 fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
     let palette = app.palette;
     if listing.links.is_empty() {
@@ -1245,51 +1807,106 @@ fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
                     domain(&link.url),
                     crate::util::chat_stamp(app.locale, link.timestamp)
                 );
-                if item_row(app, ui, Icon::ExternalLink, title, &detail).clicked() {
+                let uri = link_uri(&listing.chat, link);
+                let picture = link.thumbnail.as_deref().zip(uri.as_deref());
+                let row = Row {
+                    icon: Icon::ExternalLink,
+                    title,
+                    description: link.description.as_deref(),
+                    detail: &detail,
+                    picture,
+                };
+                let (rect, response) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+                if ui.is_rect_visible(rect) {
+                    paint_row(ui, &palette, rect, &response, &row);
+                }
+                if row_response(response, &row).clicked() {
                     app.actions.push(Action::OpenUrl(link.url.clone()));
                 }
             }
         });
 }
 
-/// One document or link row: an icon in a tile, a title, and a detail line.
-/// A pointer and accessibility target, like a chat row, not a Tab stop.
-fn item_row(
-    app: &mut App,
-    ui: &mut egui::Ui,
+/// The texture name a link's preview picture is drawn under, when it has one.
+pub(crate) fn link_uri(chat: &str, link: &crate::model::ChatLink) -> Option<String> {
+    link.thumbnail
+        .as_ref()
+        .map(|_| thumbnail_uri(chat, &format!("link-{}", link.message)))
+}
+
+/// What a document or link row shows.
+struct Row<'a> {
     icon: Icon,
-    title: &str,
-    detail: &str,
-) -> egui::Response {
-    let palette = app.palette;
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    title: &'a str,
+    /// A line between the title and the detail, such as a link's summary.
+    description: Option<&'a str>,
+    detail: &'a str,
+    /// A picture in place of the icon: its bytes and the texture name.
+    picture: Option<(&'a [u8], &'a str)>,
+}
+
+/// A document or link row as a pointer and accessibility target, like a chat
+/// row, not a Tab stop.
+fn row_response(response: egui::Response, row: &Row<'_>) -> egui::Response {
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{title}, {detail}"))
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("{}, {}", row.title, row.detail),
+        )
     });
-    if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-        }
-        let tile = Rect::from_center_size(
-            pos2(rect.left() + MARGIN + 20.0, rect.center().y),
-            Vec2::splat(40.0),
-        );
-        ui.painter().rect_filled(tile, 8.0, palette.surface);
-        theme::paint_icon(ui, icon, tile, 20.0, palette.secondary);
-        let left = tile.right() + 12.0;
-        let width = rect.right() - MARGIN - left;
-        let name = widgets::line(ui, title, theme::medium(13.5), palette.text, width, 1);
-        name.paint(ui, pos2(left, rect.top() + 12.0), palette.text);
-        let line = widgets::line(ui, detail, theme::regular(12.0), palette.dim, width, 1);
-        line.paint(ui, pos2(left, rect.top() + 33.0), palette.dim);
-        ui.painter().hline(
-            left..=rect.right() - MARGIN,
-            rect.bottom() - 0.5,
-            Stroke::new(1.0, palette.outline),
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Paints one document or link row: a tile with an icon or a picture, a
+/// title, and the lines under it, with the chat list's hover behind it and
+/// no rule under it.
+fn paint_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    response: &egui::Response,
+    row: &Row<'_>,
+) {
+    if response.hovered() {
+        widgets::highlight_card(
+            ui,
+            palette,
+            rect.shrink2(vec2(MARGIN - 10.0, 3.0)),
+            palette.surface_hover,
         );
     }
-    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    let tile = Rect::from_center_size(
+        pos2(rect.left() + MARGIN + 24.0, rect.center().y),
+        Vec2::splat(48.0),
+    );
+    match row.picture {
+        Some((bytes, uri)) => {
+            crate::image_cache::include(ui.ctx(), uri, bytes);
+            cover(ui, palette, tile, egui::Image::new(uri.to_owned()));
+        }
+        None => {
+            ui.painter()
+                .rect_filled(tile, theme::RADIUS_CONTROL, tile_fill(palette, 0.0));
+            theme::paint_icon(ui, row.icon, tile, 20.0, palette.accent);
+        }
+    }
+    let left = tile.right() + 14.0;
+    let width = rect.right() - MARGIN - left;
+    let mut lines = vec![(row.title, theme::medium(14.0), palette.text, 18.0)];
+    if let Some(description) = row.description {
+        lines.push((description, theme::regular(12.5), palette.secondary, 17.0));
+    }
+    lines.push((row.detail, theme::regular(12.0), palette.dim, 16.0));
+    let gap = 3.0;
+    let total: f32 = lines.iter().map(|line| line.3).sum::<f32>() + gap * (lines.len() - 1) as f32;
+    let mut top = rect.center().y - total / 2.0;
+    for (text, font, color, height) in lines {
+        let line = widgets::line(ui, text, font, color, width, 1);
+        line.paint(ui, pos2(left, top), color);
+        top += height + gap;
+    }
 }
 
 /// Says the open tab's list was cut, above it, when the archive held more

@@ -24,11 +24,10 @@ const MAX_WIDTH: f32 = 520.0;
 /// The narrowest conversation a docked pane leaves beside it. Below this the
 /// pane lies over the conversation instead of squeezing it.
 const CONVERSATION_MIN: f32 = 360.0;
-/// The info panel always takes a column of its own outside the narrow
-/// window mode, so it may be narrower than the search pane, and the
-/// conversation beside it too.
-pub(super) const INFO_MIN: f32 = 260.0;
-pub(super) const INFO_CONVERSATION_MIN: f32 = 280.0;
+/// The narrowest conversation the info card leaves beside it: enough for
+/// the chat header's name and buttons to stand apart. Narrower than this,
+/// the card is a page over the chat instead.
+pub(super) const INFO_CONVERSATION_MIN: f32 = 400.0;
 const ROW_HEIGHT: f32 = 60.0;
 /// Characters of context kept before a match deep in a long line.
 const LEAD: usize = 18;

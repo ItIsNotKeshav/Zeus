@@ -7231,7 +7231,8 @@ mod tests {
             output
         };
         let mut output = draw(&mut app, Vec::new());
-        for _ in 0..2 {
+        // Long enough for the info card to ease all the way in.
+        for _ in 0..30 {
             output = draw(&mut app, Vec::new());
         }
         fn find(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {

@@ -1179,8 +1179,8 @@ mod tests {
         assert_eq!(shown(&app), Some(ada), "the chat list's Info opens both");
     }
 
-    /// The panel shares the search pane's docking: beside the chat when the
-    /// window has room, over it when the chat list leaves too little.
+    /// The info card stands beside the chat when the window has room for it
+    /// and a readable chat, and is a page over the chat otherwise.
     #[test]
     fn the_info_panel_takes_a_column_and_is_a_page_in_a_narrow_window() {
         let mut app = super::super::tests::app();
@@ -1196,20 +1196,22 @@ mod tests {
         let docked = |ctx: &egui::Context| {
             ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id()))
         };
-        for _ in 0..2 {
-            frame_sized(&mut app, &mut tour, &ctx, vec2(1180.0, 780.0), Vec::new());
-        }
-        assert_eq!(docked(&ctx), Some(true), "docked in a wide window");
-        // Too tight for the list, the conversation and the panel: the list
-        // steps aside and the panel keeps its own column.
-        for _ in 0..2 {
-            frame_sized(&mut app, &mut tour, &ctx, vec2(760.0, 600.0), Vec::new());
-        }
-        assert_eq!(docked(&ctx), Some(true), "still a column of its own");
+        // The window is asked to grow for the card, and never does here: a
+        // second of frames lets the card stop waiting for it.
+        let settle = |app: &mut App, tour: &mut Tour, size| {
+            for _ in 0..60 {
+                frame_sized(app, tour, &ctx, size, Vec::new());
+            }
+        };
+        settle(&mut app, &mut tour, vec2(1180.0, 780.0));
+        assert_eq!(docked(&ctx), Some(true), "a card beside the chat");
+        // Too tight for the list, the conversation and the card, even with
+        // the list folded into the rail: the card is a page over the chat
+        // rather than squeezing the chat's header.
+        settle(&mut app, &mut tour, vec2(760.0, 600.0));
+        assert_eq!(docked(&ctx), Some(false), "a page when there is no room");
         // The narrow window mode shows it as a page over the chat.
-        for _ in 0..2 {
-            frame_sized(&mut app, &mut tour, &ctx, vec2(560.0, 600.0), Vec::new());
-        }
+        settle(&mut app, &mut tour, vec2(560.0, 600.0));
         assert_eq!(docked(&ctx), Some(false), "a page in a narrow window");
         assert!(app.info.is_some());
         app.actions.push(crate::model::Action::CloseInfo);
@@ -1234,7 +1236,8 @@ mod tests {
             .push(crate::model::Action::OpenChat(ada.clone()));
         frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
         super::super::apply_flags(&mut app, Some("info"));
-        for _ in 0..3 {
+        // Long enough for the info card to ease all the way in.
+        for _ in 0..30 {
             frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
         }
         let view = |app: &App| app.info.as_ref().map(|info| info.view);
@@ -1523,14 +1526,17 @@ mod tests {
             let ctx = egui::Context::default();
             app.attach(&ctx);
             let mut tour = Tour::new(None, None);
+            // Tall enough for Leave to show at the foot of the info card.
+            let size = vec2(1280.0, 1400.0);
             let id = super::super::sample_ids()[index].to_owned();
             app.open_chat = Some(id.clone());
             app.info = Some(crate::model::InfoPanel {
                 chat: id.clone(),
                 view: crate::model::InfoView::Overview,
             });
-            for _ in 0..3 {
-                frame(&mut app, &mut tour, &ctx, Vec::new());
+            // Long enough for the info card to ease all the way in.
+            for _ in 0..30 {
+                frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
             }
             // The controls are announced in the interface language, which
             // follows the system when Settings carries no choice of its own.
@@ -1539,7 +1545,7 @@ mod tests {
             let title = crate::i18n::gettext(locale, title).to_string();
             let archive = crate::i18n::gettext(locale, archive).to_string();
             assert!(tour.labels.contains_key(&leave), "chat info offers {leave}");
-            click(&mut app, &mut tour, &ctx, &leave);
+            click_sized(&mut app, &mut tour, &ctx, size, &leave);
             assert!(
                 matches!(
                     app.dialog,
@@ -1548,7 +1554,7 @@ mod tests {
                 "the button opens the confirm dialog for {id}"
             );
             for _ in 0..3 {
-                frame(&mut app, &mut tour, &ctx, Vec::new());
+                frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
             }
             assert!(tour.labels.contains_key(&title), "the dialog asks {title}");
             assert!(
@@ -1561,7 +1567,7 @@ mod tests {
             );
             // Cancelling leaves the chat alone.
             let cancel = crate::i18n::gettext(locale, "Cancel").to_string();
-            click(&mut app, &mut tour, &ctx, &cancel);
+            click_sized(&mut app, &mut tour, &ctx, size, &cancel);
             assert!(app.dialog.is_none(), "cancel closes the dialog");
             let chat = app.chat(&id).expect("chat");
             assert!(!chat.read_only, "cancelling does not leave the chat");
