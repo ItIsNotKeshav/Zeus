@@ -502,6 +502,8 @@ pub enum Command {
         chat: ChatId,
         path: PathBuf,
         quoting: Option<crate::model::ReplyTarget>,
+        /// The interface's name for the sticker while it goes.
+        upload: Option<crate::model::UploadId>,
     },
     /// Saves a sticker file.
     SaveSticker {

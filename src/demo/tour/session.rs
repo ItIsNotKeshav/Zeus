@@ -136,7 +136,10 @@ pub fn respond(app: &mut App) {
                 chat,
                 path,
                 quoting,
+                upload,
             } => {
+                app.uploads
+                    .retain(|entry| Some(entry.id) != upload || entry.chat != chat);
                 let mut media = super::super::media(
                     "image/webp",
                     path.metadata().map_or(0, |meta| meta.len()),

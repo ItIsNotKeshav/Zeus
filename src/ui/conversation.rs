@@ -11419,11 +11419,204 @@ fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate::model::Up
             )
         });
         ui.add_space(RUN_GAP);
+        if upload.kind == crate::model::UploadKind::Sticker
+            && let Some(crate::model::UploadPreview::File(path)) = &upload.preview
+        {
+            upload_sticker(ui, palette, upload.id, path, eased);
+            continue;
+        }
         match picture {
             Some(preview) => upload_picture(ui, palette, preview, fraction, cap, eased),
             None => upload_card(ui, palette, upload, fraction, cap, eased),
         }
     }
+}
+
+/// How high, at most, a sticker flying from the picker arcs over its
+/// straight path.
+const STICKER_ARC: f32 = 64.0;
+/// How long a sticker takes to fly from the picker, as the drag-carry
+/// flights do.
+const STICKER_FLIGHT: f32 = theme::MOTION_SCREEN;
+/// The side of the "sending" chip under a sticker on its way.
+const STICKER_CHIP: f32 = 22.0;
+/// How much a sticker on its way is faded, until its message arrives.
+const STICKER_WAITING_FADE: f32 = 0.25;
+
+/// A sticker flying from its picker tile to its place in the chat.
+#[derive(Clone)]
+struct StickerFlight {
+    upload: crate::model::UploadId,
+    /// The tile it left, in screen coordinates.
+    from: Rect,
+    start: f64,
+    /// Where it lands and what it shows, as its row last laid it out; it
+    /// flies nowhere until the row has.
+    to: Option<(Rect, egui::TextureId)>,
+}
+
+fn flights_id() -> egui::Id {
+    egui::Id::new("sticker-flights")
+}
+
+/// Sends the sticker of `upload` flying from `from`, its tile in the picker,
+/// to its place at the end of the chat. Without motion it is simply there.
+pub fn launch_sticker(ctx: &egui::Context, upload: crate::model::UploadId, from: Rect) {
+    if crate::motion::screen_reader_attached(ctx) {
+        return;
+    }
+    let start = ctx.input(|input| input.time);
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Vec<StickerFlight>>(flights_id())
+            .push(StickerFlight {
+                upload,
+                from,
+                start,
+                to: None,
+            });
+    });
+    ctx.request_repaint();
+}
+
+/// How far a flight that began at `start` has got, from 0 to 1.
+fn flight_progress(start: f64, now: f64) -> f32 {
+    ((now - start) / f64::from(STICKER_FLIGHT)).clamp(0.0, 1.0) as f32
+}
+
+/// Where a sticker flying from `from` to `to` is, `t` of the way: eased
+/// out, growing to its size, along a low arc.
+fn flight_rect(from: Rect, to: Rect, t: f32) -> Rect {
+    let eased = theme::ease_out(t.clamp(0.0, 1.0));
+    let center = from.center().lerp(to.center(), eased);
+    let size = from.size() + (to.size() - from.size()) * eased;
+    let arc = (from.center().distance(to.center()) * 0.25).min(STICKER_ARC);
+    let lift = arc * (std::f32::consts::PI * eased).sin();
+    Rect::from_center_size(center - vec2(0.0, lift), size)
+}
+
+/// Draws the stickers in flight over everything, after the chat has laid
+/// out where they land, and forgets the ones that have.
+pub fn paint_sticker_flights(ctx: &egui::Context) {
+    let Some(mut flights) = ctx.data(|data| data.get_temp::<Vec<StickerFlight>>(flights_id()))
+    else {
+        return;
+    };
+    let now = ctx.input(|input| input.time);
+    flights.retain(|flight| flight_progress(flight.start, now) < 1.0);
+    for flight in &flights {
+        let Some((to, texture)) = flight.to else {
+            continue;
+        };
+        let t = flight_progress(flight.start, now);
+        let rect = flight_rect(flight.from, to, t);
+        // It settles to the faded look of a sticker still on its way.
+        let tint = Color32::WHITE.gamma_multiply(1.0 - STICKER_WAITING_FADE * theme::ease_out(t));
+        ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            flights_id().with(flight.upload),
+        ))
+        .image(
+            texture,
+            rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            tint,
+        );
+    }
+    if flights.is_empty() {
+        ctx.data_mut(|data| data.remove::<Vec<StickerFlight>>(flights_id()));
+    } else {
+        ctx.data_mut(|data| data.insert_temp(flights_id(), flights));
+        ctx.request_repaint();
+    }
+}
+
+/// The sticker's texture and natural size: an animation's first frame, or
+/// the picture.
+fn sticker_texture(ui: &egui::Ui, path: &Path, rect: Rect) -> Option<(egui::TextureId, Vec2)> {
+    if crate::ui::picker::moves(ui.ctx(), path) {
+        return match animation::frame(ui, path, rect, false) {
+            animation::Frame::Ready(texture) => Some((texture.id(), texture.size_vec2())),
+            _ => None,
+        };
+    }
+    let poll = widgets::file_image(ui, path)
+        .load_for_size(ui.ctx(), rect.size())
+        .ok()?;
+    Some((poll.texture_id()?, poll.size()?))
+}
+
+/// A sticker on its way: drawn where its message will be, at the right edge
+/// without a bubble, faded a little with a turning ring beside it. One sent
+/// from the picker flies there first, and rests once it lands.
+fn upload_sticker(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    upload: crate::model::UploadId,
+    path: &Path,
+    eased: f32,
+) {
+    let square = Vec2::splat(STICKER_SIDE);
+    let texture = sticker_texture(ui, path, Rect::from_min_size(ui.cursor().min, square));
+    let size = texture.map_or(square, |(_, natural)| fit_sticker(natural.x, natural.y));
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), size.y), Sense::hover());
+    let rest = Rect::from_min_size(pos2(row.right() - size.x, row.top()), size);
+    let now = ui.input(|input| input.time);
+    // The flight aims at the sticker's place, or at the bottom of the view
+    // while that is still below it.
+    let clip = ui.clip_rect();
+    let target = rest.translate(vec2(0.0, (clip.bottom() - rest.bottom()).min(0.0)));
+    let flying = ui.ctx().data_mut(|data| {
+        data.get_temp_mut_or_default::<Vec<StickerFlight>>(flights_id())
+            .iter_mut()
+            .find(|flight| flight.upload == upload && flight_progress(flight.start, now) < 1.0)
+            .map(|flight| {
+                flight.to = texture.map(|(texture, _)| (target, texture));
+            })
+            .is_some()
+    });
+    if flying {
+        return;
+    }
+    // One that did not fly rises into place as other uploads do.
+    let rect = rest.translate(vec2(0.0, UPLOAD_RISE * (1.0 - eased)));
+    let painter = ui.painter_at(row.expand(UPLOAD_RISE));
+    match texture {
+        Some((texture, _)) => {
+            painter.image(
+                texture,
+                rect,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE.gamma_multiply((1.0 - STICKER_WAITING_FADE) * eased),
+            );
+        }
+        None => {
+            painter.rect_filled(rect, theme::RADIUS, palette.surface.gamma_multiply(eased));
+            theme::paint_icon(
+                ui,
+                Icon::Sticker,
+                Rect::from_center_size(rect.center(), Vec2::splat(28.0)),
+                28.0,
+                palette.secondary.gamma_multiply(eased),
+            );
+        }
+    }
+    // Waiting for the phone's servers, so a ring turns without a number.
+    let chip = Rect::from_min_size(
+        rect.right_bottom() - Vec2::splat(STICKER_CHIP + 4.0),
+        Vec2::splat(STICKER_CHIP),
+    );
+    painter.circle_filled(
+        chip.center(),
+        STICKER_CHIP / 2.0,
+        Color32::from_black_alpha((120.0 * eased) as u8),
+    );
+    progress_ring(
+        ui,
+        chip.center(),
+        STICKER_CHIP / 2.0 - 5.0,
+        None,
+        Color32::WHITE.gamma_multiply(eased),
+    );
 }
 
 /// The bubble of an upload, at the right edge, `eased` of the way into place.
@@ -11605,6 +11798,7 @@ fn upload_card(
         crate::model::UploadKind::Video => Icon::Video,
         crate::model::UploadKind::Audio => Icon::Music,
         crate::model::UploadKind::Document => Icon::FileText,
+        crate::model::UploadKind::Sticker => Icon::Sticker,
     };
     theme::paint_icon(
         ui,
@@ -11685,6 +11879,23 @@ fn progress_ring(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sticker_flight_leaves_its_tile_and_lands_in_place() {
+        let tile = Rect::from_min_size(pos2(40.0, 600.0), Vec2::splat(80.0));
+        let place = Rect::from_min_size(pos2(700.0, 400.0), Vec2::splat(STICKER_SIDE));
+        let near = |a: Rect, b: Rect| a.min.distance(b.min) < 0.01 && a.max.distance(b.max) < 0.01;
+        assert!(near(flight_rect(tile, place, 0.0), tile));
+        assert!(near(flight_rect(tile, place, 1.0), place));
+        // It arcs above the straight line between them on its way.
+        let middle = flight_rect(tile, place, 0.5);
+        let straight = tile.center().lerp(place.center(), theme::ease_out(0.5));
+        assert!(middle.center().y < straight.y);
+        assert_eq!(
+            flight_progress(1.0, 1.0 + f64::from(STICKER_FLIGHT) * 2.0),
+            1.0
+        );
+    }
 
     #[test]
     fn account_read_receipt_privacy_hides_read_ticks_only_in_outgoing_dms() {

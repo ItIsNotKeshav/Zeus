@@ -45,6 +45,8 @@ pub enum UploadKind {
     Video,
     Audio,
     Document,
+    /// A sticker, which flies in from the picker and waits in place.
+    Sticker,
 }
 
 impl UploadKind {
