@@ -10341,6 +10341,7 @@ impl Worker {
         let album = (!documents)
             .then(|| self.begin_album(&chat, &client, &paths))
             .flatten();
+        let gate = Arc::new(tokio::sync::Semaphore::new(2));
         for (index, path) in paths.into_iter().enumerate() {
             let client = client.clone();
             let album = album.clone();
@@ -10363,8 +10364,15 @@ impl Worker {
             } else {
                 Vec::new()
             };
+            let gate = gate.clone();
             tokio::spawn(async move {
                 let outcome = follow_upload(reporter, async {
+                    // At most two files of a batch are in memory at once;
+                    // permits go in order, so the files start in order.
+                    let _permit = gate
+                        .acquire_owned()
+                        .await
+                        .map_err(|error| error.to_string())?;
                     let bytes = tokio::fs::read(&path)
                         .await
                         .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -12146,18 +12154,18 @@ const UPLOAD_REPORT_INTERVAL: Duration = Duration::from_millis(80);
 /// The encrypted file as the library streams it to WhatsApp, counting what
 /// it has read.
 struct CountedUpload {
-    bytes: Arc<[u8]>,
+    bytes: SharedBytes,
     reporter: UploadReporter,
 }
 
 impl whatsapp_rust::wacore::upload::UploadSource for CountedUpload {
     fn len(&self) -> u64 {
-        (*self.bytes).len() as u64
+        self.bytes.0.len() as u64
     }
 
     fn reader_from(&self, offset: u64) -> std::io::Result<Box<dyn std::io::Read + Send>> {
         let total = self.len();
-        let mut cursor = std::io::Cursor::new(Arc::clone(&self.bytes));
+        let mut cursor = std::io::Cursor::new(self.bytes.clone());
         cursor.set_position(offset.min(total));
         self.reporter.report(offset.min(total), total);
         Ok(Box::new(CountingReader {
@@ -12170,8 +12178,19 @@ impl whatsapp_rust::wacore::upload::UploadSource for CountedUpload {
     }
 }
 
+/// The encrypted upload shared by its readers without copying the buffer
+/// into an `Arc<[u8]>`, which would briefly hold it twice.
+#[derive(Clone)]
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 struct CountingReader {
-    inner: std::io::Cursor<Arc<[u8]>>,
+    inner: std::io::Cursor<SharedBytes>,
     sent: u64,
     total: u64,
     reported: Instant,
@@ -12195,21 +12214,27 @@ impl std::io::Read for CountingReader {
 /// anything else goes in one piece.
 async fn upload_media(
     client: &Client,
-    data: Vec<u8>,
+    data: &mut Vec<u8>,
     media_type: MediaType,
 ) -> anyhow::Result<whatsapp_rust::upload::UploadResponse> {
     let Ok(reporter) = UPLOAD.try_with(UploadReporter::clone) else {
         return client
-            .upload(data, media_type, UploadOptions::default())
+            .upload(data.clone(), media_type, UploadOptions::default())
             .await;
     };
     let file_length = data.len() as u64;
-    let encrypted = tokio::task::spawn_blocking(move || {
-        whatsapp_rust::wacore::upload::encrypt_media_with_key_and_sidecar(
-            &data, media_type, None, None,
-        )
+    // Lend the buffer to the blocking task and take it back, so the caller's
+    // copy (kept for the local cache) is the only plaintext one.
+    let owned = std::mem::take(data);
+    let (owned, encrypted) = tokio::task::spawn_blocking(move || {
+        let encrypted = whatsapp_rust::wacore::upload::encrypt_media_with_key_and_sidecar(
+            &owned, media_type, None, None,
+        );
+        (owned, encrypted)
     })
-    .await??;
+    .await?;
+    *data = owned;
+    let encrypted = encrypted?;
     let info = whatsapp_rust::wacore::upload::EncryptedMediaInfo {
         media_key: encrypted.media_key,
         file_sha256: encrypted.file_sha256,
@@ -12218,7 +12243,7 @@ async fn upload_media(
         streaming_sidecar: encrypted.streaming_sidecar,
     };
     let source = CountedUpload {
-        bytes: Arc::from(encrypted.data_to_upload),
+        bytes: SharedBytes(Arc::new(encrypted.data_to_upload)),
         reporter,
     };
     client.upload_stream(source, info, media_type).await
@@ -12227,14 +12252,14 @@ async fn upload_media(
 /// Uploads a recording and builds a push-to-talk message with waveform.
 async fn prepare_voice(
     client: &Client,
-    bytes: Vec<u8>,
+    mut bytes: Vec<u8>,
     seconds: u32,
     waveform: Vec<u8>,
     context: Option<Box<wa::ContextInfo>>,
 ) -> Result<Prepared, String> {
     let mime = "audio/ogg; codecs=opus".to_owned();
     let size = bytes.len() as u64;
-    let upload = upload_media(client, bytes.clone(), MediaType::Audio)
+    let upload = upload_media(client, &mut bytes, MediaType::Audio)
         .await
         .map_err(|error| error.to_string())?;
     let message = audio_message(upload, {
@@ -12279,7 +12304,7 @@ fn whatsapp_audio_mime(mime: &str) -> Option<&'static str> {
 /// Uploads a file and builds its message. Images are encoded as JPEG.
 async fn prepare_media(
     client: &Client,
-    bytes: Vec<u8>,
+    mut bytes: Vec<u8>,
     mime: &str,
     file_name: Option<&str>,
     gif: bool,
@@ -12290,20 +12315,25 @@ async fn prepare_media(
         "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
     );
     if is_picture {
-        let decoded = tokio::task::spawn_blocking({
-            let bytes = bytes.clone();
-            move || image::load_from_memory(&bytes).map_err(|error| error.to_string())
+        let (decoded, returned) = tokio::task::spawn_blocking(move || {
+            let decoded = image::load_from_memory(&bytes).map_err(|error| error.to_string());
+            (decoded, bytes)
         })
         .await
-        .map_err(|error| error.to_string())??;
+        .map_err(|error| error.to_string())?;
+        let bytes = returned;
+        let decoded = decoded?;
         let (width, height) = (decoded.width(), decoded.height());
-        let jpeg = if mime == "image/jpeg" {
+        let mut jpeg = if mime == "image/jpeg" {
             bytes
         } else {
             encode_jpeg(&decoded, 88)?
         };
         let thumbnail = thumbnail_jpeg(&decoded);
-        let upload = upload_media(client, jpeg.clone(), MediaType::Image)
+        // The decoded pixels are far larger than the file: free them before
+        // the upload's awaits.
+        drop(decoded);
+        let upload = upload_media(client, &mut jpeg, MediaType::Image)
             .await
             .map_err(|error| error.to_string())?;
         let mut message = image_message(upload, {
@@ -12338,20 +12368,23 @@ async fn prepare_media(
     if kind == "video" {
         // The picture, size, and length phones show before downloading it.
         // Reading a second of frames takes a moment, so off the runtime.
-        let poster = {
-            let bytes = bytes.clone();
-            tokio::task::spawn_blocking(move || crate::animation::poster(&bytes))
+        let (poster, returned) = {
+            let moved = std::mem::take(&mut bytes);
+            match tokio::task::spawn_blocking(move || (crate::animation::poster(&moved), moved))
                 .await
-                .ok()
-                .flatten()
+            {
+                Ok((poster, moved)) => (poster, moved),
+                Err(error) => return Err(error.to_string()),
+            }
         };
+        bytes = returned;
         let thumbnail = poster
             .as_ref()
             .and_then(|poster| poster.picture.clone())
             .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
         let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
         let seconds = poster.as_ref().map(|poster| poster.seconds);
-        let upload = upload_media(client, bytes.clone(), MediaType::Video)
+        let upload = upload_media(client, &mut bytes, MediaType::Video)
             .await
             .map_err(|error| error.to_string())?;
         let mut message = video_message(upload, {
@@ -12390,7 +12423,7 @@ async fn prepare_media(
     }
     if let Some(audio_mime) = whatsapp_audio_mime(mime) {
         let mime_owned = audio_mime.to_owned();
-        let upload = upload_media(client, bytes.clone(), MediaType::Audio)
+        let upload = upload_media(client, &mut bytes, MediaType::Audio)
             .await
             .map_err(|error| error.to_string())?;
         let message = audio_message(
@@ -12426,7 +12459,8 @@ async fn prepare_document(
 ) -> Result<Prepared, String> {
     let size = bytes.len() as u64;
     let mime_owned = mime.to_owned();
-    let upload = upload_media(client, bytes.clone(), MediaType::Document)
+    let mut bytes = bytes;
+    let upload = upload_media(client, &mut bytes, MediaType::Document)
         .await
         .map_err(|error| error.to_string())?;
     let name = file_name.unwrap_or("file").to_owned();
@@ -12453,20 +12487,22 @@ async fn prepare_document(
 }
 
 /// Uploads a WebP sticker and builds its message without a library builder.
-async fn prepare_sticker(client: &Client, bytes: Vec<u8>) -> Result<Prepared, String> {
-    let (animated, width, height) = tokio::task::spawn_blocking({
-        let bytes = bytes.clone();
-        move || {
+async fn prepare_sticker(client: &Client, mut bytes: Vec<u8>) -> Result<Prepared, String> {
+    let (probe, returned) = tokio::task::spawn_blocking(move || {
+        let probe = (|| {
             let decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&bytes))
                 .map_err(|error| error.to_string())?;
             let animated = decoder.has_animation();
             let (width, height) = image::ImageDecoder::dimensions(&decoder);
             Ok::<_, String>((animated, width, height))
-        }
+        })();
+        (probe, bytes)
     })
     .await
-    .map_err(|error| error.to_string())??;
-    let upload = upload_media(client, bytes.clone(), MediaType::Sticker)
+    .map_err(|error| error.to_string())?;
+    let mut bytes = returned;
+    let (animated, width, height) = probe?;
+    let upload = upload_media(client, &mut bytes, MediaType::Sticker)
         .await
         .map_err(|error| error.to_string())?;
     let message = {
