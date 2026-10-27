@@ -406,6 +406,12 @@ fn kind_from_name(name: &str) -> ChatKind {
 /// rather than every photo it ever held.
 pub const GALLERY_PAGE: usize = 200;
 
+/// How many raw protobufs one startup backfill holds at a time.
+///
+/// `messages` is not `WITHOUT ROWID`, and its primary key is `(chat, id)`
+/// rather than an integer, so pages walk the table's implicit `rowid`.
+pub const BACKFILL_BATCH: usize = 256;
+
 /// `meta` keys for the phone's "Keep chats archived" and when it changed.
 const UNARCHIVE_CHATS: &str = "unarchive_chats";
 const UNARCHIVE_CHATS_AT: &str = "unarchive_chats_at";
@@ -1676,57 +1682,81 @@ impl Archive {
         Ok(())
     }
 
-    /// Returns raw messages for re-deriving fields in newer versions.
-    pub fn rows_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL")?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+    /// One page of `(rowid, chat, id, raw)` after `after_rowid`, at most [`BACKFILL_BATCH`].
+    fn raw_page(&self, sql: &str, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(sql)?;
+        let rows = statement.query_map(params![after_rowid, BACKFILL_BATCH as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })?;
         rows.collect()
     }
 
-    /// Video messages with their raw protobuf.
-    pub fn videos_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
-        let mut statement = self.connection.prepare(
-            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
-             AND json_extract(content, '$.kind') = 'video'",
-        )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect()
+    /// Raw messages for re-deriving fields, in `rowid` order, after `after_rowid`.
+    pub fn rows_with_raw(&self, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+        self.raw_page(
+            "SELECT rowid, chat, id, raw FROM messages
+             WHERE raw IS NOT NULL AND rowid > ?1
+             ORDER BY rowid LIMIT ?2",
+            after_rowid,
+        )
     }
 
-    /// Photo, video, and audio messages with their raw protobuf.
-    pub fn media_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
-        let mut statement = self.connection.prepare(
-            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
-             AND json_extract(content, '$.kind') IN ('image', 'video', 'audio')",
-        )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect()
+    /// Video messages with their raw protobuf, in `rowid` order, after `after_rowid`.
+    pub fn videos_with_raw(&self, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+        self.raw_page(
+            "SELECT rowid, chat, id, raw FROM messages
+             WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'video'
+             AND rowid > ?1
+             ORDER BY rowid LIMIT ?2",
+            after_rowid,
+        )
+    }
+
+    /// Photo, video, and audio messages with their raw protobuf, after `after_rowid`.
+    pub fn media_with_raw(&self, after_rowid: i64) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+        self.raw_page(
+            "SELECT rowid, chat, id, raw FROM messages
+             WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') IN ('image', 'video', 'audio')
+             AND rowid > ?1
+             ORDER BY rowid LIMIT ?2",
+            after_rowid,
+        )
     }
 
     /// Messages filed as unsupported without a named kind, with their raw protobuf.
-    pub fn unsupported_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
-        let mut statement = self.connection.prepare(
-            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+    pub fn unsupported_with_raw(
+        &self,
+        after_rowid: i64,
+    ) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+        self.raw_page(
+            "SELECT rowid, chat, id, raw FROM messages
+             WHERE raw IS NOT NULL AND json_valid(content)
              AND json_extract(content, '$.kind') = 'unsupported'
-             AND json_extract(content, '$.what') = 'message'",
-        )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect()
+             AND json_extract(content, '$.what') = 'message'
+             AND rowid > ?1
+             ORDER BY rowid LIMIT ?2",
+            after_rowid,
+        )
     }
 
     /// Interactive messages eligible for a derived presentation upgrade.
     /// Deleted and edited rows are left intact; callers preserve local media paths.
-    pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
-        let mut statement = self.connection.prepare(
-            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
+    pub fn interactive_placeholders(
+        &self,
+        after_rowid: i64,
+    ) -> Result<Vec<(i64, String, String, Vec<u8>)>> {
+        self.raw_page(
+            "SELECT rowid, chat, id, raw FROM messages
+             WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
              AND ((json_extract(content, '$.kind') = 'unsupported'
                    AND json_extract(content, '$.what') = 'interactive message')
-                  OR json_extract(content, '$.kind') = 'interactive')",
-        )?;
-        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
-        rows.collect()
+                  OR json_extract(content, '$.kind') = 'interactive')
+             AND rowid > ?1
+             ORDER BY rowid LIMIT ?2",
+            after_rowid,
+        )
     }
 
     /// Replaces protobuf-derived fields. Callers must retain local media paths.
@@ -2590,6 +2620,75 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER reject_message_deletion"
         }).unwrap();
+    }
+
+    /// Raw pages stay within one batch and, together, return every raw row
+    /// once in `rowid` order. A cursor on a middle row resumes after it.
+    #[test]
+    fn raw_pages_cover_every_row_and_resume_after_a_rowid() {
+        let archive = super::Archive::in_memory().unwrap();
+        let chat = "backfill-fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let total = super::BACKFILL_BATCH * 3 + 1;
+        for n in 0..total {
+            if n == super::BACKFILL_BATCH {
+                let skipped = message(chat, "no-raw", n as i64, true);
+                archive.insert_message(&skipped, None).unwrap();
+            }
+            let row = message(chat, &format!("m{n:04}"), n as i64, true);
+            let raw = format!("fixture-{n}");
+            archive.insert_message(&row, Some(raw.as_bytes())).unwrap();
+        }
+
+        let mut after = 0;
+        let mut seen = Vec::new();
+        let mut short = false;
+        loop {
+            let page = archive.rows_with_raw(after).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(!short, "a short page ended the scan");
+            assert!(page.windows(2).all(|pair| pair[0].0 < pair[1].0));
+            assert!(page.iter().all(|row| row.0 > after));
+            if page.len() < super::BACKFILL_BATCH {
+                assert_eq!(page.len(), 1);
+                short = true;
+            } else {
+                assert_eq!(page.len(), super::BACKFILL_BATCH);
+            }
+            after = page.last().unwrap().0;
+            seen.extend(page.into_iter().map(|(rowid, _, id, _)| (rowid, id)));
+        }
+        assert!(short);
+        assert_eq!(seen.len(), total);
+        assert!(seen.iter().all(|row| row.1 != "no-raw"));
+        let expected: Vec<String> = (0..total).map(|n| format!("m{n:04}")).collect();
+        assert_eq!(
+            seen.iter().map(|row| row.1.as_str()).collect::<Vec<_>>(),
+            expected.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        // Plain text must not leak into the filtered pages.
+        assert!(archive.videos_with_raw(0).unwrap().is_empty());
+        assert!(archive.media_with_raw(0).unwrap().is_empty());
+        assert!(archive.unsupported_with_raw(0).unwrap().is_empty());
+        assert!(archive.interactive_placeholders(0).unwrap().is_empty());
+
+        let cursor = seen[super::BACKFILL_BATCH * 2 - 1].0;
+        let mut rest = Vec::new();
+        after = cursor;
+        loop {
+            let page = archive.rows_with_raw(after).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            after = page.last().unwrap().0;
+            rest.extend(page);
+        }
+        assert_eq!(rest.len(), super::BACKFILL_BATCH + 1);
+        assert_eq!(rest[0].2, format!("m{:04}", super::BACKFILL_BATCH * 2));
+        assert_eq!(rest.last().unwrap().2, format!("m{:04}", total - 1));
+        assert!(rest.iter().all(|row| row.0 > cursor));
     }
 
     /// Failed unlink cannot apply the previous account's terminal barriers.

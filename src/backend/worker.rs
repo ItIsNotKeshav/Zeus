@@ -1578,6 +1578,26 @@ fn archive_range(jid: &Jid, last: Option<&Message>) -> whatsapp_rust::SyncAction
     whatsapp_rust::message_range(last.timestamp, None, key.map(|key| (key, last.timestamp)))
 }
 
+/// Last `rowid` stored for an unfinished startup backfill.
+///
+/// A missing or unreadable value starts at zero. Rows inserted here receive
+/// positive rowids, and `messages` is scanned by that implicit key.
+fn backfill_cursor(archive: &Archive, key: &str) -> i64 {
+    archive
+        .meta(key)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Records `rowid` as the resume point. False when the write did not land:
+/// the caller must not mark the backfill finished, or the rest of the table
+/// would be skipped.
+fn store_backfill_cursor(archive: &Archive, key: &str, rowid: i64) -> bool {
+    archive.set_meta(key, &rowid.to_string()).is_ok()
+}
+
 impl Worker {
     fn ephemeral_expiration(&self, chat: &str) -> Option<u32> {
         self.archive
@@ -2273,54 +2293,72 @@ impl Worker {
 
     fn backfill(&mut self) {
         const VERSION: &str = "4";
+        // The cursor names the derived version. A later bump starts over,
+        // instead of resuming a walk that already reached the end.
+        let cursor_key = format!("derived_{VERSION}_cursor");
         if self.archive.meta("derived").ok().flatten().as_deref() == Some(VERSION) {
             return;
         }
-        let rows = match self.archive.rows_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read the archive for re-deriving: {error}");
-                return;
-            }
-        };
         let started = Instant::now();
         let mut updated = 0;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
+        let mut after = backfill_cursor(&self.archive, &cursor_key);
+        loop {
+            let rows = match self.archive.rows_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read the archive for re-deriving: {error}");
+                    return;
+                }
             };
-            let base = message.get_base_message();
-            let Some(mut content) = classify(&message) else {
-                continue;
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
             };
-            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
-                continue;
-            };
-            if matches!(existing.content, Content::Revoked) {
-                continue;
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                let Some(mut content) = classify(&message) else {
+                    continue;
+                };
+                let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                    continue;
+                };
+                if matches!(existing.content, Content::Revoked) {
+                    continue;
+                }
+                // Live edits do not replace the original raw protobuf. Its body and
+                // mention context are stale, regardless of the content kind.
+                if existing.edited {
+                    continue;
+                }
+                content.keep_local_paths(&existing.content);
+                let mentions = self.mentions_of(&recorded_mention_ids(base));
+                let thumbnail = thumbnail_of(base);
+                if self
+                    .archive
+                    .set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &mentions,
+                        thumbnail.as_deref(),
+                        forwarded_of(base),
+                    )
+                    .is_ok()
+                {
+                    updated += 1;
+                }
             }
-            // Live edits do not replace the original raw protobuf. Its body and
-            // mention context are stale, regardless of the content kind.
-            if existing.edited {
-                continue;
+            if !store_backfill_cursor(&self.archive, &cursor_key, last) {
+                log::warn!("could not store re-deriving progress");
+                return;
             }
-            content.keep_local_paths(&existing.content);
-            let mentions = self.mentions_of(&recorded_mention_ids(base));
-            let thumbnail = thumbnail_of(base);
-            if self
-                .archive
-                .set_derived(
-                    &chat,
-                    &id,
-                    &content,
-                    &mentions,
-                    thumbnail.as_deref(),
-                    forwarded_of(base),
-                )
-                .is_ok()
-            {
-                updated += 1;
+            if end {
+                break;
             }
+            after = last;
         }
         let _ = self.archive.set_meta("derived", VERSION);
         if updated > 0 {
@@ -2337,41 +2375,57 @@ impl Worker {
     /// file change, and only their content: an edit flag stays as it was.
     fn backfill_view_once(&mut self) {
         const KEY: &str = "view_once_media";
+        const CURSOR: &str = "view_once_media_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.media_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived media: {error}");
+        let mut updated = 0;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.media_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived media: {error}");
+                    return;
+                }
+            };
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let Some(content @ Content::PhoneOnly { .. }) = classify(&message) else {
+                    continue;
+                };
+                let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                    continue;
+                };
+                if existing
+                    .content
+                    .media()
+                    .is_none_or(|media| media.path.is_some())
+                {
+                    continue;
+                }
+                if self
+                    .archive
+                    .set_content(&chat, &id, &content, existing.edited)
+                    .is_ok()
+                {
+                    updated += 1;
+                }
+            }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store view-once backfill progress");
                 return;
             }
-        };
-        let mut updated = 0;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            let Some(content @ Content::PhoneOnly { .. }) = classify(&message) else {
-                continue;
-            };
-            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
-                continue;
-            };
-            if existing
-                .content
-                .media()
-                .is_none_or(|media| media.path.is_some())
-            {
-                continue;
+            if end {
+                break;
             }
-            if self
-                .archive
-                .set_content(&chat, &id, &content, existing.edited)
-                .is_ok()
-            {
-                updated += 1;
-            }
+            after = last;
         }
         let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
@@ -2384,67 +2438,94 @@ impl Worker {
     /// re-deriving edited text or any other locally preserved state.
     fn backfill_media_albums(&mut self) {
         const KEY: &str = "media_albums";
+        const CURSOR: &str = "media_albums_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.rows_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived media albums: {error}");
-                return;
-            }
-        };
         let mut updated = 0;
-        let mut failed = false;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            let album =
-                album_media(message.get_base_message(), media(None, None, None, None)).album;
-            let Some(album) = album else { continue };
-            let existing = match self.archive.message(&chat, &id) {
-                Ok(Some(existing)) => existing,
-                Ok(None) => continue,
-                Err(_) => {
-                    failed = true;
-                    continue;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.rows_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived media albums: {error}");
+                    if updated > 0 {
+                        self.emit_chats();
+                    }
+                    return;
                 }
             };
-            let mut content = existing.content;
-            let media = match &mut content {
-                Content::Image { media, .. }
-                | Content::Video {
-                    media, note: false, ..
-                } => media,
-                _ => continue,
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
             };
-            if media.album.as_deref() == Some(&album) {
-                continue;
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            let mut failed = false;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let album =
+                    album_media(message.get_base_message(), media(None, None, None, None)).album;
+                let Some(album) = album else { continue };
+                let existing = match self.archive.message(&chat, &id) {
+                    Ok(Some(existing)) => existing,
+                    Ok(None) => continue,
+                    Err(_) => {
+                        failed = true;
+                        continue;
+                    }
+                };
+                let mut content = existing.content;
+                let media = match &mut content {
+                    Content::Image { media, .. }
+                    | Content::Video {
+                        media, note: false, ..
+                    } => media,
+                    _ => continue,
+                };
+                if media.album.as_deref() == Some(&album) {
+                    continue;
+                }
+                media.album = Some(album);
+                if self
+                    .archive
+                    .set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &existing.mentions,
+                        existing.thumbnail.as_deref(),
+                        existing.forwarded,
+                    )
+                    .is_ok()
+                {
+                    updated += 1;
+                } else {
+                    failed = true;
+                }
             }
-            media.album = Some(album);
-            if self
-                .archive
-                .set_derived(
-                    &chat,
-                    &id,
-                    &content,
-                    &existing.mentions,
-                    existing.thumbnail.as_deref(),
-                    existing.forwarded,
-                )
-                .is_ok()
-            {
-                updated += 1;
-            } else {
-                failed = true;
+            if failed {
+                // Retry this batch on the next launch. The cursor stays put,
+                // so the finished batches are not read again.
+                log::warn!(
+                    "could not update some archived media-album items; will retry on startup"
+                );
+                if updated > 0 {
+                    log::info!("grouped {updated} archived media-album items");
+                    self.emit_chats();
+                }
+                return;
             }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store media-album backfill progress");
+                return;
+            }
+            if end {
+                break;
+            }
+            after = last;
         }
-        if !failed {
-            let _ = self.archive.set_meta(KEY, "1");
-        } else {
-            log::warn!("could not update some archived media-album items; will retry on startup");
-        }
+        let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
             log::info!("grouped {updated} archived media-album items");
             self.emit_chats();
@@ -2456,43 +2537,61 @@ impl Worker {
     /// whole row again would drop edits and local paths.
     fn backfill_video_notes(&mut self) {
         const KEY: &str = "video_notes";
+        const CURSOR: &str = "video_notes_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.videos_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived videos: {error}");
+        let mut updated = 0;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.videos_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived videos: {error}");
+                    return;
+                }
+            };
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                if base.video_message.as_option().is_some()
+                    || base.ptv_message.as_option().is_none()
+                {
+                    continue;
+                }
+                let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                    continue;
+                };
+                let mut content = existing.content;
+                let Content::Video { note, .. } = &mut content else {
+                    continue;
+                };
+                if *note {
+                    continue;
+                }
+                *note = true;
+                if self
+                    .archive
+                    .set_content(&chat, &id, &content, existing.edited)
+                    .is_ok()
+                {
+                    updated += 1;
+                }
+            }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store video-note backfill progress");
                 return;
             }
-        };
-        let mut updated = 0;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            let base = message.get_base_message();
-            if base.video_message.as_option().is_some() || base.ptv_message.as_option().is_none() {
-                continue;
+            if end {
+                break;
             }
-            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
-                continue;
-            };
-            let mut content = existing.content;
-            let Content::Video { note, .. } = &mut content else {
-                continue;
-            };
-            if *note {
-                continue;
-            }
-            *note = true;
-            if self
-                .archive
-                .set_content(&chat, &id, &content, existing.edited)
-                .is_ok()
-            {
-                updated += 1;
-            }
+            after = last;
         }
         let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
@@ -2505,51 +2604,78 @@ impl Worker {
     /// they were recognised, to their photos.
     fn backfill_motion_photos(&mut self) {
         const KEY: &str = "motion_photo_children";
+        const CURSOR: &str = "motion_photo_children_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.unsupported_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived unsupported messages: {error}");
-                return;
-            }
-        };
         let mut removed = 0;
-        let mut failed = false;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.unsupported_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived unsupported messages: {error}");
+                    if removed > 0 {
+                        log::info!("removed {removed} archived motion photo clips");
+                        self.emit_chats();
+                    }
+                    return;
+                }
             };
-            let base = message.get_base_message();
-            if !motion_photo_child(base) {
-                continue;
-            }
-            if let Some((parent, clip)) = motion_clip(base) {
-                let filed = self.archive.message(&chat, &id).and_then(|row| match row {
-                    Some(row) => self
-                        .archive
-                        .put_motion_clip(&chat, &parent, &row.sender, &clip)
-                        .map(drop),
-                    None => Ok(()),
-                });
-                if let Err(error) = filed {
-                    log::warn!("could not move an archived motion clip: {error}");
-                    failed = true;
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            let mut failed = false;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                if !motion_photo_child(base) {
                     continue;
                 }
-            }
-            match self.archive.delete_message(&chat, &id) {
-                Ok(_) => removed += 1,
-                Err(error) => {
-                    log::warn!("could not remove an archived motion clip: {error}");
-                    failed = true;
+                if let Some((parent, clip)) = motion_clip(base) {
+                    let filed = self.archive.message(&chat, &id).and_then(|row| match row {
+                        Some(row) => self
+                            .archive
+                            .put_motion_clip(&chat, &parent, &row.sender, &clip)
+                            .map(drop),
+                        None => Ok(()),
+                    });
+                    if let Err(error) = filed {
+                        log::warn!("could not move an archived motion clip: {error}");
+                        failed = true;
+                        continue;
+                    }
+                }
+                match self.archive.delete_message(&chat, &id) {
+                    Ok(_) => removed += 1,
+                    Err(error) => {
+                        log::warn!("could not remove an archived motion clip: {error}");
+                        failed = true;
+                    }
                 }
             }
+            if failed {
+                // Leave the cursor on the previous batch so the next launch
+                // retries this one instead of reading the whole table again.
+                if removed > 0 {
+                    log::info!("removed {removed} archived motion photo clips");
+                    self.emit_chats();
+                }
+                return;
+            }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store motion-photo backfill progress");
+                return;
+            }
+            if end {
+                break;
+            }
+            after = last;
         }
-        if !failed {
-            let _ = self.archive.set_meta(KEY, "1");
-        }
+        let _ = self.archive.set_meta(KEY, "1");
         if removed > 0 {
             log::info!("removed {removed} archived motion photo clips");
             self.emit_chats();
@@ -2583,33 +2709,60 @@ impl Worker {
         if self.archive.meta(key).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.unsupported_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived unsupported messages: {error}");
-                return;
-            }
-        };
+        let cursor_key = format!("{key}_cursor");
         let mut removed = 0;
-        let mut failed = false;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            if !hidden(message.get_base_message()) {
-                continue;
-            }
-            match self.archive.delete_message(&chat, &id) {
-                Ok(_) => removed += 1,
+        let mut after = backfill_cursor(&self.archive, &cursor_key);
+        loop {
+            let rows = match self.archive.unsupported_with_raw(after) {
+                Ok(rows) => rows,
                 Err(error) => {
-                    log::warn!("could not remove an archived message ({what}): {error}");
-                    failed = true;
+                    log::warn!("could not read archived unsupported messages: {error}");
+                    if removed > 0 {
+                        log::info!("removed {removed} archived {what}");
+                        self.emit_chats();
+                    }
+                    return;
+                }
+            };
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            let mut failed = false;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                if !hidden(message.get_base_message()) {
+                    continue;
+                }
+                match self.archive.delete_message(&chat, &id) {
+                    Ok(_) => removed += 1,
+                    Err(error) => {
+                        log::warn!("could not remove an archived message ({what}): {error}");
+                        failed = true;
+                    }
                 }
             }
+            if failed {
+                // Retry this batch next launch. The cursor stays put, so the
+                // rows already finished are not read again.
+                if removed > 0 {
+                    log::info!("removed {removed} archived {what}");
+                    self.emit_chats();
+                }
+                return;
+            }
+            if !store_backfill_cursor(&self.archive, &cursor_key, last) {
+                log::warn!("could not store backfill progress for {cursor_key}");
+                return;
+            }
+            if end {
+                break;
+            }
+            after = last;
         }
-        if !failed {
-            let _ = self.archive.set_meta(key, "1");
-        }
+        let _ = self.archive.set_meta(key, "1");
         if removed > 0 {
             log::info!("removed {removed} archived {what}");
             self.emit_chats();
@@ -13270,7 +13423,8 @@ mod tests {
         assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
     }
 
-    /// A failed derived-row write keeps the album backfill retryable and preserves local paths.
+    /// A failed derived-row write keeps the album backfill retryable, leaves
+    /// its cursor before the failed batch, and preserves local paths.
     #[test]
     fn failed_album_backfill_retries_without_losing_downloaded_media() {
         let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
@@ -13293,6 +13447,13 @@ mod tests {
         crate::archive::tests::set_derived_update_failure(&worker.archive, true);
         worker.backfill_media_albums();
         assert!(worker.archive.meta("media_albums").unwrap().is_none());
+        assert!(
+            worker
+                .archive
+                .meta("media_albums_cursor")
+                .unwrap()
+                .is_none()
+        );
         crate::archive::tests::set_derived_update_failure(&worker.archive, false);
         worker.backfill_media_albums();
         assert_eq!(
@@ -13305,6 +13466,171 @@ mod tests {
             Some("album-parent")
         );
         assert_eq!(stored.content.media().unwrap().path.as_ref(), Some(&path));
+    }
+
+    fn insert_stale_texts(archive: &Archive, count: usize) {
+        let chat = "backfill-fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let raw = wa::Message::text("fresh fixture").encode_to_vec();
+        for n in 0..count {
+            let mut row = crate::archive::tests::message(chat, &format!("m{n:04}"), n as i64, true);
+            row.content = Content::text("stale fixture");
+            archive.insert_message(&row, Some(&raw)).unwrap();
+        }
+    }
+
+    fn raw_rowids(archive: &Archive) -> Vec<(i64, String)> {
+        let mut after = 0;
+        let mut seen = Vec::new();
+        loop {
+            let page = archive.rows_with_raw(after).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= crate::archive::BACKFILL_BATCH);
+            after = page.last().unwrap().0;
+            seen.extend(page.into_iter().map(|(rowid, _, id, _)| (rowid, id)));
+        }
+        seen
+    }
+
+    /// Re-deriving more than one batch writes the same bodies a single pass
+    /// would: fresh text from the protobuf, edits and revocations left alone,
+    /// and a downloaded image path kept.
+    #[test]
+    fn derived_backfill_pages_every_raw_row_and_keeps_edits_and_paths() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let chat = "backfill-fixture@s.whatsapp.net";
+        let total = crate::archive::BACKFILL_BATCH * 3 + 1;
+        insert_stale_texts(&worker.archive, total);
+        let fresh = wa::Message::text("fresh fixture");
+        assert_eq!(classify(&fresh), Some(Content::text("fresh fixture")));
+        worker
+            .archive
+            .set_content(chat, "m0000", &Content::text("edited fixture"), true)
+            .unwrap();
+        worker
+            .archive
+            .set_content(chat, "m0001", &Content::Revoked, false)
+            .unwrap();
+        let image = {
+            let mut proto = wa::Message::default();
+            proto.image_message = MessageField::some({
+                let mut image = wa::message::ImageMessage::default();
+                image.mimetype = Some("image/jpeg".into());
+                image.caption = Some("protobuf caption".into());
+                image
+            });
+            proto
+        };
+        let path = PathBuf::from("/fixture/backfill.jpg");
+        let mut photo = classify(&image).expect("image");
+        let Content::Image { caption, media, .. } = &mut photo else {
+            panic!("image");
+        };
+        *caption = Some("stale caption".into());
+        media.path = Some(path.clone());
+        let mut row = crate::archive::tests::message(chat, "photo-path", total as i64, true);
+        row.content = photo;
+        worker
+            .archive
+            .insert_message(&row, Some(&image.encode_to_vec()))
+            .unwrap();
+
+        worker.backfill();
+
+        let edited = worker.archive.message(chat, "m0000").unwrap().unwrap();
+        assert_eq!(edited.content, Content::text("edited fixture"));
+        assert!(edited.edited);
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "m0001")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
+        for n in 2..total {
+            let id = format!("m{n:04}");
+            assert_eq!(
+                worker.archive.message(chat, &id).unwrap().unwrap().content,
+                Content::text("fresh fixture"),
+                "{id}"
+            );
+        }
+        let mut expected = classify(&image).expect("image");
+        expected.media_mut().expect("media").path = Some(path);
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "photo-path")
+                .unwrap()
+                .unwrap()
+                .content,
+            expected
+        );
+        let seen = raw_rowids(&worker.archive);
+        assert_eq!(seen.len(), total + 1);
+        assert_eq!(
+            worker.archive.meta("derived").unwrap().as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            worker.archive.meta("derived_4_cursor").unwrap().unwrap(),
+            seen.last().unwrap().0.to_string()
+        );
+        // The completion key stops a second launch from writing again.
+        worker
+            .archive
+            .set_content(chat, "m0002", &Content::text("changed after"), false)
+            .unwrap();
+        worker.backfill();
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "m0002")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("changed after")
+        );
+    }
+
+    /// A cursor stored in the middle of the table resumes after that row.
+    #[test]
+    fn derived_backfill_resumes_from_a_stored_cursor() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let chat = "backfill-fixture@s.whatsapp.net";
+        let total = crate::archive::BACKFILL_BATCH * 3 + 1;
+        insert_stale_texts(&worker.archive, total);
+        let seen = raw_rowids(&worker.archive);
+        assert_eq!(seen.len(), total);
+        let mid = seen.len() / 2;
+        let cursor = seen[mid].0;
+        worker
+            .archive
+            .set_meta("derived_4_cursor", &cursor.to_string())
+            .unwrap();
+
+        worker.backfill();
+
+        for (index, (_rowid, id)) in seen.iter().enumerate() {
+            let stored = worker.archive.message(chat, id).unwrap().unwrap();
+            if index <= mid {
+                assert_eq!(stored.content, Content::text("stale fixture"), "{id}");
+            } else {
+                assert_eq!(stored.content, Content::text("fresh fixture"), "{id}");
+            }
+        }
+        assert_eq!(
+            worker.archive.meta("derived").unwrap().as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            worker.archive.meta("derived_4_cursor").unwrap().unwrap(),
+            seen.last().unwrap().0.to_string()
+        );
     }
 
     /// Checks that derived media retains the protocol album parent used for grouping.
