@@ -9659,6 +9659,47 @@ impl App {
         self.follow_receipts();
         self.sync_badge();
         self.request_attention(ctx);
+        self.log_memory(ctx, false);
+    }
+
+    /// One line a minute when `ZAPFAST_MEMORY_LOG` is `1`.
+    ///
+    /// `interface` is the call from [`Self::frame_ui`], after the image sweep,
+    /// and that is the line a window frame writes. The call from
+    /// [`Self::background_frame`] writes only when no interface frame will
+    /// follow (the window is hidden, minimized, or not up yet), or when a
+    /// sample was held for an interface frame that never ran. Checking the
+    /// variable is a single load after the first frame, and a minute with no
+    /// frame logs nothing: this never asks for a repaint.
+    fn log_memory(&self, ctx: &egui::Context, interface: bool) {
+        if !crate::memory::enabled() {
+            return;
+        }
+        let write = if interface {
+            crate::memory::interface_due()
+        } else {
+            let follows = !self.window_hidden
+                && !self.hide_intent
+                && ctx.input(|input| input.viewport().minimized) != Some(true);
+            crate::memory::background_due(follows)
+        };
+        if !write {
+            return;
+        }
+        crate::memory::sample(
+            ctx,
+            self.accounts
+                .iter()
+                .map(|account| crate::memory::AccountCounts {
+                    id: account.id.as_str(),
+                    conversations: account.conversations.len(),
+                    messages: account
+                        .conversations
+                        .values()
+                        .map(|conversation| conversation.messages.len())
+                        .sum(),
+                }),
+        );
     }
 
     /// Answers the system's sleep and wake. Every account reconnects its link
@@ -10414,6 +10455,7 @@ impl App {
         self.theme_reveal.paint(ctx);
         // Release the image caches of everything that scrolled away.
         crate::image_cache::sweep(ctx);
+        self.log_memory(ctx, true);
         // Only fading info toasts animate. Errors wait for the reader.
         if self
             .toasts

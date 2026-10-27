@@ -47,11 +47,28 @@ struct Entry {
 #[derive(Clone, Default)]
 struct Registry(Arc<Mutex<HashMap<String, Entry>>>);
 
+fn registry_id() -> egui::Id {
+    egui::Id::new("image-cache")
+}
+
 fn registry(ctx: &egui::Context) -> Registry {
     ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Registry>(egui::Id::new("image-cache"))
+        data.get_temp_mut_or_default::<Registry>(registry_id())
             .clone()
     })
+}
+
+/// How many image URIs the resident window is tracking. Zero when nothing
+/// has been registered, and this does not create the registry to find out.
+pub fn len(ctx: &egui::Context) -> usize {
+    let Some(registry) = ctx.data(|data| data.get_temp::<Registry>(registry_id())) else {
+        return 0;
+    };
+    registry
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .len()
 }
 
 /// Registers `bytes` under `uri`, and marks the image as drawn this frame.

@@ -306,7 +306,11 @@ protocol. These notes are for coding agents and new contributors.
   call's heartbeat logs both directions' frame counts, keyframes and decode
   failures, and the peer's H.264 profile (`src/call_diag.rs`);
   `ZAPFAST_CALL_VIDEO_DUMP=<folder>` writes both directions' access units as
-  raw H.264 for offline analysis, never by default. The camera is thinned to every nth frame of its measured rate and
+  raw H.264 for offline analysis, never by default. `ZAPFAST_MEMORY_LOG=1`
+  (`src/memory.rs`, never by default) logs process RSS, egui's texture count
+  and image-loader bytes, the image cache's length, resident animation frames,
+  and each account's loaded conversations and messages, once a minute on a
+  frame that is already running. The camera is thinned to every nth frame of its measured rate and
   stamped from capture time, never thinned by elapsed time; the peer's access
   units decode on a thread of their own and reach the window as
   `Event::CallVideo` frames. A camera that cannot open leaves a video call

@@ -119,11 +119,32 @@ type Delivery = (PathBuf, Option<Decoded>, bool);
 #[derive(Clone, Default)]
 struct Inbox(Arc<Mutex<Vec<Delivery>>>);
 
+fn cache_id() -> egui::Id {
+    egui::Id::new("animations")
+}
+
 fn cache(ctx: &egui::Context) -> Cache {
-    ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Cache>(egui::Id::new("animations"))
-            .clone()
-    })
+    ctx.data_mut(|data| data.get_temp_mut_or_default::<Cache>(cache_id()).clone())
+}
+
+/// Texture frames held across every resident animation. A poster counts as
+/// one. Zero when nothing has been decoded, and this does not create the
+/// cache to find out.
+pub fn resident_frames(ctx: &egui::Context) -> usize {
+    let Some(cache) = ctx.data(|data| data.get_temp::<Cache>(cache_id())) else {
+        return 0;
+    };
+    cache
+        .0
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .entries
+        .values()
+        .map(|entry| match entry {
+            Entry::Ready(playing) => playing.frames.len(),
+            Entry::Decoding | Entry::Failed => 0,
+        })
+        .sum()
 }
 
 fn inbox(ctx: &egui::Context) -> Inbox {
