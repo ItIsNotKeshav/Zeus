@@ -11,7 +11,7 @@ use std::time::Instant;
 use crate::app::{AttachmentDraft, ComposerMention, Conversation, PhoneHistory};
 use crate::backend::{Backend, LinkStatus, Waker};
 use crate::model::{
-    AccountId, Chat, ChatFilter, ChatId, Contact, Label, Message, PollDraft, StickerPack,
+    AccountId, Chat, ChatFilter, ChatId, Contacts, Label, Message, PollDraft, StickerPack,
 };
 use crate::paths::{AccountDirs, AppDirs};
 use crate::settings::AccountSettings;
@@ -31,7 +31,7 @@ pub struct Account {
     pub me_name: Option<String>,
     pub me_about: Option<String>,
     pub chats: Vec<Chat>,
-    pub contacts: HashMap<String, Contact>,
+    pub contacts: Contacts,
     pub conversations: HashMap<ChatId, Conversation>,
     /// Chats the reader left, most recently left first, whose conversations
     /// may still be in memory: the first two stay, trimmed to their newest
@@ -183,7 +183,7 @@ impl Account {
             me_name: None,
             me_about: None,
             chats: Vec::new(),
-            contacts: HashMap::new(),
+            contacts: Contacts::default(),
             conversations: HashMap::new(),
             left_chats: Vec::new(),
             settled_open: None,

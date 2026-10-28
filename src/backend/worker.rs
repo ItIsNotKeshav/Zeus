@@ -62,8 +62,8 @@ use super::{
 use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
-    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Contacts, Content, Delivery, Gif,
+    GifError, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
@@ -803,7 +803,7 @@ pub async fn run(
         me_name: None,
         me_about: None,
         lid_to_pn: HashMap::new(),
-        contacts: HashMap::new(),
+        contacts: Contacts::default(),
         status: LinkStatus::Starting,
         pairing_phone: None,
         pair_code: None,
@@ -1231,7 +1231,8 @@ struct Worker {
     me_about: Option<String>,
     /// Privacy-id user part to phone-number user part.
     lid_to_pn: HashMap<String, String>,
-    contacts: HashMap<String, Contact>,
+    /// Shared with the window: see `Contacts`.
+    contacts: Contacts,
     status: LinkStatus,
     pairing_phone: Option<String>,
     pair_code: Option<String>,
@@ -2233,16 +2234,13 @@ impl Worker {
             self.lid_to_pn = lids.into_iter().collect();
         }
         if let Ok(contacts) = self.archive.contacts() {
-            self.contacts = contacts
-                .into_iter()
-                .map(|contact| (contact.id.clone(), contact))
-                .collect();
+            self.contacts = contacts.into_iter().collect();
         }
         self.retry_confirmed_message_removals();
         if self.me_pn.is_some() || self.me_lid.is_some() {
             self.emit(self.me_event());
         }
-        self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
+        self.emit(Event::Contacts(self.contacts.shared()));
         self.emit_chats();
     }
 
@@ -3246,7 +3244,8 @@ impl Worker {
         if let Err(error) = self.archive.upsert_contact(&merged) {
             log::warn!("could not save a contact: {error}");
         }
-        self.contacts.insert(chat.to_owned(), merged.clone());
+        let merged = Arc::new(merged);
+        self.contacts.insert(Arc::clone(&merged));
         self.emit(Event::Contacts(vec![merged]));
     }
 
@@ -3384,20 +3383,15 @@ impl Worker {
         if push_name.is_empty() || id == self.me() {
             return;
         }
-        let contact = self
-            .contacts
-            .entry(id.to_owned())
-            .or_insert_with(|| Contact {
-                id: id.to_owned(),
-                full_name: None,
-                first_name: None,
-                push_name: None,
-            });
-        if contact.push_name.as_deref() == Some(push_name) {
+        let Some(contact) = self.contacts.edit(id, |contact| {
+            if contact.push_name.as_deref() == Some(push_name) {
+                return None;
+            }
+            Arc::make_mut(contact).push_name = Some(push_name.to_owned());
+            Some(Arc::clone(contact))
+        }) else {
             return;
-        }
-        contact.push_name = Some(push_name.to_owned());
-        let contact = contact.clone();
+        };
         if let Err(error) = self.archive.upsert_contact(&contact) {
             log::warn!("could not save a contact: {error}");
         }
@@ -4314,16 +4308,17 @@ impl Worker {
             .first_name
             .clone()
             .filter(|first| name.is_some() && !first.is_empty());
-        let contact = self.contacts.entry(id.clone()).or_insert_with(|| Contact {
-            id: id.clone(),
-            ..Contact::default()
-        });
-        if contact.full_name == name && contact.first_name == first_name {
+        let Some(contact) = self.contacts.edit(&id, |contact| {
+            if contact.full_name == name && contact.first_name == first_name {
+                return None;
+            }
+            let edited = Arc::make_mut(contact);
+            edited.full_name = name;
+            edited.first_name = first_name;
+            Some(Arc::clone(contact))
+        }) else {
             return;
-        }
-        contact.full_name = name;
-        contact.first_name = first_name;
-        let contact = contact.clone();
+        };
         if let Err(error) = self.archive.upsert_contact(&contact) {
             log::warn!("could not save a contact: {error}");
         }
@@ -5796,19 +5791,19 @@ impl Worker {
                 Some(name) if ChatKind::from_id(&id) == ChatKind::Group => name,
                 Some(name) if !name.is_empty() => {
                     // Prefer the phone's address-book name for direct chats.
-                    let contact = self.contacts.entry(id.clone()).or_insert_with(|| Contact {
-                        id: id.clone(),
-                        full_name: None,
-                        first_name: None,
-                        push_name: None,
+                    let named = self.contacts.edit(&id, |contact| {
+                        if contact.full_name.is_none()
+                            && !name
+                                .chars()
+                                .all(|c| c.is_ascii_digit() || c == '+' || c == ' ')
+                        {
+                            Arc::make_mut(contact).full_name = Some(name.clone());
+                            Some(Arc::clone(contact))
+                        } else {
+                            None
+                        }
                     });
-                    if contact.full_name.is_none()
-                        && !name
-                            .chars()
-                            .all(|c| c.is_ascii_digit() || c == '+' || c == ' ')
-                    {
-                        contact.full_name = Some(name.clone());
-                        let contact = contact.clone();
+                    if let Some(contact) = named {
                         let _ = self.archive.upsert_contact(&contact);
                         self.emit(Event::Contacts(vec![contact]));
                     }
@@ -7502,7 +7497,10 @@ impl Worker {
                     log::warn!("could not store the contact: {error}");
                 }
                 // Preserve the stored push name during contact updates.
-                let stored = self.archive.contact(&id).ok().flatten().unwrap_or(contact);
+                let stored = Arc::new(self.archive.contact(&id).ok().flatten().unwrap_or(contact));
+                // The worker's copy too, or the next push name heard from them
+                // hands the window the contact without the saved name.
+                self.contacts.insert(Arc::clone(&stored));
                 self.emit(Event::Contacts(vec![stored]));
                 self.emit(Event::Info(format!("Added {name} to contacts")));
                 self.emit_chat(&id);
@@ -13667,6 +13665,34 @@ mod tests {
         }
     }
 
+    /// A saved name stays with the contact when they later send a push name:
+    /// the worker files the saved contact as well as the window.
+    #[tokio::test]
+    async fn a_saved_contact_keeps_its_name_through_a_later_push_name() {
+        const ID: &str = "15550000001@s.whatsapp.net";
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        worker
+            .handle_command(Command::ContactSaved {
+                generation: worker.contact_generation,
+                id: ID.into(),
+                name: "Fixture".into(),
+                first_name: None,
+                error: None,
+            })
+            .await;
+        events.try_iter().for_each(drop);
+        worker.remember_push_name(ID, "Fix");
+        let handed = events
+            .try_iter()
+            .find_map(|event| match event {
+                Event::Contacts(mut contacts) => contacts.pop(),
+                _ => None,
+            })
+            .expect("the push name is sent");
+        assert_eq!(handed.full_name.as_deref(), Some("Fixture"));
+        assert_eq!(handed.push_name.as_deref(), Some("Fix"));
+    }
+
     /// A reconnect preserves valid lookups belonging to the same account.
     #[tokio::test]
     async fn reconnecting_the_same_account_keeps_contact_checks_current() {
@@ -14147,11 +14173,15 @@ mod tests {
         worker.on_contact_update(&update("My Dih", "My Dih"));
         let stored = worker.archive.contact(ID).expect("reads").expect("stored");
         assert_eq!(stored.first_name.as_deref(), Some("My Dih"));
-        assert_eq!(worker.contacts[ID].first_name.as_deref(), Some("My Dih"));
+        assert_eq!(
+            worker.contacts.get(ID).unwrap().first_name.as_deref(),
+            Some("My Dih")
+        );
 
         worker.on_contact_update(&update("My Dih", ""));
         assert_eq!(
-            worker.contacts[ID].first_name, None,
+            worker.contacts.get(ID).unwrap().first_name,
+            None,
             "an empty first name is none"
         );
         let stored = worker.archive.contact(ID).expect("reads").expect("stored");
@@ -14171,7 +14201,7 @@ mod tests {
             push_name: None,
         };
         worker.archive.upsert_contact(&contact).expect("stores");
-        worker.contacts.insert(ID.into(), contact);
+        worker.contacts.insert(contact);
         // The snapshot replays the contact with its first name.
         worker.on_contact_update(
             &wa_events::ContactUpdate::builder()
@@ -14217,15 +14247,12 @@ mod tests {
     fn polish_refreshes_a_stale_quote_label_when_the_sender_id_is_unchanged() {
         const SENDER: &str = "15551234567@s.whatsapp.net";
         let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
-        worker.contacts.insert(
-            SENDER.into(),
-            Contact {
-                id: SENDER.into(),
-                full_name: Some("Current Contact".into()),
-                first_name: None,
-                push_name: None,
-            },
-        );
+        worker.contacts.insert(Contact {
+            id: SENDER.into(),
+            full_name: Some("Current Contact".into()),
+            first_name: None,
+            push_name: None,
+        });
         let mut message = message_quoting(SENDER, Some("+1 555 123 456 7"));
 
         worker.polish(&mut message);
@@ -18457,6 +18484,40 @@ mod receipt_tests {
         );
     }
 
+    /// The window is handed the worker's own contact, not a copy of it, and
+    /// a later change leaves the one handed over as it was until the next
+    /// event replaces it.
+    #[test]
+    fn a_contact_is_handed_to_the_window_without_a_copy() {
+        let (mut worker, events, _commands, _runtime) = worker();
+        let handed = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .find_map(|event| match event {
+                    Event::Contacts(mut contacts) => contacts.pop(),
+                    _ => None,
+                })
+                .expect("the contact is sent")
+        };
+        worker.remember_push_name(PEER, "Ada");
+        let first = handed(&events);
+        assert!(std::ptr::eq(&*first, worker.contacts.get(PEER).unwrap()));
+
+        worker.remember_push_name(PEER, "Ada L.");
+        let second = handed(&events);
+        assert_eq!(first.push_name.as_deref(), Some("Ada"));
+        assert_eq!(second.push_name.as_deref(), Some("Ada L."));
+        assert!(std::ptr::eq(&*second, worker.contacts.get(PEER).unwrap()));
+
+        // Nothing new: nothing is sent.
+        worker.remember_push_name(PEER, "Ada L.");
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Contacts(_)))
+        );
+    }
+
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,
@@ -18506,7 +18567,7 @@ mod receipt_tests {
             me_name: None,
             me_about: None,
             lid_to_pn: HashMap::new(),
-            contacts: HashMap::new(),
+            contacts: Contacts::default(),
             status: LinkStatus::Connected,
             pairing_phone: None,
             pair_code: None,

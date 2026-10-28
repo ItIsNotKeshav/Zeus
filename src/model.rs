@@ -1932,6 +1932,100 @@ impl Contact {
     }
 }
 
+/// One account's contacts by id. The worker's copy, the event that hands a
+/// contact over and the window's copy point at one allocation, so an
+/// address book is held once however many sides read it. A change copies
+/// only the contact it touches, and only while another side still holds it.
+#[derive(Clone, Debug, Default)]
+pub struct Contacts(std::collections::HashSet<SharedContact>);
+
+/// A contact filed by its id alone, which is all it hashes and compares, so
+/// the set finds it by `&str` without a second copy of the id as a key.
+#[derive(Clone, Debug)]
+struct SharedContact(Arc<Contact>);
+
+impl PartialEq for SharedContact {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id
+    }
+}
+
+impl Eq for SharedContact {}
+
+impl std::hash::Hash for SharedContact {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // As a `str`, which the `Borrow` below looks it up as.
+        std::hash::Hash::hash(self.0.id.as_str(), state);
+    }
+}
+
+impl std::borrow::Borrow<str> for SharedContact {
+    fn borrow(&self) -> &str {
+        &self.0.id
+    }
+}
+
+impl Contacts {
+    pub fn get(&self, id: &str) -> Option<&Contact> {
+        self.0.get(id).map(|shared| &*shared.0)
+    }
+
+    pub fn contains_key(&self, id: &str) -> bool {
+        self.0.contains(id)
+    }
+
+    /// Files `contact` under its id, in place of the one there.
+    pub fn insert(&mut self, contact: impl Into<Arc<Contact>>) {
+        // `HashSet::insert` would keep the old contact.
+        self.0.replace(SharedContact(contact.into()));
+    }
+
+    /// Hands `change` the contact filed under `id`, an empty one when there
+    /// is none, and keeps it filed as `change` leaves it, even unchanged, as
+    /// a map's entry would. `Arc::make_mut` copies it before a change only
+    /// while another side holds it. `change` must keep its id.
+    pub fn edit<R>(&mut self, id: &str, change: impl FnOnce(&mut Arc<Contact>) -> R) -> R {
+        let mut contact = match self.0.take(id) {
+            Some(SharedContact(contact)) => contact,
+            None => Arc::new(Contact {
+                id: id.to_owned(),
+                ..Contact::default()
+            }),
+        };
+        let edited = change(&mut contact);
+        debug_assert_eq!(contact.id, id, "an edit keeps the contact's id");
+        self.0.insert(SharedContact(contact));
+        edited
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Contact> {
+        self.0.iter().map(|shared| &*shared.0)
+    }
+
+    /// Another handle on every contact, for the window's copy.
+    pub fn shared(&self) -> Vec<Arc<Contact>> {
+        self.0.iter().map(|shared| Arc::clone(&shared.0)).collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl FromIterator<Contact> for Contacts {
+    fn from_iter<I: IntoIterator<Item = Contact>>(contacts: I) -> Self {
+        let contacts = contacts.into_iter();
+        let mut all = Self(std::collections::HashSet::with_capacity(
+            contacts.size_hint().0,
+        ));
+        // A later contact with the same id wins, as it does in a map.
+        for contact in contacts {
+            all.insert(contact);
+        }
+        all
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Chats,
@@ -3395,6 +3489,81 @@ mod storage_tests {
         }
         assert_eq!(cached.media().unwrap().path, None);
         assert!(kept.media().unwrap().path.is_some());
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    use std::sync::Arc;
+
+    use super::{Contact, Contacts};
+
+    const ADA: &str = "15550000001@s.whatsapp.net";
+
+    fn ada(push_name: &str) -> Contact {
+        Contact {
+            id: ADA.into(),
+            push_name: Some(push_name.into()),
+            ..Contact::default()
+        }
+    }
+
+    /// The worker's copy and the window's hold one allocation, and a change
+    /// on one side copies only that contact, leaving the other's as it was.
+    #[test]
+    fn both_sides_hold_one_contact_until_it_changes() {
+        let mut worker: Contacts = [ada("Ada")].into_iter().collect();
+        let mut window = Contacts::default();
+        for contact in worker.shared() {
+            window.insert(contact);
+        }
+        assert!(std::ptr::eq(
+            worker.get(ADA).unwrap(),
+            window.get(ADA).unwrap()
+        ));
+
+        let changed = worker.edit(ADA, |contact| {
+            Arc::make_mut(contact).push_name = Some("Ada L.".into());
+            Arc::clone(contact)
+        });
+        assert_eq!(window.get(ADA).unwrap().push_name.as_deref(), Some("Ada"));
+        assert_eq!(
+            worker.get(ADA).unwrap().push_name.as_deref(),
+            Some("Ada L.")
+        );
+        window.insert(changed);
+        assert!(std::ptr::eq(
+            worker.get(ADA).unwrap(),
+            window.get(ADA).unwrap()
+        ));
+    }
+
+    /// Filing a contact again replaces it, as a map's insert does, and an
+    /// edit of someone unknown files them empty, as a map's entry does.
+    #[test]
+    fn contacts_are_filed_by_id_and_replaced() {
+        let mut contacts = Contacts::default();
+        contacts.insert(ada("Ada"));
+        contacts.insert(ada("Ada L."));
+        assert_eq!(contacts.values().count(), 1);
+        assert_eq!(
+            contacts.get(ADA).unwrap().push_name.as_deref(),
+            Some("Ada L.")
+        );
+        assert!(contacts.contains_key(ADA));
+        assert!(contacts.get("15550000002@s.whatsapp.net").is_none());
+
+        let unchanged = contacts.edit("15550000002@s.whatsapp.net", |contact| contact.label());
+        assert_eq!(unchanged, None);
+        assert_eq!(
+            contacts.get("15550000002@s.whatsapp.net"),
+            Some(&Contact {
+                id: "15550000002@s.whatsapp.net".into(),
+                ..Contact::default()
+            })
+        );
+        contacts.clear();
+        assert!(!contacts.contains_key(ADA));
     }
 }
 

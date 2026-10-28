@@ -3908,8 +3908,9 @@ impl App {
                 if live {
                     self.info_members = None;
                 }
+                // The worker's own allocations: kept, never copied.
                 for contact in contacts {
-                    self.contacts.insert(contact.id.clone(), contact);
+                    self.contacts.insert(contact);
                 }
             }
             Event::UploadProgress {
@@ -17404,14 +17405,11 @@ mod tests {
         let ctx = egui::Context::default();
         let ada = "15550000001@s.whatsapp.net";
         let grace = "15550000002@s.whatsapp.net";
-        app.contacts.insert(
-            grace.into(),
-            Contact {
-                id: grace.into(),
-                full_name: Some("Grace Hopper".into()),
-                ..Default::default()
-            },
-        );
+        app.contacts.insert(Contact {
+            id: grace.into(),
+            full_name: Some("Grace Hopper".into()),
+            ..Default::default()
+        });
         app.apply(Action::ShowDialog(Dialog::NewChat), &ctx);
         app.apply(Action::StartNewGroup, &ctx);
         app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
@@ -21873,26 +21871,19 @@ mod tests {
             push_name: None,
         };
         // Exclude contacts that already have chats.
-        app.contacts.insert(
-            "491700000001@s.whatsapp.net".into(),
-            contact("491700000001@s.whatsapp.net", "Ada Lovelace"),
-        );
+        app.contacts
+            .insert(contact("491700000001@s.whatsapp.net", "Ada Lovelace"));
         app.chats.push(Chat::new(
             "491700000001@s.whatsapp.net".into(),
             "Ada Lovelace".into(),
         ));
         // Include contacts without chats.
-        app.contacts.insert(
-            "491700000002@s.whatsapp.net".into(),
-            contact("491700000002@s.whatsapp.net", "Adele Goldberg"),
-        );
-        // Exclude groups and our own id.
         app.contacts
-            .insert("12345@g.us".into(), contact("12345@g.us", "Adventurers"));
-        app.contacts.insert(
-            "490000000000@s.whatsapp.net".into(),
-            contact("490000000000@s.whatsapp.net", "Adah Me"),
-        );
+            .insert(contact("491700000002@s.whatsapp.net", "Adele Goldberg"));
+        // Exclude groups and our own id.
+        app.contacts.insert(contact("12345@g.us", "Adventurers"));
+        app.contacts
+            .insert(contact("490000000000@s.whatsapp.net", "Adah Me"));
         app.search = "ad".into();
         let names: Vec<&str> = app
             .matching_contacts()
@@ -22806,7 +22797,7 @@ mod tests {
             first_name: None,
             push_name: None,
         };
-        app.contacts.insert(contact.id.clone(), contact);
+        app.contacts.insert(contact);
         for query in ["angel", "ÁNGEL", "A\u{301}ngel"] {
             app.search = query.into();
             assert_eq!(app.visible_chats().len(), 1, "{query}");
@@ -23229,33 +23220,57 @@ mod tests {
     #[test]
     fn names_fall_back_from_contacts_to_phones() {
         let mut app = app();
-        app.contacts.insert(
-            "1@s.whatsapp.net".into(),
-            Contact {
-                id: "1@s.whatsapp.net".into(),
-                full_name: Some("Ada".into()),
-                first_name: None,
-                push_name: None,
-            },
-        );
+        app.contacts.insert(Contact {
+            id: "1@s.whatsapp.net".into(),
+            full_name: Some("Ada".into()),
+            first_name: None,
+            push_name: None,
+        });
         assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada");
         assert_eq!(
             app.display_name("393331234567@s.whatsapp.net"),
             "+39 333 123 4567"
         );
         assert_eq!(app.display_name("42@lid"), "Unknown");
-        app.contacts.insert(
-            "42@lid".into(),
-            Contact {
-                id: "42@lid".into(),
-                full_name: None,
-                first_name: None,
-                push_name: Some("Bob".into()),
-            },
-        );
+        app.contacts.insert(Contact {
+            id: "42@lid".into(),
+            full_name: None,
+            first_name: None,
+            push_name: Some("Bob".into()),
+        });
         assert_eq!(app.display_name("42@lid"), "~Bob");
         app.me = Some("42@lid".into());
         assert_eq!(app.display_name("42@lid"), "You");
+    }
+
+    /// The window keeps the contact the worker sent, not a copy of it, until
+    /// a newer one for the same person replaces it.
+    #[test]
+    fn the_window_keeps_the_contact_the_worker_sent() {
+        let mut app = app();
+        let sent = std::sync::Arc::new(Contact {
+            id: "1@s.whatsapp.net".into(),
+            full_name: Some("Ada".into()),
+            ..Contact::default()
+        });
+        app.apply_backend_event(Event::Contacts(vec![std::sync::Arc::clone(&sent)]), true);
+        assert!(std::ptr::eq(
+            app.contacts.get("1@s.whatsapp.net").unwrap(),
+            &*sent
+        ));
+        assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada");
+
+        let renamed = Contact {
+            full_name: Some("Ada Lovelace".into()),
+            ..(*sent).clone()
+        };
+        app.apply_backend_event(Event::Contacts(vec![renamed.into()]), true);
+        assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada Lovelace");
+        assert_eq!(
+            sent.full_name.as_deref(),
+            Some("Ada"),
+            "the old one is left as it was"
+        );
     }
 
     #[test]
@@ -23298,24 +23313,18 @@ mod name_tests {
         let (mut app, _events) = App::headless(AppDirs::under(&root), Settings::default());
         app.me = Some("15550001111@s.whatsapp.net".into());
         app.me_name = Some("Carmine".into());
-        app.contacts.insert(
-            "1@s.whatsapp.net".into(),
-            Contact {
-                id: "1@s.whatsapp.net".into(),
-                full_name: Some("Ada Lovelace".into()),
-                first_name: None,
-                push_name: Some("Ada".into()),
-            },
-        );
-        app.contacts.insert(
-            "2@s.whatsapp.net".into(),
-            Contact {
-                id: "2@s.whatsapp.net".into(),
-                full_name: None,
-                first_name: None,
-                push_name: Some("Bob".into()),
-            },
-        );
+        app.contacts.insert(Contact {
+            id: "1@s.whatsapp.net".into(),
+            full_name: Some("Ada Lovelace".into()),
+            first_name: None,
+            push_name: Some("Ada".into()),
+        });
+        app.contacts.insert(Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: None,
+            first_name: None,
+            push_name: Some("Bob".into()),
+        });
         app
     }
 
@@ -23330,21 +23339,23 @@ mod name_tests {
             (3, "Stray Name", Some("")),
         ] {
             let id = format!("1555000001{index}@s.whatsapp.net");
-            app.contacts.insert(
-                id.clone(),
-                Contact {
-                    id: id.clone(),
-                    full_name: Some(full_name.into()),
-                    first_name: first_name.map(Into::into),
-                    push_name: None,
-                },
-            );
+            app.contacts.insert(Contact {
+                id: id.clone(),
+                full_name: Some(full_name.into()),
+                first_name: first_name.map(Into::into),
+                push_name: None,
+            });
             chat.participants.push(id);
         }
         // Without a saved first name (a profile name, or a contact synced
         // before first names were kept) the line keeps the first word.
         chat.participants.push("2@s.whatsapp.net".into());
-        app.contacts.get_mut("2@s.whatsapp.net").unwrap().push_name = Some("Bob Builder".into());
+        app.contacts.insert(Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: None,
+            first_name: None,
+            push_name: Some("Bob Builder".into()),
+        });
         assert_eq!(
             app.participant_names(&chat),
             "Bob, Grace, Mary, My Dih, Stray"
@@ -23372,15 +23383,12 @@ mod name_tests {
         let mut app = app();
         let ctx = egui::Context::default();
         let saved = |app: &mut App, id: &str, full: &str, first: Option<&str>| {
-            app.contacts.insert(
-                id.into(),
-                Contact {
-                    id: id.into(),
-                    full_name: Some(full.into()),
-                    first_name: first.map(Into::into),
-                    push_name: None,
-                },
-            );
+            app.contacts.insert(Contact {
+                id: id.into(),
+                full_name: Some(full.into()),
+                first_name: first.map(Into::into),
+                push_name: None,
+            });
         };
         let edit = |app: &mut App, id: &str, name: &str| {
             app.apply(
@@ -23441,15 +23449,12 @@ mod name_tests {
         .enumerate()
         {
             let id = format!("1555000000{index}@s.whatsapp.net");
-            app.contacts.insert(
-                id.clone(),
-                Contact {
-                    id: id.clone(),
-                    full_name: Some((*name).into()),
-                    first_name: name.split(' ').next().map(Into::into),
-                    push_name: Some((*name).into()),
-                },
-            );
+            app.contacts.insert(Contact {
+                id: id.clone(),
+                full_name: Some((*name).into()),
+                first_name: name.split(' ').next().map(Into::into),
+                push_name: Some((*name).into()),
+            });
             chat.participants.push(id);
         }
         // Duplicate entries for the same identity must not inflate the count.
@@ -23485,15 +23490,12 @@ mod name_tests {
         let mut app = app();
         let mut chat = Chat::new("fixture@g.us".into(), String::new());
         let id = "15550000001@s.whatsapp.net".to_owned();
-        app.contacts.insert(
-            id.clone(),
-            Contact {
-                id: id.clone(),
-                full_name: Some("Ada Lovelace".into()),
-                first_name: Some("Ada".into()),
-                push_name: None,
-            },
-        );
+        app.contacts.insert(Contact {
+            id: id.clone(),
+            full_name: Some("Ada Lovelace".into()),
+            first_name: Some("Ada".into()),
+            push_name: None,
+        });
         chat.participants.push(id);
         chat.participants.push(app.me.clone().unwrap());
         app.chats.push(chat.clone());

@@ -2424,7 +2424,7 @@ struct View<'a> {
     /// Resolves mention names without replacing our name with "You".
     mention_names: &'a dyn Fn(&str) -> String,
     avatars: &'a HashMap<String, Option<PathBuf>>,
-    contacts: &'a HashMap<String, crate::model::Contact>,
+    contacts: &'a crate::model::Contacts,
     now: i64,
     /// Animate media only while this window is active.
     animate: bool,

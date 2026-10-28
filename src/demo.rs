@@ -297,7 +297,7 @@ fn plant_avatars(app: &mut App) {
     }
     let mut everyone: Vec<String> = sample_ids().iter().map(|id| (*id).to_owned()).collect();
     everyone.push(ME.to_owned());
-    everyone.extend(app.contacts.keys().cloned());
+    everyone.extend(app.contacts.values().map(|contact| contact.id.clone()));
     for chat in &app.chats {
         everyone.extend(chat.participants.iter().cloned());
     }
@@ -441,26 +441,20 @@ pub fn populate(app: &mut App) {
         ("491703333333@s.whatsapp.net", "Tom"),
     ];
     for (id, name) in group_members {
-        app.contacts.insert(
-            id.to_owned(),
-            Contact {
-                id: id.to_owned(),
-                full_name: Some(name.to_owned()),
-                first_name: None,
-                push_name: None,
-            },
-        );
-    }
-    // Include a contact without a chat for search results.
-    app.contacts.insert(
-        "12025550137@s.whatsapp.net".to_owned(),
-        Contact {
-            id: "12025550137@s.whatsapp.net".to_owned(),
-            full_name: Some("Dorothy Vaughan".to_owned()),
+        app.contacts.insert(Contact {
+            id: id.to_owned(),
+            full_name: Some(name.to_owned()),
             first_name: None,
             push_name: None,
-        },
-    );
+        });
+    }
+    // Include a contact without a chat for search results.
+    app.contacts.insert(Contact {
+        id: "12025550137@s.whatsapp.net".to_owned(),
+        full_name: Some("Dorothy Vaughan".to_owned()),
+        first_name: None,
+        push_name: None,
+    });
     for sample in SAMPLES {
         let mut chat = Chat::new(sample.id.to_owned(), sample.name.to_owned());
         chat.last_activity = now - sample.minutes_ago * 60;
@@ -2358,15 +2352,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 .enumerate()
                 {
                     let id = format!("1555000000{index}@s.whatsapp.net");
-                    app.contacts.insert(
-                        id.clone(),
-                        Contact {
-                            id: id.clone(),
-                            full_name: Some((*name).to_owned()),
-                            first_name: None,
-                            push_name: None,
-                        },
-                    );
+                    app.contacts.insert(Contact {
+                        id: id.clone(),
+                        full_name: Some((*name).to_owned()),
+                        first_name: None,
+                        push_name: None,
+                    });
                     ids.push(id);
                 }
                 ids.push(ME.to_owned());
@@ -4402,8 +4393,8 @@ fn stock_frame(photo: stock::Photo, height: u32) -> egui::ColorImage {
 #[allow(dead_code)]
 fn contacts_by_id(app: &App) -> HashMap<&str, &Contact> {
     app.contacts
-        .iter()
-        .map(|(id, contact)| (id.as_str(), contact))
+        .values()
+        .map(|contact| (contact.id.as_str(), contact))
         .collect()
 }
 
@@ -6974,14 +6965,11 @@ mod tests {
         app.attach(&ctx);
         apply_flags(&mut app, Some("forward"));
         let id = SAMPLES[0].id;
-        app.contacts.insert(
-            id.into(),
-            Contact {
-                id: id.into(),
-                push_name: Some("Profile Fixture".into()),
-                ..Contact::default()
-            },
-        );
+        app.contacts.insert(Contact {
+            id: id.into(),
+            push_name: Some("Profile Fixture".into()),
+            ..Contact::default()
+        });
         app.forward_search = "profile fixture".into();
         assert_eq!(app.chat_title(app.chat(id).unwrap()), "~Profile Fixture");
         render_sized(&mut app, &ctx, egui::vec2(360.0, 240.0));
@@ -16079,15 +16067,12 @@ mod tests {
             .id
             .clone();
         let sender = "15550000123@s.whatsapp.net";
-        app.contacts.insert(
-            sender.into(),
-            Contact {
-                id: sender.into(),
-                full_name: Some("Alex Fixture".into()),
-                first_name: None,
-                push_name: None,
-            },
-        );
+        app.contacts.insert(Contact {
+            id: sender.into(),
+            full_name: Some("Alex Fixture".into()),
+            first_name: None,
+            push_name: None,
+        });
         let mut row = message(
             &group,
             "plain-group-message",
