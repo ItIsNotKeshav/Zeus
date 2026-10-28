@@ -764,6 +764,7 @@ pub async fn run(
         privacy_reveal_at: (!privacy_confirmed).then(|| Instant::now() + PRIVACY_GRACE),
         privacy_attempts: 0,
         privacy_warned: false,
+        chats_dirty: false,
         privacy_recovering: false,
         privacy_generation: 0,
         message_removals_in_flight: HashSet::new(),
@@ -958,6 +959,7 @@ pub async fn run(
                 worker.reconcile_call().await;
             }
         }
+        worker.flush_chats();
     }
     worker.shutdown_call().await;
     worker.stop_bot().await;
@@ -1134,6 +1136,9 @@ struct Worker {
     privacy_reveal_at: Option<Instant>,
     privacy_attempts: u32,
     privacy_warned: bool,
+    /// A learned privacy-id mapping changed the chat list, which goes out once at
+    /// the end of the turn: a history chunk teaches dozens of them.
+    chats_dirty: bool,
     privacy_recovering: bool,
     privacy_generation: u64,
     /// Serializes requests for one message, including across privacy-id mapping.
@@ -1920,7 +1925,15 @@ impl Worker {
         }
     }
 
+    /// Sends the chat list when a mapping learned this turn changed it.
+    fn flush_chats(&mut self) {
+        if self.chats_dirty {
+            self.emit_chats();
+        }
+    }
+
     fn emit_chats(&mut self) {
+        self.chats_dirty = false;
         match self.archive.chats() {
             Ok(mut chats) => {
                 // Early preference sync can create an empty privacy-id row.
@@ -3120,7 +3133,7 @@ impl Worker {
         };
         self.lid_to_pn.insert(lid.to_owned(), pn.to_owned());
         if changed {
-            self.emit_chats();
+            self.chats_dirty = true;
         }
         let chat = format!("{pn}@s.whatsapp.net");
         let lid_chat = format!("{lid}@lid");
@@ -18220,6 +18233,7 @@ mod receipt_tests {
             privacy_reveal_at: None,
             privacy_attempts: 0,
             privacy_warned: false,
+            chats_dirty: false,
             privacy_recovering: false,
             privacy_generation: 0,
             message_removals_in_flight: HashSet::new(),
