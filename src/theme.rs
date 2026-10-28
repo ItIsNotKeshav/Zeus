@@ -1905,7 +1905,9 @@ mod tests {
     fn rebuilding_the_atlas_installs_the_same_fonts_under_a_new_marker() {
         let ctx = egui::Context::default();
         install_fonts(&ctx);
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
         let markers = |ctx: &egui::Context| -> Vec<String> {
             ctx.fonts(|fonts| {
                 fonts
@@ -1924,7 +1926,9 @@ mod tests {
         let before = markers(&ctx);
         assert_eq!(before.len(), 1);
         rebuild_font_atlas(&ctx);
-        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
         let after = markers(&ctx);
         assert_eq!(after.len(), 1);
         assert_ne!(before, after, "the fonts are installed anew");
