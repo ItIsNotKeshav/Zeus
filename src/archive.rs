@@ -297,6 +297,10 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
 /// The columns [`searched_message`] reads, in its order.
 const SEARCH_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, history_order";
 
+/// The same columns without the preview blob, for rows whose preview is
+/// never drawn.
+const BARE_COLUMNS: &str = "chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, NULL AS thumbnail, mentions, forwarded, delivered_at, read_at, history_order";
+
 /// The lowercased text a search matches: text, captions, file names, poll
 /// questions, contact names and places, one per line.
 /// `Content::text_matching` previews from the same fields.
@@ -1443,9 +1447,10 @@ impl Archive {
         limit: usize,
     ) -> Result<Vec<Message>> {
         // Concrete bounds rather than `?2 IS NULL OR ...`, so SQLite walks the
-        // `(chat, timestamp)` index over just the range.
+        // `(chat, timestamp)` index over just the range. The pane lists text
+        // and opens the message by id, so the preview blobs stay behind.
         let sql = format!(
-            "SELECT {SEARCH_COLUMNS}
+            "SELECT {BARE_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND timestamp >= ?2 AND timestamp < ?3
              AND json_valid(content)
@@ -1471,8 +1476,10 @@ impl Archive {
     /// chat's pictures and videos, its documents, and its text messages that
     /// hold a web link, each kind newest first and cut at `limit`.
     pub fn media_docs_links(&self, chat: &str, limit: usize) -> Result<Vec<Message>> {
-        let mut rows = self.rows_of_kind(chat, "IN ('image', 'video')", limit)?;
-        rows.extend(self.rows_of_kind(chat, "= 'document'", limit)?);
+        // Pictures and videos are drawn from their preview; a document row is
+        // an icon and a name.
+        let mut rows = self.rows_of_kind(chat, "IN ('image', 'video')", SEARCH_COLUMNS, limit)?;
+        rows.extend(self.rows_of_kind(chat, "= 'document'", BARE_COLUMNS, limit)?);
         // Only text rows with a preview or an address that names its scheme
         // or starts with `www.` are read: finding a bare domain the way the
         // bubble underlines it would parse every text row of a long chat on
@@ -1519,10 +1526,17 @@ impl Archive {
     }
 
     /// One chat's newest messages whose content kind matches the SQL
-    /// comparison `kinds`, such as `= 'document'`.
-    fn rows_of_kind(&self, chat: &str, kinds: &str, limit: usize) -> Result<Vec<Message>> {
+    /// comparison `kinds`, such as `= 'document'`, read as `columns`
+    /// ([`SEARCH_COLUMNS`] or [`BARE_COLUMNS`]).
+    fn rows_of_kind(
+        &self,
+        chat: &str,
+        kinds: &str,
+        columns: &str,
+        limit: usize,
+    ) -> Result<Vec<Message>> {
         let sql = format!(
-            "SELECT {SEARCH_COLUMNS}
+            "SELECT {columns}
              FROM messages
              WHERE chat = ?1 AND json_valid(content)
                AND json_extract(content, '$.kind') {kinds}
@@ -1537,8 +1551,10 @@ impl Archive {
     /// Searches visible message text, filenames, polls, contacts, and places.
     /// ASCII matching is case-insensitive; other text follows SQLite behavior.
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
+        // The result list shows text and opens the message by id, so the
+        // preview blobs stay behind.
         let sql = format!(
-            "SELECT {SEARCH_COLUMNS}
+            "SELECT {BARE_COLUMNS}
              FROM messages
              WHERE json_valid(content) AND {SEARCHED_TEXT} LIKE ?1 ESCAPE '\\'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
@@ -2256,10 +2272,20 @@ impl Archive {
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
-        let mut statement = self.connection.prepare(
-            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
-             FROM messages WHERE chat = ?1 AND id = ?2",
-        )?;
+        self.message_with(chat, id, "thumbnail")
+    }
+
+    /// The message without its preview blob, for a row that only lists it.
+    pub fn message_bare(&self, chat: &str, id: &str) -> Result<Option<Message>> {
+        self.message_with(chat, id, "NULL AS thumbnail")
+    }
+
+    /// Reads one message, with `thumbnail` standing for the preview column.
+    fn message_with(&self, chat: &str, id: &str, thumbnail: &str) -> Result<Option<Message>> {
+        let mut statement = self.connection.prepare(&format!(
+            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, {thumbnail}, mentions, forwarded, delivered_at, read_at, history_order
+             FROM messages WHERE chat = ?1 AND id = ?2"
+        ))?;
         statement
             .query_row(params![chat, id], |row| {
                 let content: String = row.get(4)?;
@@ -5938,10 +5964,18 @@ mod media_path_tests {
         }
         let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
         let rows = archive.media_docs_links(chat, 10).expect("rows");
-        // Only a link's preview keeps its picture: the panel draws it. Other
-        // text rows leave their blob behind.
+        // Pictures, videos and a link's preview keep their picture: the panel
+        // draws those. Documents and other text rows leave their blob behind.
         for row in &rows {
-            let kept = !matches!(row.content, Content::Text { preview: None, .. });
+            let kept = matches!(
+                row.content,
+                Content::Image { .. }
+                    | Content::Video { .. }
+                    | Content::Text {
+                        preview: Some(_),
+                        ..
+                    }
+            );
             assert_eq!(row.thumbnail.is_some(), kept, "{}", row.id);
         }
         assert_eq!(ids(rows), ["preview", "clip", "link", "doc", "photo"]);
