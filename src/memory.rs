@@ -29,6 +29,7 @@ pub(crate) struct AccountCounts<'a> {
 struct Sample {
     rss_mib: Option<u64>,
     textures: usize,
+    font_atlas: [usize; 2],
     loader_bytes: usize,
     image_cache: usize,
     animation_frames: usize,
@@ -63,6 +64,7 @@ pub(crate) fn sample<'a>(ctx: &egui::Context, accounts: impl Iterator<Item = Acc
     let sample = Sample {
         rss_mib: rss_bytes().map(|bytes| bytes / MIB),
         textures: ctx.tex_manager().read().num_allocated(),
+        font_atlas: ctx.fonts(|fonts| fonts.font_image_size()),
         loader_bytes: loader_bytes(ctx),
         image_cache: crate::image_cache::len(ctx),
         animation_frames: crate::animation::resident_frames(ctx),
@@ -255,8 +257,13 @@ fn format_sample(sample: &Sample) -> String {
             .join(",")
     };
     format!(
-        "rss_mib={rss} textures={} loader_bytes={} image_cache={} animation_frames={} accounts={accounts}",
-        sample.textures, sample.loader_bytes, sample.image_cache, sample.animation_frames,
+        "rss_mib={rss} textures={} font_atlas={}x{} loader_bytes={} image_cache={} animation_frames={} accounts={accounts}",
+        sample.textures,
+        sample.font_atlas[0],
+        sample.font_atlas[1],
+        sample.loader_bytes,
+        sample.image_cache,
+        sample.animation_frames,
     )
 }
 
@@ -269,6 +276,7 @@ mod tests {
         let line = format_sample(&Sample {
             rss_mib: Some(214),
             textures: 96,
+            font_atlas: [2048, 1024],
             loader_bytes: 12_345_678,
             image_cache: 40,
             animation_frames: 12,
@@ -287,11 +295,12 @@ mod tests {
         });
         assert_eq!(
             line,
-            "rss_mib=214 textures=96 loader_bytes=12345678 image_cache=40 animation_frames=12 accounts=1:120/45000,2:3/200"
+            "rss_mib=214 textures=96 font_atlas=2048x1024 loader_bytes=12345678 image_cache=40 animation_frames=12 accounts=1:120/45000,2:3/200"
         );
         let missing = format_sample(&Sample {
             rss_mib: None,
             textures: 0,
+            font_atlas: [0, 0],
             loader_bytes: 0,
             image_cache: 0,
             animation_frames: 0,
@@ -299,7 +308,7 @@ mod tests {
         });
         assert_eq!(
             missing,
-            "rss_mib=unavailable textures=0 loader_bytes=0 image_cache=0 animation_frames=0 accounts=-"
+            "rss_mib=unavailable textures=0 font_atlas=0x0 loader_bytes=0 image_cache=0 animation_frames=0 accounts=-"
         );
         assert!(!line.contains('\n') && !missing.contains('\n'));
     }

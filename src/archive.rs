@@ -1621,18 +1621,26 @@ impl Archive {
     /// Returns downloaded stickers we sent (`from_me`) or received, newest
     /// first. Received stickers stay out of Recent, as in WhatsApp's own apps,
     /// and get their own shelf, which leaves out locked chats so a sticker
-    /// cannot hint at who is behind the lock.
+    /// cannot hint at who is behind the lock. Grouping and the limit work on
+    /// narrow columns; `raw` is read only for each path's newest row (the bare
+    /// `rowid` beside `MAX` comes from the row holding the maximum).
     pub fn recent_stickers(&self, limit: usize, from_me: bool) -> Result<Vec<ArchivedSticker>> {
         let mut statement = self.connection.prepare(
-            "SELECT json_extract(content, '$.media.path') AS path, MAX(timestamp), raw
-             FROM messages
-             WHERE json_extract(content, '$.kind') = 'sticker' AND path IS NOT NULL
-               AND from_me = ?2
-               AND (from_me OR NOT EXISTS (
-                   SELECT 1 FROM chats WHERE chats.id = messages.chat AND chats.locked))
-             GROUP BY path
-             ORDER BY 2 DESC
-             LIMIT ?1",
+            "SELECT latest.path, latest.used, messages.raw
+             FROM (
+                 SELECT json_extract(content, '$.media.path') AS path,
+                        MAX(timestamp) AS used, rowid AS winner
+                 FROM messages
+                 WHERE json_extract(content, '$.kind') = 'sticker' AND path IS NOT NULL
+                   AND from_me = ?2
+                   AND (from_me OR NOT EXISTS (
+                       SELECT 1 FROM chats WHERE chats.id = messages.chat AND chats.locked))
+                 GROUP BY path
+                 ORDER BY used DESC
+                 LIMIT ?1
+             ) AS latest
+             JOIN messages ON messages.rowid = latest.winner
+             ORDER BY latest.used DESC",
         )?;
         let rows = statement.query_map(params![limit as i64, from_me], |row| {
             Ok(ArchivedSticker {
@@ -5522,6 +5530,48 @@ mod sticker_tests {
             archive.stickers_without_file(10).expect("lists").is_empty(),
             "a received sticker is not fetched for Recent"
         );
+    }
+
+    #[test]
+    fn recent_stickers_keep_the_newest_row_of_each_path_with_its_raw() {
+        let dir = tempfile::tempdir().expect("temp");
+        let file = |name: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, b"webp").expect("writes");
+            path.display().to_string()
+        };
+        let (one, two, three) = (file("one.webp"), file("two.webp"), file("three.webp"));
+        let archive = Archive::in_memory().expect("opens");
+        archive.ensure_chat("a@s.whatsapp.net", "A").expect("chat");
+        for (id, timestamp, path, raw) in [
+            ("s1", 10, &one, &b"one-old"[..]),
+            ("s2", 30, &one, &b"one-new"[..]),
+            ("s3", 20, &two, &b"two-only"[..]),
+            ("s4", 5, &three, &b"three-old"[..]),
+        ] {
+            archive
+                .insert_message(
+                    &sticker("a@s.whatsapp.net", id, timestamp, Some(path)),
+                    Some(raw),
+                )
+                .expect("inserted");
+        }
+        let listed = archive.recent_stickers(10, true).expect("lists");
+        let summary: Vec<_> = listed
+            .iter()
+            .map(|sticker| (sticker.last_used, sticker.raw.clone()))
+            .collect();
+        assert_eq!(
+            summary,
+            vec![
+                (30, Some(b"one-new".to_vec())),
+                (20, Some(b"two-only".to_vec())),
+                (5, Some(b"three-old".to_vec())),
+            ]
+        );
+        let limited = archive.recent_stickers(2, true).expect("lists");
+        assert_eq!(limited.len(), 2);
+        assert_eq!(limited[1].last_used, 20);
     }
 
     #[test]
