@@ -32,6 +32,10 @@ const DRIFT: Duration = Duration::from_millis(60);
 const LEAD: Duration = Duration::from_millis(400);
 /// How long a playing video may stay off screen before it pauses.
 const UNSEEN: Duration = Duration::from_millis(1500);
+/// How long a video stays paused before its decoder is let go: the thread
+/// and the frames queued from it hold several 1080p pictures at once, and a
+/// video left open and paused need not keep them.
+const RELEASE_AFTER: Duration = Duration::from_secs(10);
 /// Longest wait between repaints while a video plays, for the progress.
 const TICK: Duration = Duration::from_millis(40);
 /// How long a video plays silently after its sound output failed before the
@@ -597,6 +601,11 @@ struct Session {
     queue: VecDeque<(Duration, ColorImage)>,
     /// Every frame of the current decode has arrived.
     decoded: bool,
+    /// Since when the video has been paused, while it is.
+    paused_since: Option<Instant>,
+    /// Whether the decoder was let go after a long pause: the picture on
+    /// screen and the position stay, and playing decodes again from there.
+    released: bool,
     texture: Option<TextureHandle>,
     clock: Clock,
     sound: Option<Sound>,
@@ -626,6 +635,7 @@ impl Session {
             State::Loading => self.resume = false,
             State::Playing => {
                 self.state = State::Paused;
+                self.paused_since = Some(now);
                 self.clock.pause(now);
                 if let Some(sound) = &self.sound {
                     sound.sink.pause();
@@ -640,6 +650,7 @@ impl Session {
             State::Loading => self.resume = true,
             State::Paused => {
                 self.state = State::Playing;
+                self.paused_since = None;
                 self.clock.resume(now);
                 if let Some(sound) = &self.sound {
                     sound.sink.play();
@@ -737,6 +748,15 @@ impl Session {
         self.sound_retry = Some((now + wait, wait));
     }
 
+    /// Lets the decoder go: its thread ends at its next frame, and the frames
+    /// queued from it are freed. The picture shown stays in its texture.
+    fn release_decoder(&mut self) {
+        self.frames = closed();
+        self.queue = VecDeque::new();
+        self.resize = None;
+        self.released = true;
+    }
+
     fn show(&mut self, ctx: &egui::Context, image: ColorImage) {
         match &mut self.texture {
             Some(texture) => texture.set(image, TextureOptions::LINEAR),
@@ -822,11 +842,29 @@ impl Player {
                 };
                 if playing {
                     session.pause(now);
+                } else if session.released {
+                    self.play_released();
                 } else {
                     session.play(now);
                 }
             }
             _ => self.start(message, path, Duration::ZERO),
+        }
+    }
+
+    /// Plays a paused video whose decoder was let go: it decodes again from
+    /// where it stands, as a seek does, and plays once the first frame is in.
+    fn play_released(&mut self) {
+        let Some(position) = self
+            .session
+            .as_ref()
+            .map(|session| session.clock.position(Instant::now()))
+        else {
+            return;
+        };
+        self.restart(position);
+        if let Some(session) = self.session.as_mut() {
+            session.resume = true;
         }
     }
 
@@ -861,6 +899,8 @@ impl Player {
         session.clock.seek(to, now);
         session.queue.clear();
         session.decoded = false;
+        session.paused_since = None;
+        session.released = false;
         session.side = side;
         session.resize = None;
         session.frames = spawn_decoder(&session.path, to, side, self.waker.clone());
@@ -939,7 +979,13 @@ impl Player {
 
     /// Plays the loaded video if it is paused.
     pub fn resume(&mut self) {
-        if let Some(session) = self.session.as_mut() {
+        if self
+            .session
+            .as_ref()
+            .is_some_and(|session| session.released)
+        {
+            self.play_released();
+        } else if let Some(session) = self.session.as_mut() {
             session.play(Instant::now());
         }
     }
@@ -997,6 +1043,8 @@ impl Player {
             frames: spawn_decoder(path, from, self.side, self.waker.clone()),
             queue: VecDeque::new(),
             decoded: false,
+            paused_since: None,
+            released: false,
             texture: None,
             clock,
             sound: None,
@@ -1064,6 +1112,7 @@ impl Player {
             if let Some((_, image)) = session.queue.pop_front() {
                 session.show(ctx, image);
                 session.state = State::Paused;
+                session.paused_since = Some(now);
                 if session.resume {
                     session.play(now);
                 }
@@ -1077,6 +1126,19 @@ impl Player {
             }
         }
         session.recover_sound(now, &self.waker);
+        // A video left paused lets its decoder go; the repaint that ends the
+        // wait is the only one a paused video asks for.
+        if session.state == State::Paused
+            && !session.released
+            && let Some(since) = session.paused_since
+        {
+            let left = RELEASE_AFTER.saturating_sub(now.saturating_duration_since(since));
+            if left.is_zero() {
+                session.release_decoder();
+            } else {
+                ctx.request_repaint_after(left);
+            }
+        }
         if session.state != State::Playing {
             return None;
         }
@@ -1117,6 +1179,11 @@ impl Player {
         ctx.request_repaint_after(next.clamp(Duration::from_millis(4), TICK));
         None
     }
+}
+
+/// A receiver whose sender is gone, standing in for a decoder that was let go.
+fn closed() -> Receiver<Delivery> {
+    std::sync::mpsc::channel().1
 }
 
 /// Starts decoding `path` from `from` on its own thread. Dropping the
@@ -1643,6 +1710,56 @@ mod tests {
         assert_eq!(player.status("clip").unwrap().state, State::Paused);
         player.stop();
         assert!(player.message().is_none());
+    }
+
+    /// A video left paused lets its decoder go, keeps its picture and its
+    /// place, and plays on from there when asked.
+    #[test]
+    fn a_long_paused_video_lets_its_decoder_go_and_plays_on_from_its_place() {
+        let ctx = egui::Context::default();
+        let mut player = Player::new(Waker::default());
+        player.silence();
+        let path = Path::new(SAMPLE);
+        player.toggle("clip", path);
+        let wait_for = |player: &mut Player, state: State| {
+            let started = Instant::now();
+            while player.status("clip").unwrap().state != state {
+                assert!(started.elapsed() < Duration::from_secs(5));
+                player.saw("clip");
+                player.poll(&ctx);
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        wait_for(&mut player, State::Playing);
+        std::thread::sleep(Duration::from_millis(300));
+        player.toggle("clip", path);
+        let paused = player.status("clip").unwrap();
+        assert_eq!(paused.state, State::Paused);
+        // Not yet: a short pause keeps the decoder for a quick resume.
+        player.poll(&ctx);
+        assert!(!player.session.as_ref().unwrap().released);
+
+        let since = Instant::now() - RELEASE_AFTER - Duration::from_millis(1);
+        player.session.as_mut().unwrap().paused_since = Some(since);
+        player.poll(&ctx);
+        let session = player.session.as_ref().unwrap();
+        assert!(session.released);
+        assert!(session.queue.is_empty());
+        assert!(session.texture.is_some(), "the paused picture stays");
+        let held = player.status("clip").unwrap();
+        assert_eq!(held.state, State::Paused);
+        assert_eq!(held.position, paused.position);
+        assert!(held.frame.is_some());
+
+        // Playing decodes again from the same place and carries on.
+        player.toggle("clip", path);
+        assert!(!player.session.as_ref().unwrap().released);
+        assert!(player.is_active());
+        wait_for(&mut player, State::Playing);
+        let resumed = player.status("clip").unwrap();
+        assert!(resumed.position >= paused.position);
+        assert!(resumed.position < paused.position + Duration::from_secs(1));
+        player.stop();
     }
 
     /// Covering the window asks for larger frames. A playing video does not

@@ -180,6 +180,26 @@ const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
 /// most likely found it through search or by scrolling far up, and are still
 /// reading there (and scrolling through that much history would be slow).
 const FOLLOW_REPLY: usize = 25;
+/// How long the zoom and display scale hold still before the font atlas is
+/// rebuilt for them, so a drag between displays or a run of zoom steps
+/// rebuilds it once.
+const ATLAS_SETTLE: Duration = Duration::from_secs(2);
+/// How long the window stays unfocused before the font atlas is rebuilt.
+const ATLAS_IDLE: Duration = Duration::from_secs(5 * 60);
+
+/// What `App::follow_font_atlas` has seen of the scale and of the window's
+/// focus, to know when the font atlas has gathered glyphs nobody draws now.
+#[derive(Default)]
+struct AtlasWatch {
+    /// The zoom factor and native pixels per point last seen.
+    scale: Option<(f32, f32)>,
+    /// When that scale last changed, until the atlas is rebuilt for it.
+    changed: Option<Instant>,
+    /// Since when the window has been unfocused.
+    away: Option<Instant>,
+    /// Whether the atlas was rebuilt during this unfocused spell.
+    rebuilt_away: bool,
+}
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -433,6 +453,7 @@ pub struct App {
     /// no screenshots and would hold the old palette.
     pub reveal_theme_changes: bool,
     zoom_applied: bool,
+    atlas_watch: AtlasWatch,
     /// The wallpaper image named in the settings, decoded off this thread.
     pub wallpaper_image: crate::wallpaper::CustomImage,
 
@@ -1411,6 +1432,7 @@ impl App {
             theme_reveal: crate::theme_reveal::Reveal::default(),
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
+            atlas_watch: AtlasWatch::default(),
             wallpaper_image: crate::wallpaper::CustomImage::default(),
             scroll_chats_to_top: false,
             stale_images: Vec::new(),
@@ -9717,6 +9739,62 @@ impl App {
         self.sync_badge();
         self.request_attention(ctx);
         self.log_memory(ctx, false);
+        self.follow_font_atlas(ctx);
+    }
+
+    /// Rebuilds the font atlas once the zoom or the display's scale has held
+    /// for `ATLAS_SETTLE`, and once the window has been unfocused for
+    /// `ATLAS_IDLE`: epaint never forgets a glyph it drew, so the old scale's
+    /// glyphs would stay in the atlas, on the CPU and on the GPU. The wait ends
+    /// in a repaint request, never a timer, and the rebuild of an unfocused
+    /// window runs then, not as a hitch when the reader comes back.
+    fn follow_font_atlas(&mut self, ctx: &egui::Context) {
+        if self.window_hidden {
+            // The window's context, and its atlas, went with it.
+            self.atlas_watch = AtlasWatch::default();
+            return;
+        }
+        let now = Instant::now();
+        let scale = (
+            ctx.zoom_factor(),
+            ctx.native_pixels_per_point().unwrap_or(1.0),
+        );
+        let focused = self.window_focused;
+        let watch = &mut self.atlas_watch;
+        match watch.scale {
+            Some(seen) if seen == scale => {}
+            Some(_) => {
+                watch.scale = Some(scale);
+                watch.changed = Some(now);
+            }
+            None => watch.scale = Some(scale),
+        }
+        let mut rebuild = false;
+        if let Some(changed) = watch.changed {
+            let left = ATLAS_SETTLE.saturating_sub(now.saturating_duration_since(changed));
+            if left.is_zero() {
+                watch.changed = None;
+                rebuild = true;
+            } else {
+                ctx.request_repaint_after(left);
+            }
+        }
+        if focused {
+            watch.away = None;
+            watch.rebuilt_away = false;
+        } else if !watch.rebuilt_away {
+            let since = *watch.away.get_or_insert(now);
+            let left = ATLAS_IDLE.saturating_sub(now.saturating_duration_since(since));
+            if left.is_zero() {
+                watch.rebuilt_away = true;
+                rebuild = true;
+            } else {
+                ctx.request_repaint_after(left);
+            }
+        }
+        if rebuild {
+            crate::theme::rebuild_font_atlas(ctx);
+        }
     }
 
     /// One line a minute when `ZAPFAST_MEMORY_LOG` is `1`.

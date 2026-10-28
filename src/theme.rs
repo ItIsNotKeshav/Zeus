@@ -1089,8 +1089,43 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     add_tabular(&mut fonts);
+    add_atlas_marker(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// Which of the two atlas markers the installed fonts carry; see
+/// [`rebuild_font_atlas`].
+static ATLAS_GENERATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Adds a family nobody draws with, named for the current atlas generation.
+/// egui's `set_fonts` does nothing when the definitions equal the installed
+/// ones, and only a new set of definitions makes epaint build its glyph atlas
+/// afresh, so a family whose name alternates is what lets the same fonts be
+/// installed again to drop the glyphs they gathered. It lists the regular
+/// weight's fonts: epaint binds a family's fonts only when text asks for it,
+/// and this one never is asked for.
+fn add_atlas_marker(fonts: &mut egui::FontDefinitions) {
+    let generation = ATLAS_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    let regular = fastframe_fonts::Weight::Regular.family();
+    let behind = fonts.families.get(&regular).cloned().unwrap_or_default();
+    fonts.families.insert(
+        egui::FontFamily::Name(format!("zeus-atlas-{generation}").into()),
+        behind,
+    );
+}
+
+/// Throws away the glyph atlas and draws text into a fresh one, which looks
+/// the same. epaint keeps every glyph it ever rasterised, at every scale,
+/// until the atlas is 80% full, and the atlas is a texture as wide as the
+/// GPU allows held on the CPU and the GPU both; after a zoom change or a move
+/// to another display the old scale's glyphs only take room.
+pub fn rebuild_font_atlas(ctx: &egui::Context) {
+    ATLAS_GENERATION.fetch_xor(1, std::sync::atomic::Ordering::AcqRel);
+    install_fonts(ctx);
+    // New fonts take over on the next pass, which an unfocused window would
+    // otherwise only run when the reader comes back.
+    ctx.request_repaint();
 }
 
 /// Puts a bundled variable font in front of each interface weight, with the
@@ -1863,6 +1898,49 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rebuilding the atlas installs the very fonts again, so epaint starts a
+    /// fresh glyph atlas, and text still lays out.
+    #[test]
+    fn rebuilding_the_atlas_installs_the_same_fonts_under_a_new_marker() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let markers = |ctx: &egui::Context| -> Vec<String> {
+            ctx.fonts(|fonts| {
+                fonts
+                    .definitions()
+                    .families
+                    .keys()
+                    .filter_map(|family| match family {
+                        egui::FontFamily::Name(name) if name.starts_with("zeus-atlas-") => {
+                            Some(name.to_string())
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+        };
+        let before = markers(&ctx);
+        assert_eq!(before.len(), 1);
+        rebuild_font_atlas(&ctx);
+        let _ = ctx.run_ui(egui::RawInput::default(), |_| {});
+        let after = markers(&ctx);
+        assert_eq!(after.len(), 1);
+        assert_ne!(before, after, "the fonts are installed anew");
+        // Text still lays out afterwards, in the interface and tabular faces.
+        ctx.fonts_mut(|fonts| {
+            for font in [
+                regular(14.0),
+                medium(14.0),
+                semibold(14.0),
+                tabular(fastframe_fonts::Weight::Medium, 14.0),
+            ] {
+                let galley = fonts.layout_no_wrap("Zeus".into(), font, egui::Color32::WHITE);
+                assert!(galley.size().x > 0.0);
+            }
+        });
+    }
 
     /// Timers count in Inter's tabular figures whatever face draws the
     /// rest, and fall back like the interface text of their weight.
