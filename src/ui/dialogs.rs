@@ -558,31 +558,34 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
 /// one-to-one chats, without ourselves or a locked chat, matching `needle`
 /// (a `search_key`) by name or number.
 pub(super) fn contact_choices(app: &App, needle: &str) -> Vec<crate::model::Contact> {
-    let mut contacts = app.contacts.clone();
+    let wanted = |contact: &crate::model::Contact| {
+        crate::model::phone_of(&contact.id).is_some()
+            && app.me.as_deref() != Some(contact.id.as_str())
+            && !app.chat(&contact.id).is_some_and(|chat| chat.locked)
+            && (needle.is_empty()
+                || crate::util::search_key(&app.display_name(&contact.id)).contains(needle)
+                || crate::model::phone_of(&contact.id).is_some_and(|phone| phone.contains(needle)))
+    };
+    // Only the people kept are copied, not the whole contact book.
+    let mut contacts: Vec<_> = app
+        .contacts
+        .values()
+        .filter(|contact| wanted(contact))
+        .cloned()
+        .collect();
     for chat in &app.chats {
-        if chat.kind == crate::model::ChatKind::Direct {
-            contacts
-                .entry(chat.id.clone())
-                .or_insert_with(|| crate::model::Contact {
-                    id: chat.id.clone(),
-                    full_name: Some(app.chat_title(chat)),
-                    ..Default::default()
-                });
+        if chat.kind == crate::model::ChatKind::Direct && !app.contacts.contains_key(&chat.id) {
+            let contact = crate::model::Contact {
+                id: chat.id.clone(),
+                full_name: Some(app.chat_title(chat)),
+                ..Default::default()
+            };
+            if wanted(&contact) {
+                contacts.push(contact);
+            }
         }
     }
-    let mut contacts: Vec<_> = contacts
-        .into_values()
-        .filter(|contact| {
-            crate::model::phone_of(&contact.id).is_some()
-                && app.me.as_deref() != Some(contact.id.as_str())
-                && !app.chat(&contact.id).is_some_and(|chat| chat.locked)
-                && (needle.is_empty()
-                    || crate::util::search_key(&app.display_name(&contact.id)).contains(needle)
-                    || crate::model::phone_of(&contact.id)
-                        .is_some_and(|phone| phone.contains(needle)))
-        })
-        .collect();
-    contacts.sort_by_key(|contact| crate::util::search_key(&app.display_name(&contact.id)));
+    contacts.sort_by_cached_key(|contact| crate::util::search_key(&app.display_name(&contact.id)));
     contacts
 }
 

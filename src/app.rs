@@ -1963,6 +1963,7 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+        self.trim_open_conversations();
         self.window_hidden = true;
         self.window_focused = false;
         self.hide_intent = false;
@@ -3034,23 +3035,33 @@ impl App {
     /// phone's order below pins instead of promoting drafts.
     /// Locked chats only appear inside the locked folder.
     pub fn visible_chats(&self) -> Vec<&Chat> {
+        self.visible_chat_indices()
+            .into_iter()
+            .map(|index| &self.chats[index])
+            .collect()
+    }
+
+    /// `visible_chats` as positions in `chats`, so a list can copy just the
+    /// rows it draws instead of every chat each frame.
+    pub fn visible_chat_indices(&self) -> Vec<usize> {
         let needle = crate::util::search_key(self.search.trim());
         let locked = self.locked_folder_open();
         let filtering = !locked && needle.is_empty() && !self.show_archived;
         // Each chat comes with whether it matched only loosely.
-        let mut chats: Vec<(bool, &Chat)> = self
+        let mut indices: Vec<(bool, usize)> = self
             .chats
             .iter()
-            .filter(|chat| chat.locked == locked)
-            .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
+            .enumerate()
+            .filter(|(_, chat)| chat.locked == locked)
+            .filter(|(_, chat)| locked || chat.archived == self.show_archived || !needle.is_empty())
             // Searching still finds people never written to, and one being
             // opened stays.
-            .filter(|chat| {
+            .filter(|(_, chat)| {
                 !needle.is_empty()
                     || self.open_chat.as_deref() == Some(chat.id.as_str())
                     || !self.unlisted_stranger(chat)
             })
-            .filter(|chat| match &self.label_filter {
+            .filter(|(_, chat)| match &self.label_filter {
                 // A label lists every chat wearing it, channels included,
                 // because someone put each of them there.
                 _ if !filtering => true,
@@ -3061,11 +3072,11 @@ impl App {
                             && self.unread_kept.contains(&chat.id))
                 }
             })
-            .filter_map(|chat| {
+            .filter_map(|(index, chat)| {
                 // Inside the locked folder the typed text is the secret code,
                 // not a query to match.
                 if (self.locked_folder && !self.chat_lock_authenticated()) || needle.is_empty() {
-                    return Some((false, chat));
+                    return Some((false, index));
                 }
                 let title = crate::util::search_key(&self.chat_title(chat));
                 let exact = title.contains(&needle)
@@ -3075,14 +3086,15 @@ impl App {
                     });
                 // A name with letters left out is found too, below the
                 // chats the search matches as typed.
-                (exact || crate::util::fuzzy_matches(&title, &needle)).then_some((!exact, chat))
+                (exact || crate::util::fuzzy_matches(&title, &needle)).then_some((!exact, index))
             })
             .collect();
         // The Favorites chip keeps the phone's order below the pinned chats.
         let favorites_order = self.favorites_order();
-        chats.sort_by(|(loose_a, a), (loose_b, b)| {
+        indices.sort_by(|&(loose_a, a), &(loose_b, b)| {
+            let (a, b) = (&self.chats[a], &self.chats[b]);
             loose_a
-                .cmp(loose_b)
+                .cmp(&loose_b)
                 .then_with(|| b.pinned.cmp(&a.pinned))
                 .then_with(|| {
                     if a.pinned && b.pinned {
@@ -3099,7 +3111,7 @@ impl App {
                     }
                 })
         });
-        chats.into_iter().map(|(_, chat)| chat).collect()
+        indices.into_iter().map(|(_, index)| index).collect()
     }
 
     /// When a chat counts as last active for the list order: a chat holding a

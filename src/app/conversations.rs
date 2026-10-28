@@ -129,6 +129,68 @@ impl App {
         holds
     }
 
+    /// Trims the open chat of every account to its newest page once the
+    /// window is gone. A new window starts every chat at its end, whatever
+    /// the old one had scrolled to, so the older rows would only sit in
+    /// memory until the window comes back. What the window still points at
+    /// stays, and so does the chat while a jump, a voice run or a sweep needs
+    /// its rows; nothing is trimmed while the window shows.
+    pub(super) fn trim_open_conversations(&mut self) {
+        let window = self.window_holds();
+        let extra = self.hidden_window_holds();
+        let active = self.active;
+        for (index, account) in self.accounts.iter_mut().enumerate() {
+            if index == active {
+                if let Some(extra) = &extra {
+                    trim_open(account, &window, extra);
+                }
+            } else {
+                trim_open(account, &[], &[]);
+            }
+        }
+    }
+
+    /// The messages of the open chat that the window's own state points at,
+    /// beyond what `window_holds` lists, or `None` while something under way
+    /// needs the whole conversation: a jump to a message still to load, a
+    /// quote waiting for its message, a sweep, the voice message player or
+    /// the unread divider before the transcript has reached it.
+    fn hidden_window_holds(&self) -> Option<Vec<String>> {
+        let open = self.open_chat.as_deref()?;
+        let divider = self
+            .unread_divider
+            .as_ref()
+            .filter(|divider| divider.chat == open);
+        if self.scroll_anchor.is_some()
+            || self.reply_when_loaded.is_some()
+            || self.sweep.is_some()
+            || self.player.is_playing()
+            || self.voice_wanted.is_some()
+            || divider.is_some_and(|divider| !divider.placed)
+        {
+            return None;
+        }
+        let mut holds: Vec<String> = Vec::new();
+        holds.extend(self.editing.clone());
+        if let Some((chat, messages)) = &self.selection
+            && chat == open
+        {
+            holds.extend(messages.iter().cloned());
+        }
+        if let Some((chat, message)) = &self.reaction_target
+            && chat == open
+        {
+            holds.push(message.clone());
+        }
+        if let Some(jump) = &self.jump_highlight
+            && jump.chat == open
+        {
+            holds.push(jump.message.clone());
+        }
+        holds.extend(divider.and_then(|divider| divider.first.clone()));
+        Some(holds)
+    }
+
     /// The conversation of `chat` in memory: the open chat's, made if need
     /// be, or one the reader left recently. A chat dropped from memory, or
     /// never opened, has none: it reads its messages from the archive when
@@ -219,6 +281,41 @@ fn settle(account: &mut Account, window: &[(ChatId, String)]) {
         }
         account.left_chats.retain(|left| *left != chat);
     }
+}
+
+/// Trims `account`'s open conversation to its newest page, keeping the
+/// messages `window` and `extra` point at and a quote parked with a draft.
+/// One waiting for an older page is left alone, and so is any conversation
+/// without a backend to read it back.
+fn trim_open(account: &mut Account, window: &[(ChatId, String)], extra: &[String]) {
+    if account.backend.is_offline() {
+        return;
+    }
+    let Some(open) = account.open_chat.as_deref() else {
+        return;
+    };
+    let Some(conversation) = account.conversations.get_mut(open) else {
+        return;
+    };
+    if conversation.busy() {
+        return;
+    }
+    let mut held: Vec<&str> = window
+        .iter()
+        .filter(|(chat, _)| chat.as_str() == open)
+        .map(|(_, message)| message.as_str())
+        .collect();
+    held.extend(extra.iter().map(String::as_str));
+    held.extend(
+        account
+            .attachment_drafts
+            .iter()
+            .filter_map(|(destination, draft)| {
+                let target = draft.quoting.as_ref()?;
+                (target.source_chat(destination) == open).then_some(target.id.as_str())
+            }),
+    );
+    conversation.trim(PAGE, &held);
 }
 
 #[cfg(test)]
@@ -512,6 +609,36 @@ mod tests {
         assert_eq!(second.conversations[CHATS[2]].messages.len(), PAGE);
         assert_eq!(second.conversations[CHATS[1]].messages.len(), PAGE);
         assert!(!second.conversations.contains_key(CHATS[0]));
+    }
+
+    #[test]
+    fn a_gone_window_trims_the_open_chat_but_keeps_what_it_points_at() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands, _events) = online(directory.path(), &CHATS);
+        open_with(&mut app, CHATS[0], 100);
+        app.window_gone();
+        let kept = &app.conversations[CHATS[0]];
+        assert_eq!(kept.messages.len(), PAGE);
+        assert_eq!(kept.messages[0].id, format!("m{}", 100 - PAGE));
+        assert!(!kept.complete, "scrolling up pages the archive again");
+
+        // A quote waiting in the composer keeps its message and what follows.
+        open_with(&mut app, CHATS[1], 100);
+        app.reply_to = Some(ReplyTarget {
+            id: "m10".into(),
+            chat: None,
+        });
+        app.window_gone();
+        let kept = &app.conversations[CHATS[1]];
+        assert_eq!(kept.messages.len(), 90);
+        assert_eq!(kept.messages[0].id, "m10");
+
+        // A jump still waiting for its message needs the rows it has.
+        app.reply_to = None;
+        open_with(&mut app, CHATS[2], 100);
+        app.scroll_anchor = Some("m3".into());
+        app.window_gone();
+        assert_eq!(app.conversations[CHATS[2]].messages.len(), 100);
     }
 
     #[test]

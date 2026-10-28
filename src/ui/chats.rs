@@ -1091,7 +1091,8 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
         results(app, ui);
         return;
     }
-    let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
+    // Positions only: the rows drawn below copy their own chat.
+    let chats = app.visible_chat_indices();
     if chats.is_empty() {
         // The favorites title is translated, so it is bound here: the tuple
         // below borrows it for this frame, and every other arm stays a literal.
@@ -1124,9 +1125,9 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
     under_header(ui, |ui, inset| chat_rows(app, ui, &chats, to_top, inset));
 }
 
-/// The scrolling rows of `chats`, the first `inset` points of the scroll
-/// area lying under the frosted header.
-fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, inset: f32) {
+/// The scrolling rows of `chats`, positions in `app.chats`, the first
+/// `inset` points of the scroll area lying under the frosted header.
+fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, inset: f32) {
     // Rows touch: one clickable surface from top to bottom, no gaps or rules.
     ui.spacing_mut().item_spacing.y = 0.0;
     let row_height = theme::ROW_HEIGHT;
@@ -1144,18 +1145,23 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
     let view = list_view(app);
     let step = row_height + ui.spacing().item_spacing.y;
     if !copy
-        && let Some(offset) =
-            followed_offset(ui, list_id, rows_moved(ui, list_id, view, chats), step)
+        && let Some(offset) = followed_offset(
+            ui,
+            list_id,
+            rows_moved(ui, list_id, view, &app.chats, chats),
+            step,
+        )
     {
         scroll_area = scroll_area.vertical_scroll_offset(offset);
     }
     if to_top && near_top(ui, "chat-list", row_height) {
         scroll_area = scroll_area.vertical_scroll_offset(0.0);
     }
-    let target_row = app
-        .scroll_chat_into_view
-        .as_ref()
-        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+    let target_row = app.scroll_chat_into_view.as_ref().and_then(|target| {
+        chats
+            .iter()
+            .position(|&index| app.chats[index].id == *target)
+    });
     if copy
         && let Some(offset) = ui
             .ctx()
@@ -1195,13 +1201,22 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[Chat], to_top: bool, ins
             );
         }
         if !copy {
-            remember_rows(ui, list_id, view, &chats[range.clone()], range.start);
+            remember_rows(
+                ui,
+                list_id,
+                view,
+                &app.chats,
+                &chats[range.clone()],
+                range.start,
+            );
         }
         for index in range {
-            let chat = &chats[index];
+            let Some(chat) = app.chats.get(chats[index]).cloned() else {
+                continue;
+            };
             // Key by chat so an open menu survives list reordering.
             let response = ui
-                .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
                 .inner;
             // Store the row rect for interaction tests.
             ui.ctx()
@@ -1256,7 +1271,7 @@ fn list_view(app: &App) -> egui::Id {
 /// still sit together says it; a chat that moved away from its neighbour
 /// is the one that jumped to the top. Nothing moved, or a list drawn under
 /// another filter, says zero.
-fn rows_moved(ui: &egui::Ui, id: egui::Id, view: egui::Id, chats: &[Chat]) -> isize {
+fn rows_moved(ui: &egui::Ui, id: egui::Id, view: egui::Id, all: &[Chat], chats: &[usize]) -> isize {
     let Some(shown) = ui
         .ctx()
         .data(|data| data.get_temp::<ShownRows>(id.with("shown")))
@@ -1270,12 +1285,17 @@ fn rows_moved(ui: &egui::Ui, id: egui::Id, view: egui::Id, chats: &[Chat]) -> is
     let same = shown.ids.iter().enumerate().all(|(n, id)| {
         chats
             .get(shown.first + n)
+            .and_then(|&index| all.get(index))
             .is_some_and(|chat| chat.id == *id)
     });
     if same {
         return 0;
     }
-    let position = |id: &str| chats.iter().position(|chat| chat.id == id);
+    let position = |id: &str| {
+        chats
+            .iter()
+            .position(|&index| all.get(index).is_some_and(|chat| chat.id == id))
+    };
     for (n, pair) in shown.ids.windows(2).enumerate() {
         if let (Some(at), Some(next)) = (position(&pair[0]), position(&pair[1]))
             && next == at + 1
@@ -1287,12 +1307,23 @@ fn rows_moved(ui: &egui::Ui, id: egui::Id, view: egui::Id, chats: &[Chat]) -> is
 }
 
 /// Remembers the chats the list of scroll area `id` drew this frame.
-fn remember_rows(ui: &egui::Ui, id: egui::Id, view: egui::Id, chats: &[Chat], first: usize) {
+fn remember_rows(
+    ui: &egui::Ui,
+    id: egui::Id,
+    view: egui::Id,
+    all: &[Chat],
+    chats: &[usize],
+    first: usize,
+) {
     let shown = ShownRows {
         view,
         pass: ui.ctx().cumulative_pass_nr(),
         first,
-        ids: chats.iter().map(|chat| chat.id.clone()).collect(),
+        ids: chats
+            .iter()
+            .filter_map(|&index| all.get(index))
+            .map(|chat| chat.id.clone())
+            .collect(),
     };
     ui.ctx()
         .data_mut(|data| data.insert_temp(id.with("shown"), shown));
@@ -1380,7 +1411,7 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
 /// The authenticated folder, including archived chats and local title search.
 fn locked_list(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let chats = app.visible_chats();
+    let chats = app.visible_chat_indices();
     if chats.is_empty() {
         widgets::empty_state(
             ui,
@@ -1391,14 +1422,14 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
         );
         return;
     }
-    let chats: Vec<Chat> = chats.into_iter().cloned().collect();
     under_header(ui, |ui, inset| {
         ui.spacing_mut().item_spacing.y = 0.0;
         let mut scroll_area = scroll_area(ui, inset).id_salt("locked-chats");
-        let target_row = app
-            .scroll_chat_into_view
-            .as_ref()
-            .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+        let target_row = app.scroll_chat_into_view.as_ref().and_then(|target| {
+            chats
+                .iter()
+                .position(|&index| app.chats[index].id == *target)
+        });
         if let Some(target_row) = target_row {
             let id = ui.make_persistent_id(egui::IdSalt::new("locked-chats"));
             let current = egui::scroll_area::State::load(ui.ctx(), id)
@@ -1422,8 +1453,11 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
             chats.len(),
             inset,
             |ui, range| {
-                for chat in &chats[range] {
-                    ui.push_id(("chat", &chat.id), |ui| row(app, ui, chat));
+                for &index in &chats[range] {
+                    let Some(chat) = app.chats.get(index).cloned() else {
+                        continue;
+                    };
+                    ui.push_id(("chat", &chat.id), |ui| row(app, ui, &chat));
                 }
             },
         );
@@ -1452,16 +1486,18 @@ fn row_scroll_offset(
 /// Search results grouped into chats, messages, and contacts.
 fn results(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
-    let hits: Vec<Message> = app.search_hits.clone();
+    // Chats and hits are positions: each row copies its own while it draws,
+    // so no frame holds a second copy of every result.
+    let chats = app.visible_chat_indices();
+    let hits = app.search_hits.len();
     let contacts: Vec<Contact> = app.matching_contacts().into_iter().cloned().collect();
     let needle = crate::util::search_key(app.search.trim());
     let offer_self = !needle.is_empty()
         && app.offers_self(&needle)
         && !chats
             .iter()
-            .any(|chat| app.me.as_deref() == Some(chat.id.as_str()));
-    if chats.is_empty() && hits.is_empty() && contacts.is_empty() && !offer_self {
+            .any(|&index| app.me.as_deref() == Some(app.chats[index].id.as_str()));
+    if chats.is_empty() && hits == 0 && contacts.is_empty() && !offer_self {
         widgets::empty_state(
             ui,
             &palette,
@@ -1480,11 +1516,14 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(inset);
                 if !chats.is_empty() {
                     section(ui, &palette, "Chats");
-                    for chat in &chats {
+                    for &index in &chats {
+                        let Some(chat) = app.chats.get(index).cloned() else {
+                            continue;
+                        };
                         let reveal = ui.is_enabled()
                             && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
                         let response = ui
-                            .push_id(("chat", &chat.id), |ui| row(app, ui, chat))
+                            .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
                             .inner;
                         if reveal {
                             response.scroll_to_me(None);
@@ -1492,10 +1531,13 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 }
-                if !hits.is_empty() {
+                if hits > 0 {
                     section(ui, &palette, "Messages");
-                    for hit in &hits {
-                        ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, hit));
+                    for index in 0..hits {
+                        let Some(hit) = app.search_hits.get(index).cloned() else {
+                            continue;
+                        };
+                        ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, &hit));
                     }
                 }
                 if !contacts.is_empty() || offer_self {
@@ -2174,7 +2216,7 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         compact_locked_entry(app, ui);
         return;
     }
-    let chats: Vec<Chat> = app.visible_chats().into_iter().cloned().collect();
+    let chats = app.visible_chat_indices();
     // Exactly the height the rail gives it: egui's least scrolled height
     // would reach past the window's bottom in a short one.
     let mut scroll_area = egui::ScrollArea::vertical()
@@ -2187,7 +2229,7 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         && let Some(offset) = followed_offset(
             ui,
             rail_id,
-            rows_moved(ui, rail_id, view, &chats),
+            rows_moved(ui, rail_id, view, &app.chats, &chats),
             COMPACT_CELL + ui.spacing().item_spacing.y,
         )
     {
@@ -2208,7 +2250,11 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
         .scroll_chat_into_view
         .as_ref()
         .filter(|_| !copy)
-        .and_then(|target| chats.iter().position(|chat| chat.id == *target));
+        .and_then(|target| {
+            chats
+                .iter()
+                .position(|&index| app.chats[index].id == *target)
+        });
     if let Some(target_row) = target_row {
         let id = ui.make_persistent_id(egui::IdSalt::new("chat-rail"));
         let current = egui::scroll_area::State::load(ui.ctx(), id)
@@ -2235,7 +2281,14 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     let output = scroll_area.show_rows(ui, COMPACT_CELL, chats.len(), |ui, range| {
         let mut focused = None;
         if !copy {
-            remember_rows(ui, rail_id, view, &chats[range.clone()], range.start);
+            remember_rows(
+                ui,
+                rail_id,
+                view,
+                &app.chats,
+                &chats[range.clone()],
+                range.start,
+            );
         }
         if carried != 0.0 {
             ui.scroll_with_delta_animation(
@@ -2243,9 +2296,12 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
                 egui::style::ScrollAnimation::none(),
             );
         }
-        for chat in &chats[range] {
+        for &index in &chats[range] {
+            let Some(chat) = app.chats.get(index).cloned() else {
+                continue;
+            };
             let response = ui
-                .push_id(("chat", &chat.id), |ui| compact_row(app, ui, chat))
+                .push_id(("chat", &chat.id), |ui| compact_row(app, ui, &chat))
                 .inner;
             if response.clicked() && !app.locked_folder_open() && !app.show_archived {
                 app.actions.push(Action::KeepUnread(chat.id.clone()));
