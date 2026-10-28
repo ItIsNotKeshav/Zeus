@@ -3261,6 +3261,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                             {
                                 let id = bubble_id(&chat.id, &message.id).with("body");
                                 ui.ctx().data_mut(|data| data.remove::<Rect>(id));
+                                for member in album.unwrap_or(std::slice::from_ref(message)) {
+                                    forget_bubble(ui.ctx(), &chat.id, &member.id);
+                                }
                             }
                             ui.add_space(height);
                             if known.is_none() {
@@ -5618,6 +5621,35 @@ fn inline_editor(
 /// Stable message-bubble id used by interaction tests.
 pub fn bubble_id(chat: &str, message: &str) -> egui::Id {
     egui::Id::new(("bubble", chat, message))
+}
+
+/// Lets go of what a message's row left in `ctx.data` once the row has left the
+/// layout. egui never frees temporary data, and every message that was ever on
+/// screen would keep a dozen entries for the whole session. These are only
+/// where the row's parts were last drawn, and the row writes them again
+/// whenever it is laid out. Left alone: the arrival spring's start (without it
+/// an old message would spring in again), the time toggle (the reader's own
+/// choice), and the menu and reaction rects (a popup may still be anchored
+/// to them).
+fn forget_bubble(ctx: &egui::Context, chat: &str, message: &str) {
+    let id = bubble_id(chat, message);
+    ctx.data_mut(|data| {
+        for part in [
+            "rect",
+            "footer",
+            "picture",
+            "preview",
+            "quote",
+            "card",
+            "call-box",
+            "album-tile",
+            "forwarded",
+            "carousel-viewport",
+        ] {
+            data.remove::<Rect>(id.with(part));
+        }
+        data.remove::<bool>(id.with("swiping"));
+    });
 }
 
 /// Where a voice message's speed chip was drawn, for interaction tests.
