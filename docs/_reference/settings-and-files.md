@@ -127,7 +127,10 @@ name or description, in the interface language or in English.
   on Linux. Elsewhere, including other Linux desktops, the window is opaque
   in the theme's colours. Turning Blur off makes every one of those surfaces
   solid at once; turning it on again shows the desktop through a window
-  opened after the change.
+  opened after the change. On macOS, which Zeus draws with Metal to hold
+  less memory, the header and message field are always solid, and Blur
+  decides only whether the desktop shows through the Messages theme's
+  window.
 - **Always show time**: the time and ticks inside every message, as
   WhatsApp shows them. Off, the Zeus look shows them below a message you
   click, and below your last message.

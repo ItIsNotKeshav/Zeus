@@ -1,7 +1,8 @@
 //! Frosted glass under a vibrant header: what egui has already drawn beneath
 //! a rectangle is blurred in place, as macOS blurs content scrolling under a
 //! toolbar. egui has no blur of its own, so this is an OpenGL paint callback
-//! that runs just before the header is drawn over it.
+//! that runs just before the header is drawn over it. macOS draws with Metal,
+//! where it cannot run, and goes without (`backdrop::blur`).
 //!
 //! The region is copied twice: sharp at full size, and at half of it,
 //! where separable Gaussian passes blur it lightly, as macOS does: the

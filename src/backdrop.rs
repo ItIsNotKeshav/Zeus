@@ -29,8 +29,13 @@ pub fn glass() -> f32 {
 /// Whether glass is frosted: anything short of Solid. At Solid the frosted
 /// header and composer, glass and window material give way to solid
 /// surfaces, as the Blur switch's Off did.
+///
+/// Never on macOS: it draws with Metal through egui-wgpu, which paints a
+/// frame in one render pass that a paint callback cannot read back, and the
+/// frost (`ui/glass.rs`) blurs what is already drawn. The window's material
+/// still follows Settings there (`Settings::vibrant_window`).
 pub fn blur() -> bool {
-    glass() < 1.0
+    !cfg!(target_os = "macos") && glass() < 1.0
 }
 
 /// Records Settings' Glass for [`glass`]; the app does so every frame.

@@ -688,6 +688,29 @@ fn native_options(
         // time, and opened smaller at every launch with the interface zoomed,
         // since its zoom comes back only once the window exists.
         persist_window: false,
+        #[cfg(target_os = "macos")]
+        renderer: eframe::Renderer::Wgpu,
+        #[cfg(target_os = "macos")]
+        wgpu_options: metal_options(),
+        ..Default::default()
+    }
+}
+
+/// How macOS draws: with Metal through wgpu, where AppKit keeps two fewer
+/// full-window buffers than for OpenGL (about 90 MB for a large window on a
+/// 2x display). It asks for the integrated GPU, so a Mac with two never wakes
+/// the discrete one to draw a chat, and keeps one frame in flight, so the
+/// window has two drawables rather than three. Frosted glass needs OpenGL and
+/// stays solid here (`backdrop::blur`).
+#[cfg(target_os = "macos")]
+fn metal_options() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    setup.instance_descriptor.backends = eframe::wgpu::Backends::METAL;
+    setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
+    WgpuConfiguration {
+        surface: SurfaceConfig::LOW_LATENCY,
+        wgpu_setup: WgpuSetup::CreateNew(setup),
         ..Default::default()
     }
 }

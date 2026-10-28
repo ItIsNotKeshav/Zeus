@@ -538,6 +538,16 @@ protocol. These notes are for coding agents and new contributors.
   Vsync stays on elsewhere. Spotifast, RekordFlash and TonePush pin the same
   two revisions; move them together. Repaints are event-driven, so nothing
   spins.
+- macOS draws with Metal through egui-wgpu (`metal_options` in `src/main.rs`:
+  Metal only, the low-power GPU, one frame in flight); Linux and Windows keep
+  glow. AppKit keeps two fewer full-window buffers for a Metal layer than for
+  OpenGL, measured at 93 MB less for a 1800x1130 window on a 2x display.
+  egui-wgpu paints a frame in one render pass that a paint callback cannot
+  read back, so the frosted glass (`ui/glass.rs`, OpenGL only) cannot run
+  there: `backdrop::blur` is false on macOS and its header, composer and
+  glass are solid, while Settings' Blur still decides the window's material.
+  Frost on macOS needs egui-wgpu to split the pass at a callback that reads
+  the backdrop, a change for the crmne/egui fork.
 - `src/voice.rs` is the codec for voice messages: OGG/Opus in and out
   (the `ogg` crate for the container, `opus` with libopus bundled and
   built by cmake for the codec, so cmake is a build dependency), plus
