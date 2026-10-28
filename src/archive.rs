@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS chats (
     muted_until INTEGER,
     locked INTEGER NOT NULL DEFAULT 0
 );
+-- The chat list reads newest first; this order spares it a sort of the whole joined result.
+CREATE INDEX IF NOT EXISTS chats_by_activity ON chats (last_activity);
 CREATE TABLE IF NOT EXISTS messages (
     chat TEXT NOT NULL,
     id TEXT NOT NULL,
