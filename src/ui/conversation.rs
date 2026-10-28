@@ -1606,6 +1606,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 };
                 (has_focus && typed(":"), has_focus && typed("@"))
             });
+            forget_pending_posters(ui.ctx(), app);
             if !app.pending.is_empty() {
                 pending_strip(app, ui);
             }
@@ -14393,6 +14394,44 @@ fn pending_poster(ctx: &egui::Context, path: &std::path::Path) -> Option<(egui::
         PendingPoster::Ready(handle) => Some((handle.id(), handle.size_vec2())),
         _ => None,
     }
+}
+
+/// Lets go of the poster of every video no longer staged, here or parked with
+/// another chat's draft. egui keeps temporary data for good, so its texture
+/// would outlive the attachment.
+fn forget_pending_posters(ctx: &egui::Context, app: &App) {
+    let kept_id = egui::Id::new("pending-posters-kept");
+    let kept = ctx
+        .data_mut(|data| data.get_temp::<Vec<std::path::PathBuf>>(kept_id))
+        .unwrap_or_default();
+    let parked = app
+        .accounts
+        .iter()
+        .flat_map(|account| account.attachment_drafts.values())
+        .flat_map(|draft| draft.pending.iter());
+    let current: Vec<std::path::PathBuf> = app
+        .pending
+        .iter()
+        .chain(parked)
+        .filter_map(|staged| match &staged.item {
+            crate::app::Pending::File(path) if crate::image_preview::is_video(path) => {
+                Some(path.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    if kept == current {
+        return;
+    }
+    ctx.data_mut(|data| {
+        for path in kept.iter().filter(|path| !current.contains(path)) {
+            data.remove::<std::sync::Arc<std::sync::Mutex<PendingPoster>>>(egui::Id::new((
+                "pending-poster",
+                path.as_path(),
+            )));
+        }
+        data.insert_temp(kept_id, current);
+    });
 }
 
 /// Pixel size of a staged picture file, read once from its header.
