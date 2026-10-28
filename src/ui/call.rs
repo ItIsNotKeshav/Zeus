@@ -1381,17 +1381,20 @@ fn call_texture(
     match kept {
         Some(kept) if std::sync::Arc::ptr_eq(&kept.frame, image) => kept.texture.id(),
         Some(kept) => {
+            // The frame is shared, not copied: a 720p one is 3.7 MB.
             kept.texture.set(
-                egui::ImageData::from((**image).clone()),
+                egui::ImageData::Color(std::sync::Arc::clone(image)),
                 TextureOptions::LINEAR,
             );
             kept.frame = std::sync::Arc::clone(image);
             kept.texture.id()
         }
         None => {
-            let texture = ui
-                .ctx()
-                .load_texture(name, (**image).clone(), TextureOptions::LINEAR);
+            let texture = ui.ctx().load_texture(
+                name,
+                egui::ImageData::Color(std::sync::Arc::clone(image)),
+                TextureOptions::LINEAR,
+            );
             let id = texture.id();
             *kept = Some(crate::app::CallTexture {
                 texture,
