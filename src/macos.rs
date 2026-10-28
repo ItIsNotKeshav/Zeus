@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use objc2_app_kit::{NSApplication, NSText};
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem as Native, Submenu};
 
+use crate::backend::Waker;
 use crate::model::{Action, Dialog, Page};
 
 thread_local! {
@@ -17,7 +18,9 @@ thread_local! {
 static EVENTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static EDIT_EVENTS: LazyLock<Arc<Mutex<Vec<egui::Event>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(Vec::new())));
-static REPAINT: Mutex<Option<egui::Context>> = Mutex::new(None);
+// A waker, not a context: the context dies with its window, and a static would
+// keep that window's atlas, galleys and loaders alive until the next one opens.
+static WAKER: Mutex<Option<Waker>> = Mutex::new(None);
 
 /// Menu edits must reach the input before egui processes focus and selection.
 struct MenuInput(Arc<Mutex<Vec<egui::Event>>>);
@@ -107,13 +110,13 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
     Ok(menu)
 }
 
-pub fn attach(ctx: &egui::Context) {
+pub fn attach(ctx: &egui::Context, waker: &Waker) {
     ctx.add_plugin(MenuInput(Arc::clone(&EDIT_EVENTS)));
     // Layout tests use headless contexts on test threads, without an NSApp.
     if objc2::MainThreadMarker::new().is_none() {
         return;
     }
-    *REPAINT.lock().unwrap_or_else(|p| p.into_inner()) = Some(ctx.clone());
+    *WAKER.lock().unwrap_or_else(|p| p.into_inner()) = Some(waker.clone());
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         // The tray's menu shares muda's one handler; its ids are its own.
         if fastframe_tray::claim_menu_event(&event.id.0) {
@@ -133,8 +136,8 @@ pub fn attach(ctx: &egui::Context) {
                 .unwrap_or_else(|p| p.into_inner())
                 .push(event.id.0);
         }
-        if let Some(ctx) = &*REPAINT.lock().unwrap_or_else(|p| p.into_inner()) {
-            ctx.request_repaint();
+        if let Some(waker) = &*WAKER.lock().unwrap_or_else(|p| p.into_inner()) {
+            waker.wake();
         }
     }));
     MENU.with_borrow_mut(|menu| {

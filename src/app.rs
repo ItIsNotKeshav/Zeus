@@ -2374,7 +2374,7 @@ impl App {
         // the tray installs one when it makes its item on the first window.
         // Ours hands the tray its own events (#215).
         #[cfg(target_os = "macos")]
-        crate::macos::attach(ctx);
+        crate::macos::attach(ctx, &self.waker);
         if let Some(tray) = &mut self.tray {
             tray.attach();
         }
