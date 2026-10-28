@@ -1086,6 +1086,23 @@ pub fn host_owned_presence<B, T, H, R>(
     builder.with_presence_policy(PresencePolicy::Manual)
 }
 
+/// App-state blobs fetched at once: two rather than the library's four. A
+/// link fetches the collections' snapshots together, and every fetch in
+/// flight holds its response and its buffer, so this lowers that peak for a
+/// sync a little slower. The byte budget stays the library's: past it a blob
+/// fails rather than waits.
+const APP_STATE_DOWNLOADS: std::num::NonZeroUsize = std::num::NonZeroUsize::new(2).unwrap();
+
+/// The library's caches as it sets them, but for [`APP_STATE_DOWNLOADS`].
+fn cache_config() -> whatsapp_rust::CacheConfig {
+    let mut config = whatsapp_rust::CacheConfig::default();
+    config.app_state_downloads = whatsapp_rust::AppStateDownloadConfig::new(
+        whatsapp_rust::AppStateDownloadConfig::default().max_bytes(),
+        APP_STATE_DOWNLOADS,
+    );
+    config
+}
+
 /// Waits longer after each failed lock-state recovery, so a collection the
 /// server keeps refusing is not rebuilt every few seconds.
 fn privacy_backoff(attempts: u32) -> Duration {
@@ -2843,6 +2860,7 @@ impl Worker {
         };
         let sender = self.wa_sender.clone();
         let builder = host_owned_presence(Bot::builder().with_backend(store))
+            .with_cache_config(cache_config())
             .with_watched_ab_props([
                 abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE,
                 abprops::web::ENABLE_WEB_CALLING,
@@ -13579,6 +13597,17 @@ fn clear_boundary(read: crate::archive::Result<Vec<Message>>) -> Option<i64> {
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    /// App-state blobs come two at a time, within the library's own budget.
+    #[test]
+    fn app_state_blobs_are_fetched_two_at_a_time() {
+        let downloads = cache_config().app_state_downloads;
+        assert_eq!(downloads.concurrency().get(), 2);
+        assert_eq!(
+            downloads.max_bytes(),
+            whatsapp_rust::AppStateDownloadConfig::default().max_bytes()
+        );
+    }
 
     /// A failed number check leaves contacts and conversation state unchanged.
     #[tokio::test]
