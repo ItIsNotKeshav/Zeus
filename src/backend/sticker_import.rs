@@ -283,7 +283,8 @@ pub fn import_signal_pack(url: &str, packs: &Path) -> Result<String, String> {
         }
     });
     // Keep each sticker's emoji in the file, where search and WhatsApp read it.
-    let files: Vec<Vec<u8>> = blobs
+    // Each is converted as it is written.
+    let files = blobs
         .into_iter()
         .zip(&stickers)
         .filter_map(|(blob, sticker)| {
@@ -295,8 +296,7 @@ pub fn import_signal_pack(url: &str, packs: &Path) -> Result<String, String> {
                 ..Default::default()
             };
             Some(crate::sticker_meta::write(&webp, &info).unwrap_or(webp))
-        })
-        .collect();
+        });
     write_pack(packs, &title, files)
 }
 
@@ -343,10 +343,9 @@ pub fn import_archive(path: &Path, packs: &Path) -> Result<String, String> {
                 .map(|stem| stem.to_string_lossy().into_owned())
         })
         .unwrap_or_default();
-    let files: Vec<Vec<u8>> = pictures
+    let files = pictures
         .into_iter()
-        .filter_map(|(_, bytes)| webp_bytes(bytes))
-        .collect();
+        .filter_map(|(_, bytes)| webp_bytes(bytes));
     write_pack(packs, &title, files)
 }
 
@@ -465,15 +464,39 @@ pub fn pack_art(first: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((cover, thumbnail))
 }
 
-/// Writes pack images to a new directory named after the title.
-fn write_pack(packs: &Path, title: &str, files: Vec<Vec<u8>>) -> Result<String, String> {
-    if files.is_empty() {
+/// Writes pack images to a new directory named after the title, each as it
+/// comes, so a converted pack is never held whole. They are written under
+/// names the sticker list skips and named stickers once all are in, so a
+/// pack still converting never lists half full; a pack that cannot be
+/// written is removed.
+fn write_pack(
+    packs: &Path,
+    title: &str,
+    files: impl IntoIterator<Item = Vec<u8>>,
+) -> Result<String, String> {
+    let mut files = files.into_iter();
+    let Some(first) = files.next() else {
         return Err("No stickers could be read from this pack".to_owned());
-    }
+    };
     let dir = unique_pack_dir(packs, title)?;
-    for (index, bytes) in files.iter().enumerate() {
-        std::fs::write(dir.join(format!("{index:03}.webp")), bytes)
-            .map_err(|error| format!("Could not write the sticker pack: {error}"))?;
+    let part = |index: usize| dir.join(format!("{index:03}.webp.part"));
+    let mut count = 0;
+    let mut written = Ok(());
+    for bytes in std::iter::once(first).chain(files) {
+        written = std::fs::write(part(count), bytes);
+        if written.is_err() {
+            break;
+        }
+        count += 1;
+    }
+    let written = written.and_then(|()| {
+        (0..count).try_for_each(|index| {
+            std::fs::rename(part(index), dir.join(format!("{index:03}.webp")))
+        })
+    });
+    if let Err(error) = written {
+        let _ = std::fs::remove_dir_all(&dir);
+        return Err(format!("Could not write the sticker pack: {error}"));
     }
     Ok(dir
         .file_name()
@@ -487,8 +510,13 @@ fn webp_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
         return Some(bytes);
     }
-    if let Some(frames) = animation_frames(&bytes) {
-        return encode_animated(frames);
+    if let Some(mut frames) = animation_frames(&bytes) {
+        // A lone frame is a still picture; a second means it moves.
+        if let Some(first) = frames.next()
+            && let Some(second) = frames.next()
+        {
+            return encode_animated([first, second].into_iter().chain(frames));
+        }
     }
     let picture = image::load_from_memory(&bytes).ok()?;
     let picture = if picture.width().max(picture.height()) > 512 {
@@ -509,8 +537,9 @@ fn webp_bytes(bytes: Vec<u8>) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Returns frames and millisecond delays for animated APNG or GIF data.
-fn animation_frames(bytes: &[u8]) -> Option<Vec<(image::RgbaImage, u32)>> {
+/// Returns frames and millisecond delays for animated APNG or GIF data,
+/// each decoded only when it is asked for.
+fn animation_frames(bytes: &[u8]) -> Option<impl Iterator<Item = (image::RgbaImage, u32)> + '_> {
     use image::AnimationDecoder;
     let cursor = std::io::Cursor::new(bytes);
     let frames = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -526,21 +555,23 @@ fn animation_frames(bytes: &[u8]) -> Option<Vec<(image::RgbaImage, u32)>> {
     } else {
         return None;
     };
-    let frames: Vec<(image::RgbaImage, u32)> = frames
-        .take(200)
-        .filter_map(|frame| frame.ok())
-        .map(|frame| {
-            let (numerator, denominator) = frame.delay().numer_denom_ms();
-            (frame.into_buffer(), numerator / denominator.max(1))
-        })
-        .collect();
-    (frames.len() > 1).then_some(frames)
+    Some(
+        frames
+            .take(200)
+            .filter_map(|frame| frame.ok())
+            .map(|frame| {
+                let (numerator, denominator) = frame.delay().numer_denom_ms();
+                (frame.into_buffer(), numerator / denominator.max(1))
+            }),
+    )
 }
 
-/// Encodes frames as a lossy animated WebP at sticker size.
-fn encode_animated(frames: Vec<(image::RgbaImage, u32)>) -> Option<Vec<u8>> {
+/// Encodes frames as a lossy animated WebP at sticker size, scaling and
+/// adding each as it comes rather than holding them all at full size.
+fn encode_animated(frames: impl Iterator<Item = (image::RgbaImage, u32)>) -> Option<Vec<u8>> {
     use webp_animation::prelude::*;
-    let (source_width, source_height) = frames.first().map(|(frame, _)| frame.dimensions())?;
+    let mut frames = frames.peekable();
+    let (source_width, source_height) = frames.peek().map(|(frame, _)| frame.dimensions())?;
     let scale = (512.0 / f64::from(source_width.max(source_height))).min(1.0);
     let width = (f64::from(source_width) * scale).round().max(1.0) as u32;
     let height = (f64::from(source_height) * scale).round().max(1.0) as u32;
@@ -742,6 +773,24 @@ mod tests {
         let decoder =
             image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&webp)).expect("is a webp");
         assert!(decoder.has_animation(), "the motion survives");
+    }
+
+    #[test]
+    fn an_apng_of_one_frame_becomes_a_still_sticker() {
+        let mut apng = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut apng, 4, 4);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_animated(1, 0).expect("animated");
+            let mut writer = encoder.write_header().expect("header");
+            writer.write_image_data(&[10u8; 4 * 4 * 4]).expect("frame");
+            writer.finish().expect("finishes");
+        }
+        let webp = webp_bytes(apng).expect("converts");
+        let decoder =
+            image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&webp)).expect("is a webp");
+        assert!(!decoder.has_animation(), "nothing moves");
     }
 
     #[test]

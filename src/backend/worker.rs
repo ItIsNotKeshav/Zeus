@@ -70,10 +70,20 @@ use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
 /// Delay after the last history chunk before sync is complete.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
+/// History chunks inflating past this many bytes are filed a chat at a time
+/// as they are parsed, rather than parsed whole first.
+const HISTORY_STREAM_ABOVE: usize = 2 * 1024 * 1024;
 /// Quiet time after which the archive hands its page cache back.
 const ARCHIVE_IDLE_RELEASE: Duration = Duration::from_secs(60);
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
+/// Profile pictures downloading at once.
+const AVATAR_DOWNLOADS: usize = 4;
+/// How long a profile picture waits for its turn before it downloads
+/// anyway, so stuck downloads slow the rest instead of stopping them.
+const AVATAR_PATIENCE: Duration = Duration::from_secs(30);
+/// Automatic attachment downloads running at once.
+const AUTOMATIC_DOWNLOADS: usize = 6;
 /// Phone history-request timeout.
 const PHONE_PATIENCE: Duration = Duration::from_secs(30);
 /// Phone history-request batch size.
@@ -849,6 +859,9 @@ pub async fn run(
         first_names_recovered,
         first_names_recovering: false,
         downloads: HashSet::new(),
+        download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
+        download_turns: HashMap::new(),
+        avatar_gate: Arc::new(tokio::sync::Semaphore::new(AVATAR_DOWNLOADS)),
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
@@ -1340,6 +1353,13 @@ struct Worker {
     first_names_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
+    /// Lets only a few automatic attachment downloads run at once.
+    download_gate: Arc<tokio::sync::Semaphore>,
+    /// Automatic downloads that may still wait for their turn, so a click on
+    /// one starts it at once.
+    download_turns: HashMap<(ChatId, String, Option<usize>), Arc<tokio::sync::Notify>>,
+    /// Lets only a few profile pictures download at once.
+    avatar_gate: Arc<tokio::sync::Semaphore>,
     /// Serial forward in flight. The next send waits for the running one.
     forward_queue: Option<ForwardQueue<ForwardJob>>,
     call: Option<calls::CallRuntime>,
@@ -5553,52 +5573,120 @@ impl Worker {
             }
         }
         let compressed = lazy.compressed_bytes().clone();
-        let parsed = tokio::task::spawn_blocking(move || parse_history(&compressed)).await;
-        match parsed {
-            Ok(Ok(parsed)) => {
-                if on_demand {
-                    log::info!(
-                        "poll recovery: on-demand history received; chats={}, messages={}, standalone_votes={}",
-                        parsed.chats.len(),
-                        parsed
-                            .chats
-                            .iter()
-                            .map(|chat| chat.messages.len())
-                            .sum::<usize>(),
-                        parsed
-                            .chats
-                            .iter()
-                            .map(|chat| chat.poll_updates.len())
-                            .sum::<usize>()
-                    );
-                    for chat in &parsed.chats {
+        if lazy.decompressed_size() > HISTORY_STREAM_ABOVE {
+            // An initial chunk inflates to tens of megabytes: parsed whole,
+            // all its chats would sit in memory at once before filing.
+            if let Some(filed) = self.stream_history(compressed, on_demand).await
+                && on_demand
+            {
+                self.answer_older(filed, session.as_deref());
+            }
+        } else {
+            let parsed = tokio::task::spawn_blocking(move || parse_history(&compressed)).await;
+            match parsed {
+                Ok(Ok(parsed)) => {
+                    if on_demand {
                         log::info!(
-                            "history reload: parsed entries={}, visible={}, reactions={}, votes={}, counts={:?}",
-                            chat.diagnostics.entries,
-                            chat.messages.len(),
-                            chat.reactions.len(),
-                            chat.poll_updates.len(),
-                            chat.diagnostics,
+                            "poll recovery: on-demand history received; chats={}, messages={}, standalone_votes={}",
+                            parsed.chats.len(),
+                            parsed
+                                .chats
+                                .iter()
+                                .map(|chat| chat.messages.len())
+                                .sum::<usize>(),
+                            parsed
+                                .chats
+                                .iter()
+                                .map(|chat| chat.poll_updates.len())
+                                .sum::<usize>()
                         );
+                        for chat in &parsed.chats {
+                            log_history_chat(chat);
+                        }
+                    }
+                    let filed = self.apply_history(parsed, !on_demand);
+                    if on_demand {
+                        self.answer_older(filed, session.as_deref());
                     }
                 }
-                let filed = self.apply_history(parsed, !on_demand);
-                if on_demand {
-                    self.answer_older(filed, session.as_deref());
-                }
+                Ok(Err(error)) => self.history_unreadable(&error),
+                Err(_error) => log::warn!("history parsing worker failed"),
             }
-            Ok(Err(error)) => {
-                log::warn!("a history chunk could not be read");
-                self.emit(Event::Error(format!(
-                    "Could not read part of the chat history: {error}"
-                )));
-            }
-            Err(_error) => log::warn!("history parsing worker failed"),
         }
         if !on_demand && lazy.progress().is_some_and(|progress| progress >= 100) {
             self.sync_deadline = Some(Instant::now() + Duration::from_secs(3));
         }
         self.emit_chats();
+    }
+
+    /// Tells the reader a history chunk could not be read.
+    fn history_unreadable(&mut self, error: &str) {
+        log::warn!("a history chunk could not be read");
+        self.emit(Event::Error(format!(
+            "Could not read part of the chat history: {error}"
+        )));
+    }
+
+    /// Files a large history chunk one chat at a time, so only a chat or
+    /// two of it are decoded at once. A first pass reads the chunk's id
+    /// mappings, names and stickers, filed before any chat as
+    /// `apply_history` files them; a second parses each chat and hands it
+    /// over as it is ready. Returns what `apply_history` returns, or `None`
+    /// when the chunk could not be read, and then none of it was filed.
+    async fn stream_history<C>(
+        &mut self,
+        compressed: C,
+        on_demand: bool,
+    ) -> Option<Vec<(ChatId, usize, Option<bool>)>>
+    where
+        C: AsRef<[u8]> + Clone + Send + 'static,
+    {
+        let first = compressed.clone();
+        let prelude =
+            tokio::task::spawn_blocking(move || parse_history_prelude(first.as_ref())).await;
+        let (prelude, pairs) = match prelude {
+            Ok(Ok(prelude)) => prelude,
+            Ok(Err(error)) => {
+                self.history_unreadable(&error);
+                return None;
+            }
+            Err(_error) => {
+                log::warn!("history parsing worker failed");
+                return None;
+            }
+        };
+        self.apply_history_prelude(&prelude, &pairs);
+        // One parsed chat waits while the worker files the one before it.
+        let (sender, mut chats) = mpsc::channel(1);
+        let reader =
+            tokio::task::spawn_blocking(move || stream_history_chats(compressed.as_ref(), &sender));
+        let mut media_changed_in: HashSet<ChatId> = HashSet::new();
+        let mut filed = Vec::new();
+        let (mut received, mut messages, mut votes) = (0, 0, 0);
+        while let Some(chat) = chats.recv().await {
+            if on_demand {
+                received += 1;
+                messages += chat.messages.len();
+                votes += chat.poll_updates.len();
+                log_history_chat(&chat);
+            }
+            filed.extend(self.apply_history_chat(chat, !on_demand, &mut media_changed_in));
+        }
+        // The first pass read the same bytes through, so the second does not
+        // fail in practice. If it does, the chats filed stay filed: history
+        // is filed idempotently, as when the phone repeats a chunk.
+        match reader.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => self.history_unreadable(&error),
+            Err(_error) => log::warn!("history parsing worker failed"),
+        }
+        if on_demand {
+            log::info!(
+                "poll recovery: on-demand history received; chats={received}, messages={messages}, standalone_votes={votes}"
+            );
+        }
+        self.finish_history(&filed, media_changed_in);
+        Some(filed)
     }
 
     /// Archives a history chunk. `metadata` controls chat-state updates.
@@ -5608,9 +5696,24 @@ impl Worker {
         parsed: ParsedHistory,
         metadata: bool,
     ) -> Vec<(ChatId, usize, Option<bool>)> {
+        self.apply_history_prelude(&parsed, &[]);
         // Chats whose listed pictures, documents or links changed, told
         // once each rather than once per imported message.
         let mut media_changed_in: HashSet<ChatId> = HashSet::new();
+        let mut filed = Vec::new();
+        for chat in parsed.chats {
+            filed.extend(self.apply_history_chat(chat, metadata, &mut media_changed_in));
+        }
+        self.finish_history(&filed, media_changed_in);
+        filed
+    }
+
+    /// Files what a history chunk holds besides its chats' messages: id
+    /// mappings, the phone's recent stickers and names. All of it lands
+    /// before any chat, so each message is filed under the ids the whole
+    /// chunk maps. `pairs` are the privacy ids and phone numbers of chats
+    /// read ahead of a chunk filed one chat at a time.
+    fn apply_history_prelude(&mut self, parsed: &ParsedHistory, pairs: &[(String, String)]) {
         for (lid, pn) in &parsed.lids {
             if let (Some(lid), Some(pn)) = (Self::jid_of(lid), Self::jid_of(pn)) {
                 self.learn_pair(&lid, &pn);
@@ -5645,393 +5748,405 @@ impl Worker {
                 self.learn_pair(&lid, &pn);
             }
         }
-        let mut filed = Vec::new();
+        for (lid, pn) in pairs {
+            if let (Some(lid), Some(pn)) = (Self::jid_of(lid), Self::jid_of(pn)) {
+                self.learn_pair(&lid, &pn);
+            }
+        }
         for (id, name) in &parsed.push_names {
             let id = self.canonical_str(id);
             self.remember_push_name(&id, name);
         }
-        for mut chat in parsed.chats {
-            let id = self.canonical_str(&chat.id);
-            if id.ends_with("@broadcast") {
+    }
+
+    /// Archives one chat of a history chunk, after `apply_history_prelude`.
+    /// Returns its message count and whether the phone has more, or `None`
+    /// when the chat is left out.
+    fn apply_history_chat(
+        &mut self,
+        mut chat: ParsedChat,
+        metadata: bool,
+        media_changed_in: &mut HashSet<ChatId>,
+    ) -> Option<(ChatId, usize, Option<bool>)> {
+        let id = self.canonical_str(&chat.id);
+        if id.ends_with("@broadcast") {
+            return None;
+        }
+        let existing = self.archive.chat(&id).ok().flatten();
+        if let Some(through) = self.archive.removal_point(&id).ok().flatten() {
+            chat.messages.retain(|message| message.timestamp > through);
+            // Nothing newer than the deletion: leave the chat deleted.
+            if existing.is_none() && chat.messages.is_empty() {
+                return None;
+            }
+        }
+        if metadata || existing.is_none() {
+            let subject_known = chat.name.is_some()
+                || existing
+                    .as_ref()
+                    .is_some_and(|chat| chat.group_subject_known);
+            let named_channel = existing
+                .as_ref()
+                .filter(|known| known.is_channel() && keeps_its_name(known));
+            let name = match chat.name {
+                // The server's list names a channel; history may not.
+                _ if named_channel.is_some() => named_channel
+                    .map(|known| known.name.clone())
+                    .unwrap_or_default(),
+                Some(name) if ChatKind::from_id(&id) == ChatKind::Group => name,
+                Some(name) if !name.is_empty() => {
+                    // Prefer the phone's address-book name for direct chats.
+                    let contact = self.contacts.entry(id.clone()).or_insert_with(|| Contact {
+                        id: id.clone(),
+                        full_name: None,
+                        first_name: None,
+                        push_name: None,
+                    });
+                    if contact.full_name.is_none()
+                        && !name
+                            .chars()
+                            .all(|c| c.is_ascii_digit() || c == '+' || c == ' ')
+                    {
+                        contact.full_name = Some(name.clone());
+                        let contact = contact.clone();
+                        let _ = self.archive.upsert_contact(&contact);
+                        self.emit(Event::Contacts(vec![contact]));
+                    }
+                    self.chat_name(&id, None)
+                }
+                _ => existing
+                    .as_ref()
+                    .map_or_else(|| self.chat_name(&id, None), |chat| chat.name.clone()),
+            };
+            let mut row = Chat::new(id.clone(), name);
+            row.group_subject_known = subject_known;
+            row.last_activity = chat.last_activity;
+            row.unread = existing.as_ref().map_or(0, |existing| existing.unread);
+            row.archived = chat
+                .archived
+                .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.archived));
+            row.pinned_at = chat
+                .pinned_at
+                .unwrap_or_else(|| existing.as_ref().map_or(0, |row| row.pinned_at));
+            row.pinned = chat.pinned_at.map_or_else(
+                || existing.as_ref().is_some_and(|row| row.pinned),
+                |when| when > 0,
+            );
+            row.muted_until = chat
+                .muted_until
+                .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
+            row.locked = chat
+                .locked
+                .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.locked));
+            if self.archive.upsert_chat(&row).is_err() {
+                log::warn!("could not store a chat");
+                return None;
+            }
+            // History has no lock timestamp, so it must not supersede
+            // an app-state update already received from the phone.
+            if let Some(locked) = chat.locked {
+                let _ = self.archive.set_locked_snapshot(&id, locked);
+            }
+        }
+        if let Some(expiration) = chat.ephemeral_expiration {
+            let _ = self.archive.set_ephemeral(
+                &id,
+                expiration,
+                chat.ephemeral_setting_timestamp.unwrap_or_default(),
+            );
+        }
+        if ChatKind::from_id(&id) == ChatKind::Group {
+            self.request_group_info(&id, false);
+        }
+        let count = chat.messages.len();
+        let mut added = 0;
+        let mut repeated = 0;
+        let mut removed = 0;
+        let mut failed = 0;
+        let mut secrets = HashMap::new();
+        for message in chat.messages {
+            if self.message_was_removed(&id, &message.id) {
+                removed += 1;
                 continue;
             }
-            let existing = self.archive.chat(&id).ok().flatten();
-            if let Some(through) = self.archive.removal_point(&id).ok().flatten() {
-                chat.messages.retain(|message| message.timestamp > through);
-                // Nothing newer than the deletion: leave the chat deleted.
-                if existing.is_none() && chat.messages.is_empty() {
-                    continue;
-                }
+            if let Some(secret) = message
+                .poll_secret
+                .as_deref()
+                .filter(|secret| secret.len() == 32)
+            {
+                secrets.insert(message.id.clone(), secret.to_vec());
             }
-            if metadata || existing.is_none() {
-                let subject_known = chat.name.is_some()
-                    || existing
-                        .as_ref()
-                        .is_some_and(|chat| chat.group_subject_known);
-                let named_channel = existing
-                    .as_ref()
-                    .filter(|known| known.is_channel() && keeps_its_name(known));
-                let name = match chat.name {
-                    // The server's list names a channel; history may not.
-                    _ if named_channel.is_some() => named_channel
-                        .map(|known| known.name.clone())
-                        .unwrap_or_default(),
-                    Some(name) if ChatKind::from_id(&id) == ChatKind::Group => name,
-                    Some(name) if !name.is_empty() => {
-                        // Prefer the phone's address-book name for direct chats.
-                        let contact = self.contacts.entry(id.clone()).or_insert_with(|| Contact {
-                            id: id.clone(),
-                            full_name: None,
-                            first_name: None,
-                            push_name: None,
-                        });
-                        if contact.full_name.is_none()
-                            && !name
-                                .chars()
-                                .all(|c| c.is_ascii_digit() || c == '+' || c == ' ')
-                        {
-                            contact.full_name = Some(name.clone());
-                            let contact = contact.clone();
-                            let _ = self.archive.upsert_contact(&contact);
-                            self.emit(Event::Contacts(vec![contact]));
-                        }
-                        self.chat_name(&id, None)
-                    }
-                    _ => existing
-                        .as_ref()
-                        .map_or_else(|| self.chat_name(&id, None), |chat| chat.name.clone()),
-                };
-                let mut row = Chat::new(id.clone(), name);
-                row.group_subject_known = subject_known;
-                row.last_activity = chat.last_activity;
-                row.unread = existing.as_ref().map_or(0, |existing| existing.unread);
-                row.archived = chat
-                    .archived
-                    .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.archived));
-                row.pinned_at = chat
-                    .pinned_at
-                    .unwrap_or_else(|| existing.as_ref().map_or(0, |row| row.pinned_at));
-                row.pinned = chat.pinned_at.map_or_else(
-                    || existing.as_ref().is_some_and(|row| row.pinned),
-                    |when| when > 0,
-                );
-                row.muted_until = chat
-                    .muted_until
-                    .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
-                row.locked = chat
-                    .locked
-                    .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.locked));
-                if self.archive.upsert_chat(&row).is_err() {
-                    log::warn!("could not store a chat");
-                    continue;
-                }
-                // History has no lock timestamp, so it must not supersede
-                // an app-state update already received from the phone.
-                if let Some(locked) = chat.locked {
-                    let _ = self.archive.set_locked_snapshot(&id, locked);
-                }
-            }
-            if let Some(expiration) = chat.ephemeral_expiration {
-                let _ = self.archive.set_ephemeral(
-                    &id,
-                    expiration,
-                    chat.ephemeral_setting_timestamp.unwrap_or_default(),
-                );
-            }
-            if ChatKind::from_id(&id) == ChatKind::Group {
-                self.request_group_info(&id, false);
-            }
-            let count = chat.messages.len();
-            let mut added = 0;
-            let mut repeated = 0;
-            let mut removed = 0;
-            let mut failed = 0;
-            let mut secrets = HashMap::new();
-            for message in chat.messages {
-                if self.message_was_removed(&id, &message.id) {
-                    removed += 1;
-                    continue;
-                }
-                if let Some(secret) = message
-                    .poll_secret
+            let poll_creator = if message.from_me {
+                self.me()
+            } else {
+                message.sender.clone().unwrap_or_else(|| chat.id.clone())
+            };
+            let sender = if message.from_me {
+                self.me()
+            } else {
+                message
+                    .sender
                     .as_deref()
-                    .filter(|secret| secret.len() == 32)
-                {
-                    secrets.insert(message.id.clone(), secret.to_vec());
-                }
-                let poll_creator = if message.from_me {
-                    self.me()
-                } else {
-                    message.sender.clone().unwrap_or_else(|| chat.id.clone())
-                };
-                let sender = if message.from_me {
-                    self.me()
-                } else {
-                    message
-                        .sender
-                        .as_deref()
-                        .map(|sender| self.canonical_str(sender))
-                        .unwrap_or_else(|| id.clone())
-                };
-                if let Some(push_name) = message.push_name.as_deref()
-                    && !message.from_me
-                {
-                    self.remember_push_name(&sender, push_name);
-                }
-                let reactions = message
-                    .reactions
-                    .into_iter()
-                    .map(|(who, from_me, emoji)| Reaction {
-                        sender: if from_me {
-                            self.me()
-                        } else {
-                            who.as_deref()
-                                .map(|who| self.canonical_str(who))
-                                .unwrap_or_else(|| id.clone())
-                        },
-                        from_me,
-                        emoji,
-                    })
-                    .collect();
-                let quoted = message.quoted.map(|quoted| {
-                    let sender = self.canonical_str(&quoted.sender);
-                    Quoted {
-                        chat: quoted.chat.as_deref().map(|chat| self.canonical_str(chat)),
-                        sender_name: self.name_for(&sender),
-                        sender,
-                        ..quoted
-                    }
-                });
-                let mentions = self.mentions_of(&message.mentions);
-                // A direct chat's receipt times date its ticks. A group's may
-                // be partial, so they only fill in "Message info".
-                let group = ChatKind::from_id(&id) == ChatKind::Group;
-                // A zero timestamp means the time is unknown: kept, it would
-                // win `min()` and date the tick to the Unix epoch.
-                let first = |at: fn(&wa::UserReceipt) -> Option<i64>| {
-                    message
-                        .receipts
-                        .iter()
-                        .filter_map(at)
-                        .filter(|&at| at > 0)
-                        .min()
-                };
-                let read = matches!(message.status, Delivery::Read | Delivery::Played);
-                let delivered_at = first(|receipt| receipt.receipt_timestamp)
-                    .filter(|_| !group && (read || message.status == Delivery::Delivered));
-                let read_at = first(|receipt| receipt.read_timestamp).filter(|_| !group && read);
-                let mut row = Message {
-                    id: message.id,
-                    chat: id.clone(),
-                    sender,
-                    sender_name: if message.from_me {
-                        None
+                    .map(|sender| self.canonical_str(sender))
+                    .unwrap_or_else(|| id.clone())
+            };
+            if let Some(push_name) = message.push_name.as_deref()
+                && !message.from_me
+            {
+                self.remember_push_name(&sender, push_name);
+            }
+            let reactions = message
+                .reactions
+                .into_iter()
+                .map(|(who, from_me, emoji)| Reaction {
+                    sender: if from_me {
+                        self.me()
                     } else {
-                        message.push_name
+                        who.as_deref()
+                            .map(|who| self.canonical_str(who))
+                            .unwrap_or_else(|| id.clone())
                     },
-                    from_me: message.from_me,
-                    timestamp: message.timestamp,
-                    content: message.content,
-                    status: message.status,
-                    delivered_at,
-                    read_at,
-                    quoted,
-                    reactions,
-                    history_order: message.history_order,
-                    edited: message.edited,
-                    mentions,
-                    forwarded: message.forwarded,
-                    thumbnail: message.thumbnail,
-                };
-                let mut poll_history_received = false;
-                let raw =
-                    ensure_message_secret(message.raw, secrets.get(&row.id).map(Vec::as_slice));
-                if matches!(row.content, Content::Poll { .. }) {
-                    if let Ok(raw) = wa::Message::decode_from_slice(&raw) {
-                        self.remember_poll(
-                            &row,
-                            &raw,
-                            &poll_creator,
-                            message.poll_secret.as_deref(),
-                        );
-                    }
-                    poll_history_received = self.history_poll_votes(&row, &message.poll_votes);
+                    from_me,
+                    emoji,
+                })
+                .collect();
+            let quoted = message.quoted.map(|quoted| {
+                let sender = self.canonical_str(&quoted.sender);
+                Quoted {
+                    chat: quoted.chat.as_deref().map(|chat| self.canonical_str(chat)),
+                    sender_name: self.name_for(&sender),
+                    sender,
+                    ..quoted
                 }
-                // History replays and on-demand chunks can repeat a message the
-                // archive already holds; keep the files it already downloaded.
-                let mut keep_raw = false;
-                let mut existed = false;
-                let mut live_location_changed = false;
-                let existing = self.archive.message(&id, &row.id).ok().flatten();
-                // What the info panel listed for this row before it lands,
-                // so a change to its pictures, documents or links is told.
-                let before = existing.as_ref().map(|existing| existing.content.clone());
-                if let Some(existing) = existing {
-                    existed = true;
-                    row.content.keep_local_paths(&existing.content);
-                    keep_live_location_notice(&mut row.content, &existing);
-                    // A repeated original must not undo a later edit or revoke.
-                    if (existing.edited && !row.edited)
-                        || matches!(existing.content, Content::Revoked)
-                    {
-                        row.content = existing.content.clone();
-                        row.edited = existing.edited;
-                        row.quoted = existing.quoted;
-                        row.mentions = existing.mentions;
-                        row.thumbnail = existing.thumbnail.clone();
-                        keep_raw = true;
-                    }
-                    live_location_changed = matches!(
-                        (&existing.content, &row.content),
-                        (Content::LiveLocation { .. }, Content::LiveLocation { .. })
-                    ) && existing.content != row.content;
-                }
-                if let Err(error) = self
-                    .archive
-                    .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
-                {
-                    failed += 1;
-                    log::warn!("could not store a history message: {error}");
+            });
+            let mentions = self.mentions_of(&message.mentions);
+            // A direct chat's receipt times date its ticks. A group's may
+            // be partial, so they only fill in "Message info".
+            let group = ChatKind::from_id(&id) == ChatKind::Group;
+            // A zero timestamp means the time is unknown: kept, it would
+            // win `min()` and date the tick to the Unix epoch.
+            let first = |at: fn(&wa::UserReceipt) -> Option<i64>| {
+                message
+                    .receipts
+                    .iter()
+                    .filter_map(at)
+                    .filter(|&at| at > 0)
+                    .min()
+            };
+            let read = matches!(message.status, Delivery::Read | Delivery::Played);
+            let delivered_at = first(|receipt| receipt.receipt_timestamp)
+                .filter(|_| !group && (read || message.status == Delivery::Delivered));
+            let read_at = first(|receipt| receipt.read_timestamp).filter(|_| !group && read);
+            let mut row = Message {
+                id: message.id,
+                chat: id.clone(),
+                sender,
+                sender_name: if message.from_me {
+                    None
                 } else {
-                    if live_location_changed {
-                        self.emit_message(&id, &row.id);
-                    }
-                    self.retire_local_call_twins(&row);
-                    if existed {
-                        repeated += 1;
-                    } else {
-                        added += 1;
-                    }
-                    if before.as_ref() != Some(&row.content)
-                        && (before.as_ref().is_some_and(Content::listable)
-                            || row.content.listable())
-                    {
-                        media_changed_in.insert(id.clone());
-                    }
+                    message.push_name
+                },
+                from_me: message.from_me,
+                timestamp: message.timestamp,
+                content: message.content,
+                status: message.status,
+                delivered_at,
+                read_at,
+                quoted,
+                reactions,
+                history_order: message.history_order,
+                edited: message.edited,
+                mentions,
+                forwarded: message.forwarded,
+                thumbnail: message.thumbnail,
+            };
+            let mut poll_history_received = false;
+            let raw = ensure_message_secret(message.raw, secrets.get(&row.id).map(Vec::as_slice));
+            if matches!(row.content, Content::Poll { .. }) {
+                if let Ok(raw) = wa::Message::decode_from_slice(&raw) {
+                    self.remember_poll(&row, &raw, &poll_creator, message.poll_secret.as_deref());
                 }
-                self.settle_early_events(&id, &row.id);
-                if group {
-                    self.file_history_receipts(&id, &row.id, &message.receipts);
+                poll_history_received = self.history_poll_votes(&row, &message.poll_votes);
+            }
+            // History replays and on-demand chunks can repeat a message the
+            // archive already holds; keep the files it already downloaded.
+            let mut keep_raw = false;
+            let mut existed = false;
+            let mut live_location_changed = false;
+            let existing = self.archive.message(&id, &row.id).ok().flatten();
+            // What the info panel listed for this row before it lands,
+            // so a change to its pictures, documents or links is told.
+            let before = existing.as_ref().map(|existing| existing.content.clone());
+            if let Some(existing) = existing {
+                existed = true;
+                row.content.keep_local_paths(&existing.content);
+                keep_live_location_notice(&mut row.content, &existing);
+                // A repeated original must not undo a later edit or revoke.
+                if (existing.edited && !row.edited) || matches!(existing.content, Content::Revoked)
+                {
+                    row.content = existing.content.clone();
+                    row.edited = existing.edited;
+                    row.quoted = existing.quoted;
+                    row.mentions = existing.mentions;
+                    row.thumbnail = existing.thumbnail.clone();
+                    keep_raw = true;
                 }
-                if matches!(row.content, Content::Poll { .. }) {
-                    if poll_history_received {
-                        let _ = self.archive.mark_poll_history(&id, &row.id);
-                        self.poll_history.finish(&id, &row.id);
-                    }
+                live_location_changed = matches!(
+                    (&existing.content, &row.content),
+                    (Content::LiveLocation { .. }, Content::LiveLocation { .. })
+                ) && existing.content != row.content;
+            }
+            if let Err(error) = self
+                .archive
+                .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
+            {
+                failed += 1;
+                log::warn!("could not store a history message: {error}");
+            } else {
+                if live_location_changed {
                     self.emit_message(&id, &row.id);
                 }
-            }
-            if !metadata && self.pending_older.contains_key(&id) {
-                log::info!(
-                    "history reload: archived added={added}, repeated={repeated}, removed={removed}, failed={failed}"
-                );
-            }
-            for reaction in chat.reactions {
-                self.apply_history_reaction(&id, reaction, &secrets);
-            }
-            let had_pins = !chat.pins.is_empty();
-            for pin in chat.pins {
-                let written = if pin.pinned {
-                    let secs = if pin.duration_secs == 0 {
-                        PIN_SECS
-                    } else {
-                        i64::from(pin.duration_secs)
-                    };
-                    self.archive.pin_from(
-                        &id,
-                        &pin.target,
-                        pin.at,
-                        pin.at.saturating_add(secs),
-                        &pin.pinner,
-                    )
+                self.retire_local_call_twins(&row);
+                if existed {
+                    repeated += 1;
                 } else {
-                    self.archive
-                        .set_pin(&id, &pin.target, false, pin.at, 0, &pin.pinner)
-                };
-                if let Err(error) = written {
-                    log::warn!("could not store a history pin: {error}");
+                    added += 1;
                 }
-            }
-            if had_pins {
-                self.emit_pins(&id);
-            }
-            for update in chat.poll_updates {
-                let sender = if update.from_me {
-                    self.me()
-                } else {
-                    update.sender.unwrap_or_else(|| chat.id.clone())
-                };
-                self.ingest_poll_vote(
-                    &id,
-                    &update.id,
-                    &sender,
-                    update.from_me,
-                    update.timestamp,
-                    &update.update,
-                );
-            }
-            for revoked in chat.revoked {
-                if self
-                    .archive
-                    .message(&id, &revoked)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|old| old.content.listable())
+                if before.as_ref() != Some(&row.content)
+                    && (before.as_ref().is_some_and(Content::listable) || row.content.listable())
                 {
                     media_changed_in.insert(id.clone());
                 }
-                let _ = self
-                    .archive
-                    .set_content(&id, &revoked, &Content::Revoked, false);
             }
-            for clip in chat.clips {
-                let sender = if clip.from_me {
-                    self.me()
-                } else {
-                    clip.sender
-                        .as_deref()
-                        .map(|sender| self.canonical_str(sender))
-                        .unwrap_or_else(|| id.clone())
-                };
-                self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw);
+            self.settle_early_events(&id, &row.id);
+            if group {
+                self.file_history_receipts(&id, &row.id, &message.receipts);
             }
-            if (metadata || existing.is_none())
-                && let Some(snapshot_unread) = chat.unread
-            {
-                if snapshot_unread == 0 {
-                    let _ = self.archive.mark_read_through(&id, chat.last_activity);
-                } else {
-                    let unread = self
-                        .archive
-                        .history_unread(&id, snapshot_unread)
-                        .unwrap_or(0);
-                    let unread = existing
-                        .as_ref()
-                        .map_or(unread, |existing| existing.unread.max(unread));
-                    let _ = self.archive.set_unread(&id, unread);
+            if matches!(row.content, Content::Poll { .. }) {
+                if poll_history_received {
+                    let _ = self.archive.mark_poll_history(&id, &row.id);
+                    self.poll_history.finish(&id, &row.id);
                 }
+                self.emit_message(&id, &row.id);
             }
-            if (metadata || existing.is_none())
-                && let Some(marked) = chat.marked_unread
-            {
-                let _ = self.archive.history_marked_unread(&id, marked);
-            }
-            if chat.more_on_phone == Some(false) {
-                // The phone holds nothing older (or will not share it): later
-                // sessions skip asking instead of waiting out a silent phone.
-                let _ = self.archive.set_history_start(&id);
-            }
-            filed.push((id, count, chat.more_on_phone));
         }
+        if !metadata && self.pending_older.contains_key(&id) {
+            log::info!(
+                "history reload: archived added={added}, repeated={repeated}, removed={removed}, failed={failed}"
+            );
+        }
+        for reaction in chat.reactions {
+            self.apply_history_reaction(&id, reaction, &secrets);
+        }
+        let had_pins = !chat.pins.is_empty();
+        for pin in chat.pins {
+            let written = if pin.pinned {
+                let secs = if pin.duration_secs == 0 {
+                    PIN_SECS
+                } else {
+                    i64::from(pin.duration_secs)
+                };
+                self.archive.pin_from(
+                    &id,
+                    &pin.target,
+                    pin.at,
+                    pin.at.saturating_add(secs),
+                    &pin.pinner,
+                )
+            } else {
+                self.archive
+                    .set_pin(&id, &pin.target, false, pin.at, 0, &pin.pinner)
+            };
+            if let Err(error) = written {
+                log::warn!("could not store a history pin: {error}");
+            }
+        }
+        if had_pins {
+            self.emit_pins(&id);
+        }
+        for update in chat.poll_updates {
+            let sender = if update.from_me {
+                self.me()
+            } else {
+                update.sender.unwrap_or_else(|| chat.id.clone())
+            };
+            self.ingest_poll_vote(
+                &id,
+                &update.id,
+                &sender,
+                update.from_me,
+                update.timestamp,
+                &update.update,
+            );
+        }
+        for revoked in chat.revoked {
+            if self
+                .archive
+                .message(&id, &revoked)
+                .ok()
+                .flatten()
+                .is_some_and(|old| old.content.listable())
+            {
+                media_changed_in.insert(id.clone());
+            }
+            let _ = self
+                .archive
+                .set_content(&id, &revoked, &Content::Revoked, false);
+        }
+        for clip in chat.clips {
+            let sender = if clip.from_me {
+                self.me()
+            } else {
+                clip.sender
+                    .as_deref()
+                    .map(|sender| self.canonical_str(sender))
+                    .unwrap_or_else(|| id.clone())
+            };
+            self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw);
+        }
+        if (metadata || existing.is_none())
+            && let Some(snapshot_unread) = chat.unread
+        {
+            if snapshot_unread == 0 {
+                let _ = self.archive.mark_read_through(&id, chat.last_activity);
+            } else {
+                let unread = self
+                    .archive
+                    .history_unread(&id, snapshot_unread)
+                    .unwrap_or(0);
+                let unread = existing
+                    .as_ref()
+                    .map_or(unread, |existing| existing.unread.max(unread));
+                let _ = self.archive.set_unread(&id, unread);
+            }
+        }
+        if (metadata || existing.is_none())
+            && let Some(marked) = chat.marked_unread
+        {
+            let _ = self.archive.history_marked_unread(&id, marked);
+        }
+        if chat.more_on_phone == Some(false) {
+            // The phone holds nothing older (or will not share it): later
+            // sessions skip asking instead of waiting out a silent phone.
+            let _ = self.archive.set_history_start(&id);
+        }
+        Some((id, count, chat.more_on_phone))
+    }
+
+    /// Tells the app about a filed history chunk's chats, once per chunk.
+    fn finish_history(
+        &mut self,
+        filed: &[(ChatId, usize, Option<bool>)],
+        media_changed_in: HashSet<ChatId>,
+    ) {
         self.pump_poll_votes();
         self.pump_poll_history();
-        for (id, _, _) in &filed {
+        for (id, _, _) in filed {
             self.emit_chat(id);
         }
         for chat in media_changed_in {
             self.emit(Event::ChatSharedChanged(chat));
         }
-        filed
     }
 
     /// Completes the requests an on-demand history chunk answers. `session`
@@ -9173,6 +9288,12 @@ impl Worker {
     /// no size limit; every download's deadline grows with its size.
     fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>, manual: bool) {
         if !self.downloads.insert((chat.clone(), id.clone(), card)) {
+            // A click on an automatic download still waiting for its turn
+            // starts it now.
+            if manual && let Some(turn) = self.download_turns.get(&(chat.clone(), id.clone(), card))
+            {
+                turn.notify_one();
+            }
             // A click while only the picker is fetching it: the picker's
             // download skips the re-upload, so remember to ask if it fails.
             let key = (chat, id);
@@ -9343,7 +9464,28 @@ impl Worker {
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
+        // Automatic downloads take turns, so a screenful of pictures does not
+        // start dozens of transfers at once. The reader's clicks, and the
+        // picker's stickers, which it paces itself, do not wait.
+        let key = (chat.clone(), id.clone());
+        let turn = (!manual
+            && !self.sticker_downloads.contains(&key)
+            && !self.sticker_retried.contains(&key))
+        .then(|| {
+            let skip = Arc::new(tokio::sync::Notify::new());
+            self.download_turns
+                .insert((chat.clone(), id.clone(), card), skip.clone());
+            (self.download_gate.clone(), skip)
+        });
         tokio::spawn(async move {
+            // The wait for a turn is not counted against the deadline.
+            let _turn = match turn {
+                Some((gate, skip)) => tokio::select! {
+                    permit = gate.acquire_owned() => permit.ok(),
+                    () = skip.notified() => None,
+                },
+                None => None,
+            };
             let cache_id = card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
             let named = file_name
                 .as_deref()
@@ -9477,6 +9619,8 @@ impl Worker {
             let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
         }
         self.downloads.remove(&(chat.clone(), id.clone(), card));
+        self.download_turns
+            .remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
         let for_picker = self.sticker_downloads.remove(&key);
         let clicked = self.sticker_clicked.remove(&key);
@@ -9735,6 +9879,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
+        let gate = self.avatar_gate.clone();
         tokio::spawn(async move {
             let fetched = async {
                 let mut picture = None;
@@ -9777,7 +9922,7 @@ impl Worker {
                         Ok(None)
                     };
                 };
-                download_avatar(picture.url, path).await.map(Some)
+                download_avatar(&gate, picture.url, path).await.map(Some)
             }
             .await;
             match fetched {
@@ -12099,8 +12244,14 @@ fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, Stri
     Ok(bytes)
 }
 
-/// Downloads a picture through the proxy settings into the avatar cache.
-async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> {
+/// Downloads a picture through the proxy settings into the avatar cache,
+/// once `gate` gives it a turn or it has waited `AVATAR_PATIENCE`.
+async fn download_avatar(
+    gate: &tokio::sync::Semaphore,
+    url: String,
+    path: PathBuf,
+) -> Result<PathBuf, String> {
+    let turn = tokio::time::timeout(AVATAR_PATIENCE, gate.acquire()).await;
     let bytes = tokio::task::spawn_blocking(move || {
         crate::proxy::agent()
             .get(&url)
@@ -12110,6 +12261,7 @@ async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> 
     })
     .await
     .map_err(|error| error.to_string())??;
+    drop(turn);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -12898,6 +13050,54 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
         };
         chats.push(parse_conversation(conversation));
     }
+    Ok(ParsedHistory {
+        chats,
+        ..history_remainder(stream)?
+    })
+}
+
+/// Reads what a history chunk holds besides its chats, with each chat's
+/// privacy id and phone number, keeping no chat: the first pass over a chunk
+/// filed one chat at a time. It fails wherever `parse_history` would.
+fn parse_history_prelude(
+    compressed: &[u8],
+) -> Result<(ParsedHistory, Vec<(String, String)>), String> {
+    let mut stream = HistorySyncStream::new(compressed, MAX_DECOMPRESSED);
+    // One conversation decoded at a time, its allocations reused.
+    let mut conversation = wa::Conversation::default();
+    let mut pairs = Vec::new();
+    while stream
+        .next_conversation_into(&mut conversation)
+        .map_err(|error| error.to_string())?
+    {
+        if let (Some(lid), Some(pn)) = (conversation.lid_jid.take(), conversation.pn_jid.take()) {
+            pairs.push((lid, pn));
+        }
+    }
+    Ok((history_remainder(stream)?, pairs))
+}
+
+/// Parses a history chunk's chats one at a time into `chats`: the second
+/// pass over a chunk filed one chat at a time. Stops once nothing listens.
+fn stream_history_chats(compressed: &[u8], chats: &mpsc::Sender<ParsedChat>) -> Result<(), String> {
+    let mut stream = HistorySyncStream::new(compressed, MAX_DECOMPRESSED);
+    while let Some(conversation) = stream
+        .next_conversation()
+        .map_err(|error| error.to_string())?
+    {
+        if chats
+            .blocking_send(parse_conversation(conversation))
+            .is_err()
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Decodes what a history chunk holds besides its chats, once `stream` has
+/// read them all.
+fn history_remainder(stream: HistorySyncStream<'_>) -> Result<ParsedHistory, String> {
     let remainder = stream.remainder().map_err(|error| error.to_string())?;
     let push_names = remainder
         .pushnames
@@ -12910,11 +13110,23 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
         .filter_map(|entry| Some((entry.lid_jid.clone()?, entry.pn_jid.clone()?)))
         .collect();
     Ok(ParsedHistory {
-        chats,
+        chats: Vec::new(),
         push_names,
         lids,
         stickers: remainder.recent_stickers,
     })
+}
+
+/// Logs an on-demand history chunk's chat. Counts only.
+fn log_history_chat(chat: &ParsedChat) {
+    log::info!(
+        "history reload: parsed entries={}, visible={}, reactions={}, votes={}, counts={:?}",
+        chat.diagnostics.entries,
+        chat.messages.len(),
+        chat.reactions.len(),
+        chat.poll_updates.len(),
+        chat.diagnostics,
+    );
 }
 
 /// Converts supported protocol message content into local display types, retaining quoted source metadata.
@@ -18350,6 +18562,9 @@ mod receipt_tests {
             first_names_recovered: true,
             first_names_recovering: false,
             downloads: HashSet::new(),
+            download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
+            download_turns: HashMap::new(),
+            avatar_gate: Arc::new(tokio::sync::Semaphore::new(AVATAR_DOWNLOADS)),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,
@@ -18767,6 +18982,124 @@ mod receipt_tests {
             });
             proto
         }
+    }
+
+    /// `data` as a zlib stream of stored blocks, which inflates as the
+    /// phone's compressed chunks do.
+    fn stored_zlib(data: &[u8]) -> Vec<u8> {
+        let mut out = vec![0x78, 0x01];
+        let mut blocks = data.chunks(0xffff).peekable();
+        if blocks.peek().is_none() {
+            out.extend([1, 0, 0, 0xff, 0xff]);
+        }
+        while let Some(block) = blocks.next() {
+            out.push(u8::from(blocks.peek().is_none()));
+            let len = u16::try_from(block.len()).unwrap();
+            out.extend(len.to_le_bytes());
+            out.extend((!len).to_le_bytes());
+            out.extend(block);
+        }
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in data {
+            a = (a + u32::from(byte)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        out.extend(((b << 16) | a).to_be_bytes());
+        out
+    }
+
+    #[tokio::test]
+    async fn a_chunk_filed_chat_by_chat_matches_one_filed_whole() {
+        const GROUP: &str = "fixture@g.us";
+        let text = |body: &str| {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some(body.into());
+            proto
+        };
+        let mut sync = wa::HistorySync::default();
+        sync.sync_type = wa::history_sync::HistorySyncType::INITIAL_BOOTSTRAP;
+        sync.conversations = vec![
+            {
+                let mut proto = wa::Conversation::default();
+                proto.id = PEER_LID.into();
+                proto.messages = vec![history_entry(
+                    PEER_LID,
+                    "early",
+                    false,
+                    None,
+                    text("hi"),
+                    Vec::new(),
+                    None,
+                )];
+                proto
+            },
+            {
+                let mut proto = wa::Conversation::default();
+                proto.id = GROUP.into();
+                proto.messages = vec![history_entry(
+                    GROUP,
+                    "group",
+                    false,
+                    Some(PEER_LID),
+                    text("hello"),
+                    Vec::new(),
+                    None,
+                )];
+                proto
+            },
+            // The chunk maps the privacy id only after the chats using it.
+            {
+                let mut proto = wa::Conversation::default();
+                proto.id = PEER.into();
+                proto.lid_jid = Some(PEER_LID.into());
+                proto.pn_jid = Some(PEER.into());
+                proto
+            },
+        ];
+        sync.pushnames = vec![{
+            let mut proto = wa::Pushname::default();
+            proto.id = Some(PEER.into());
+            proto.pushname = Some("Keshav".into());
+            proto
+        }];
+        let blob = stored_zlib(&sync.encode_to_vec());
+        let (mut whole, _events, _inbox, _wa) = worker();
+        let expected = whole.apply_history(parse_history(&blob).unwrap(), true);
+        let (mut streamed, _events, _inbox, _wa) = worker();
+        let filed = streamed.stream_history(blob.clone(), false).await.unwrap();
+        assert_eq!(filed, expected);
+        let rows = |worker: &Worker, chat: &str| {
+            worker
+                .archive
+                .messages(chat, None, 50)
+                .unwrap()
+                .into_iter()
+                .map(|message| (message.id, message.sender))
+                .collect::<Vec<_>>()
+        };
+        for chat in [PEER, GROUP] {
+            assert_eq!(rows(&streamed, chat), rows(&whole, chat));
+        }
+        assert_eq!(
+            rows(&streamed, PEER),
+            [("early".to_owned(), PEER.to_owned())]
+        );
+        assert_eq!(
+            rows(&streamed, GROUP),
+            [("group".to_owned(), PEER.to_owned())]
+        );
+        assert_eq!(
+            streamed
+                .contacts
+                .get(PEER)
+                .and_then(|contact| contact.push_name.as_deref()),
+            Some("Keshav")
+        );
+        // A chunk cut short files none of its chats, even those before the cut.
+        let (mut broken, _events, _inbox, _wa) = worker();
+        let cut = blob[..blob.len() / 2].to_vec();
+        assert!(broken.stream_history(cut, false).await.is_none());
+        assert!(rows(&broken, PEER).is_empty());
     }
 
     /// A pin for everyone of the message "target".
