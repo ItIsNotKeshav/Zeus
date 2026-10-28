@@ -70,6 +70,8 @@ use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
 /// Delay after the last history chunk before sync is complete.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
+/// Quiet time after which the archive hands its page cache back.
+const ARCHIVE_IDLE_RELEASE: Duration = Duration::from_secs(60);
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
 /// Phone history-request timeout.
@@ -798,6 +800,8 @@ pub async fn run(
         qr: None,
         syncing: false,
         sync_deadline: None,
+        last_busy: Instant::now(),
+        archive_released: false,
         group_info_requested: HashSet::new(),
         leave_generation: HashMap::new(),
         subject_generation: HashMap::new(),
@@ -878,6 +882,8 @@ pub async fn run(
     // file never is: a favourite fetched when the process died would
     // otherwise stay there forever, this folder having no other sweep.
     discard_attachment_staging(&worker.dirs.saved_sticker_dir());
+    // The backfills and the media walk above read the archive end to end.
+    worker.archive.release_memory();
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -890,6 +896,7 @@ pub async fn run(
             .call
             .as_ref()
             .and_then(|runtime| runtime.frames.clone());
+        let mut ticked = false;
         tokio::select! {
             command = inbox.recv() => {
                 match command {
@@ -941,6 +948,7 @@ pub async fn run(
                 worker.emit_chats();
             }
             _ = tick.tick() => {
+                ticked = true;
                 worker.watch_link();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
@@ -957,9 +965,14 @@ pub async fn run(
                 worker.pump_prefetch();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
+                worker.release_idle_archive();
             }
         }
         worker.flush_chats();
+        if !ticked {
+            worker.last_busy = Instant::now();
+            worker.archive_released = false;
+        }
     }
     worker.shutdown_call().await;
     worker.stop_bot().await;
@@ -1212,6 +1225,10 @@ struct Worker {
     qr: Option<String>,
     syncing: bool,
     sync_deadline: Option<Instant>,
+    /// The last turn that was not the periodic tick.
+    last_busy: Instant,
+    /// The archive's page cache was released since `last_busy`.
+    archive_released: bool,
     /// Groups queued or already requested. Queries are rate-limited.
     group_info_requested: HashSet<String>,
     /// Pending group metadata queue.
@@ -1923,6 +1940,16 @@ impl Worker {
                 true
             }
         }
+    }
+
+    /// Lets the archive drop its page cache once the worker has done nothing
+    /// but tick for a while. Rides the existing tick, so it wakes nothing.
+    fn release_idle_archive(&mut self) {
+        if self.archive_released || self.last_busy.elapsed() < ARCHIVE_IDLE_RELEASE {
+            return;
+        }
+        self.archive_released = true;
+        self.archive.release_memory();
     }
 
     /// Sends the chat list when a mapping learned this turn changed it.
@@ -9828,13 +9855,16 @@ impl Worker {
         from: Option<i64>,
         until: Option<i64>,
     ) {
-        match self.archive.search_chat_messages(
+        let found = self.archive.search_chat_messages(
             &chat,
             &query,
             from,
             until,
             Self::CHAT_SEARCH_LIMIT + 1,
-        ) {
+        );
+        // Same as the global search: the scan leaves cold pages behind.
+        self.archive.release_memory();
+        match found {
             Ok(mut messages) => {
                 // The extra row is not shown: it is how the pane learns the
                 // archive held more, so it can say the list was cut.
@@ -9858,7 +9888,11 @@ impl Worker {
 
     /// Loads archived messages needed to scroll to a quote.
     fn search_messages(&mut self, query: String) {
-        match self.archive.search_messages(&query, 50) {
+        let found = self.archive.search_messages(&query, 50);
+        // A search reads the whole table through the page cache, which then
+        // holds pages nothing will ask for again.
+        self.archive.release_memory();
+        match found {
             Ok(mut messages) => {
                 for message in &mut messages {
                     self.polish(message);
@@ -18267,6 +18301,8 @@ mod receipt_tests {
             qr: None,
             syncing: false,
             sync_deadline: None,
+            last_busy: Instant::now(),
+            archive_released: false,
             group_info_requested: HashSet::new(),
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),

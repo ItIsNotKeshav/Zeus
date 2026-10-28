@@ -437,6 +437,14 @@ impl Archive {
         Self::prepare(Connection::open_in_memory()?)
     }
 
+    /// Hands the connection's page cache back to the allocator. SQLite keeps
+    /// the pages of the last big read for good otherwise; the next query
+    /// reads what it needs again. Called after a scan and when idle, never
+    /// per message.
+    pub fn release_memory(&self) {
+        let _ = self.connection.release_memory();
+    }
+
     fn prepare(connection: Connection) -> Result<Self> {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
