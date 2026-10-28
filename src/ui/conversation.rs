@@ -14546,10 +14546,11 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                                     ((*width as f32 * scale) as u32).max(1),
                                     ((*height as f32 * scale) as u32).max(1),
                                 );
-                                match image::RgbaImage::from_raw(
+                                // Borrowed: a copy of a 4K bitmap is 33 MB.
+                                match image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(
                                     *width as u32,
                                     *height as u32,
-                                    rgba.to_vec(),
+                                    rgba.as_slice(),
                                 ) {
                                     Some(full) => {
                                         let small = image::imageops::resize(
