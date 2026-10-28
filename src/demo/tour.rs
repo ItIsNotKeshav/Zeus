@@ -1783,7 +1783,11 @@ mod tests {
             click(&mut app, &mut tour, &ctx, "Send poll");
             assert!(app.dialog.is_none());
             assert!(!app.poll_creating);
-            for _ in 0..3 {
+            // The new poll springs in and the list glides up to meet it, and
+            // only the picture moves, so labels read off it sit away from
+            // their controls until both settle. Each frame is 1/60 s; the
+            // spring takes half a second.
+            for _ in 0..40 {
                 frame(&mut app, &mut tour, &ctx, Vec::new());
             }
             click(&mut app, &mut tour, &ctx, "Pizza");
