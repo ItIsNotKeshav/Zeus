@@ -10,6 +10,11 @@ pub mod controls;
 pub mod conversation;
 pub mod dialogs;
 pub(crate) mod focus;
+#[cfg(not(target_os = "macos"))]
+mod glass;
+/// macOS draws through wgpu's Metal backend, so its frost is a wgpu port.
+#[cfg(target_os = "macos")]
+#[path = "glass_metal.rs"]
 mod glass;
 pub mod image_editor;
 pub mod image_preview;

@@ -37,8 +37,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 log = "0.4"
 directories = "6"
-# UI framework. glow avoids the larger wgpu dependency.
-eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "glow", "default_fonts", "links", "wayland", "x11", "persistence"] }
+# UI framework. The renderer is chosen per platform below: glow (OpenGL)
+# avoids the larger wgpu dependency on Linux and Windows, and macOS draws
+# through wgpu's Metal backend.
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "links", "wayland", "x11", "persistence"] }
 egui = "0.36.2"
 egui_extras = { version = "0.36.2", features = ["file", "image", "svg", "webp", "gif"] }
 # Reads the colour emoji font's bitmaps for the demo tour's GIF fixtures. Keep
@@ -203,6 +205,10 @@ fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0" 
 fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0", features = ["reqwest"] }
 
 [patch.crates-io]
+# RathnamS089/egui wgpu-backdrop: crmne/egui apps-0.36.2 plus egui-wgpu paint
+# callbacks that read what was drawn under them (CallbackTrait::reads_backdrop),
+# which the frosted glass blurs on Metal (src/ui/glass_metal.rs). Go back to
+# crmne/egui once it takes that commit.
 # crmne/egui apps-0.36.2, shared with Spotifast, RekordFlash and TonePush: egui
 # 0.36.2 with right-to-left shaping and glyph clusters from crmne/zapfast#144
 # and digits shaped left to right in text without right-to-left letters (#184)
@@ -218,16 +224,16 @@ fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.0"
 # no longer shrinks each time it reopens (#293, emilk/egui#8656).
 # Every egui crate comes from the same revision so they share one emath and
 # epaint. Drop this once egui releases all three.
-ecolor = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-eframe = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui-wgpu = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui-winit = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui_extras = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui_glow = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-emath = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-epaint = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+ecolor = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+eframe = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+egui = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+egui-wgpu = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+egui-winit = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+egui_extras = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+egui_glow = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+emath = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+epaint = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
+epaint_default_fonts = { git = "https://github.com/RathnamS089/egui", rev = "f594e612afdc3eada30f72d8f66aeebc3f362aae" }
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
@@ -263,7 +269,17 @@ raw-window-handle = "0.6"
 # winit, the fork in [patch.crates-io].
 winit = { version = "0.30", default-features = false, features = ["wayland-csd-adwaita"] }
 
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["glow"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
+# Metal, through wgpu, which native_options picks on macOS. Apple's OpenGL
+# runs on a translation layer over Metal that ignores the swap interval, so
+# frames were not held to the display's refresh. glow stays compiled in,
+# since fastframe-shell and fastframe-titlebar ask eframe for it.
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu"] }
+# Lays out the frosted glass's uniforms for wgpu (src/ui/glass_metal.rs).
+bytemuck = { version = "1", features = ["derive"] }
 apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
 # The application menu bar, built with tray-icon's muda at the version
 # fastframe-tray uses.
