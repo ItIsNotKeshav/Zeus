@@ -40,6 +40,8 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    // The chat's glass this pass shares a sheet of its own.
+    glass::new_sheet();
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,

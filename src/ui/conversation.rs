@@ -89,7 +89,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 let frosted = bar.with_max_y(bar.bottom() + HEADER_TAIL);
                 let ease = HEADER_TAIL + bar.height() * HEADER_EASE;
                 ui.painter()
-                    .set(glass, super::glass::shape(frosted, ease, radius));
+                    .set(glass, super::glass::sheet_shape(frosted, ease, radius));
                 ui.painter().set(
                     veil,
                     header_veil(
@@ -123,8 +123,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 |ui| {
                     let glass = ui.painter().add(egui::Shape::Noop);
                     pin_banner(app, ui, &chat, true);
-                    ui.painter()
-                        .set(glass, super::glass::rounded(rect, PIN_ROW_HEIGHT / 2.0));
+                    ui.painter().set(
+                        glass,
+                        super::glass::sheet_rounded(rect, PIN_ROW_HEIGHT / 2.0),
+                    );
                 },
             );
             rect.bottom() + PIN_FLOAT_GAP / 2.0
@@ -2150,7 +2152,7 @@ fn composer_glass<R>(
     if palette.vibrant() {
         ui.painter().set(
             glass,
-            super::glass::rounded(shown.response.rect, f32::from(COMPOSER_RADIUS)),
+            super::glass::sheet_rounded(shown.response.rect, f32::from(COMPOSER_RADIUS)),
         );
     }
     shown
@@ -3861,8 +3863,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         let rect = output.inner_rect;
         let center = pos2(rect.right() - 34.0, rect.bottom() - over - 34.0);
         let button = Rect::from_center_size(center, Vec2::splat(40.0 * (0.7 + 0.3 * appear)));
+        // On a layer above the messages, as the header and composer are,
+        // so its glass joins theirs on the sheet (see [`super::glass`]).
         let mut child = ui.new_child(
             egui::UiBuilder::new()
+                .layer_id(egui::LayerId::new(
+                    egui::Order::Middle,
+                    ui.id().with("to-bottom-layer"),
+                ))
                 .max_rect(button)
                 .layout(Layout::centered_and_justified(egui::Direction::LeftToRight)),
         );
@@ -3879,7 +3887,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .as_shape(button, CornerRadius::same(20)),
         );
         // Frosted over the messages it floats on; solid while Blur is off.
-        child.painter().add(super::glass::rounded(button, 20.0));
+        child
+            .painter()
+            .add(super::glass::sheet_rounded(button, 20.0));
         if theme::circle_button(
             &mut child,
             Icon::ArrowDown,
@@ -3893,9 +3903,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         {
             app.actions.push(Action::ScrollToBottom);
         }
+        // On the button's layer, so the button does not cover it.
         if unread > 0 {
             widgets::badge(
-                ui,
+                &child,
                 &palette,
                 pos2(center.x + 14.0, center.y - 16.0),
                 unread,
@@ -8749,9 +8760,9 @@ fn album_download_button(
     let disc = Rect::from_center_size(button.center(), button.size() * scale);
     let painter = ui.painter();
     let alpha = |value: f32| (value * appear).round() as u8;
-    // Frosted over the pictures it floats on, as the other floating controls
-    // are; a darker tint stands in while Blur is off.
-    painter.add(super::glass::rounded(disc, disc.width() / 2.0));
+    // A tint over the pictures it floats on, not a blur: it is drawn among
+    // the messages, and a frost of its own there would cost a frame two
+    // more trips out of the window's framebuffer (crmne/zapfast#55).
     let tint = 170.0 * crate::backdrop::tinted(0.5);
     painter.circle_filled(
         disc.center(),
