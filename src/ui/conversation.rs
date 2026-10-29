@@ -26,6 +26,9 @@ use super::widgets;
 
 /// Group-message avatar size.
 const SENDER_AVATAR: f32 = 28.0;
+/// Below this width a pane of a split drops the header's call buttons into
+/// its menu.
+const SPLIT_COMPACT: f32 = 520.0;
 const BODY_SIZE: f32 = widgets::MESSAGE_TEXT_SIZE;
 /// Extra space above the first message of a run from one side. With the
 /// list's 3 points between rows, runs stand 8 points apart and a run's
@@ -60,11 +63,45 @@ const NOT_SENT: &str = "Not sent";
 const NOT_SENT_HINT: &str =
     "This message could not be sent, and Zeus will not retry it. Send it again yourself.";
 
+/// How a pane of the chat panel takes part: the one chat of the panel, the
+/// open chat of a split, or the other chat of a split, whose composer is a
+/// quiet field a press anywhere in the pane wakes (it makes the chat the open
+/// one).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Pane {
+    Solo,
+    Active,
+    Passive,
+    /// The pop-out window's transcript.
+    PopOut,
+}
+
+/// The open chat, alone in the chat panel or beside another chat.
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let Some(chat) = app.current_chat().cloned() else {
         empty(app, ui);
         return;
     };
+    let area = ui.max_rect();
+    match super::split::layout(app, ui.ctx(), area) {
+        Some(panes) => super::split::show(app, ui, panes, chat),
+        // The same scope as a pane of a split has, so the chat's scroll
+        // state and everything keyed by the ui survives a split opening or
+        // closing around it.
+        None => show_scoped(app, ui, area, chat, Pane::Solo),
+    }
+}
+
+/// `chat`'s pane drawn in `rect`, in a scope keyed by the chat.
+pub(super) fn show_scoped(app: &mut App, ui: &mut egui::Ui, rect: Rect, chat: Chat, pane: Pane) {
+    let id = ("chat-pane", chat.id.clone());
+    ui.scope_builder(egui::UiBuilder::new().id_salt(id).max_rect(rect), |ui| {
+        ui.set_clip_rect(rect.intersect(ui.clip_rect()));
+        show_pane(app, ui, chat, pane);
+    });
+}
+
+fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
     let radius = if super::narrow(ui.ctx()) {
         0.0
     } else {
@@ -82,7 +119,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 // veil of the chat's colour that keeps the title readable.
                 let glass = ui.painter().add(egui::Shape::Noop);
                 let veil = ui.painter().add(egui::Shape::Noop);
-                header(app, ui, &chat);
+                header(app, ui, &chat, pane);
                 let bar = ui.min_rect();
                 // Strongest at the top, both ease off from within the bar to
                 // a little below it, so where they start never shows.
@@ -145,7 +182,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layer_id(layer)
                     .layout(Layout::bottom_up(Align::Min)),
                 |ui| {
-                    composer(app, ui, &chat);
+                    match pane {
+                        Pane::Passive => quiet_composer(app, ui, &chat),
+                        _ => composer(app, ui, &chat),
+                    }
                     // From a little above the field, or the reply, edit or voice
                     // strip over it, to the bottom, as wide as the chat. Nothing
                     // is blurred under it: the wallpaper and the theme's tint
@@ -173,15 +213,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             theme::MOTION_QUICK,
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
-            messages(app, ui, &chat, bar.height(), over);
+            messages_in(app, ui, &chat, bar.height(), over, pane);
         });
         // A vibrant window is flat, as Messages is: no shadows over the chat.
         return;
     }
-    let header = header(app, ui, &chat);
+    let header = header(app, ui, &chat, pane);
     pin_banner(app, ui, &chat, false);
-    composer(app, ui, &chat);
-    messages(app, ui, &chat, 0.0, 0.0);
+    match pane {
+        Pane::Passive => quiet_composer(app, ui, &chat),
+        _ => composer(app, ui, &chat),
+    }
+    messages_in(app, ui, &chat, 0.0, 0.0, pane);
     // Over the messages, which scroll under the header.
     widgets::paint_shadow_below(
         ui,
@@ -373,6 +416,7 @@ fn pin_cursor_id(chat: &str) -> egui::Id {
 
 fn empty(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
+    super::split::publish_area(ui.ctx(), ui.max_rect(), app);
     let rect = ui.max_rect();
     let center = rect.center() - vec2(0.0, 30.0);
     theme::logo(
@@ -502,7 +546,7 @@ fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
     ])
 }
 
-fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
+fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
     let palette = app.palette;
     let title = app.chat_title(chat);
     // Beside the list or the rail, the header's row sits as far down as the
@@ -514,7 +558,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
     } else {
         (super::chats::HEADER_DROP - super::chats::CARD_GAP) as i8
     };
-    egui::Panel::top("chat-header")
+    egui::Panel::top(ui.id().with("chat-header"))
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -557,14 +601,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                 // More and Search, and Back in a narrow window, and the call
                 // buttons in a one-to-one chat, each on its own glass with
                 // room around it on a vibrant window.
-                let call_buttons = if chat.kind == crate::model::ChatKind::Direct
-                    && app.me.as_deref() != Some(chat.id.as_str())
-                {
+                let can_call = chat.kind == crate::model::ChatKind::Direct
+                    && app.me.as_deref() != Some(chat.id.as_str());
+                // A pane of a split is narrower: the call buttons move into
+                // its menu, and the pane's own close button takes their room.
+                let compact = pane != Pane::Solo && ui.available_width() < SPLIT_COMPACT;
+                let call_buttons = if can_call && !compact {
                     if call_here { 1.0 } else { 2.0 }
                 } else {
                     0.0
                 };
-                let buttons = if narrow { 3.0 } else { 2.0 } + call_buttons;
+                let buttons = if narrow { 3.0 } else { 2.0 }
+                    + call_buttons
+                    + if pane == Pane::Solo { 0.0 } else { 1.0 };
                 let right_controls = if palette.vibrant() {
                     buttons * 36.0 + (buttons - 0.5) * BUTTON_GAP + (BUTTON_GLASS - 30.0)
                 } else {
@@ -731,6 +780,27 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     if palette.vibrant() {
                         ui.add_space(BUTTON_GAP / 2.0);
                     }
+                    // A pane of a split closes on its own: the other fills
+                    // the panel.
+                    if pane != Pane::Solo {
+                        let close_glass = ui.painter().add(egui::Shape::Noop);
+                        let close = theme::icon_button(
+                            ui,
+                            Icon::X,
+                            18.0,
+                            palette.secondary,
+                            palette.text,
+                            &crate::i18n::gettext(app.locale, "Close pane"),
+                        );
+                        if palette.vibrant() {
+                            ui.painter()
+                                .set(close_glass, glass_button(&palette, close.rect));
+                            ui.add_space(BUTTON_GAP);
+                        }
+                        if close.clicked() {
+                            app.actions.push(Action::CloseSplit(chat.id.clone()));
+                        }
+                    }
                     let more_glass = ui.painter().add(egui::Shape::Noop);
                     let more = theme::icon_button(
                         ui,
@@ -744,6 +814,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         ui.painter()
                             .set(more_glass, glass_button(&palette, more.rect));
                     }
+                    let pop_out_label = crate::i18n::gettext(app.locale, "Pop out chat");
+                    let swap_label = crate::i18n::gettext(app.locale, "Swap sides");
+                    let voice_label = crate::i18n::gettext(app.locale, "Voice call");
+                    let video_label = crate::i18n::gettext(app.locale, "Video call");
                     let width = widgets::menu_width(
                         ui,
                         &[
@@ -755,6 +829,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             leave_label.as_ref(),
                             "Copy number",
                             "Close chat",
+                            pop_out_label.as_ref(),
+                            swap_label.as_ref(),
+                            voice_label.as_ref(),
+                            video_label.as_ref(),
                         ],
                         true,
                     );
@@ -832,6 +910,43 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                 && widgets::menu_item(ui, &palette, Some(Icon::Copy), "Copy number")
                             {
                                 app.actions.push(Action::CopyText(format!("+{phone}")));
+                            }
+                            if compact && can_call {
+                                if widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(theme::phone_icon()),
+                                    voice_label.as_ref(),
+                                ) {
+                                    app.actions.push(Action::StartCall(chat.id.clone()));
+                                }
+                                if widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(theme::video_icon()),
+                                    video_label.as_ref(),
+                                ) {
+                                    app.actions.push(Action::StartVideoCall(chat.id.clone()));
+                                }
+                            }
+                            widgets::menu_separator(ui, &palette);
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::PictureInPicture),
+                                pop_out_label.as_ref(),
+                            ) {
+                                app.actions.push(Action::PopOut(chat.id.clone()));
+                            }
+                            if pane != Pane::Solo {
+                                if widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::ArrowLeftRight),
+                                    swap_label.as_ref(),
+                                ) {
+                                    app.actions.push(Action::SwapSplit);
+                                }
                             }
                             if widgets::menu_item(ui, &palette, Some(Icon::X), "Close chat") {
                                 app.actions.push(Action::CloseChat);
@@ -2047,6 +2162,116 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
         .data_mut(|data| data.insert_temp(super::composer_rect_id(), shown.response.rect));
 }
 
+/// The composer of the other pane of a split: a quiet field with what is
+/// drafted there, or "Type a message". It takes nothing itself: a press
+/// anywhere in the pane makes its chat the open one, and the real composer
+/// takes its place with the keyboard.
+fn quiet_composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+    let palette = app.palette;
+    let draft = app.draft_preview(&chat.id);
+    egui::Panel::bottom(ui.id().with("composer"))
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(Color32::TRANSPARENT)
+                .inner_margin(Margin {
+                    left: 8,
+                    right: 8,
+                    top: 12,
+                    bottom: 12,
+                }),
+        )
+        .show(ui, |ui| {
+            if !chat.can_send() {
+                return;
+            }
+            let line_height = ui
+                .painter()
+                .layout_no_wrap("x".to_owned(), theme::regular(BODY_SIZE), palette.text)
+                .size()
+                .y;
+            let line = (line_height + COMPOSER_PADDING)
+                .round()
+                .max(COMPOSER_CONTROL);
+            let pill = composer_glass(ui, &palette, |ui| {
+                let (rect, response) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), line), Sense::hover());
+                let (text, color) = match &draft {
+                    Some(draft) => (
+                        format!("{} {draft}", crate::i18n::gettext(app.locale, "Draft:")),
+                        palette.secondary,
+                    ),
+                    None => (
+                        crate::i18n::gettext(app.locale, "Type a message").into_owned(),
+                        palette.dim,
+                    ),
+                };
+                let inset = f32::from(COMPOSER_RADIUS) * 0.7;
+                let label = widgets::line(
+                    ui,
+                    &text,
+                    theme::regular(BODY_SIZE),
+                    color,
+                    (rect.width() - inset * 2.0).max(0.0),
+                    1,
+                );
+                label.paint(
+                    ui,
+                    pos2(rect.left() + inset, rect.center().y - label.size().y / 2.0),
+                    color,
+                );
+                response
+            });
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(composer_pill_id(), pill.response.rect));
+        });
+}
+
+/// The pop-out window's transcript.
+pub(super) fn pop_out_transcript(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+    messages_in(app, ui, chat, 0.0, 0.0, Pane::PopOut);
+}
+
+/// The pop-out window's reply field: one line, sent with Enter to its own
+/// chat, never touching the open chat's composer.
+pub(super) fn pop_out_composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+    if !chat.can_send() {
+        return;
+    }
+    let palette = app.palette;
+    let hint = crate::i18n::gettext(app.locale, "Type a message").into_owned();
+    egui::Panel::bottom(ui.id().with("pop-out-composer"))
+        .show_separator_line(false)
+        .frame(
+            Frame::new()
+                .fill(palette.panel.to_opaque())
+                .inner_margin(Margin::same(10)),
+        )
+        .show(ui, |ui| {
+            let Some(pop) = app.pop_out.as_mut() else {
+                return;
+            };
+            let field = egui::TextEdit::singleline(&mut pop.text)
+                .hint_text(hint)
+                .desired_width(f32::INFINITY)
+                .margin(Margin::symmetric(12, 8));
+            let response = ui.add(field);
+            if std::mem::take(&mut pop.focus) {
+                response.request_focus();
+            }
+            if response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                let text = std::mem::take(&mut pop.text);
+                response.request_focus();
+                if !text.trim().is_empty() {
+                    app.actions.push(Action::PopOutSend {
+                        chat: chat.id.clone(),
+                        text,
+                    });
+                }
+            }
+        });
+}
+
 /// Corner radius of the composer's rounded field.
 const COMPOSER_RADIUS: u8 = 24;
 /// Padding around the text of a one-line composer row. The row, and the send
@@ -2723,14 +2948,32 @@ fn glide_new_message<R>(
 
 /// The conversation's messages. `under` is how much of the list's top lies
 /// beneath the header, which a vibrant window lays over it.
-fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32) {
+/// The messages of `chat`'s pane. The other pane of a split, and the
+/// pop-out, keep their place away from the app's: it is swapped in around the
+/// drawing.
+fn messages_in(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32, pane: Pane) {
+    match pane {
+        Pane::Passive => app.with_other_view(|app| messages(app, ui, chat, under, over, pane)),
+        Pane::PopOut => app.with_pop_out_view(|app| messages(app, ui, chat, under, over, pane)),
+        Pane::Solo | Pane::Active => messages(app, ui, chat, under, over, pane),
+    }
+}
+
+fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32, pane: Pane) {
     let palette = app.palette;
+    // A scroll gesture stays with the pane it began over; the other pane of
+    // a split is one of its own.
+    let scroll_pane = if matches!(pane, Pane::Passive | Pane::PopOut) {
+        crate::app::ScrollPane::OtherMessages
+    } else {
+        crate::app::ScrollPane::Messages
+    };
     // Taken up front: `names_or` below borrows the rest of `app` for the
     // whole function, so a pending scroll must come out before that.
     let pending_scroll = app.scroll_page.take();
     // A scroll gesture that began over the messages stays with them when
     // the pointer drifts off (#274), taken here for the same reason.
-    let carried = app.scroll_route.take(crate::app::ScrollPane::Messages);
+    let carried = app.scroll_route.take(scroll_pane);
     // An explicit jump (Ctrl+End, or the return-to-bottom button) must reach
     // the bottom even while a message bubble retains keyboard focus.
     let scroll_forced = std::mem::take(&mut app.scroll_to_bottom_forced);
@@ -3104,7 +3347,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     // Rows within a few viewports of the screen are laid out
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
-                    let margin = (viewport.height() * 3.0).max(600.0);
+                    let margin = if matches!(pane, Pane::Passive | Pane::PopOut) {
+                        // Beside the chat being read, which asks the frames.
+                        (viewport.height() * 1.5).max(400.0)
+                    } else {
+                        (viewport.height() * 3.0).max(600.0)
+                    };
                     let last_outgoing = conversation.messages.iter().rposition(|message| {
                         message.from_me && !matches!(message.content, Content::Revoked)
                     });
@@ -3661,8 +3909,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         *color = plain;
     }
     glide_new_message(ui, &chat.id, newest, &output, layer, first_shape);
-    app.scroll_route
-        .place(crate::app::ScrollPane::Messages, output.inner_rect);
+    app.scroll_route.place(scroll_pane, output.inner_rect);
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
     let at_bottom =
         output.state.offset.y + output.inner_rect.height() >= output.content_size.y - 24.0;
