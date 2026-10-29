@@ -3147,6 +3147,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             {
                 app.settings.doodle_intensity = percent / 100.0;
             }
+            // How many doodles there are as a percentage, such as doodle-density-50.
+            part if let Some(percent) = part
+                .strip_prefix("doodle-density-")
+                .and_then(|percent| percent.parse::<f32>().ok()) =>
+            {
+                app.settings.doodle_density = percent / 100.0;
+            }
             // A doodle style by its stored name, such as doodle-style-travel.
             part if let Some(style) = part
                 .strip_prefix("doodle-style-")
@@ -17457,6 +17464,30 @@ mod bubble_detail_tests {
             footer.top() >= picture.bottom(),
             "with a caption the time stays below the picture ({footer:?}, {picture:?})"
         );
+    }
+
+    /// The Zeus look shows a message's time under its bubble when it is
+    /// clicked. A picture without a caption has it on its corner already, so
+    /// that line is left out for it, but not for text.
+    #[test]
+    fn a_picture_with_its_time_on_it_shows_no_second_time_below() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("photos,nothing"));
+        let chat = SAMPLES[0].id;
+        let ids = ["photos-out", "photos-forwarded-out"];
+        for id in ids {
+            let bubble = crate::ui::conversation::bubble_id(chat, id);
+            ctx.data_mut(|data| data.insert_temp(bubble.with("metadata-visible"), true));
+        }
+        frames(&mut app, &ctx, egui::vec2(1180.0, 1400.0));
+        let below = |id: &str| {
+            let bubble = crate::ui::conversation::bubble_id(chat, id);
+            ctx.read_response(bubble.with("metadata-row")).is_some()
+        };
+        assert!(!below("photos-out"), "the picture's time is on the picture");
+        assert!(below("photos-forwarded-out"), "text shows its time below");
     }
 
     /// A voice message carries its time and ticks on the duration's line,

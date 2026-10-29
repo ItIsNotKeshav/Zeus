@@ -12,7 +12,9 @@ use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{DOODLE_INTENSITY, DoodleColor, DoodleStyle, Settings, WallpaperColor};
+use crate::settings::{
+    DOODLE_DENSITY, DOODLE_INTENSITY, DoodleColor, DoodleStyle, Settings, WallpaperColor,
+};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -659,6 +661,7 @@ fn sections(app: &App) -> Vec<Section> {
         vec![
             translated(locale, "Doodles"),
             translated(locale, "Wallpaper"),
+            translated(locale, "Doodle density"),
         ],
         doodle_cards,
     );
@@ -2686,7 +2689,12 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         ),
     );
     ui.add_space(2.0);
-    let look = app.wallpaper();
+    // Each card shows its whole tile, whatever the density: thinning every
+    // style at every step of the slider would draw seven tiles for each.
+    let look = wallpaper::Look {
+        density: 1.0,
+        ..app.wallpaper()
+    };
     let shown = app.settings.show_wallpaper;
     let current = app.settings.doodle_style;
     let width = ui.available_width();
@@ -2855,33 +2863,67 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
         .settings
         .doodle_intensity
         .clamp(*range.start(), *range.end());
+    // The slider shows a share of the strongest doodles, not a multiple of
+    // the default, so it ends at 100%.
+    if let Some(percent) = doodle_slider(
+        ui,
+        app,
+        "Doodle intensity",
+        intensity / range.end(),
+        range.start() / range.end()..=1.0,
+    ) {
+        app.actions
+            .push(Action::SetDoodleIntensity(percent * range.end()));
+    }
+    ui.add_space(6.0);
+    let range = DOODLE_DENSITY;
+    let density = app
+        .settings
+        .doodle_density
+        .clamp(*range.start(), *range.end());
+    // How many doodles there are against the default tile, which is 100%.
+    if let Some(density) = doodle_slider(ui, app, "Doodle density", density, range) {
+        app.actions.push(Action::SetDoodleDensity(density));
+    }
+}
+
+/// How wide a doodle slider's name is, so that its sliders line up.
+const DOODLE_SLIDER_LABEL: f32 = 128.0;
+
+/// One of the doodle sliders: its name, a Glass slider and the value as a
+/// percentage. `value` is a multiple of 1.0, and what the slider moves to is
+/// returned.
+fn doodle_slider(
+    ui: &mut egui::Ui,
+    app: &App,
+    label: &'static str,
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> Option<f32> {
+    let palette = app.palette;
+    let mut moved = None;
     ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::gettext(app.locale, "Doodle intensity").into_owned(),
-            theme::medium(13.5),
-            palette.text,
-        );
+        ui.scope(|ui| {
+            ui.set_min_width(DOODLE_SLIDER_LABEL);
+            theme::text(
+                ui,
+                crate::i18n::gettext(app.locale, label).into_owned(),
+                theme::medium(13.5),
+                palette.text,
+            );
+        });
         ui.add_space(6.0);
-        // The slider shows a share of the strongest doodles, not a multiple
-        // of the default, so it ends at 100%.
-        let mut percent = intensity / range.end();
-        let value = format!("{:.0}%", percent * 100.0);
+        let mut value = value;
+        let shown = format!("{:.0}%", value * 100.0);
         let value_width = 48.0;
         let width = ui.available_width() - value_width - ui.spacing().item_spacing.x;
-        let slider = widgets::glass_slider(
-            ui,
-            &palette,
-            &mut percent,
-            range.start() / range.end()..=1.0,
-            width,
-        );
-        theme::text(ui, value, theme::medium(13.0), palette.secondary);
+        let slider = widgets::glass_slider(ui, &palette, &mut value, range, width);
+        theme::text(ui, shown, theme::medium(13.0), palette.secondary);
         if slider.changed() {
-            app.actions
-                .push(Action::SetDoodleIntensity(percent * range.end()));
+            moved = Some(value);
         }
     });
+    moved
 }
 
 /// Least width of a doodle tile before the grid drops a column.
@@ -3473,10 +3515,13 @@ fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
     let clear = crate::i18n::gettext(app.locale, "Clear");
     let solid = crate::i18n::gettext(app.locale, "Solid");
     ui.add_enabled_ui(!reduced, |ui| {
-        ui.horizontal(|ui| {
+        // A setting's control sits in a right-to-left row, which lays its
+        // first item last: Solid goes first, so Clear ends up on the left,
+        // where the slider's low end is.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             theme::text(
                 ui,
-                clear.into_owned(),
+                solid.into_owned(),
                 theme::medium(12.5),
                 palette.secondary,
             );
@@ -3486,7 +3531,7 @@ fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
             });
             theme::text(
                 ui,
-                solid.into_owned(),
+                clear.into_owned(),
                 theme::medium(12.5),
                 palette.secondary,
             );
