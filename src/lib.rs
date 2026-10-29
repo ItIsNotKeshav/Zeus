@@ -40,6 +40,7 @@ pub mod mp4_guard;
 pub mod nav;
 pub mod notify;
 pub mod opener;
+pub mod pacing;
 pub mod paths;
 pub mod privacy;
 pub mod proxy;

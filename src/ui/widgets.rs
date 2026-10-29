@@ -312,6 +312,12 @@ pub fn fitted_image(ui: &Ui, path: &Path, size: Vec2) -> egui::Image<'static> {
     egui::Image::new(crate::image_cache::fit_uri(ui.ctx(), path, size))
 }
 
+/// Like [`fitted_image`], for a picture shown whole within `bounds` points
+/// rather than cropped to fill them: decoded only as large as it fits.
+pub fn fitted_image_within(ui: &Ui, path: &Path, bounds: Vec2) -> egui::Image<'static> {
+    egui::Image::new(crate::image_cache::fit_uri_within(ui.ctx(), path, bounds))
+}
+
 /// Round profile picture, or id-colored initials when no picture is available.
 pub fn avatar(
     ui: &mut Ui,
@@ -385,11 +391,14 @@ pub fn paint_avatar(
             // person, not its digits.
             theme::paint_icon(ui, Icon::User, rect, size * 0.5, Color32::WHITE);
         } else {
+            // In whole points: each size of a font fills the glyph atlas
+            // anew, and an avatar that grows or shrinks would make one each
+            // frame.
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 initials,
-                theme::semibold(size * 0.38),
+                theme::semibold((size * 0.38).round()),
                 Color32::WHITE,
             );
         }

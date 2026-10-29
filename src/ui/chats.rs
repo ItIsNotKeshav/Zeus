@@ -111,7 +111,7 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
         let frosted = reach.with_max_y(reach.bottom() + FROST_TAIL);
         let ease = FROST_TAIL + FROST_OVERLAP;
         ui.painter()
-            .set(glass, super::glass::progressive(frosted, ease));
+            .set(glass, super::glass::sheet_progressive(frosted, ease));
         ui.painter().set(
             veil,
             conversation::header_veil(
