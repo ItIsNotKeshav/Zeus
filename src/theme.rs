@@ -438,7 +438,7 @@ impl Palette {
     /// The conversation's background on a vibrant theme: mostly `color`,
     /// with a little of the material behind the window showing through.
     pub fn vibrant_chat(&self, color: Color32) -> Color32 {
-        if !crate::backdrop::blur() {
+        if !crate::backdrop::frost() {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
@@ -453,7 +453,7 @@ impl Palette {
     pub fn vibrant_header(&self, color: Color32) -> Color32 {
         // Without the frost under it, a thin veil leaves the messages
         // sharp under the title; it starts solid and eases out instead.
-        if !crate::backdrop::blur() {
+        if !crate::backdrop::frost() {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
@@ -474,7 +474,7 @@ impl Palette {
     /// A glass pill under a vibrant header's name or buttons: much more of
     /// `color` than the veil, so text on it reads over any picture.
     pub fn vibrant_pill(&self, color: Color32) -> Color32 {
-        if !crate::backdrop::blur() {
+        if !crate::backdrop::frost() {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
@@ -515,7 +515,7 @@ impl Palette {
     /// `color` thinned for a surface over frosted glass, or as it is while
     /// Settings' Blur is off.
     pub fn frosted(&self, color: Color32) -> Color32 {
-        if !crate::backdrop::blur() {
+        if !crate::backdrop::frost() {
             return color;
         }
         // White glass reads as an opaque box well before dark glass does,

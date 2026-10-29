@@ -126,7 +126,9 @@ name or description, in the interface language or in English.
   on Linux. Elsewhere, including other Linux desktops, the window is opaque
   in the theme's colours. Turning Blur off makes every one of those surfaces
   solid at once; turning it on again shows the desktop through a window
-  opened after the change.
+  opened after the change. On a Mac whose graphics cannot read back the
+  window, the frosted header, message field and floating buttons are
+  solid, while the desktop still shows through the sidebar.
 - **Always show time**: the time and ticks inside every message, as
   WhatsApp shows them. Off, the Zeus look shows them below a message you
   click, and below your last message.

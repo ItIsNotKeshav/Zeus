@@ -84,7 +84,7 @@ pub fn rounded(rect: egui::Rect, radius: f32) -> egui::Shape {
 
 fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::Shape {
     // Settings' Blur off: nothing is frosted, and what floats above is solid.
-    if !crate::backdrop::blur() {
+    if !crate::backdrop::frost() {
         return egui::Shape::Noop;
     }
     egui::Shape::Callback(egui::PaintCallback {

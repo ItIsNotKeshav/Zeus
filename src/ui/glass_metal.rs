@@ -80,7 +80,7 @@ pub fn rounded(rect: egui::Rect, radius: f32) -> egui::Shape {
 
 fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::Shape {
     // Settings' Blur off: nothing is frosted, and what floats above is solid.
-    if !crate::backdrop::blur() {
+    if !crate::backdrop::frost() {
         return egui::Shape::Noop;
     }
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -143,8 +143,12 @@ impl CallbackTrait for Frost {
             return;
         };
         let mut glass = glass.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(glass) = glass.as_mut() {
-            glass.paint(self.id, render_pass);
+        match glass.as_mut() {
+            Some(glass) => glass.paint(self.id, render_pass),
+            // egui-wgpu calls every frost's backdrop before its paint where
+            // the window can be copied from, which makes the pipelines; a
+            // paint without them means it cannot, so the glass turns solid.
+            None => crate::backdrop::cannot_frost(),
         }
     }
 
