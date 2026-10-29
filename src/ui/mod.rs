@@ -1,6 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
+pub mod bubbles;
 pub mod call;
 pub mod calls;
 pub(crate) mod carry;
@@ -25,6 +26,7 @@ pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod reaction_list;
+mod room;
 pub mod settings;
 pub mod split;
 pub(crate) mod swipe;
@@ -123,6 +125,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     carry::show(app, ctx);
     split::drag(app, ctx);
     split::pop_out(app, ctx);
+    bubbles::show(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
 }
@@ -166,9 +169,22 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // (maximized, full screen, tiled), the list steps aside before the chat
     // gets too narrow for its header.
     info::prepare(app, ui.ctx());
-    let crowded = app.info_visible()
+    let info_crowded = app.info_visible()
         && ui.available_width() + info::room_ahead(ui.ctx()) - list_width
             < info::CARD_COLUMN + pane::INFO_CONVERSATION_MIN;
+    // A split grows the window the same way for its second pane, and folds
+    // the list when the window cannot grow enough.
+    let info_column = if app.info_visible() {
+        info::CARD_COLUMN
+    } else {
+        0.0
+    };
+    let card = ui.available_width() - list_width - chats::CARD_GAP - info_column;
+    split::prepare(app, ui.ctx(), card);
+    let split_crowded = app.page == Page::Chats
+        && split::wanted(app, ui.ctx())
+        && card + split::room_ahead(ui.ctx()) < split::NEED;
+    let crowded = info_crowded || split_crowded;
     if !narrow(ui.ctx()) && crowded {
         // The list folds into the rail's avatars, as when it is collapsed:
         // the chats stay a click (or a drop) away.

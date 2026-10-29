@@ -74,6 +74,8 @@ pub(crate) enum Pane {
     Passive,
     /// The pop-out window's transcript.
     PopOut,
+    /// An open chat bubble's transcript.
+    Bubble,
 }
 
 /// The open chat, alone in the chat panel or beside another chat.
@@ -816,6 +818,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                     }
                     let pop_out_label = crate::i18n::gettext(app.locale, "Pop out chat");
                     let swap_label = crate::i18n::gettext(app.locale, "Swap sides");
+                    let bubble_label = crate::i18n::gettext(app.locale, "Open as bubble");
                     let voice_label = crate::i18n::gettext(app.locale, "Voice call");
                     let video_label = crate::i18n::gettext(app.locale, "Video call");
                     let width = widgets::menu_width(
@@ -830,6 +833,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             "Copy number",
                             "Close chat",
                             pop_out_label.as_ref(),
+                            bubble_label.as_ref(),
                             swap_label.as_ref(),
                             voice_label.as_ref(),
                             video_label.as_ref(),
@@ -929,14 +933,29 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                     app.actions.push(Action::StartVideoCall(chat.id.clone()));
                                 }
                             }
-                            widgets::menu_separator(ui, &palette);
-                            if widgets::menu_item(
-                                ui,
-                                &palette,
-                                Some(Icon::PictureInPicture),
-                                pop_out_label.as_ref(),
-                            ) {
+                            if app.settings.split_view || app.settings.chat_bubbles {
+                                widgets::menu_separator(ui, &palette);
+                            }
+                            if app.settings.split_view
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::PictureInPicture),
+                                    pop_out_label.as_ref(),
+                                )
+                            {
                                 app.actions.push(Action::PopOut(chat.id.clone()));
+                            }
+                            if app.settings.chat_bubbles
+                                && !chat.locked
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::MessageCircle),
+                                    bubble_label.as_ref(),
+                                )
+                            {
+                                app.actions.push(Action::Bubble(chat.id.clone()));
                             }
                             if pane != Pane::Solo {
                                 if widgets::menu_item(
@@ -2232,6 +2251,11 @@ pub(super) fn pop_out_transcript(app: &mut App, ui: &mut egui::Ui, chat: &Chat) 
     messages_in(app, ui, chat, 0.0, 0.0, Pane::PopOut);
 }
 
+/// An open bubble's transcript.
+pub(super) fn bubble_transcript(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
+    messages_in(app, ui, chat, 0.0, 0.0, Pane::Bubble);
+}
+
 /// The pop-out window's reply field: one line, sent with Enter to its own
 /// chat, never touching the open chat's composer.
 pub(super) fn pop_out_composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
@@ -2955,6 +2979,10 @@ fn messages_in(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: 
     match pane {
         Pane::Passive => app.with_other_view(|app| messages(app, ui, chat, under, over, pane)),
         Pane::PopOut => app.with_pop_out_view(|app| messages(app, ui, chat, under, over, pane)),
+        Pane::Bubble => {
+            let id = chat.id.clone();
+            app.with_bubble_view(&id, |app| messages(app, ui, chat, under, over, pane))
+        }
         Pane::Solo | Pane::Active => messages(app, ui, chat, under, over, pane),
     }
 }
@@ -2963,7 +2991,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let palette = app.palette;
     // A scroll gesture stays with the pane it began over; the other pane of
     // a split is one of its own.
-    let scroll_pane = if matches!(pane, Pane::Passive | Pane::PopOut) {
+    let scroll_pane = if matches!(pane, Pane::Passive | Pane::PopOut | Pane::Bubble) {
         crate::app::ScrollPane::OtherMessages
     } else {
         crate::app::ScrollPane::Messages
@@ -3347,7 +3375,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     // Rows within a few viewports of the screen are laid out
                     // and their height remembered, so scrolling finds them
                     // measured before they show.
-                    let margin = if matches!(pane, Pane::Passive | Pane::PopOut) {
+                    let margin = if matches!(pane, Pane::Passive | Pane::PopOut | Pane::Bubble) {
                         // Beside the chat being read, which asks the frames.
                         (viewport.height() * 1.5).max(400.0)
                     } else {

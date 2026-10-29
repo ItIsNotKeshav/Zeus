@@ -38,6 +38,57 @@ use crate::theme::{self, Icon, Palette};
 pub(crate) const GAP: f32 = chats::CARD_GAP;
 /// How far a pane that is arriving or leaving slides, in points.
 const SLIDE: f32 = 14.0;
+/// The chat panel's width a split needs: two panes and the gap.
+pub(super) const NEED: f32 = 2.0 * state::MIN_PANE + GAP;
+
+// -- making room -----------------------------------------------------------
+
+/// The window's growing for the second pane, in [`super::room`].
+fn room_id() -> egui::Id {
+    egui::Id::new("split-room")
+}
+
+/// Whether the panel holds two chats now, or will once the window has made
+/// room: Settings' Split view is on, and a chat sits beside the open one in a
+/// window that is not narrow.
+pub(super) fn wanted(app: &App, ctx: &egui::Context) -> bool {
+    app.settings.split_view
+        && app.current_chat().is_some()
+        && app.split_other().is_some()
+        && !super::narrow(ctx)
+}
+
+/// Asks the window to grow for the second pane as a split opens, before the
+/// side columns are laid out, and gives the room back once the pane has left.
+/// `card` is how wide the chat panel's card is with the list beside it.
+pub(super) fn prepare(app: &App, ctx: &egui::Context, card: f32) {
+    if wanted(app, ctx) {
+        super::room::widen(ctx, room_id(), NEED - card, true);
+    } else if ctx.data(|data| data.get_temp::<Ghost>(ghost_id()).is_none()) {
+        super::room::widen(ctx, room_id(), 0.0, false);
+    }
+}
+
+/// The width the window is still about to gain for the second pane.
+pub(super) fn room_ahead(ctx: &egui::Context) -> f32 {
+    super::room::room_ahead(ctx, room_id())
+}
+
+/// Whether the chat panel at `area` shows two panes this frame.
+fn live(app: &App, ctx: &egui::Context, area: Rect) -> bool {
+    wanted(app, ctx) && state::fits(area.width() + room_ahead(ctx), GAP)
+}
+
+/// Whether a panel `card` wide could take a second pane: it has room, or the
+/// window can grow for it, or the list can fold away for it.
+fn could_split(app: &App, ctx: &egui::Context, card: f32) -> bool {
+    let list = if app.sidebar_mode() == crate::model::SidebarDisplayMode::Expanded {
+        app.settings.sidebar_width
+    } else {
+        0.0
+    };
+    state::fits(card + super::room::growable(ctx) + list, GAP)
+}
 
 // -- the panes -------------------------------------------------------------
 
@@ -103,7 +154,7 @@ pub(super) fn layout(app: &App, ctx: &egui::Context, area: Rect) -> Option<Panes
     if app.page != Page::Chats || super::narrow(ctx) {
         return None;
     }
-    let live = app.split_other().is_some() && state::fits(area.width(), GAP);
+    let live = live(app, ctx, area);
     let ghost = ctx.data(|data| data.get_temp::<Ghost>(ghost_id()));
     if !live && ghost.is_none() {
         // Nothing to play: the animation rests at its end, so a split made
@@ -431,7 +482,7 @@ struct Area {
 }
 
 pub(super) fn publish_area(ctx: &egui::Context, area: Rect, app: &App) {
-    let panes = (app.split_other().is_some() && state::fits(area.width(), GAP)).then(|| {
+    let panes = live(app, ctx, area).then(|| {
         let ratio = app
             .split
             .as_ref()
@@ -562,7 +613,7 @@ fn zones(app: &App, ctx: &egui::Context, chat: &str) -> Vec<Zone> {
         // Already the only chat in the panel: nowhere to take it.
         return Vec::new();
     }
-    if !state::fits(area.card.width(), GAP) {
+    if !could_split(app, ctx, area.card.width()) {
         return vec![Zone {
             rect: area.card,
             drop: Drop::Open,
@@ -1028,6 +1079,5 @@ mod tests {
 pub(super) fn active(app: &App, ctx: &egui::Context, area: Rect) -> bool {
     app.page == Page::Chats
         && app.current_chat().is_some()
-        && (app.split_other().is_some() && state::fits(area.width(), GAP)
-            || ctx.data(|data| data.get_temp::<Ghost>(ghost_id()).is_some()))
+        && (live(app, ctx, area) || ctx.data(|data| data.get_temp::<Ghost>(ghost_id()).is_some()))
 }

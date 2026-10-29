@@ -184,103 +184,20 @@ fn member_filter_id() -> egui::Id {
     egui::Id::new("chat-info-member-filter")
 }
 
-/// Whether the window cannot grow for the card: maximized or full screen.
-pub(super) fn fixed_window(ctx: &egui::Context) -> bool {
-    ctx.input(|input| {
-        let viewport = input.viewport();
-        viewport.maximized == Some(true) || viewport.fullscreen == Some(true)
-    })
-}
-
-/// The window growing for the card: its inner width before, the width
-/// asked for, and when.
-#[derive(Clone, Copy)]
-struct Widened {
-    from: f32,
-    to: f32,
-    at: f64,
-}
-
-/// How long a window has to grow before the card stops waiting for it: a
-/// window manager that tiles or snaps it may never let it.
-const GROW_WAIT: f64 = 0.6;
-
-fn widened(ctx: &egui::Context) -> Option<Widened> {
-    ctx.data(|data| data.get_temp::<Widened>(widened_id()))
-}
-
-/// The window's inner width, in points.
-fn inner_width(ctx: &egui::Context) -> f32 {
-    ctx.input(|input| {
-        input
-            .viewport()
-            .inner_rect
-            .map_or_else(|| input.content_rect().width(), |rect| rect.width())
-    })
-}
-
-/// Whether the window grew by the card's column, as asked.
-fn grown(ctx: &egui::Context) -> bool {
-    widened(ctx).is_some_and(|widened| inner_width(ctx) >= widened.to - 1.0)
+/// Grows the window by the card's column while the card is open, and shrinks
+/// it back after, so the chat keeps its width (see [`super::room`]).
+fn widen_window(ctx: &egui::Context, open: bool) {
+    super::room::widen(ctx, widened_id(), CARD_COLUMN, open);
 }
 
 /// The width the window is still about to gain for the card, so the layout
 /// does not give way for the frames before it has grown.
 pub(super) fn room_ahead(ctx: &egui::Context) -> f32 {
-    let Some(widened) = widened(ctx) else {
-        return 0.0;
-    };
-    let now = ctx.input(|input| input.time);
-    if now - widened.at > GROW_WAIT {
-        return 0.0;
-    }
-    (widened.to - inner_width(ctx)).max(0.0)
+    super::room::room_ahead(ctx, widened_id())
 }
 
-/// Grows the window by the card's column while the card is open, and shrinks
-/// it back after, so the chat keeps its width. A maximized or full-screen
-/// window cannot grow, and a window manager may refuse: the chat gives way
-/// instead, and nothing is shrunk that did not grow.
-fn widen_window(ctx: &egui::Context, open: bool) {
-    let fixed = fixed_window(ctx);
-    let width = inner_width(ctx);
-    let height = ctx.input(|input| {
-        input
-            .viewport()
-            .inner_rect
-            .map_or_else(|| input.content_rect().height(), |rect| rect.height())
-    });
-    match (open, widened(ctx)) {
-        (true, None) if !fixed => {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
-                width + CARD_COLUMN,
-                height,
-            )));
-            let at = ctx.input(|input| input.time);
-            ctx.data_mut(|data| {
-                data.insert_temp(
-                    widened_id(),
-                    Widened {
-                        from: width,
-                        to: width + CARD_COLUMN,
-                        at,
-                    },
-                )
-            });
-        }
-        (false, Some(widened)) => {
-            // Only what it grew by, and only while it is not maximized.
-            let gained = (width - widened.from).clamp(0.0, CARD_COLUMN);
-            if !fixed && gained > 1.0 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(
-                    width - gained,
-                    height,
-                )));
-            }
-            ctx.data_mut(|data| data.remove::<Widened>(widened_id()));
-        }
-        _ => {}
-    }
+fn grown(ctx: &egui::Context) -> bool {
+    super::room::grown(ctx, widened_id())
 }
 
 /// The card's column at the right, on the gutter's colour, `open` of the

@@ -2823,6 +2823,25 @@ pub enum Action {
         chat: ChatId,
         text: String,
     },
+    /// Keeps a chat as a bubble over other windows and opens it.
+    Bubble(ChatId),
+    /// Opens this chat's bubble, or closes it when it is the open one.
+    ToggleBubble(ChatId),
+    /// Closes the open bubble back into its picture.
+    CollapseBubbles,
+    /// Lets go of a chat's bubble.
+    DismissBubble(ChatId),
+    /// Lets go of a chat's bubble and opens the chat in the window.
+    DockBubble(ChatId),
+    /// Sends what a chat's bubble holds: its text, its attachments, or both.
+    BubbleSend(ChatId),
+    /// Picks files to attach in a chat's bubble.
+    BubbleAttach(ChatId),
+    /// Takes one attachment out of a chat's bubble.
+    BubbleUnstage {
+        chat: ChatId,
+        index: usize,
+    },
     /// Starts selecting messages in the open chat, beginning with this one.
     SelectMessage(String),
     /// Adds a message to the selection or removes it.
@@ -3049,8 +3068,6 @@ pub enum Action {
     CloseUpdate,
     /// Asks GitHub for a newer release now, from Settings.
     CheckForUpdates,
-    /// Follows stable releases only, or betas too, from About.
-    SetUpdateChannel(crate::updates::Channel),
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),

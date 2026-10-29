@@ -19,7 +19,7 @@
 //! `ui::split::pop_out` in a viewport of its own with a reply field that keeps
 //! its text beside it, so it works the same whichever chat is open.
 
-use egui::{Pos2, Rect, pos2};
+use egui::{Rect, pos2};
 
 use super::{App, JumpHighlight, UnreadDivider};
 use crate::model::{AccountId, Action, ChatId, Scroll};
@@ -163,7 +163,8 @@ impl App {
     /// open chat. Beside nothing, it is a split of the open chat and this one;
     /// in a split, it takes the place of the chat in that pane.
     pub(super) fn open_split(&mut self, chat: ChatId, side: Side) {
-        if self.chat(&chat).is_none()
+        if !self.settings.split_view
+            || self.chat(&chat).is_none()
             || (self.chat(&chat).is_some_and(|chat| chat.locked) && !self.locked_folder_open())
         {
             return;
@@ -266,6 +267,10 @@ impl App {
         if self.pop_out.as_ref().is_some_and(|pop| pop.chat == id) {
             self.pop_out = None;
         }
+        self.bubbles.list.retain(|bubble| bubble.chat != id);
+        if self.bubbles.expanded.as_deref() == Some(id) {
+            self.bubbles.expanded = None;
+        }
     }
 
     /// Runs `draw` with the other pane's place swapped in for the open chat's,
@@ -308,7 +313,8 @@ impl App {
 
     /// Shows `chat` in a window of its own.
     pub(super) fn open_pop_out(&mut self, chat: ChatId) {
-        if self.chat(&chat).is_none()
+        if !self.settings.split_view
+            || self.chat(&chat).is_none()
             || (self.chat(&chat).is_some_and(|chat| chat.locked) && !self.locked_folder_open())
         {
             return;
