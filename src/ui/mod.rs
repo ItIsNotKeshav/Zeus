@@ -12,23 +12,10 @@ pub mod dialogs;
 pub(crate) mod focus;
 #[cfg(not(target_os = "macos"))]
 mod glass;
-/// macOS draws through wgpu, which cannot read back the frame mid-pass, so
-/// nothing is frosted there and the surfaces above are solid
-/// ([`crate::backdrop::frost`]).
+/// macOS draws through wgpu's Metal backend, so its frost is a wgpu port.
 #[cfg(target_os = "macos")]
-mod glass {
-    pub fn shape(_rect: egui::Rect, _fade: f32, _radius: f32) -> egui::Shape {
-        egui::Shape::Noop
-    }
-
-    pub fn progressive(_rect: egui::Rect, _fade: f32) -> egui::Shape {
-        egui::Shape::Noop
-    }
-
-    pub fn rounded(_rect: egui::Rect, _radius: f32) -> egui::Shape {
-        egui::Shape::Noop
-    }
-}
+#[path = "glass_metal.rs"]
+mod glass;
 pub mod image_editor;
 pub mod image_preview;
 pub mod info;
