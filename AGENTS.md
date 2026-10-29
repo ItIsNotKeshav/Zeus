@@ -88,6 +88,20 @@ protocol. These notes are for coding agents and new contributors.
   keyring key before moving it, and moves SQLite side files before their
   database. Removing an account deletes its folders after its backend has
   stopped, then its keyring entry.
+- Settings > Experimental holds features that are off until turned on:
+  Split view and Chat bubbles (`Settings::split_view`, `chat_bubbles`).
+  Split view (`app/split.rs`, `ui/split.rs`) puts a second chat beside the
+  open one and pops a chat out into an always-on-top window. The window grows
+  for the second pane the way it does for the info card (`ui/room.rs`: each
+  claim gives back only what it gained), and when it cannot (maximized,
+  tiled, the screen's edge) the list folds into the rail before the split
+  gives way. Chat bubbles (`app/bubbles.rs`, `ui/bubbles.rs`) keep up to
+  `MAX_BUBBLES` chats of the account on screen in a borderless, see-through,
+  always-on-top window; one opens into a card with its own transcript place,
+  text and attachments (picked, dropped or pasted), sent through
+  `App::send_staged` like the composer's. Neither touches the open chat's
+  composer. There is no update channel choice any more: every copy follows
+  stable releases, and settings version 5 moves an old Beta choice to Stable.
 - `src/archive.rs` is the SQLite store of chats, messages, contacts, and
   privacy-id mappings. The phone sends recent history at link time and can
   supply older history on request, but recovery is not guaranteed. Preserve

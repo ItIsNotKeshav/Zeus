@@ -1242,6 +1242,7 @@ fastframe_icons::icons! {
         ChevronRight => lucide "chevron-right",
         ChevronUp => lucide "chevron-up",
         ListChecks => "list-checks",
+        Flask => "flask-conical",
         Columns => "columns-2",
         CircleAlert => lucide "circle-alert",
         CircleCheck => lucide "circle-check",

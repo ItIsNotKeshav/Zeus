@@ -346,6 +346,7 @@ fn category_icon(source: &str) -> Icon {
         "System" => Icon::Monitor,
         "Account" => Icon::User,
         "Files" => Icon::Download,
+        "Experimental" => Icon::Flask,
         "About" => Icon::Info,
         _ => Icon::Settings,
     }
@@ -1170,6 +1171,24 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
+    let mut experimental = Section::new(translated(locale, "Experimental"));
+    experimental.toggle(
+        translated(locale, "Split view"),
+        translated(
+            locale,
+            "Drag a chat from the list onto the open one to read two side by side, or pop a chat out into a small window above the others. The window grows to fit both chats when it can.",
+        ),
+        |settings| &mut settings.split_view,
+    );
+    experimental.toggle(
+        translated(locale, "Chat bubbles"),
+        translated(
+            locale,
+            "Keep up to three chats as bubbles floating over your other windows. Click one to open a small chat where you can reply, and attach, paste or drop pictures and files. Start one from a chat's menu with Open as bubble.",
+        ),
+        |settings| &mut settings.chat_bubbles,
+    );
+
     let mut about_section = Section::new(translated(locale, "About"));
     about_section.block(
         vec![
@@ -1190,6 +1209,7 @@ fn sections(app: &App) -> Vec<Section> {
         system,
         account_section,
         files,
+        experimental,
         about_section,
     ]
 }
@@ -3369,48 +3389,10 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             theme::paragraph(ui, text, theme::regular(13.0), color);
         }
     }
-    if crate::brand::UPDATES {
-        ui.add_space(12.0);
-        update_channel_picker(app, ui);
-    }
     ui.add_space(14.0);
     if let Some(url) = widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
     }
-}
-
-/// Stable or Beta: which releases About offers.
-fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    let locale = app.locale;
-    let options: Vec<_> = crate::updates::Channel::ALL
-        .into_iter()
-        .map(|channel| (channel, crate::i18n::gettext(locale, channel.label())))
-        .collect();
-    let selected = Some(app.settings.update_channel);
-    ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::gettext(locale, "Update channel"),
-            theme::medium(13.0),
-            palette.secondary,
-        );
-        ui.add_space(6.0);
-        if let Some(channel) = segmented(ui, &palette, "channel", &options, selected, 88.0) {
-            app.actions.push(Action::SetUpdateChannel(channel));
-        }
-    });
-    let note = match app.settings.update_channel {
-        crate::updates::Channel::Stable => "Tested releases only.",
-        crate::updates::Channel::Beta => "Early builds first. They may have rough edges.",
-    };
-    ui.add_space(6.0);
-    theme::paragraph(
-        ui,
-        crate::i18n::gettext(locale, note),
-        theme::regular(12.0),
-        palette.secondary,
-    );
 }
 
 /// Asks GitHub for a newer release now; a newer one opens the update window.

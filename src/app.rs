@@ -544,6 +544,8 @@ pub struct App {
     pub picker: Option<PickerTab>,
     /// A chat shown in a window of its own, above other windows.
     pub pop_out: Option<PopOut>,
+    /// Chats kept as bubbles over other windows.
+    pub bubbles: Bubbles,
     /// Picker anchor at the composer button.
     pub picker_anchor: Option<egui::Rect>,
     pub picker_search: String,
@@ -1192,7 +1194,6 @@ impl App {
         options: AppOptions,
     ) -> std::io::Result<Self> {
         crate::proxy::configure(&settings.proxy);
-        crate::updates::set_channel(settings.update_channel);
         let mut roster = AccountRoster::load(&dirs.accounts_file())?;
         if roster.order.is_empty() {
             roster = AccountRoster::default();
@@ -1418,6 +1419,7 @@ impl App {
             paste_keys: PasteKeys::default(),
             picker: None,
             pop_out: None,
+            bubbles: Bubbles::default(),
             picker_anchor: None,
             picker_search: String::new(),
             picker_recent: None,
@@ -1727,8 +1729,9 @@ impl App {
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
         self.recent_chats.clear();
-        // The pop-out shows the previous account's chat.
+        // The pop-out and the bubbles show the previous account's chats.
         self.pop_out = None;
+        self.bubbles.clear();
         self.forward_recipients.clear();
         self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
@@ -3625,7 +3628,9 @@ impl App {
                 paths,
                 documents,
             } => {
-                if live && self.open_chat.as_deref() == Some(chat.as_str()) {
+                // A picker opened from a bubble fills that bubble.
+                if live && !documents && self.bubble_picked(&chat, &paths) {
+                } else if live && self.open_chat.as_deref() == Some(chat.as_str()) {
                     if documents {
                         self.stage_documents(paths);
                     } else {
@@ -5886,19 +5891,38 @@ impl App {
         self.store_draft(&chat, "");
         self.composer_mentions = selected;
         // The reply travels with the first attachment, like the caption.
-        let mut quoting = self.reply_to.take();
+        let quoting = self.reply_to.take();
         let quoted = quoting.clone();
         let caption = caption.trim().to_owned();
         let (caption, mentions) = self.encode_composer_mentions(&chat, caption);
         let caption = Some(caption).filter(|text| !text.is_empty());
-        let mut caption = caption;
-        let mut mentions = mentions;
         self.emoji_start = None;
         self.mention_start = None;
+        let items = std::mem::take(&mut self.pending)
+            .into_iter()
+            .map(|staged| staged.item)
+            .collect();
+        self.send_staged(&chat, items, caption, mentions, quoting);
+        // Everything staged has gone, so nothing is remembered about it.
+        self.forget_unstaged_pictures();
+        self.follow_outgoing(quoted.as_ref());
+    }
+
+    /// Sends staged attachments to `chat` in the order they were staged, the
+    /// caption, mentions and quote going with the first.
+    pub(crate) fn send_staged(
+        &mut self,
+        chat: &ChatId,
+        items: Vec<Pending>,
+        mut caption: Option<String>,
+        mut mentions: Vec<String>,
+        mut quoting: Option<crate::model::ReplyTarget>,
+    ) {
+        let chat = chat.clone();
         // Files go in runs of one kind, in the order they were staged.
         let mut runs: Vec<(bool, Vec<PathBuf>)> = Vec::new();
-        for staged in std::mem::take(&mut self.pending) {
-            let (documents, path) = match staged.item {
+        for item in items {
+            let (documents, path) = match item {
                 Pending::Picture {
                     width,
                     height,
@@ -5960,9 +5984,6 @@ impl App {
                 uploads,
             });
         }
-        // Everything staged has gone, so nothing is remembered about it.
-        self.forget_unstaged_pictures();
-        self.follow_outgoing(quoted.as_ref());
     }
 
     #[allow(dead_code)]
@@ -6113,28 +6134,6 @@ impl App {
         } else if new {
             self.toast(format!("Zeus {version} is available"));
         }
-    }
-
-    /// Moves to another channel: what the last one offered no longer applies,
-    /// so the offer and any download of it go, and the new channel is asked
-    /// at once.
-    fn set_update_channel(&mut self, channel: crate::updates::Channel) {
-        if self.settings.update_channel == channel {
-            return;
-        }
-        self.settings.update_channel = channel;
-        crate::updates::set_channel(channel);
-        self.mark_settings_dirty();
-        self.update = None;
-        self.show_update = false;
-        if matches!(
-            self.update_download,
-            crate::updates::DownloadState::Ready(_) | crate::updates::DownloadState::Failed(_)
-        ) {
-            self.update_download = crate::updates::DownloadState::Idle;
-        }
-        self.update_check = crate::updates::Check::Idle;
-        self.check_for_updates_now();
     }
 
     /// A check the reader asked for, whatever the daily setting says.
@@ -6576,6 +6575,14 @@ impl App {
                 self.open_pop_out(chat);
             }
             Action::ClosePopOut => self.pop_out = None,
+            action @ (Action::Bubble(_)
+            | Action::ToggleBubble(_)
+            | Action::CollapseBubbles
+            | Action::DismissBubble(_)
+            | Action::DockBubble(_)
+            | Action::BubbleSend(_)
+            | Action::BubbleAttach(_)
+            | Action::BubbleUnstage { .. }) => self.apply_bubble(action, ctx),
             Action::DockPopOut => self.dock_pop_out(),
             Action::PopOutSend { chat, text } => self.send_from_pop_out(chat, text),
             Action::OpenChat(id) => {
@@ -8516,7 +8523,6 @@ impl App {
             }
             Action::CloseUpdate => self.show_update = false,
             Action::CheckForUpdates => self.check_for_updates_now(),
-            Action::SetUpdateChannel(channel) => self.set_update_channel(channel),
             Action::DownloadUpdate => self.download_update(),
             Action::InstallUpdate => {
                 if matches!(
@@ -8694,7 +8700,10 @@ impl App {
                 self.search_hits.clear();
                 self.mark_settings_dirty();
             }
-            Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SettingsChanged => {
+                self.mark_settings_dirty();
+                self.drop_disabled_experiments();
+            }
             Action::SetAccountPrivacy { kind, choice } => {
                 // The value lives on the phone: nothing is written without a
                 // connection and a snapshot to write against.
@@ -10539,6 +10548,8 @@ mod calls;
 pub use calls::CallPerson;
 pub(crate) mod split;
 pub use split::{PaneView, PopOut, Side, Split};
+pub(crate) mod bubbles;
+pub use bubbles::{Bubble, Bubbles, MAX_BUBBLES};
 mod voice_input;
 #[cfg(any(test, feature = "demo"))]
 pub(crate) use voice_input::demo_microphones;
@@ -10697,6 +10708,7 @@ mod tests {
     fn a_split_follows_the_chat_that_is_open() {
         let ctx = egui::Context::default();
         let mut app = app();
+        app.settings.split_view = true;
         let (a, b, c) = ("1@s.whatsapp.net", "2@s.whatsapp.net", "3@s.whatsapp.net");
         for (id, name) in [(a, "Ada"), (b, "Bo"), (c, "Cy")] {
             app.chats.push(Chat::new(id.into(), name.into()));
@@ -10733,6 +10745,7 @@ mod tests {
     fn a_popped_out_chat_leaves_the_window() {
         let ctx = egui::Context::default();
         let mut app = app();
+        app.settings.split_view = true;
         let (a, b) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
         for (id, name) in [(a, "Ada"), (b, "Bo")] {
             app.chats.push(Chat::new(id.into(), name.into()));

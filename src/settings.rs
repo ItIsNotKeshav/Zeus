@@ -1013,8 +1013,16 @@ pub struct Settings {
     pub proxy: String,
     /// Ask GitHub every two hours whether a newer release exists.
     pub check_for_updates: bool,
-    /// Whether updates follow stable releases or betas too.
+    /// The update channel older releases offered. Every copy follows stable
+    /// releases now; the field stays so files from those releases still load,
+    /// and [`SETTINGS_VERSION`] 5 sets it back to Stable for them.
     pub update_channel: crate::updates::Channel,
+    /// Experimental: drag a chat beside the open one, and pop one out into a
+    /// window of its own.
+    pub split_view: bool,
+    /// Experimental: up to [`crate::app::MAX_BUBBLES`] chats as bubbles
+    /// floating over other windows, each opening into a small chat.
+    pub chat_bubbles: bool,
     /// Download verified updates in the background; restarting remains explicit.
     pub download_updates_automatically: bool,
     /// Voice and audio playback speed multiplier.
@@ -1125,6 +1133,8 @@ impl Default for Settings {
             proxy: String::new(),
             check_for_updates: true,
             update_channel: crate::updates::Channel::Stable,
+            split_view: false,
+            chat_bubbles: false,
             download_updates_automatically: false,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
@@ -1155,7 +1165,10 @@ impl Default for Settings {
 ///    mode) become [`WallpaperColor::Theme`], the new default.
 /// 2. The one theme menu becomes a chat theme, a mode and an accent
 ///    ([`Settings::set_theme`]).
-pub const SETTINGS_VERSION: u32 = 4;
+/// 3. Halloween comes on.
+/// 4. Blur's switch becomes Glass.
+/// 5. The Beta update channel is gone: everyone follows stable releases.
+pub const SETTINGS_VERSION: u32 = 5;
 
 /// The key push to talk starts on.
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
@@ -1563,6 +1576,11 @@ impl Settings {
             } else {
                 1.0
             };
+        }
+        if self.version < 5 {
+            // Settings no longer offers Beta; a copy that chose it follows
+            // stable releases, the one channel left.
+            self.update_channel = crate::updates::Channel::Stable;
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -2024,6 +2042,18 @@ mod tests {
         assert_eq!(loaded.mode, Mode::Light);
         assert!(!loaded.blur);
         assert!(!loaded.vibrant_window());
+    }
+
+    #[test]
+    fn a_beta_channel_moves_to_stable() {
+        let (beta, _) = load_from(r#"{"version":4,"update_channel":"beta"}"#);
+        assert_eq!(beta.update_channel, crate::updates::Channel::Stable);
+        assert_eq!(beta.version, SETTINGS_VERSION);
+        let (fresh, _) = load_from("{}");
+        assert!(
+            !fresh.split_view && !fresh.chat_bubbles,
+            "experiments start off"
+        );
     }
 
     #[test]
