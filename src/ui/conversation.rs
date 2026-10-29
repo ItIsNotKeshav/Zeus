@@ -2420,6 +2420,10 @@ struct View<'a> {
     /// them, when there are any: each bubble lays a soft scrim over them
     /// (#29).
     doodles: Option<(f32, Color32)>,
+    /// The scrims the visible bubbles ask for. They are painted together,
+    /// under every bubble: one laid down with its own bubble would wash over
+    /// the bubble above it, which is drawn first.
+    scrims: &'a std::cell::RefCell<Vec<egui::Shape>>,
 }
 
 /// Protocol album parent carried by pictures and ordinary videos.
@@ -2761,6 +2765,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let names_or = |id: &str, hint: Option<&str>| app.display_name_or(id, hint);
     let mention_names = |id: &str| app.mention_name(id);
     let keyboard_navigation = std::cell::Cell::new(false);
+    let scrims = std::cell::RefCell::new(Vec::new());
     let view = View {
         palette,
         locale: app.locale,
@@ -2822,6 +2827,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .then_some(app.copy_rows.as_ref()),
         swipes: app.settings.swipes,
         doodles: app.doodles_behind(),
+        scrims: &scrims,
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -3094,6 +3100,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         ui.add_space(under);
                     }
                     top_of_history(ui, &palette, &conversation, chat, &mut actions);
+                    // Where the bubbles' scrims go, under every one of them.
+                    let scrim_layer = ui.painter().add(egui::Shape::Noop);
                     let mut previous: Option<&Message> = None;
                     let mut day_separator_top = f32::NEG_INFINITY;
                     // The pin notices still to place, in time order. Each one
@@ -3573,6 +3581,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                             to: row.to_owned(),
                         });
                     }
+                    ui.painter()
+                        .set(scrim_layer, egui::Shape::Vec(view.scrims.take()));
                     // A pin made after the newest message keeps its notice at
                     // the end of the transcript.
                     for notice in &notices[placed..] {
@@ -4790,7 +4800,10 @@ fn bubble_row(
             }
         },
     );
-    if !view.time_inside && !view.selecting {
+    // A picture without a caption already carries its time over its corner:
+    // a second one under the bubble would say it twice.
+    let time_on_picture = album.is_none() && time_over_picture(message);
+    if !view.time_inside && !view.selecting && !time_on_picture {
         let bubble_rect = ui
             .ctx()
             .data(|data| data.get_temp::<Rect>(id.with("rect")))
@@ -5586,8 +5599,7 @@ fn bubble_frame(
     let rect_id = bubble_id.with("rect");
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(rect_id));
     let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
-    // Painted once the contents are measured, beneath them, over a scrim.
-    let scrim = ui.painter().add(egui::Shape::Noop);
+    // Painted once the contents are measured, beneath them.
     let backdrop = ui.painter().add(egui::Shape::Noop);
     let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
         widgets::Side::Right
@@ -5701,7 +5713,7 @@ fn bubble_frame(
         });
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
         if let Some(shape) = doodle_scrim(inner.response.rect, fill, view.doodles) {
-            ui.painter().set(scrim, shape);
+            view.scrims.borrow_mut().push(shape);
         }
         ui.painter().set(
             backdrop,
@@ -7012,6 +7024,7 @@ pub(crate) fn list_menu(
     let mention_names = |id: &str| app.mention_name(id);
     let avatars = HashMap::new();
     let keyboard_navigation = std::cell::Cell::new(false);
+    let scrims = std::cell::RefCell::new(Vec::new());
     let view = View {
         palette: app.palette,
         locale: app.locale,
@@ -7044,6 +7057,7 @@ pub(crate) fn list_menu(
         copy_rows: Some(app.copy_rows.as_ref()),
         swipes: app.settings.swipes,
         doodles: app.doodles_behind(),
+        scrims: &scrims,
         selecting: false,
         selected: &[],
         motion_playing: None,
@@ -12755,6 +12769,7 @@ mod tests {
         let mention_names = |id: &str| app.mention_name(id);
         let avatars = HashMap::new();
         let keyboard_navigation = std::cell::Cell::new(false);
+        let scrims = std::cell::RefCell::new(Vec::new());
         let view = View {
             palette: Palette::dark(),
             locale: app.locale,
@@ -12785,6 +12800,7 @@ mod tests {
             copy_rows: Some(app.copy_rows.as_ref()),
             swipes: app.settings.swipes,
             doodles: None,
+            scrims: &scrims,
             selecting: false,
             selected: &[],
             motion_playing: None,

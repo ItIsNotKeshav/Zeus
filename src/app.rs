@@ -1934,6 +1934,7 @@ impl App {
                 && self.account().settings.wallpaper_image.is_none(),
             style: self.settings.doodle_style,
             intensity: self.settings.doodle_intensity,
+            density: self.settings.doodle_density,
             accent: (self.settings.doodle_color == crate::settings::DoodleColor::Accent)
                 .then_some(self.palette.accent),
             image: self
@@ -8576,6 +8577,13 @@ impl App {
                 self.settings.doodle_intensity = intensity.clamp(
                     *crate::settings::DOODLE_INTENSITY.start(),
                     *crate::settings::DOODLE_INTENSITY.end(),
+                );
+                self.mark_settings_dirty();
+            }
+            Action::SetDoodleDensity(density) => {
+                self.settings.doodle_density = density.clamp(
+                    *crate::settings::DOODLE_DENSITY.start(),
+                    *crate::settings::DOODLE_DENSITY.end(),
                 );
                 self.mark_settings_dirty();
             }
