@@ -3342,6 +3342,7 @@ impl Worker {
                 self.refresh_legacy_preferences();
                 self.retry_avatars();
                 self.pump_read_sync();
+                self.favorite_chats.connected();
                 self.pump_favorite_chats();
                 self.poll_history.reconnect(Instant::now());
                 self.push_favorites();
@@ -9971,7 +9972,6 @@ impl Worker {
         message.album_message = MessageField::some(album);
         let expiration = self.apply_ephemeral(chat, &mut message);
         let client = client.clone();
-        let chat = chat.to_owned();
         let parent = id.clone();
         tokio::spawn(async move {
             let result = async {
@@ -9988,7 +9988,7 @@ impl Worker {
             }
             .await;
             if let Err(error) = result {
-                log::warn!("could not send an album parent in {chat}: {error}");
+                log::warn!("could not send an album parent: {error}");
             }
         });
         Some(id)

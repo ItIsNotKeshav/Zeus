@@ -15,9 +15,9 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 }
 
 pub(crate) fn unhex(value: &str) -> Option<Vec<u8>> {
-    value
-        .len()
-        .is_multiple_of(2)
+    // Two bytes per pair: slicing a multi-byte letter in half would panic, and
+    // the value comes from a file that can be edited or damaged.
+    (value.is_ascii() && value.len().is_multiple_of(2))
         .then(|| {
             (0..value.len())
                 .step_by(2)
@@ -1782,6 +1782,17 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unhex_reads_pairs_and_refuses_anything_else() {
+        assert_eq!(unhex("00ff10"), Some(vec![0, 255, 16]));
+        assert_eq!(unhex(""), Some(Vec::new()));
+        assert_eq!(unhex("abc"), None, "odd length");
+        assert_eq!(unhex("zz"), None);
+        // Four bytes, but "é" would be cut in half by the second pair.
+        assert_eq!(unhex("aéa"), None);
+        assert_eq!(unhex("éé"), None);
+    }
 
     #[test]
     fn swipes_default_without_a_setting_and_ignore_a_choice_out_of_place() {
