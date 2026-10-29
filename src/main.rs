@@ -469,6 +469,8 @@ fn run() -> eframe::Result<()> {
                         update_receipt: receipt,
                         #[cfg(target_os = "windows")]
                         taskbar: Default::default(),
+                        #[cfg(target_os = "macos")]
+                        pacer: zeus::pacing::for_display(),
                         #[cfg(feature = "demo")]
                         shot,
                         #[cfg(feature = "demo")]
@@ -665,6 +667,10 @@ struct Shell {
     /// This window's unread count, drawn on its taskbar button.
     #[cfg(target_os = "windows")]
     taskbar: TaskbarBadge,
+    /// Starts each frame in step with the display, where the swap does not
+    /// wait for it (macOS 13 and later).
+    #[cfg(target_os = "macos")]
+    pacer: Option<zeus::pacing::Pacer<zeus::pacing::DisplayLink>>,
     #[cfg(feature = "demo")]
     shot: Option<Shot>,
     #[cfg(feature = "demo")]
@@ -734,6 +740,10 @@ impl eframe::App for Shell {
     }
 
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        #[cfg(target_os = "macos")]
+        if let Some(pacer) = &mut self.pacer {
+            pacer.hold();
+        }
         // A maximized Windows window hides its sizing frame, which leaves the
         // interface that much closer to a shorter title bar: start it lower.
         let inset = zeus::window_inset::top(input);
