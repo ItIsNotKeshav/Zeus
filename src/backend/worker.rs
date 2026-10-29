@@ -3551,6 +3551,23 @@ impl Worker {
                 {
                     self.emit_chat(&chat);
                 }
+                // So does who may post: members get the composer back the
+                // moment an admin opens the group, not a refresh tick and a
+                // round trip later. Admins post either way.
+                let announcement = match &*update.action {
+                    GroupNotificationAction::Announce => Some(true),
+                    GroupNotificationAction::NotAnnounce => Some(false),
+                    _ => None,
+                };
+                if let Some(announcement) = announcement
+                    && let Ok(Some(known)) = self.archive.chat(&chat)
+                    && self
+                        .archive
+                        .set_read_only(&chat, announcement && !known.admin)
+                        .is_ok()
+                {
+                    self.emit_chat(&chat);
+                }
                 self.request_group_info(&chat, true);
             }
             E::ArchiveUpdate(update) => {
@@ -16077,6 +16094,43 @@ mod receipt_tests {
                 worker.archive.chat(group).unwrap().unwrap().info_locked,
                 expected
             );
+            assert_eq!(
+                worker.group_info_queue.front().map(String::as_str),
+                Some(group),
+                "the metadata is refreshed too"
+            );
+        }
+    }
+
+    /// "Only admins can send" and its reversal change who may post at once,
+    /// for members; an admin keeps posting either way.
+    #[tokio::test]
+    async fn group_announcement_notices_apply_before_the_refresh() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        for (admin, action, read_only) in [
+            (false, GroupNotificationAction::Announce, true),
+            (false, GroupNotificationAction::NotAnnounce, false),
+            (true, GroupNotificationAction::Announce, false),
+        ] {
+            worker
+                .archive
+                .set_group_rights(group, false, admin)
+                .unwrap();
+            let update = wa_events::GroupUpdate::builder()
+                .group_jid(group.parse().unwrap())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
+                .is_lid_addressing_mode(false)
+                .action(Box::new(action))
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+                .await;
+            let row = worker.archive.chat(group).unwrap().unwrap();
+            assert_eq!(row.read_only, read_only);
+            assert_eq!(row.can_send(), !read_only);
             assert_eq!(
                 worker.group_info_queue.front().map(String::as_str),
                 Some(group),

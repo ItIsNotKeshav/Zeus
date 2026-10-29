@@ -1462,6 +1462,15 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 selection_bar(app, ui, &chat.id, &selected);
                 return;
             }
+            // When an admin opens or closes the group to everyone, the
+            // composer and the read-only note fade in as they swap.
+            let open = theme::animate(
+                ui.ctx(),
+                egui::Id::new(("composer-open", chat.id.as_str())),
+                chat.can_send(),
+                theme::MOTION_PANEL,
+            );
+            ui.multiply_opacity(if chat.can_send() { open } else { 1.0 - open });
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     // A channel we left says so; the rest are only read-only.
