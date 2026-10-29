@@ -33,6 +33,19 @@ pub fn blur() -> bool {
     glass() < 1.0
 }
 
+/// Whether this build's renderer can frost glass inside the window. The
+/// frost reads back what the frame has drawn so far, which the OpenGL
+/// renderer allows and wgpu's, which macOS uses, does not.
+pub const CAN_FROST: bool = cfg!(not(target_os = "macos"));
+
+/// Whether glass inside the window is frosted: [`blur`] where the renderer
+/// can frost. Where it cannot, the header, composer and floating controls
+/// take the solid surfaces of Solid; the window's own material, which the
+/// system draws, still follows [`blur`].
+pub fn frost() -> bool {
+    CAN_FROST && blur()
+}
+
 /// Records Settings' Glass for [`glass`]; the app does so every frame.
 pub fn set_glass(tint: f32) {
     GLASS.store(tint.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
@@ -320,6 +333,18 @@ mod tests {
             transparent_window(true),
             cfg!(target_os = "macos") || platform::may_show_through()
         );
+    }
+
+    /// macOS draws through wgpu, which cannot frost, so its glass is solid
+    /// whatever Glass says; elsewhere frosting follows Glass alone.
+    #[test]
+    fn glass_frosts_only_where_the_renderer_can() {
+        assert_eq!(CAN_FROST, cfg!(not(target_os = "macos")));
+        // Other tests set Glass as they run, so only the answer that does
+        // not depend on it is checked.
+        if cfg!(target_os = "macos") {
+            assert!(!frost());
+        }
     }
 
     /// The default tint keeps every fill as it was; Solid makes it opaque,
