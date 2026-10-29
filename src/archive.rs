@@ -531,6 +531,16 @@ impl Archive {
         Ok(())
     }
 
+    /// Records who may post, from an "only admins can send" switch announced
+    /// by WhatsApp, ahead of the metadata refresh that confirms it.
+    pub fn set_read_only(&self, id: &str, read_only: bool) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET read_only = ?2 WHERE id = ?1",
+            params![id, read_only],
+        )?;
+        Ok(())
+    }
+
     /// Records a lock or unlock of the group's info announced by WhatsApp,
     /// which leaves our own role as it was.
     pub fn set_info_locked(&self, id: &str, info_locked: bool) -> Result<()> {
