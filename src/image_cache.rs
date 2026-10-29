@@ -324,6 +324,67 @@ impl FitLoader {
     }
 }
 
+/// The URIs of message thumbnails, which [`FitLoader`] decodes at once.
+const THUMBNAIL: &str = "bytes://thumb-";
+
+/// The most a thumbnail may weigh to be decoded on the interface thread. A
+/// message's preview is a few kilobytes and decodes in well under a
+/// millisecond; anything larger goes to egui's own loader.
+const SMALL_THUMBNAIL: usize = 32 * 1024;
+
+impl FitLoader {
+    /// Decodes a small thumbnail in the frame that first draws it. egui's
+    /// loader decodes on a thread of its own, so a chat would open with an
+    /// empty frame, or egui's spinner, where each preview goes, and fill
+    /// them in a frame later.
+    fn load_thumbnail(&self, ctx: &egui::Context, uri: &str) -> egui::load::ImageLoadResult {
+        let known = self
+            .fits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(uri)
+            .cloned();
+        if let Some(Fitted::Ready(image)) = known {
+            return Ok(egui::load::ImagePoll::Ready { image });
+        }
+        let Ok(egui::load::BytesPoll::Ready { bytes, .. }) = ctx.try_load_bytes(uri) else {
+            return Err(egui::load::LoadError::NotSupported);
+        };
+        if bytes.len() > SMALL_THUMBNAIL {
+            return Err(egui::load::LoadError::NotSupported);
+        }
+        // A crafted one fails here, as a picture does on the decoder thread.
+        let decoded = std::panic::catch_unwind(|| decode_thumbnail(&bytes));
+        let Ok(Some(image)) = decoded else {
+            return Err(egui::load::LoadError::NotSupported);
+        };
+        let image = Arc::new(image);
+        self.fits
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(uri.to_owned(), Fitted::Ready(Arc::clone(&image)));
+        Ok(egui::load::ImagePoll::Ready { image })
+    }
+}
+
+/// Decodes a thumbnail's bytes, if they hold a picture of a thumbnail's
+/// size: a few bytes that claim a huge picture are not given its memory.
+fn decode_thumbnail(bytes: &[u8]) -> Option<egui::ColorImage> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(1024);
+    limits.max_image_height = Some(1024);
+    limits.max_alloc = Some(16 * 1024 * 1024);
+    reader.limits(limits);
+    let rgba = reader.decode().ok()?.to_rgba8();
+    Some(egui::ColorImage::from_rgba_unmultiplied(
+        [rgba.width() as usize, rgba.height() as usize],
+        rgba.as_flat_samples().as_slice(),
+    ))
+}
+
 /// The decoder thread: takes every waiting request, decodes the newest still
 /// wanted, and puts the rest back.
 fn decode_jobs(receiver: &mpsc::Receiver<(String, egui::Context)>, fits: &Fits) {
@@ -374,6 +435,9 @@ impl egui::load::ImageLoader for FitLoader {
         uri: &str,
         _size_hint: egui::load::SizeHint,
     ) -> egui::load::ImageLoadResult {
+        if uri.starts_with(THUMBNAIL) {
+            return self.load_thumbnail(ctx, uri);
+        }
         if parse_fit(uri).is_none() {
             return Err(egui::load::LoadError::NotSupported);
         }
@@ -582,6 +646,27 @@ mod tests {
         let small = picture(dir.path(), "small.png", 100, 50);
         let image = decode_fitted(&small, 256).expect("decoded");
         assert_eq!(image.size, [100, 50], "a small picture is never enlarged");
+    }
+
+    /// A thumbnail is ready in the frame that first draws it, rather than a
+    /// frame later from egui's loader thread.
+    #[test]
+    fn a_thumbnail_is_ready_at_once() {
+        let ctx = egui::Context::default();
+        egui_extras::install_image_loaders(&ctx);
+        install(&ctx);
+        let mut png = Vec::new();
+        image::RgbaImage::from_pixel(24, 16, image::Rgba([200, 40, 40, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .expect("encoded");
+        let uri = "bytes://thumb-chat-message";
+        include(&ctx, uri, &png);
+        match ctx.try_load_image(uri, egui::load::SizeHint::default()) {
+            Ok(egui::load::ImagePoll::Ready { image }) => assert_eq!(image.size, [24, 16]),
+            Ok(egui::load::ImagePoll::Pending { .. }) => panic!("still pending"),
+            Err(error) => panic!("{error}"),
+        }
+        assert!(decode_thumbnail(b"not a picture").is_none());
     }
 
     #[test]

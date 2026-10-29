@@ -19,7 +19,13 @@
 //! So lines count as well as points, at the step a wheel notch scrolls, and
 //! where nothing says when the fingers lift a pause in the events stands for
 //! it. Whatever follows a swipe (the glide) is swallowed until the events go
-//! quiet or the fingers touch again.
+//! quiet or the fingers touch again. Where a pause stands for the lift, the
+//! fingers may still be down after one: a swipe that acted keeps them until
+//! the touchpad has been still for [`STRANDED`], so lifting them, or moving
+//! on after a pause, does not swipe the row a second time.
+//!
+//! Pauses are only those the frames saw: a frame that took long to draw
+//! brings the events that came meanwhile, which is no pause at all.
 
 use egui::layers::ShapeIdx;
 use egui::{self, Context, Id, Pos2, Rect, Vec2, pos2, vec2};
@@ -44,7 +50,8 @@ const SIDEWAYS: f32 = 1.2;
 /// a Windows touchpad came no more than 20 ms apart.
 const QUIET: f64 = 0.12;
 /// Where the platform reports lifts, a gesture that went this long without
-/// one (a lost end event) ends anyway.
+/// one (a lost end event) ends anyway. Where it does not, a swipe that acted
+/// holds the fingers this long after they last moved.
 const STRANDED: f64 = 0.8;
 /// After a swipe acts, events closer together than this are its glide.
 const TAIL_GAP: f64 = 0.12;
@@ -104,6 +111,11 @@ struct Gesture {
     began_at: f64,
     /// Input time of the latest event.
     last: f64,
+    /// Input time of the frame before this one: events in a frame came
+    /// after it, so the touchpad was still at least until then.
+    seen: f64,
+    /// The gesture acted when it ended.
+    acted: bool,
     released_at: f64,
     /// The platform says when fingers touch and lift. Kept across gestures.
     announced: bool,
@@ -115,6 +127,11 @@ struct Gesture {
 
 impl Gesture {
     fn step(&mut self, frame: Frame) {
+        self.follow(frame);
+        self.seen = frame.time;
+    }
+
+    fn follow(&mut self, frame: Frame) {
         let moved = frame.delta != Vec2::ZERO;
         self.announced |= frame.began || frame.lifted;
         if self.stage == Stage::Released {
@@ -122,7 +139,12 @@ impl Gesture {
         }
         if self.stage == Stage::Tail {
             let touched = frame.began && frame.time - self.released_at > FRESH_TOUCH;
-            if !touched && frame.time - self.last <= TAIL_GAP {
+            let rest = if self.acted && !self.announced {
+                STRANDED
+            } else {
+                TAIL_GAP
+            };
+            if !touched && self.still(frame) <= rest {
                 if moved || frame.lifted {
                     self.last = frame.time;
                 }
@@ -151,8 +173,8 @@ impl Gesture {
         if self.stage != Stage::Tracking {
             return;
         }
-        let idle = frame.time - self.last;
-        let lifted = frame.lifted || idle > if self.announced { STRANDED } else { QUIET };
+        let lifted =
+            frame.lifted || self.still(frame) > if self.announced { STRANDED } else { QUIET };
         if !lifted {
             return;
         }
@@ -173,14 +195,28 @@ impl Gesture {
             self.stage = Stage::Released;
             self.released_at = frame.time;
             self.last = frame.time;
+            self.acted = self.travel.x.abs() >= THRESHOLD;
         } else {
             self.reset();
         }
     }
 
+    /// How long the touchpad has surely been still. A frame with events
+    /// vouches only for the frames before it: drawn after a slow one, its
+    /// events came at any time since then.
+    fn still(&self, frame: Frame) -> f64 {
+        let until = if frame.events > 0 {
+            self.seen
+        } else {
+            frame.time
+        };
+        (until - self.last).max(0.0)
+    }
+
     fn reset(&mut self) {
         *self = Self {
             announced: self.announced,
+            seen: self.seen,
             ..Self::default()
         };
     }
@@ -636,6 +672,80 @@ mod tests {
             began: true,
             ..moving(1.0, 20.0, 0.0)
         });
+        assert!(gesture.pull(area()).is_some());
+    }
+
+    /// A frame that took long to draw brings the glide's events late: no
+    /// pause, so the glide stays the swipe's and starts no other.
+    #[test]
+    fn slow_frame_is_no_pause_in_the_glide() {
+        let mut gesture = Gesture::default();
+        gesture.step(Frame {
+            began: true,
+            ..moving(0.0, 4.0, 0.0)
+        });
+        for step in 1..12 {
+            gesture.step(moving(f64::from(step) * 0.016, 10.0, 0.0));
+        }
+        gesture.step(Frame {
+            lifted: true,
+            ..quiet(0.2)
+        });
+        assert!(gesture.pull(area()).unwrap().fired);
+        gesture.step(moving(0.21, 12.0, 0.0));
+        // The swipe's action took a quarter of a second to draw.
+        gesture.step(moving(0.46, 24.0, 0.0));
+        gesture.step(moving(0.47, 12.0, 0.0));
+        assert_eq!(gesture.pull(area()), None);
+    }
+
+    /// Windows: a pause read as the lift acted, and the fingers, still down,
+    /// move again (or roll off the touchpad) a moment later. That is the
+    /// same swipe, not a second one.
+    #[test]
+    fn fingers_moving_on_after_a_swipe_acted_do_not_swipe_again() {
+        let mut gesture = Gesture::default();
+        for step in 0..10 {
+            gesture.step(moving(f64::from(step) * 0.016, -12.0, 0.0));
+        }
+        for step in 0..12 {
+            gesture.step(quiet(0.16 + f64::from(step) * 0.016));
+            if gesture.pull(area()).is_some_and(|pull| pull.fired) {
+                break;
+            }
+        }
+        assert_eq!(gesture.stage, Stage::Released, "the pause acts");
+        let mut time = gesture.released_at;
+        while time < gesture.released_at + 0.5 {
+            time += 0.016;
+            gesture.step(quiet(time));
+        }
+        for step in 0..6 {
+            gesture.step(moving(time + f64::from(step) * 0.016, -20.0, 0.0));
+            assert_eq!(gesture.pull(area()), None, "no second swipe");
+        }
+        // Once the touchpad has rested, the next swipe is a new one.
+        let rested = time + 2.0;
+        gesture.step(quiet(rested));
+        for step in 0..10 {
+            gesture.step(moving(rested + 0.01 + f64::from(step) * 0.016, -12.0, 0.0));
+        }
+        assert!(gesture.pull(area()).is_some());
+    }
+
+    /// A short swipe that eased back leaves the next one free at once.
+    #[test]
+    fn swipe_that_did_not_act_leaves_the_next_free() {
+        let mut gesture = Gesture::default();
+        for step in 0..3 {
+            gesture.step(moving(f64::from(step) * 0.016, -12.0, 0.0));
+        }
+        gesture.step(quiet(0.3));
+        assert!(!gesture.pull(area()).unwrap().fired);
+        gesture.step(quiet(0.5));
+        for step in 0..3 {
+            gesture.step(moving(0.6 + f64::from(step) * 0.016, -12.0, 0.0));
+        }
         assert!(gesture.pull(area()).is_some());
     }
 

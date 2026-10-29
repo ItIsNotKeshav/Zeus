@@ -2921,8 +2921,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     // to land on the same id.
     let scroll_id = ui.make_persistent_id(egui::IdSalt::new(("messages", &chat.id)));
     let scroll_state = egui::scroll_area::State::load(ui.ctx(), scroll_id);
-    // The list has not been shown before: it starts at the top.
-    let first_show = scroll_state.is_none();
+    // The list has not been shown before, or showed no rows yet while its
+    // messages were on their way: it starts at the top.
+    let first_show = scroll_state.is_none() || rows.is_empty();
     let redo_scroll_id = scroll_id.with("redo-scroll");
     let offset = scroll_state.map_or(0.0, |state| state.offset.y);
     // A keyboard scroll under way stops for a jump to a message, for the
@@ -3907,18 +3908,20 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
 
 /// The disc behind a message's react or reply button: opaque, so the chat's
 /// wallpaper does not show through, and lifted like a bubble.
-fn floating_circle(ui: &egui::Ui, palette: &Palette, rect: Rect, hovered: bool) {
+fn floating_circle(ui: &egui::Ui, palette: &Palette, rect: Rect, hovered: bool, opacity: f32) {
     let radius = CornerRadius::from(rect.width() / 2.0);
-    ui.painter()
-        .add(palette.bubble_shadow().as_shape(rect, radius));
+    let mut shadow = palette.bubble_shadow();
+    shadow.color = shadow.color.gamma_multiply(opacity);
+    ui.painter().add(shadow.as_shape(rect, radius));
+    let fill = if hovered {
+        palette.surface_hover
+    } else {
+        palette.overlay
+    };
     ui.painter().circle_filled(
         rect.center(),
         rect.width() / 2.0,
-        if hovered {
-            palette.surface_hover
-        } else {
-            palette.overlay
-        },
+        fill.gamma_multiply(opacity),
     );
 }
 
@@ -4204,9 +4207,22 @@ fn reaction_affordance(
     let swiping = ui
         .ctx()
         .data(|data| data.get_temp::<bool>(bubble_id(&view.chat.id, &message.id).with("swiping")));
-    let revealed = !swiping.unwrap_or(false) && reaction_affordance_visible(pointer, shown, reach);
-    if ui.is_rect_visible(rect) && (response.has_focus() || (uncovered && revealed)) {
-        floating_circle(ui, &view.palette, rect, response.hovered());
+    let swiping = swiping.unwrap_or(false);
+    let revealed = !swiping && reaction_affordance_visible(pointer, shown, reach);
+    // The buttons ease in and out with the pointer, so they do not snap back
+    // beside a row that just settled from a swipe; a swipe starting takes
+    // them at once, before they ride along. They only paint: nothing about
+    // them takes room, so the transcript never moves for them.
+    let fade = theme::animate(
+        ui.ctx(),
+        bubble.id.with("affordance"),
+        uncovered && revealed,
+        if swiping { 0.0 } else { theme::MOTION_QUICK },
+    );
+    let opacity = |focused: bool| if focused { 1.0 } else { fade };
+    if ui.is_rect_visible(rect) && opacity(response.has_focus()) > 0.0 {
+        let opacity = opacity(response.has_focus());
+        floating_circle(ui, &view.palette, rect, response.hovered(), opacity);
         theme::paint_icon(
             ui,
             Icon::Smile,
@@ -4216,7 +4232,8 @@ fn reaction_affordance(
                 view.palette.text
             } else {
                 view.palette.secondary
-            },
+            }
+            .gamma_multiply(opacity),
         );
     }
     if response
@@ -4234,8 +4251,9 @@ fn reaction_affordance(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Reply")
     });
     theme::reveal_focus(&reply);
-    if ui.is_rect_visible(reply_rect) && (reply.has_focus() || (uncovered && revealed)) {
-        floating_circle(ui, &view.palette, reply_rect, reply.hovered());
+    if ui.is_rect_visible(reply_rect) && opacity(reply.has_focus()) > 0.0 {
+        let opacity = opacity(reply.has_focus());
+        floating_circle(ui, &view.palette, reply_rect, reply.hovered(), opacity);
         theme::paint_icon(
             ui,
             Icon::Reply,
@@ -4245,7 +4263,8 @@ fn reaction_affordance(
                 view.palette.text
             } else {
                 view.palette.secondary
-            },
+            }
+            .gamma_multiply(opacity),
         );
     }
     if reply
@@ -9744,6 +9763,32 @@ fn fit_sticker(width: f32, height: f32) -> Vec2 {
     vec2(width * scale, height * scale)
 }
 
+/// The dimming over a picture while it downloads, by message, so it can lift
+/// once the file (a new path) is there.
+fn download_veil_id(message: &Message) -> egui::Id {
+    egui::Id::new(("download-veil", &message.chat, &message.id))
+}
+
+/// What a picture had over it while it downloaded, the dimming and the
+/// spinner, at `strength` as it lifts.
+fn paint_download_veil(ui: &egui::Ui, rect: Rect, radius: f32, strength: f32) {
+    if strength <= 0.0 || !ui.is_rect_visible(rect) {
+        return;
+    }
+    ui.painter().rect_filled(
+        rect,
+        radius,
+        Color32::from_black_alpha(60).gamma_multiply(strength),
+    );
+    let disc = Rect::from_center_size(rect.center(), Vec2::splat(44.0));
+    ui.painter().circle_filled(
+        disc.center(),
+        22.0,
+        Color32::from_black_alpha(120).gamma_multiply(strength),
+    );
+    theme::paint_spinner(ui, disc, 22.0, Color32::WHITE.gamma_multiply(strength));
+}
+
 /// Reserved size for an image or video before and after download.
 fn frame_size(
     media: &Media,
@@ -9844,6 +9889,14 @@ fn picture(
             .filter(|_| sticker.is_none())
             .map(|bytes| thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes));
         let sharpen_id = pixels_id.with("sharpen");
+        // A picture that just finished downloading lifts the dimming and the
+        // spinner it had while it came, rather than dropping them at once.
+        let veil = theme::animate(
+            ui.ctx(),
+            download_veil_id(message),
+            false,
+            theme::MOTION_PANEL,
+        );
         return match image.load_for_size(ui.ctx(), vec2(max_width, max_height)) {
             Ok(egui::load::TexturePoll::Ready { texture }) => {
                 if drawn != Some(texture.size) {
@@ -9879,6 +9932,7 @@ fn picture(
                         .sense(Sense::click()),
                 );
                 let rect = response.rect;
+                paint_download_veil(ui, rect, radius, veil);
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -9925,6 +9979,7 @@ fn picture(
                             theme::paint_spinner(ui, rect, 22.0, palette.accent);
                         }
                     }
+                    paint_download_veil(ui, rect, radius, veil);
                 }
                 rect
             }
@@ -9977,6 +10032,10 @@ fn picture(
         let disc = Rect::from_center_size(rect.center(), Vec2::splat(44.0));
         match &media.state {
             MediaState::Downloading => {
+                // Lifted, once the picture is here, by `paint_download_veil`.
+                if sticker.is_none() {
+                    theme::animate(ui.ctx(), download_veil_id(message), true, 0.0);
+                }
                 ui.painter()
                     .circle_filled(disc.center(), 22.0, Color32::from_black_alpha(120));
                 theme::paint_spinner(ui, disc, 22.0, Color32::WHITE);

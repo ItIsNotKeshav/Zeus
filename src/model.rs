@@ -2525,6 +2525,9 @@ pub enum Action {
     /// Steps forward again after a back step.
     NavigateForward,
     OpenChat(ChatId),
+    /// Loads a chat's newest messages ahead of opening it: a press on its row
+    /// in the list, so the click that follows opens it with them in place.
+    PreloadChat(ChatId),
     /// Starts a 1:1 voice call with the chat.
     StartCall(ChatId),
     /// Starts a 1:1 video call with the chat.
