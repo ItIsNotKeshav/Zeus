@@ -295,6 +295,11 @@ protocol. These notes are for coding agents and new contributors.
   thread and are dropped when unseen. A paused animation decodes only its
   first frame, the poster, and the rest once it plays: full decodes of a
   picker's paused stickers overran the frame budget and evicted each other.
+  Stickers in a chat go through `animation::autoplay`: they loop on their
+  own while on screen, in draw order, as long as their frames fit
+  `AUTOPLAY_FRAMES` in the pass; the rest of the budget is kept for the one
+  under the pointer and the posters, so playing stickers never evict each
+  other. The picker and GIFs still play on hover.
   Two decoders run at once; one still running after 10 s gives up its slot.
 - Every MP4 header goes through `mp4_guard::read_header`, never
   `mp4::Mp4Reader::read_header` directly: `mp4` 0.14 loops forever on a
