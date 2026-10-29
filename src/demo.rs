@@ -14757,6 +14757,192 @@ mod tests {
         );
     }
 
+    /// The pass each row of a `sweep_chat` was last laid out in.
+    fn row_passes(app: &App, chat: &str, count: usize) -> Vec<Option<u64>> {
+        let rows = &app.conversations[chat].rows;
+        (0..count)
+            .map(|i| rows.get(&format!("m{i:03}")).and_then(|row| row.pass))
+            .collect()
+    }
+
+    /// Turns the wheel by `delta` points over the open chat's messages and
+    /// runs frames until the list stops moving.
+    fn wheel_messages(app: &mut App, ctx: &egui::Context, chat: &str, delta: f32) {
+        let centre = app
+            .selection_view
+            .lock()
+            .expect("the view rect")
+            .expect("the conversation was drawn")
+            .center();
+        frame_with(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(centre),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, delta),
+                    modifiers: egui::Modifiers::NONE,
+                    phase: egui::TouchPhase::Move,
+                },
+            ],
+        );
+        let mut last = f32::NAN;
+        for _ in 0..200 {
+            frame_with(app, ctx, Vec::new());
+            let (offset, _) = scroll_metrics(ctx, chat);
+            if (offset - last).abs() < 0.01 {
+                break;
+            }
+            last = offset;
+        }
+    }
+
+    /// A text selection keeps only the rows that may hold its ends laid out:
+    /// scrolled far from it, the rows far from both it and the view are
+    /// skipped, and the selection survives the way there and back.
+    #[test]
+    fn a_text_selection_skips_rows_far_from_it_and_the_view() {
+        let (mut app, ctx, chat) = sweep_chat(400);
+        // A long chat's end settles one frame later than a short one's, as
+        // the list measures what it has not laid out yet.
+        render(&mut app, &ctx);
+        let body = drawn_rect(&ctx, &chat, "m395", "body");
+        let (from, to) = (
+            egui::pos2(body.left() + 2.0, body.center().y),
+            egui::pos2(body.right() - 2.0, body.center().y),
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(from), primary(from, true)],
+        );
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        frame_with(&mut app, &ctx, vec![primary(to, false)]);
+        render(&mut app, &ctx);
+        assert!(text_selected(&ctx), "the drag selected text");
+        let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
+        assert_eq!(copied.len(), 1, "{copied:?}");
+        assert!(
+            copied[0].len() > 4 && "message number 395".contains(copied[0].as_str()),
+            "{copied:?}"
+        );
+        let ends: Vec<usize> = (0..400)
+            .filter(|i| {
+                app.conversations[&chat]
+                    .text_ends
+                    .contains(&format!("m{i:03}"))
+            })
+            .collect();
+        assert!(ends.contains(&395), "the selected row is kept: {ends:?}");
+        assert!(
+            ends.len() < 200,
+            "only rows near the view are kept: {ends:?}"
+        );
+        // Most of the way up, far from the selection.
+        let (end, _) = scroll_metrics(&ctx, &chat);
+        wheel_messages(&mut app, &ctx, &chat, end * 0.6);
+        assert!(text_selected(&ctx), "scrolling away keeps the selection");
+        let passes = row_passes(&app, &chat, 400);
+        let latest = passes.iter().flatten().max().copied();
+        assert_eq!(passes[395], latest, "the selected row is still laid out");
+        let near_view: Vec<usize> = (0..400)
+            .filter(|i| passes[*i] == latest && !ends.contains(i))
+            .collect();
+        let (first, last) = (
+            *near_view.first().expect("rows near the view"),
+            *near_view.last().expect("rows near the view"),
+        );
+        assert!(
+            first > 0 && passes[0] < latest,
+            "rows above the view are skipped, from {first}"
+        );
+        assert!(
+            last + 1 < ends[0],
+            "rows between the view (to {last}) and the selection's rows (from {}) are skipped",
+            ends[0]
+        );
+        // Back at the end, the same text copies.
+        wheel_messages(&mut app, &ctx, &chat, -end * 2.0);
+        assert!(app.at_bottom, "back at the end");
+        assert!(text_selected(&ctx), "scrolling back keeps the selection");
+        assert_eq!(copied_text(&mut app, &ctx, egui::Event::Copy), copied);
+    }
+
+    /// A copy of a text selection from near the top of a long chat to near
+    /// its end gives every message between, each under its header, though
+    /// the rows between were skipped until the copy.
+    #[test]
+    fn a_copy_across_a_long_text_selection_has_every_message() {
+        let (mut app, ctx, chat) = sweep_chat(400);
+        // A long chat's end settles one frame later than a short one's, as
+        // the list measures what it has not laid out yet.
+        render(&mut app, &ctx);
+        // From the end of a message near the end, leftwards.
+        let body = drawn_rect(&ctx, &chat, "m395", "body");
+        let (from, to) = (
+            egui::pos2(body.right() - 2.0, body.center().y),
+            body.center(),
+        );
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(from), primary(from, true)],
+        );
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        frame_with(&mut app, &ctx, vec![egui::Event::PointerMoved(to)]);
+        frame_with(&mut app, &ctx, vec![primary(to, false)]);
+        render(&mut app, &ctx);
+        assert!(text_selected(&ctx), "the drag selected text");
+        // Up to the top, then Shift-click the start of a message there.
+        let (end, _) = scroll_metrics(&ctx, &chat);
+        wheel_messages(&mut app, &ctx, &chat, end * 2.0);
+        let start = drawn_rect(&ctx, &chat, "m005", "body");
+        let at = egui::pos2(start.left() + 2.0, start.center().y);
+        let shift = egui::Modifiers::SHIFT;
+        let button = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: shift,
+        };
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::ModifiersChanged(shift),
+                egui::Event::PointerMoved(at),
+                button(true),
+            ],
+        );
+        frame_with(&mut app, &ctx, vec![button(false)]);
+        frame_with(
+            &mut app,
+            &ctx,
+            vec![egui::Event::ModifiersChanged(egui::Modifiers::NONE)],
+        );
+        assert!(text_selected(&ctx), "Shift-click extends the selection");
+        let passes = row_passes(&app, &chat, 400);
+        let latest = passes.iter().flatten().max().copied();
+        assert!(
+            passes[200] < latest,
+            "the rows between are skipped before the copy"
+        );
+        let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
+        assert_eq!(copied.len(), 1, "one clipboard write: {copied:?}");
+        let lines: Vec<&str> = copied[0].lines().collect();
+        assert_eq!(lines.len(), 391, "m005 to m395: {copied:?}");
+        for (line, i) in lines.iter().zip(5..=395) {
+            let tail = format!(": message number {i}");
+            assert!(
+                line.starts_with('[') && line.ends_with(&tail),
+                "{line:?} should be message {i} under its header"
+            );
+        }
+        assert!(text_selected(&ctx), "copying keeps the selection");
+    }
+
     /// Dragging near the top scrolls up from a bottom-pinned list.
     #[test]
     fn a_held_drag_at_the_top_edge_scrolls_the_list_up() {

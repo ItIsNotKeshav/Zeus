@@ -2491,6 +2491,116 @@ fn handle_colors(visuals: &mut egui::Visuals) -> [&mut egui::Color32; 3] {
     ]
 }
 
+/// Whether egui holds a text selection in any label.
+fn has_text_selection(ctx: &egui::Context) -> bool {
+    ctx.plugin_opt::<egui::text_selection::LabelSelectionState>()
+        .is_some_and(|plugin| plugin.lock().has_selection())
+}
+
+/// The rows the transcript keeps laid out for egui's text selection while it
+/// skips the rest of a long history.
+///
+/// egui drops a selection when a pass does not draw both of its end labels,
+/// but needs the labels between them only to copy their text. An end moves
+/// only into a label drawn while a pointer button is pressed, held or let go
+/// (keys move it inside its own label), so the rows laid out on those passes
+/// hold both ends, wherever the view goes after. A primary press without
+/// Shift either ends the selection or starts it again in the label under the
+/// pointer, so it keeps only the rows near the view. The frame that copies
+/// lays out every row from the first such row to the last, so egui and the
+/// transcript read the text of every selected message.
+struct TextEnds {
+    /// The rows that may hold an end, by message id.
+    ids: HashSet<String>,
+    /// The rows of messages this pass laid out where an end may have moved.
+    moved: Vec<String>,
+    /// The span of message indices a copy this pass reads.
+    copy: Option<std::ops::RangeInclusive<usize>>,
+    /// A primary press without Shift or another button.
+    fresh_press: bool,
+    /// Any button pressed, held or let go.
+    busy: bool,
+}
+
+impl TextEnds {
+    fn begin(ui: &egui::Ui, mut ids: HashSet<String>, messages: &[Message]) -> Self {
+        if !has_text_selection(ui.ctx()) {
+            ids.clear();
+        }
+        let copying = !ids.is_empty()
+            && ui.input(|input| {
+                input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::Copy | egui::Event::Cut))
+            });
+        let copy = if copying {
+            let first = messages
+                .iter()
+                .position(|message| ids.contains(&message.id));
+            let last = messages
+                .iter()
+                .rposition(|message| ids.contains(&message.id));
+            first.zip(last).map(|(first, last)| first..=last)
+        } else {
+            None
+        };
+        let (fresh_press, busy) = ui.input(|input| {
+            let pointer = &input.pointer;
+            let others = [
+                egui::PointerButton::Secondary,
+                egui::PointerButton::Middle,
+                egui::PointerButton::Extra1,
+                egui::PointerButton::Extra2,
+            ]
+            .into_iter()
+            .any(|button| pointer.button_down(button) || pointer.button_pressed(button));
+            (
+                pointer.primary_pressed() && !input.modifiers.shift && !others,
+                pointer.any_down() || pointer.any_pressed() || pointer.any_released(),
+            )
+        });
+        Self {
+            ids,
+            moved: Vec::new(),
+            copy,
+            fresh_press,
+            busy,
+        }
+    }
+
+    /// Whether the row of `members`, starting at message `index`, must be
+    /// laid out wherever the view is.
+    fn holds(&self, index: usize, members: &[Message]) -> bool {
+        self.copy.as_ref().is_some_and(|span| span.contains(&index))
+            || (!self.ids.is_empty() && members.iter().any(|member| self.ids.contains(&member.id)))
+    }
+
+    /// Notes a row this pass laid out; `near` says whether it lies near the
+    /// view, where a fresh press can have put both ends.
+    fn laid_out(&mut self, members: &[Message], near: bool) {
+        if self.busy && (near || !self.fresh_press) {
+            self.moved
+                .extend(members.iter().map(|member| member.id.clone()));
+        }
+    }
+
+    /// The rows to keep laid out from the next pass on, once every row that
+    /// could move an end has been drawn.
+    fn finish(self, ctx: &egui::Context) -> HashSet<String> {
+        if !has_text_selection(ctx) {
+            return HashSet::new();
+        }
+        let mut ids = if self.fresh_press {
+            HashSet::new()
+        } else {
+            self.ids
+        };
+        ids.extend(self.moved);
+        ids
+    }
+}
+
 /// A row height to assume for a message that has not been laid out yet. Rows
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
@@ -2950,19 +3060,19 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let mut edge_scrolled_up = false;
     // Rows far from the viewport are skipped rather than laid out, keeping the
     // height they last took (or an estimate), so a long history costs the rows
-    // near the screen instead of every loaded one. A jump to a message, the
-    // unread divider's first placement, and a text selection lay out every
-    // row: a jump needs exact positions, and egui drops a selection whose
-    // ends it does not see in a frame. Rows near the viewport are measured
-    // again each frame, so a width change or an image that loads corrects
-    // them before they come into view.
+    // near the screen instead of every loaded one. A jump to a message and
+    // the unread divider's first placement lay out every row: a jump needs
+    // exact positions. A text selection keeps the rows that hold its ends
+    // laid out (`TextEnds`). Rows near the viewport are measured again each
+    // frame, so a width change or an image that loads corrects them before
+    // they come into view.
     let layout_width = ui.available_width();
-    let lay_out_all = view.anchor.is_some()
-        || divider.as_ref().is_some_and(|(.., placed)| !placed)
-        || ui
-            .ctx()
-            .plugin_opt::<egui::text_selection::LabelSelectionState>()
-            .is_some_and(|plugin| plugin.lock().has_selection());
+    let lay_out_all = view.anchor.is_some() || divider.as_ref().is_some_and(|(.., placed)| !placed);
+    let mut text_ends = TextEnds::begin(
+        ui,
+        std::mem::take(&mut conversation.text_ends),
+        &conversation.messages,
+    );
     let pass = ui.ctx().cumulative_pass_nr();
     let redo = ui.ctx().current_pass_index() > 0;
     let mut rows = std::mem::take(&mut conversation.rows);
@@ -3107,8 +3217,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         viewport.contains(origin) && origin.x < viewport.right() - 16.0
                     })
             });
+            // A pass redone after rows above the view were first measured
+            // has had this frame's step already, in the pass before it.
             if view.reaction.is_none()
                 && held_inside
+                && !redo
                 && let Some(pointer) = ui.input(|input| input.pointer.latest_pos())
             {
                 let delta = edge_scroll(pointer.y, viewport.top(), viewport.bottom());
@@ -3253,7 +3366,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         };
                         let near = before + height >= viewport.top() - reach
                             && before <= viewport.bottom() + reach;
-                        if !lay_out_all && !near {
+                        let members = album.unwrap_or(std::slice::from_ref(message));
+                        if !lay_out_all && !near && !text_ends.holds(message_index, members) {
                             // The body rect of a row that just left the
                             // layout marks where it last was, not where it is.
                             if known
@@ -3631,6 +3745,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         {
                             visible_day = Some((message.timestamp, day_separator_top));
                         }
+                        text_ends.laid_out(
+                            members,
+                            before + measured >= viewport.top() - margin
+                                && before <= viewport.bottom() + margin,
+                        );
                         rows.insert(
                             message.id.clone(),
                             RowHeight {
@@ -3776,6 +3895,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let exhausted = conversation.phone_exhausted;
     conversation.rows = rows;
     conversation.top_row = top_row;
+    conversation.text_ends = text_ends.finish(ui.ctx());
     // Keep the rows on screen where they were when rows above them changed
     // height or arrived, unless this frame scrolled on purpose (to the end, a
     // jump, or the divider) or sticks to the end, where egui keeps the offset

@@ -226,6 +226,9 @@ pub struct Conversation {
     /// The height each row last took, keyed by message id, so the transcript
     /// can skip rows far from the viewport instead of laying them out.
     pub(crate) rows: HashMap<String, RowHeight>,
+    /// The rows that may hold an end of egui's text selection, by message
+    /// id, which the transcript keeps laid out while the selection lasts.
+    pub(crate) text_ends: HashSet<String>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
     /// The first row whose top was in the message list's view last frame,
