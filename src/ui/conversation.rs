@@ -9788,7 +9788,9 @@ fn picture(
             );
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             if ui.is_rect_visible(rect) {
-                match animation::frame(ui, path, rect, view.animate && response.hovered()) {
+                // Stickers play and loop on their own while on screen, as on
+                // the phone, not only under the pointer.
+                match animation::autoplay(ui, path, rect, view.animate, response.hovered()) {
                     animation::Frame::Ready(texture) => {
                         ui.painter().image(
                             texture.id(),
