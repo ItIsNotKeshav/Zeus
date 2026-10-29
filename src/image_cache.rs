@@ -7,9 +7,10 @@
 //! that fall out of the resident window, by count and by the bytes their
 //! textures take.
 //!
-//! Chat pictures go through [`fit_uri`]: a [`FitLoader`] decodes them off the
-//! interface thread at the size they are drawn, so a 12-megapixel photo in a
-//! bubble takes a few megabytes of texture rather than 48.
+//! Chat pictures go through [`fit_uri`] and [`fit_uri_within`]: a
+//! [`FitLoader`] decodes them off the interface thread at the size they are
+//! drawn, so a 12-megapixel photo in a bubble takes a megabyte or two of
+//! texture rather than 48.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -21,8 +22,11 @@ const RESIDENT: usize = 256;
 
 /// The most texture memory the resident images may take, in bytes. On a Mac
 /// the GPU shares the system's memory, so this is memory the app is seen to
-/// use. Anything the current frame drew is always kept.
-const BUDGET: usize = 256 * 1024 * 1024;
+/// use: Activity Monitor counted it in the 700 MB some Macs showed after a
+/// photo-heavy chat, where Windows, whose graphics memory is apart, showed
+/// 100. A window full of pictures fits many times over. Anything the
+/// current frame drew is always kept.
+const BUDGET: usize = 128 * 1024 * 1024;
 
 struct Entry {
     /// Frame the image was last drawn on.
@@ -173,8 +177,21 @@ pub fn sweep(ctx: &egui::Context) {
     }
 }
 
-/// The scheme [`FitLoader`] serves: `fit://{side}/{file URI}`.
+/// The scheme [`FitLoader`] serves: `fit://{side}/{file URI}` for a picture
+/// cropped to cover its frame, `fit://{width}x{height}/{file URI}` for one
+/// shown whole within it.
 const FIT: &str = "fit://";
+
+/// How large a fitted picture is decoded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Fit {
+    /// Its shorter edge at least this many pixels: it covers a frame of any
+    /// shape that size, as a cropped tile or an avatar does.
+    Cover(u32),
+    /// Wholly within this many pixels across and down, as a picture shown
+    /// whole in its bubble is.
+    Within(u32, u32),
+}
 
 /// The sides a fitted picture's shorter edge is decoded at, in pixels. A
 /// picture drawn at a size between two steps uses the larger, so one drawn a
@@ -185,22 +202,41 @@ const SIDES: [u32; 8] = [128, 192, 256, 384, 512, 768, 1024, 1536];
 const LONGEST: u32 = 4096;
 
 /// A URI for the picture at `path`, decoded no larger than it is drawn at
-/// `size` points on this display, and registered as drawn this frame. A file
-/// [`FitLoader`] cannot decode (an animated GIF or WebP, an SVG) keeps its
-/// plain file URI. Full-size viewers use [`crate::util::image_uri`] instead.
+/// `size` points on this display, and registered as drawn this frame: large
+/// enough to cover a frame that size whatever its shape, for a tile that
+/// crops it. A file [`FitLoader`] cannot decode (an animated GIF or WebP, an
+/// SVG) keeps its plain file URI. Full-size viewers use
+/// [`crate::util::image_uri`] instead.
 pub fn fit_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
+    let side = step(size.x.max(size.y) * ctx.pixels_per_point());
+    fitted(ctx, path, |file| format!("{FIT}{side}/{file}"))
+}
+
+/// Like [`fit_uri`], for a picture shown whole within `bounds` points: only
+/// as large as it can be drawn there. A photo in a bubble is as wide as the
+/// bubble or as tall, not both, so this takes a third of what covering the
+/// bounds would.
+pub fn fit_uri_within(ctx: &egui::Context, path: &Path, bounds: egui::Vec2) -> String {
+    let pixels = ctx.pixels_per_point();
+    let (width, height) = (step(bounds.x * pixels), step(bounds.y * pixels));
+    fitted(ctx, path, |file| format!("{FIT}{width}x{height}/{file}"))
+}
+
+/// The side in [`SIDES`] at or above `pixels`, or the largest.
+fn step(pixels: f32) -> u32 {
+    let pixels = pixels.ceil() as u32;
+    SIDES
+        .iter()
+        .copied()
+        .find(|side| *side >= pixels)
+        .unwrap_or(SIDES[SIDES.len() - 1])
+}
+
+/// The fitted URI `uri` makes of the file's, for a picture [`FitLoader`]
+/// decodes, or the file's own, and registered as drawn this frame.
+fn fitted(ctx: &egui::Context, path: &Path, uri: impl FnOnce(&str) -> String) -> String {
     let file = crate::util::image_uri(path);
-    let uri = if fits(path) {
-        let pixels = (size.x.max(size.y) * ctx.pixels_per_point()).ceil() as u32;
-        let side = SIDES
-            .iter()
-            .copied()
-            .find(|side| *side >= pixels)
-            .unwrap_or(SIDES[SIDES.len() - 1]);
-        format!("{FIT}{side}/{file}")
-    } else {
-        file
-    };
+    let uri = if fits(path) { uri(&file) } else { file };
     touch(ctx, &uri);
     uri
 }
@@ -216,10 +252,15 @@ fn fits(path: &Path) -> bool {
         })
 }
 
-/// The file URI a [`fit_uri`] was made from, and the side it asks for.
-fn parse_fit(uri: &str) -> Option<(u32, &str)> {
-    let (side, file) = uri.strip_prefix(FIT)?.split_once('/')?;
-    Some((side.parse().ok()?, file))
+/// The file URI a [`fit_uri`] or [`fit_uri_within`] was made from, and the
+/// size it asks for.
+fn parse_fit(uri: &str) -> Option<(Fit, &str)> {
+    let (size, file) = uri.strip_prefix(FIT)?.split_once('/')?;
+    let fit = match size.split_once('x') {
+        Some((width, height)) => Fit::Within(width.parse().ok()?, height.parse().ok()?),
+        None => Fit::Cover(size.parse().ok()?),
+    };
+    Some((fit, file))
 }
 
 fn fitted_source(uri: &str) -> Option<&str> {
@@ -236,11 +277,11 @@ fn uri_path(file: &str) -> Option<&str> {
     }
 }
 
-/// Decodes `path` so its shorter edge is at least `side` pixels (when the
-/// picture is that big) and its longer edge at most [`LONGEST`]. The image
-/// keeps the picture's own size as its source size, so layouts that read it
-/// see the photo's real shape and dimensions.
-fn decode_fitted(path: &Path, side: u32) -> Result<egui::ColorImage, String> {
+/// Decodes `path` as `fit` asks (never larger than the picture is), its
+/// longer edge at most [`LONGEST`]. The image keeps the picture's own size
+/// as its source size, so layouts that read it see the photo's real shape
+/// and dimensions.
+fn decode_fitted(path: &Path, fit: Fit) -> Result<egui::ColorImage, String> {
     use image::ImageDecoder as _;
     let reader = image::ImageReader::open(path)
         .and_then(image::ImageReader::with_guessed_format)
@@ -252,9 +293,13 @@ fn decode_fitted(path: &Path, side: u32) -> Result<egui::ColorImage, String> {
     picture.apply_orientation(orientation);
     let (width, height) = (picture.width().max(1), picture.height().max(1));
     let (short, long) = (width.min(height), width.max(height));
-    let scale = (f64::from(side) / f64::from(short))
-        .min(f64::from(LONGEST) / f64::from(long))
-        .min(1.0);
+    let scale = match fit {
+        Fit::Cover(side) => f64::from(side) / f64::from(short),
+        Fit::Within(across, down) => {
+            (f64::from(across) / f64::from(width)).min(f64::from(down) / f64::from(height))
+        }
+    };
+    let scale = scale.min(f64::from(LONGEST) / f64::from(long)).min(1.0);
     let picture = if scale < 1.0 {
         let fitted = |edge: u32| ((f64::from(edge) * scale).round() as u32).max(1);
         picture.thumbnail_exact(fitted(width), fitted(height))
@@ -347,9 +392,9 @@ fn decode_jobs(receiver: &mpsc::Receiver<(String, egui::Context)>, fits: &Fits) 
             continue;
         }
         let result = parse_fit(&uri)
-            .and_then(|(side, file)| Some((side, uri_path(file)?)))
+            .and_then(|(fit, file)| Some((fit, uri_path(file)?)))
             .ok_or_else(|| "not a fitted picture".to_owned())
-            .and_then(|(side, path)| decode_fitted(Path::new(path), side));
+            .and_then(|(fit, path)| decode_fitted(Path::new(path), fit));
         let mut fits = fits.lock().unwrap_or_else(|p| p.into_inner());
         // Forgotten while it was being decoded: nobody draws it any more.
         if let Some(entry @ Fitted::Pending) = fits.get_mut(&uri) {
@@ -572,7 +617,7 @@ mod tests {
     fn a_fitted_picture_is_decoded_no_larger_than_drawn() {
         let dir = tempfile::tempdir().expect("temp");
         let path = picture(dir.path(), "wide.png", 2000, 1000);
-        let image = decode_fitted(&path, 256).expect("decoded");
+        let image = decode_fitted(&path, Fit::Cover(256)).expect("decoded");
         assert_eq!(image.size, [512, 256], "the shorter edge covers the side");
         assert_eq!(
             image.source_size,
@@ -580,7 +625,29 @@ mod tests {
             "layouts still see the photo's own size"
         );
         let small = picture(dir.path(), "small.png", 100, 50);
-        let image = decode_fitted(&small, 256).expect("decoded");
+        let image = decode_fitted(&small, Fit::Cover(256)).expect("decoded");
+        assert_eq!(image.size, [100, 50], "a small picture is never enlarged");
+    }
+
+    /// A picture shown whole is decoded only as large as it fits, not large
+    /// enough to cover its bounds: a third of the pixels for a photo.
+    #[test]
+    fn a_picture_shown_whole_is_decoded_within_its_bounds() {
+        let dir = tempfile::tempdir().expect("temp");
+        let path = picture(dir.path(), "photo.png", 4000, 3000);
+        let image = decode_fitted(&path, Fit::Within(768, 1024)).expect("decoded");
+        assert_eq!(
+            image.size,
+            [768, 576],
+            "as wide as the bounds, no taller than it must be"
+        );
+        let covering = decode_fitted(&path, Fit::Cover(1024)).expect("decoded");
+        assert!(image.pixels.len() * 3 <= covering.pixels.len());
+        let tall = picture(dir.path(), "tall.png", 1000, 4000);
+        let image = decode_fitted(&tall, Fit::Within(768, 1024)).expect("decoded");
+        assert_eq!(image.size, [256, 1024]);
+        let small = picture(dir.path(), "small.png", 100, 50);
+        let image = decode_fitted(&small, Fit::Within(768, 1024)).expect("decoded");
         assert_eq!(image.size, [100, 50], "a small picture is never enlarged");
     }
 
@@ -605,7 +672,20 @@ mod tests {
         );
         assert_eq!(
             parse_fit(&format!("fit://256/{file}")),
-            Some((256, file.as_str()))
+            Some((Fit::Cover(256), file.as_str()))
+        );
+        // 300 by 440 points on a 1x display: each bound to its step.
+        assert_eq!(
+            fit_uri_within(&ctx, path, egui::vec2(300.0, 440.0)),
+            format!("fit://384x512/{file}")
+        );
+        assert_eq!(
+            parse_fit(&format!("fit://384x512/{file}")),
+            Some((Fit::Within(384, 512), file.as_str()))
+        );
+        assert_eq!(
+            fit_uri_within(&ctx, gif, egui::vec2(300.0, 440.0)),
+            crate::util::image_uri(gif)
         );
     }
 

@@ -9845,7 +9845,8 @@ fn picture(
             return ui.allocate_exact_size(reserved, Sense::hover()).0;
         }
         // Stickers are WebP, which keep egui's own loader and their motion.
-        let image = widgets::fitted_image(ui, path, vec2(max_width, max_height));
+        // Shown whole, so decoded only as large as it fits the bounds.
+        let image = widgets::fitted_image_within(ui, path, vec2(max_width, max_height));
         // While the picture decodes its blurred thumbnail stands in, and the
         // sharp picture fades in over it once ready. One already decoded, as
         // when scrolled back to, shows at once.
