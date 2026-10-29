@@ -34,6 +34,8 @@ pub struct Account {
     pub contacts: HashMap<String, Contact>,
     pub conversations: HashMap<ChatId, Conversation>,
     pub open_chat: Option<ChatId>,
+    /// A second chat beside the open one in the chat panel.
+    pub split: Option<crate::app::Split>,
     /// The background-history state last sent to this account's worker: the
     /// switch and the chat on screen.
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
@@ -162,6 +164,7 @@ impl Account {
             contacts: HashMap::new(),
             conversations: HashMap::new(),
             open_chat,
+            split: None,
             prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),

@@ -1954,6 +1954,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         ) + 24.0,
     )
     .max(190.0);
+    super::split::watch(ui, response.rect, &chat.id, || app.chat_title(chat));
     let popup = egui::Popup::context_menu(&response)
         .width(menu_width)
         .frame(widgets::menu_frame(&menu_palette));
@@ -2292,6 +2293,7 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
     if super::carry::carrying(ui.ctx()) {
         super::carry::target(ui, rect, chat, &title, rect.center());
     }
+    super::split::watch(ui, response.rect, &chat.id, || title.clone());
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(title);
@@ -2416,6 +2418,24 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         && widgets::menu_item(ui, palette, Some(Icon::Copy), "Copy number")
     {
         app.actions.push(Action::CopyText(format!("+{phone}")));
+    }
+    let beside =
+        app.current_chat().is_some_and(|open| open.id != chat.id) && !super::narrow(ui.ctx());
+    let beside_label = crate::i18n::gettext(app.locale, "Open beside");
+    if beside && widgets::menu_item(ui, palette, Some(Icon::Columns), beside_label.as_ref()) {
+        app.actions.push(Action::OpenSplit {
+            chat: chat.id.clone(),
+            side: crate::app::Side::Right,
+        });
+    }
+    let pop_label = crate::i18n::gettext(app.locale, "Pop out chat");
+    if widgets::menu_item(
+        ui,
+        palette,
+        Some(Icon::PictureInPicture),
+        pop_label.as_ref(),
+    ) {
+        app.actions.push(Action::PopOut(chat.id.clone()));
     }
     if widgets::menu_item(ui, palette, Some(Icon::Info), "Info") {
         // The panel sits beside the conversation, so the chat opens first.
