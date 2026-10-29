@@ -1915,6 +1915,15 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     }
     if response.clicked() {
         app.actions.push(Action::OpenChat(chat.id.clone()));
+    } else if response.is_pointer_button_down_on()
+        && app
+            .conversations
+            .get(&chat.id)
+            .is_none_or(|conversation| !conversation.requested)
+    {
+        // The press comes a moment before the click: long enough to read the
+        // chat's newest messages, so it opens whole rather than blank.
+        app.actions.push(Action::PreloadChat(chat.id.clone()));
     }
     swipe(app, ui, chat, rect, shapes);
     let menu_palette = palette;

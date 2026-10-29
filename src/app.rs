@@ -6529,6 +6529,13 @@ impl App {
                 };
                 self.apply(Action::Open(page), ctx);
             }
+            Action::PreloadChat(id) => {
+                // A locked chat's messages stay in the locked folder.
+                let locked = self.chat(&id).is_some_and(|chat| chat.locked);
+                if !locked || self.locked_folder_open() {
+                    self.ensure_loaded(&id);
+                }
+            }
             Action::OpenChat(id) => {
                 // A chat where someone mentioned us opens at the mention, as
                 // on WhatsApp, rather than at the first unread message.
