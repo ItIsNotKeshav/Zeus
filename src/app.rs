@@ -6303,7 +6303,7 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        crate::backdrop::set_glass(self.settings.glass_shown());
+        crate::backdrop::set_glass(ctx, self.settings.glass_shown());
         let halloween = self.settings.halloween_icons();
         if crate::theme::halloween() != halloween {
             crate::theme::set_halloween(halloween);
