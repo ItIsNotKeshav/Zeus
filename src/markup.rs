@@ -312,6 +312,7 @@ fn inline(line: &str) -> Vec<Span> {
             });
         }
     };
+    let last_closers = last_closers(&chars);
     let mut i = 0;
     let triple = |at: usize| {
         at + 2 < chars.len() && chars[at] == '`' && chars[at + 1] == '`' && chars[at + 2] == '`'
@@ -360,7 +361,7 @@ fn inline(line: &str) -> Vec<Span> {
                     i += 1;
                     continue;
                 }
-            } else if is_opener(&chars, i) && has_closer(&chars, i + 1, c) {
+            } else if is_opener(&chars, i) && last_closers[index].is_some_and(|last| last > i) {
                 flush(&mut run, &mut spans, flags);
                 flags[index] = true;
                 i += 1;
@@ -388,8 +389,17 @@ fn is_closer(chars: &[char], i: usize) -> bool {
     before_ok && after_ok
 }
 
-fn has_closer(chars: &[char], from: usize, marker: char) -> bool {
-    (from..chars.len()).any(|j| chars[j] == marker && is_closer(chars, j))
+/// Where the last closing marker of each kind (`*`, `_`, `~`) sits. Whether
+/// an opener has a closer after it is then one comparison, not a scan to the
+/// end of the line for every opener (a line of `*a *a *a …` took minutes).
+fn last_closers(chars: &[char]) -> [Option<usize>; 3] {
+    let mut last = [None; 3];
+    for (kind, marker) in ['*', '_', '~'].into_iter().enumerate() {
+        last[kind] = (0..chars.len())
+            .rev()
+            .find(|&j| chars[j] == marker && is_closer(chars, j));
+    }
+    last
 }
 
 /// Splits a plain span around web addresses and mentions.
@@ -399,6 +409,10 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
     let mut plain_start = 0;
     let mut i = 0;
     let bytes = text.as_bytes();
+    // A run of brackets, spaces and hyphens with no digit holds no phone
+    // number from any start inside it; scanning it again from each start made
+    // a line of `(((…` quadratic.
+    let mut no_phone_until = 0;
     while i < text.len() {
         if !text.is_char_boundary(i) {
             i += 1;
@@ -410,9 +424,18 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
                 .next_back()
                 .is_some_and(|c| c.is_alphanumeric());
         if at_boundary {
-            if (bytes[i].is_ascii_digit() || matches!(bytes[i], b'+' | b'('))
-                && let Some((end, digits, valid)) = phone_at(text, i)
+            let phone = if i >= no_phone_until
+                && (bytes[i].is_ascii_digit() || matches!(bytes[i], b'+' | b'('))
             {
+                let found = phone_at(text, i);
+                if found.is_none() {
+                    no_phone_until = phone_run_end(text, i);
+                }
+                found
+            } else {
+                None
+            };
+            if let Some((end, digits, valid)) = phone {
                 if valid {
                     push_plain(&mut out, &span, &text[plain_start..i]);
                     out.push(Span {
@@ -476,6 +499,21 @@ fn link_and_mention(span: Span, mentions: &[Mention]) -> Vec<Span> {
     }
     push_plain(&mut out, &span, &text[plain_start..]);
     out
+}
+
+/// Where the run of phone characters (digits, `+` first, spaces, hyphens and
+/// brackets) that starts at `at` ends.
+fn phone_run_end(text: &str, at: usize) -> usize {
+    let mut end = at;
+    for (offset, c) in text[at..].char_indices() {
+        let part =
+            c.is_ascii_digit() || matches!(c, ' ' | '-' | '(' | ')') || (c == '+' && offset == 0);
+        if !part {
+            break;
+        }
+        end = at + offset + c.len_utf8();
+    }
+    end
 }
 
 /// Finds a phone candidate with optional spaces, hyphens, and parentheses.
@@ -780,6 +818,28 @@ const KNOWN_TLDS: &[&str] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_runs_of_markers_and_brackets_parse_in_moments() {
+        let started = std::time::Instant::now();
+        for unit in ["(", "*a ", "_a ", "~a ", "+ ", "- ("] {
+            let text = unit.repeat(30_000);
+            plain(&text, &[]);
+            links(&text);
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn an_opener_without_a_later_closer_stays_plain() {
+        assert_eq!(plain("*a *b", &[]), "*a *b");
+        assert_eq!(plain("*a* b", &[]), "a b");
+        assert_eq!(plain("_a_ ~b~", &[]), "a b");
+    }
 
     fn kinds(text: &str) -> Vec<(String, bool, bool, bool, bool)> {
         parse(text, &[])

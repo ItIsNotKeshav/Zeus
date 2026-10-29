@@ -488,8 +488,20 @@ fn run() -> eframe::Result<()> {
 /// Threads that catch their own panics. Each wraps its work in
 /// `catch_unwind` and turns a panic into an "unsupported file" result, so a
 /// malformed image or video cannot close the app. `video-sound` reads a
-/// video's sound track header off the UI thread (the mp4 hang fix).
-const CONTAINED_THREADS: &[&str] = &["animation-decode", "video-decode", "video-sound"];
+/// video's sound track header off the UI thread (the mp4 hang fix);
+/// `fit-pictures` decodes chat photos at their display size.
+const CONTAINED_THREADS: &[&str] = &[
+    "animation-decode",
+    "video-decode",
+    "video-sound",
+    "fit-pictures",
+];
+
+/// egui's own picture loader names its one-picture-per-thread decoders after
+/// the picture. It does not catch a panic, but a thread that ends alone only
+/// leaves that picture unloaded, which beats closing the app for a crafted
+/// avatar, sticker, thumbnail or link preview.
+const CONTAINED_THREAD_PREFIXES: &[&str] = &["egui_extras::ImageLoader::load("];
 
 /// Keeps release builds' old crash behavior for every thread but the
 /// decoders. The release profile unwinds so their guards work, but a panic
@@ -507,7 +519,12 @@ fn contain_panics() {
 }
 
 fn is_contained(thread: Option<&str>) -> bool {
-    thread.is_some_and(|name| CONTAINED_THREADS.contains(&name))
+    thread.is_some_and(|name| {
+        CONTAINED_THREADS.contains(&name)
+            || CONTAINED_THREAD_PREFIXES
+                .iter()
+                .any(|prefix| name.starts_with(prefix))
+    })
 }
 
 /// Whether eframe stopped because the graphics driver gave it no usable
@@ -1124,6 +1141,10 @@ mod panic_tests {
         assert!(is_contained(Some("animation-decode")));
         assert!(is_contained(Some("video-decode")));
         assert!(is_contained(Some("video-sound")));
+        assert!(is_contained(Some("fit-pictures")));
+        assert!(is_contained(Some(
+            "egui_extras::ImageLoader::load(\"file:///a.png\")"
+        )));
         assert!(!is_contained(Some("main")));
         assert!(!is_contained(Some("tokio-runtime-worker")));
         assert!(!is_contained(None));

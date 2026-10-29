@@ -349,7 +349,15 @@ fn decode_jobs(receiver: &mpsc::Receiver<(String, egui::Context)>, fits: &Fits) 
         let result = parse_fit(&uri)
             .and_then(|(side, file)| Some((side, uri_path(file)?)))
             .ok_or_else(|| "not a fitted picture".to_owned())
-            .and_then(|(side, path)| decode_fitted(Path::new(path), side));
+            .and_then(|(side, path)| {
+                // A malformed picture can make a decoder panic. That fails
+                // this picture; it must not end the thread every later
+                // picture waits on, or the app (see `contain_panics`).
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    decode_fitted(Path::new(path), side)
+                }))
+                .unwrap_or_else(|_| Err("the picture could not be decoded".to_owned()))
+            });
         let mut fits = fits.lock().unwrap_or_else(|p| p.into_inner());
         // Forgotten while it was being decoded: nobody draws it any more.
         if let Some(entry @ Fitted::Pending) = fits.get_mut(&uri) {

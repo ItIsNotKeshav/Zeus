@@ -4899,8 +4899,13 @@ fn reference_timestamp(
     // Keep the metadata at its final position and reveal it through a clip
     // that grows with the row. The transcript's ordinary layout then moves
     // subsequent messages in step, instead of jumping by the whole row.
-    // Under the bubble, ending at its right edge on either side.
+    // Under the bubble, ending at its right edge on either side. A bubble
+    // narrower than the time and ticks (a two-letter reply) lets the row reach
+    // past its left edge instead of cutting the time short.
+    let time = crate::util::clock(message.timestamp);
+    let needed = reference_timestamp_width(ui, &time, own);
     let x = bubble.map_or(available.x_range(), |bubble| bubble.x_range());
+    let x = widen_to(x, needed, available.x_range());
     let row_rect = Rect::from_x_y_ranges(x, slot_top + SPACING..=slot_top + SPACING + ROW_HEIGHT);
     let clip = Rect::from_min_max(slot.min, pos2(slot.right(), slot.top() + reveal_height))
         .intersect(ui.clip_rect());
@@ -4914,7 +4919,6 @@ fn reference_timestamp(
     row_ui.multiply_opacity(progress);
     row_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        let time = crate::util::clock(message.timestamp);
         if own {
             match message.status {
                 Delivery::Pending => {
@@ -4950,6 +4954,28 @@ fn reference_timestamp(
         }
     });
     ui.interact(row_rect.intersect(clip), id, Sense::click())
+}
+
+/// The room the time and delivery mark under a bubble take, with their gap.
+fn reference_timestamp_width(ui: &egui::Ui, time: &str, own: bool) -> f32 {
+    let time = ui
+        .painter()
+        .layout_no_wrap(time.to_owned(), theme::regular(10.0), Color32::WHITE)
+        .size()
+        .x;
+    // The mark is 14 points of ticks, or "•••" / "✗" while sending or failed.
+    time + if own { 14.0 + 4.0 } else { 0.0 } + 2.0
+}
+
+/// `span` grown to the left to be `needed` wide, or shifted right when that
+/// would leave `bounds`. The right edge only moves for a span narrower than
+/// `needed` that sits against the left edge of `bounds`.
+fn widen_to(span: egui::Rangef, needed: f32, bounds: egui::Rangef) -> egui::Rangef {
+    if span.span() >= needed {
+        return span;
+    }
+    let left = (span.max - needed).max(bounds.min);
+    egui::Rangef::new(left, (left + needed).max(span.max))
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -12911,6 +12937,34 @@ mod tests {
         output.textures_delta.clear();
         assert!(widths[1] > widths[0] + 30.0, "{widths:?}");
         assert_eq!(widths[2], widths[0]);
+    }
+
+    #[test]
+    fn a_bubble_narrower_than_its_time_row_lets_the_row_reach_left() {
+        let bounds = egui::Rangef::new(0.0, 600.0);
+        let wide = egui::Rangef::new(300.0, 500.0);
+        assert_eq!(widen_to(wide, 60.0, bounds), wide, "a wide bubble is kept");
+        let short = egui::Rangef::new(464.0, 500.0);
+        let row = widen_to(short, 60.0, bounds);
+        assert_eq!(row.max, 500.0, "still ends at the bubble's right edge");
+        assert_eq!(row.span(), 60.0);
+        let at_edge = egui::Rangef::new(0.0, 36.0);
+        let row = widen_to(at_edge, 60.0, bounds);
+        assert_eq!((row.min, row.max), (0.0, 60.0), "never past the view");
+    }
+
+    #[test]
+    fn the_time_under_a_short_bubble_is_shown_whole() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut widths = Vec::new();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            widths.push(reference_timestamp_width(ui, "11:11 PM", true));
+            widths.push(reference_timestamp_width(ui, "11:11 PM", false));
+        });
+        output.textures_delta.clear();
+        assert!(widths[0] >= widths[1] + 18.0, "{widths:?}");
+        assert!(widths[1] > 20.0, "{widths:?}");
     }
 
     #[test]
