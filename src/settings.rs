@@ -295,6 +295,9 @@ impl DoodleColor {
 /// How much of the default doodle strength the slider scales it by.
 pub const DOODLE_INTENSITY: std::ops::RangeInclusive<f32> = 0.2..=2.5;
 
+/// How many doodles the slider shows, as a multiple of the default tile's.
+pub const DOODLE_DENSITY: std::ops::RangeInclusive<f32> = 0.25..=2.0;
+
 /// How long a downloaded attachment stays in the media cache without being
 /// opened before it is deleted on its own. It downloads again when opened.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -957,6 +960,8 @@ pub struct Settings {
     pub doodle_color: DoodleColor,
     /// How strongly they show, as a multiple of the default (1.0).
     pub doodle_intensity: f32,
+    /// How many of them there are, as a multiple of the default (1.0).
+    pub doodle_density: f32,
     /// Colour selected in the wallpaper picker.
     pub wallpaper_color: WallpaperColor,
     /// Colour selected for the dark wallpaper picker.
@@ -1102,6 +1107,7 @@ impl Default for Settings {
             doodle_style: DoodleStyle::Halloween,
             doodle_color: DoodleColor::Accent,
             doodle_intensity: 1.0,
+            doodle_density: 1.0,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,
