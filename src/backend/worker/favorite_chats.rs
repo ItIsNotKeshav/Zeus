@@ -17,6 +17,12 @@ use super::*;
 use crate::archive::Favorite;
 use whatsapp_rust::schemas;
 
+/// How many failed requests one connection makes before it stops asking. Each
+/// failed read makes the library ask the phone to rebuild the list, and the
+/// phone shows a "syncing" alert for it, so a list that never validates must
+/// not be retried for ever (#26).
+const MAX_FAILURES: u32 = 3;
+
 /// One request at a time: the list is a single value, and a failure blocks
 /// every later change as well.
 #[derive(Default)]
@@ -29,12 +35,32 @@ pub(super) struct FavoriteChats {
     /// its change: the queue is kept and the merged list goes out again.
     overtaken: bool,
     retry_at: Option<Instant>,
+    /// Failed requests on this connection.
     failures: u32,
+    /// [`MAX_FAILURES`] was reached: nothing more is asked until the next
+    /// connection or a list from the phone.
+    gave_up: bool,
 }
 
 impl FavoriteChats {
     fn ready(&self, now: Instant) -> bool {
-        !self.reading && !self.sending && self.retry_at.is_none_or(|retry| now >= retry)
+        !self.reading
+            && !self.sending
+            && !self.gave_up
+            && self.retry_at.is_none_or(|retry| now >= retry)
+    }
+
+    /// A new connection starts counting again: the phone may be back, or its
+    /// list fixed.
+    pub(super) fn connected(&mut self) {
+        self.failures = 0;
+        self.gave_up = false;
+        self.retry_at = None;
+    }
+
+    /// The phone sent its list, so what failed before may work now.
+    fn heard_from_phone(&mut self) {
+        self.connected();
     }
 
     fn settle(&mut self, success: bool, now: Instant) {
@@ -43,7 +69,13 @@ impl FavoriteChats {
             self.retry_at = None;
         } else {
             self.failures = self.failures.saturating_add(1);
-            let seconds = (30 * (1_u64 << (self.failures - 1).min(5))).min(15 * 60);
+            if self.failures >= MAX_FAILURES {
+                self.gave_up = true;
+                self.retry_at = None;
+                log::warn!("favorite chats sync stopped until the next connection");
+                return;
+            }
+            let seconds = 30 * (1_u64 << (self.failures - 1));
             self.retry_at = Some(now + Duration::from_secs(seconds));
             log::warn!("favorite chats sync paused; retrying in {seconds} seconds");
         }
@@ -97,6 +129,7 @@ impl Worker {
         let at = update.timestamp.timestamp_millis();
         match self.archive.apply_phone_favorites(&list, at) {
             Ok(Some(touched)) => {
+                self.favorite_chats.heard_from_phone();
                 if self.favorite_chats.sending {
                     self.favorite_chats.overtaken = true;
                 }
@@ -374,6 +407,40 @@ mod tests {
         let (_, list) = worker.favorites_to_send().expect("still queued");
         let list: Vec<_> = list.into_iter().map(|favorite| favorite.chat).collect();
         assert_eq!(list, [GROUP, PEER]);
+    }
+
+    #[test]
+    fn a_list_that_never_validates_is_asked_for_a_few_times_per_connection() {
+        let mut chats = FavoriteChats::default();
+        let start = Instant::now();
+        assert!(chats.ready(start));
+        chats.settle(false, start);
+        assert!(!chats.ready(start), "waits before the second try");
+        assert!(chats.ready(start + Duration::from_secs(30)));
+        chats.settle(false, start + Duration::from_secs(30));
+        assert!(!chats.ready(start + Duration::from_secs(60)));
+        assert!(chats.ready(start + Duration::from_secs(90)));
+        chats.settle(false, start + Duration::from_secs(90));
+        let much_later = start + Duration::from_secs(24 * 3600);
+        assert!(!chats.ready(much_later), "the third failure ends the tries");
+
+        chats.connected();
+        assert!(chats.ready(much_later), "a new connection tries again");
+    }
+
+    #[test]
+    fn a_success_or_the_phones_list_clears_the_failures() {
+        let mut chats = FavoriteChats::default();
+        let start = Instant::now();
+        chats.settle(false, start);
+        chats.settle(true, start);
+        chats.settle(false, start);
+        chats.settle(false, start);
+        assert!(!chats.gave_up, "the success started the count over");
+        chats.settle(false, start);
+        assert!(chats.gave_up);
+        chats.heard_from_phone();
+        assert!(chats.ready(start));
     }
 
     #[tokio::test]
