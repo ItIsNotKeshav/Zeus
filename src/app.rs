@@ -6280,7 +6280,7 @@ impl App {
                     == egui::Theme::Dark
             }
         };
-        crate::backdrop::set_glass(self.settings.glass_shown());
+        crate::backdrop::set_glass(ctx, self.settings.glass_shown());
         let palette = self.settings.palette(dark);
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
