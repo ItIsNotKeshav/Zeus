@@ -16300,12 +16300,20 @@ mod tests {
         render(&mut app, &ctx);
 
         // Registering a poster decodes it, so only the rows on screen may have
-        // done so, and at least one of them must have.
+        // done so, and at least one of them must have. A small poster decodes
+        // in the frame that draws it, and egui lets its bytes go once its
+        // texture is up, so a registered poster has either.
         let key: String = chat.chars().filter(char::is_ascii_alphanumeric).collect();
+        let textures: std::collections::HashSet<String> = ctx
+            .tex_manager()
+            .read()
+            .allocated()
+            .map(|(_, meta)| meta.name.clone())
+            .collect();
         let registered = (0..40)
             .filter(|index| {
                 let uri = format!("bytes://thumb-{key}-{}", id(*index));
-                ctx.try_load_bytes(&uri).is_ok()
+                textures.contains(&uri) || ctx.try_load_bytes(&uri).is_ok()
             })
             .count();
         assert!(
