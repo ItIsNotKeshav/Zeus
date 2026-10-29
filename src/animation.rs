@@ -27,6 +27,11 @@ const MAX_DECODERS: usize = 2;
 const DECODE_DEADLINE: Duration = Duration::from_secs(10);
 /// Global texture-frame budget. Least-recently-used animations are removed first.
 const MAX_RESIDENT_FRAMES: usize = 450;
+/// Frames that media playing on its own, such as the stickers in a chat, may
+/// hold in one pass. The rest of the budget keeps room for one animation
+/// under the pointer and the posters of the others, so a sticker playing on
+/// its own never evicts another one that is also playing.
+const AUTOPLAY_FRAMES: usize = MAX_RESIDENT_FRAMES - MAX_FRAMES - 60;
 
 /// The decoders holding a slot, by number, and when each started.
 static DECODING: Mutex<Vec<(u64, Instant)>> = Mutex::new(Vec::new());
@@ -98,6 +103,9 @@ struct Animations {
     idle: HashSet<PathBuf>,
     /// When the eviction sweep last ran.
     last_sweep: Option<Instant>,
+    /// How many frames each resident animation has, once every frame was
+    /// decoded, kept when it drops back to its poster.
+    lengths: HashMap<PathBuf, usize>,
 }
 
 #[derive(Clone, Default)]
@@ -166,6 +174,11 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                 continue;
             }
             Some(decoded) if !decoded.frames.is_empty() => {
+                if complete {
+                    animations
+                        .lengths
+                        .insert(arrived_path.clone(), decoded.frames.len());
+                }
                 let mut total = Duration::ZERO;
                 let frames = decoded
                     .frames
@@ -238,10 +251,14 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
             _ => true,
         });
         animations.idle = idle;
-        enforce_budget(&mut animations, path, now);
+        let Animations {
+            entries, lengths, ..
+        } = &mut *animations;
+        lengths.retain(|path, _| entries.contains_key(path));
+        enforce_budget(&mut animations, path, now, ctx.cumulative_frame_nr());
     } else if uploaded {
         // New frames can exceed the budget between sweeps.
-        enforce_budget(&mut animations, path, now);
+        enforce_budget(&mut animations, path, now, ctx.cumulative_frame_nr());
     }
     match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
@@ -310,6 +327,60 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
             }
         },
     }
+}
+
+/// Like [`frame`], for media that plays and loops on its own while it is on
+/// screen, as stickers in a chat do. While `animate` (the window is in use),
+/// what the pointer is over always plays; the rest play in the order they are
+/// drawn for as long as their frames fit [`AUTOPLAY_FRAMES`] in this pass,
+/// and the others keep their first frame. Within that allowance the playing
+/// set stays the same from pass to pass, so nothing is evicted and decoded
+/// again in turn.
+pub fn autoplay(
+    ui: &egui::Ui,
+    path: &Path,
+    rect: egui::Rect,
+    animate: bool,
+    hovered: bool,
+) -> Frame {
+    if !animate || !ui.is_rect_visible(rect) {
+        return frame(ui, path, rect, false);
+    }
+    let ctx = ui.ctx();
+    // `None` until every frame was decoded once.
+    let length = {
+        let cache = cache(ctx);
+        let animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+        match animations.entries.get(path) {
+            Some(Entry::Failed) => Some(0),
+            _ => animations.lengths.get(path).copied(),
+        }
+    };
+    let pass = ctx.cumulative_frame_nr();
+    let plays = ctx.data_mut(|data| {
+        let (counted, claimed) =
+            data.get_temp_mut_or_default::<(u64, usize)>(egui::Id::new("animation-autoplay"));
+        if *counted != pass {
+            *counted = pass;
+            *claimed = 0;
+        }
+        if hovered {
+            return true;
+        }
+        // One of unknown length starts while there is room left, and holds
+        // the most an animation can until its length is known. One that
+        // turns out not to fit keeps that length after the budget trims it,
+        // so it is not decoded again only to be trimmed again.
+        let fits = match length {
+            Some(length) => *claimed + length <= AUTOPLAY_FRAMES,
+            None => *claimed < AUTOPLAY_FRAMES,
+        };
+        if fits {
+            *claimed += length.unwrap_or(MAX_FRAMES);
+        }
+        fits
+    });
+    frame(ui, path, rect, plays)
 }
 
 /// Whether a decoder thread could be started.
@@ -593,8 +664,10 @@ pub(crate) fn video_frame(path: &Path, index: usize) -> Option<ColorImage> {
 /// Trims animations until the resident frames fit the budget, sparing the
 /// one being drawn. What the last sweep found idle goes first; an animation
 /// drawn since only drops back to its poster, so a tile that is still on
-/// screen never flashes its placeholder, and posters go last.
-fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
+/// screen never flashes its placeholder, and posters go last. Among those,
+/// one shown paused gives up its frames before one still playing in `pass`,
+/// which would otherwise decode them all again on its next draw.
+fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant, pass: u64) {
     let mut resident: usize = animations
         .entries
         .values()
@@ -614,9 +687,10 @@ fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
                 Entry::Ready(playing) => (
                     u8::from(!animations.idle.contains(*entry_path)),
                     u8::from(playing.frames.len() == 1),
+                    u8::from(playing.animating && playing.played_in + 1 >= pass),
                     playing.last_drawn,
                 ),
-                _ => (1, 1, now),
+                _ => (1, 1, 1, now),
             })
             .map(|(entry_path, _)| entry_path.clone());
         let Some(victim) = victim else {
@@ -634,9 +708,11 @@ fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
             Some(Entry::Ready(playing)) => {
                 resident -= playing.frames.len();
                 animations.entries.remove(&victim);
+                animations.lengths.remove(&victim);
             }
             _ => {
                 animations.entries.remove(&victim);
+                animations.lengths.remove(&victim);
             }
         }
     }
@@ -1557,6 +1633,106 @@ mod tests {
         assert_eq!(playing.frames.len(), 3);
         drop(animations);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A hovered sticker plays round and round, not once.
+    #[test]
+    fn a_playing_sticker_loops() {
+        let dir = tempfile::tempdir().expect("temp");
+        let paths = vec![animated_webp(dir.path(), "loop.webp", 3)];
+        let ctx = egui::Context::default();
+        settle(&ctx, &paths, false);
+        let mut shown = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(20);
+        // Three frames of 40 ms: a loop takes 120 ms.
+        let mut loops = 0;
+        while loops < 4 {
+            assert!(Instant::now() < deadline, "it played {loops} loops");
+            let complete = |ctx: &egui::Context| {
+                matches!(
+                    cache(ctx).0.lock().expect("cache").entries.get(&paths[0]),
+                    Some(Entry::Ready(playing)) if playing.complete
+                )
+            };
+            let was_complete = complete(&ctx);
+            if let Frame::Ready(texture) = &draw_all(&ctx, &paths, true)[0]
+                && was_complete
+            {
+                let id = texture.id();
+                if shown.last() != Some(&id) {
+                    if shown.len() >= 3 && shown.first() == Some(&id) {
+                        loops += 1;
+                    }
+                    shown.push(id);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// Stickers in a chat loop on their own, as many as fit the allowance,
+    /// and the ones playing keep playing instead of evicting each other.
+    #[test]
+    fn stickers_on_screen_play_on_their_own_within_the_allowance() {
+        let dir = tempfile::tempdir().expect("temp");
+        let per_file = 60;
+        let fit = AUTOPLAY_FRAMES / per_file as usize;
+        let paths: Vec<_> = (0..fit + 2)
+            .map(|index| animated_webp(dir.path(), &format!("chat-{index}.webp"), per_file))
+            .collect();
+        let ctx = egui::Context::default();
+        let draw = || {
+            let mut shown = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(800.0, 200.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    ui.horizontal(|ui| {
+                        for path in &paths {
+                            let (rect, _) = ui
+                                .allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                            shown.push(match autoplay(ui, path, rect, true, false) {
+                                Frame::Ready(texture) => Some(texture.id()),
+                                _ => None,
+                            });
+                        }
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            shown
+        };
+        // Each sticker starts once the one before it knows its length.
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !paths.iter().take(fit).all(|path| {
+            matches!(
+                cache(&ctx).0.lock().expect("cache").entries.get(path),
+                Some(Entry::Ready(playing)) if playing.complete
+            )
+        }) {
+            assert!(Instant::now() < deadline, "the stickers never all played");
+            draw();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let mut seen = vec![HashSet::new(); paths.len()];
+        for _ in 0..60 {
+            for (index, shown) in draw().into_iter().enumerate() {
+                seen[index].insert(shown.expect("a sticker fell back to its placeholder"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        for (index, ids) in seen.iter().enumerate() {
+            if index < fit {
+                assert!(ids.len() > 2, "sticker {index} showed {} frames", ids.len());
+            } else {
+                assert_eq!(ids.len(), 1, "sticker {index} beyond the allowance played");
+            }
+        }
     }
 
     #[test]
