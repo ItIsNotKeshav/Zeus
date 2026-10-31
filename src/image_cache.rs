@@ -5,7 +5,7 @@
 //! alone a session that scrolls through photos holds every one of them for
 //! good. Each draw site registers its URI here, and [`sweep`] forgets the ones
 //! that fall out of the resident window, by count and by the bytes their
-//! textures take. A window left alone for [`IDLE`] keeps only what it shows,
+//! textures take. A window left alone for `IDLE` keeps only what it shows,
 //! and a minimized one nothing.
 //!
 //! Chat pictures go through [`fit_uri`]: a [`FitLoader`] decodes them off the
@@ -130,7 +130,7 @@ pub fn forget(ctx: &egui::Context, uri: &str) {
 /// Images the current frame drew are never forgotten, so a frame that shows
 /// more than the window holds does not reload them on the next one.
 ///
-/// After [`IDLE`] without input only what the frame drew is kept. Until then
+/// After `IDLE` without input only what the frame drew is kept. Until then
 /// a frame is asked for at that moment, so a window nobody touches still lets
 /// go of what scrolled away.
 pub fn sweep(ctx: &egui::Context) {
@@ -795,7 +795,10 @@ mod tests {
         release(&ctx);
         assert!(uris.iter().all(|uri| !registered(&ctx, uri)));
         include(&ctx, &uris[0], b"image bytes");
-        assert!(registered(&ctx, &uris[0]), "a later draw registers it again");
+        assert!(
+            registered(&ctx, &uris[0]),
+            "a later draw registers it again"
+        );
     }
 
     #[test]
