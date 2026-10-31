@@ -6213,6 +6213,11 @@ impl App {
     /// from `eframe::App::logic`, after [`Self::background_frame`].
     pub fn window_logic(&mut self, ctx: &egui::Context) {
         self.sync_window_state(ctx);
+        // A minimized window shows no pictures or stickers, so it keeps none.
+        if ctx.input(|input| input.viewport().minimized) == Some(true) {
+            crate::image_cache::release(ctx);
+            crate::animation::release(ctx);
+        }
         // Close the window and continue headless when background mode is
         // enabled. Decided here rather than in `frame_ui`, which eframe skips
         // for a minimized window: closing one from the taskbar quit instead.

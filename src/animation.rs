@@ -125,6 +125,18 @@ fn inbox(ctx: &egui::Context) -> Inbox {
     })
 }
 
+/// Drops every decoded animation: a minimized window shows none, and decodes
+/// them again once it is back.
+pub fn release(ctx: &egui::Context) {
+    let cache = cache(ctx);
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    // A decode under way still delivers, and a failed file is not tried again.
+    animations
+        .entries
+        .retain(|_, entry| !matches!(entry, Entry::Ready(_)));
+    animations.idle.clear();
+}
+
 /// Current display state for an animated file.
 pub enum Frame {
     /// Current animation frame.

@@ -5,7 +5,8 @@
 //! alone a session that scrolls through photos holds every one of them for
 //! good. Each draw site registers its URI here, and [`sweep`] forgets the ones
 //! that fall out of the resident window, by count and by the bytes their
-//! textures take.
+//! textures take. A window left alone for [`IDLE`] keeps only what it shows,
+//! and a minimized one nothing.
 //!
 //! Chat pictures go through [`fit_uri`]: a [`FitLoader`] decodes them off the
 //! interface thread at the size they are drawn, so a 12-megapixel photo in a
@@ -14,6 +15,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 
 /// Image URIs kept resident. Anything the current frame drew is always kept,
 /// so this only bounds what has scrolled away.
@@ -22,7 +24,12 @@ const RESIDENT: usize = 256;
 /// The most texture memory the resident images may take, in bytes. On a Mac
 /// the GPU shares the system's memory, so this is memory the app is seen to
 /// use. Anything the current frame drew is always kept.
-const BUDGET: usize = 256 * 1024 * 1024;
+const BUDGET: usize = 128 * 1024 * 1024;
+
+/// How long the window may go without input before the images it is not
+/// showing are let go, whatever `RESIDENT` and `BUDGET` would keep: scrolling
+/// back after a pause reads them again.
+const IDLE: Duration = Duration::from_secs(30);
 
 struct Entry {
     /// Frame the image was last drawn on.
@@ -122,14 +129,25 @@ pub fn forget(ctx: &egui::Context, uri: &str) {
 ///
 /// Images the current frame drew are never forgotten, so a frame that shows
 /// more than the window holds does not reload them on the next one.
+///
+/// After [`IDLE`] without input only what the frame drew is kept. Until then
+/// a frame is asked for at that moment, so a window nobody touches still lets
+/// go of what scrolled away.
 pub fn sweep(ctx: &egui::Context) {
     let frame = ctx.cumulative_frame_nr();
+    let idle_for = idle_for(ctx);
     let stale: Vec<String> = {
         let registry = registry(ctx);
         let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
         if entries.is_empty() {
             return;
         }
+        let (resident, budget) = if idle_for >= IDLE {
+            (0, 0)
+        } else {
+            ctx.request_repaint_after(IDLE - idle_for);
+            (RESIDENT, BUDGET)
+        };
         // egui names each texture it loads after its URI.
         let mut sizes: HashMap<&str, usize> = HashMap::new();
         let mut total = 0;
@@ -144,7 +162,7 @@ pub fn sweep(ctx: &egui::Context) {
             }
         }
         let mut count = entries.len();
-        if count <= RESIDENT && total <= BUDGET {
+        if count <= resident && total <= budget {
             return;
         }
         let mut idle: Vec<(u64, &str)> = entries
@@ -155,7 +173,7 @@ pub fn sweep(ctx: &egui::Context) {
         idle.sort_unstable();
         let mut stale = Vec::new();
         for (_, uri) in idle {
-            if count <= RESIDENT && total <= BUDGET {
+            if count <= resident && total <= budget {
                 break;
             }
             count -= 1;
@@ -171,6 +189,33 @@ pub fn sweep(ctx: &egui::Context) {
     for uri in stale {
         ctx.forget_image(&uri);
     }
+}
+
+/// How long it has been since the last input event, counted from the first
+/// sweep.
+fn idle_for(ctx: &egui::Context) -> Duration {
+    let (now, active) = ctx.input(|input| (input.time, !input.raw.events.is_empty()));
+    let last = ctx.data_mut(|data| {
+        let last = data.get_temp_mut_or(egui::Id::new("image-cache-input"), now);
+        if active {
+            *last = now;
+        }
+        *last
+    });
+    Duration::from_secs_f64((now - last).max(0.0))
+}
+
+/// Forgets every image: a minimized window shows none, and draws them again
+/// once it is back.
+pub fn release(ctx: &egui::Context) {
+    let registry = registry(ctx);
+    let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
+    if entries.is_empty() {
+        return;
+    }
+    entries.clear();
+    drop(entries);
+    ctx.forget_all_images();
 }
 
 /// The scheme [`FitLoader`] serves: `fit://{side}/{file URI}`.
@@ -694,6 +739,63 @@ mod tests {
             .filter(|index| registered(&ctx, &uri(*index)))
             .count();
         assert_eq!(kept, RESIDENT, "the window should hold exactly its budget");
+    }
+
+    /// Draws `shown` at `time` seconds and then sweeps, with or without an
+    /// input event in that frame.
+    fn draw_at(ctx: &egui::Context, shown: &[String], time: f64, input: bool) {
+        let raw = egui::RawInput {
+            time: Some(time),
+            events: if input {
+                vec![egui::Event::PointerMoved(egui::pos2(1.0, 1.0))]
+            } else {
+                Vec::new()
+            },
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(raw, |ui| {
+            for uri in shown {
+                include(ui.ctx(), uri, b"image bytes");
+            }
+            sweep(ui.ctx());
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn a_window_left_alone_keeps_only_what_it_shows() {
+        let ctx = context();
+        let uris: Vec<String> = (0..8).map(uri).collect();
+        draw_at(&ctx, &uris, 0.0, true);
+        draw_at(&ctx, &uris[..2], 1.0, false);
+        let kept = |ctx: &egui::Context| uris.iter().filter(|uri| registered(ctx, uri)).count();
+        assert_eq!(kept(&ctx), 8, "what scrolled away stays for a while");
+        draw_at(&ctx, &uris[..2], IDLE.as_secs_f64() - 1.0, false);
+        assert_eq!(kept(&ctx), 8, "not yet idle");
+        draw_at(&ctx, &uris[..2], IDLE.as_secs_f64() + 0.5, false);
+        assert_eq!(kept(&ctx), 2, "only what is on screen stays");
+    }
+
+    #[test]
+    fn input_puts_off_letting_go() {
+        let ctx = context();
+        let uris: Vec<String> = (0..8).map(uri).collect();
+        draw_at(&ctx, &uris, 0.0, true);
+        draw_at(&ctx, &uris[..2], IDLE.as_secs_f64() - 1.0, true);
+        draw_at(&ctx, &uris[..2], IDLE.as_secs_f64() + 0.5, false);
+        let kept = uris.iter().filter(|uri| registered(&ctx, uri)).count();
+        assert_eq!(kept, 8, "the window was in use a moment ago");
+    }
+
+    #[test]
+    fn release_forgets_every_image() {
+        let ctx = context();
+        let uris: Vec<String> = (0..8).map(uri).collect();
+        draw_at(&ctx, &uris, 0.0, true);
+        release(&ctx);
+        assert!(uris.iter().all(|uri| !registered(&ctx, uri)));
+        include(&ctx, &uris[0], b"image bytes");
+        assert!(registered(&ctx, &uris[0]), "a later draw registers it again");
     }
 
     #[test]
