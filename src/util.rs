@@ -471,7 +471,24 @@ pub fn now() -> i64 {
     if let Some(clock) = fixed_clock::get() {
         return clock.now;
     }
+    #[cfg(feature = "demo")]
+    if let Some(now) = DEMO_NOW.get() {
+        return *now;
+    }
     Timestamp::now().as_second()
+}
+
+/// The time a demo screenshot is taken at, whenever it is taken.
+#[cfg(feature = "demo")]
+static DEMO_NOW: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+
+/// Stops the clock at a fixed moment (12 March 2026, 14:30 UTC) for demo
+/// screenshots, so the same page shows the same times from any build on the
+/// same machine and their pictures can be compared pixel for pixel. Call
+/// before the sample is made.
+#[cfg(feature = "demo")]
+pub fn freeze_demo_clock() {
+    let _ = DEMO_NOW.set(1_773_325_800);
 }
 
 /// A clock for tests whose layout depends on the time: the current time, the

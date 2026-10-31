@@ -39,7 +39,7 @@ pub const SPACEWALK: Photo = photo!("spacewalk.jpg", 900, 1200);
 pub const SPOTIFAST: Photo = photo!("spotifast.png", 256, 256);
 
 /// The pictures `thumbnail_for` cycles through.
-const PHOTOS: [Photo; 5] = [LAUNCH, ENGINE, VENUE, DUSK, SPACEWALK];
+pub(crate) const PHOTOS: [Photo; 5] = [LAUNCH, ENGINE, VENUE, DUSK, SPACEWALK];
 
 /// A four-second H.264 and AAC clip of a rocket leaving the pad, 640 by 360.
 pub const VIDEO: &[u8] = include_bytes!("../../assets/demo/videos/launch.mp4");

@@ -1,0 +1,182 @@
+name: Zeus benchmark build
+
+# Builds Zeus with the demo, which carries the benchmark's scenario,
+# for scripts/bench (see its README). Run it from the Actions tab, one build
+# per run: current main alone, or main with pull requests merged into it here
+# (never pushed), or another fork's branch with the benchmark added on top.
+# Each artifact holds the binary, BUILD_INFO.txt and the bench scripts.
+on:
+  workflow_dispatch:
+    inputs:
+      label:
+        description: "Name of this build in the results, e.g. main, pr66, pr63-65"
+        required: true
+        default: main
+      prs:
+        description: "Pull requests to merge into main, in order, e.g. 66 or 63,65 (empty: main alone)"
+        required: false
+        default: ""
+      fork:
+        description: "Instead, a fork's branch as owner/repo@branch, e.g. pratyakshm/Zeus@main"
+        required: false
+        default: ""
+      platforms:
+        description: "Which builds to make"
+        type: choice
+        options: [macos, windows, macos-and-windows, linux, all]
+        default: macos-and-windows
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          LABEL: ${{ inputs.label }}
+        run: |
+          case "$LABEL" in
+            *[!A-Za-z0-9._+-]* | "") echo "::error::Use letters, digits and . _ + - in the label"; exit 1 ;;
+          esac
+          mac='{"os":"macos-latest","target":"aarch64-apple-darwin"}'
+          win='{"os":"windows-latest","target":"x86_64-pc-windows-msvc"}'
+          linux='{"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"}'
+          case "$PLATFORMS" in
+            macos) list="$mac" ;;
+            windows) list="$win" ;;
+            linux) list="$linux" ;;
+            macos-and-windows) list="$mac,$win" ;;
+            *) list="$mac,$win,$linux" ;;
+          esac
+          echo "matrix={\"include\":[$list]}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: plan
+    name: ${{ inputs.label }} ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Merged or picked here only; nothing is pushed anywhere.
+      - name: Apply the change under test
+        id: change
+        shell: bash
+        env:
+          PRS: ${{ inputs.prs }}
+          FORK: ${{ inputs.fork }}
+          LABEL: ${{ inputs.label }}
+          TARGET: ${{ matrix.target }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name "Zeus benchmark"
+          git config user.email "bench@localhost"
+          base="$(git rev-parse HEAD)"
+          changes="main"
+          if [ -n "$FORK" ] && [ -n "$PRS" ]; then
+            echo "::error::Give pull requests or a fork, not both"; exit 1
+          fi
+          if [ -n "$FORK" ]; then
+            case "$FORK" in
+              */*@*) ;;
+              *) echo "::error::Write the fork as owner/repo@branch"; exit 1 ;;
+            esac
+            repo="${FORK%@*}" branch="${FORK#*@}"
+            # The benchmark's own commits, to add on top of the fork.
+            bench="$(git log --reverse --format=%H "$base" -- src/demo/tour/bench.rs src/demo/tour/marks.rs scripts/bench)"
+            git fetch --no-tags "https://github.com/$repo" "$branch"
+            fork_head="$(git rev-parse FETCH_HEAD)"
+            git checkout --detach "$fork_head"
+            for commit in $bench; do
+              if ! git cherry-pick --allow-empty "$commit"; then
+                echo "::error::The benchmark does not apply on $FORK; it has to be added there by hand"
+                exit 1
+              fi
+            done
+            changes="$FORK at ${fork_head:0:12}, with the benchmark added"
+          elif [ -n "$PRS" ]; then
+            changes="main"
+            for pr in $(echo "$PRS" | tr ',' ' '); do
+              case "$pr" in *[!0-9]*) echo "::error::$pr is not a pull request number"; exit 1 ;; esac
+              git fetch --no-tags origin "pull/$pr/head"
+              head="$(git rev-parse FETCH_HEAD)"
+              if ! git merge --no-ff --no-edit -m "Benchmark: merge #$pr" FETCH_HEAD; then
+                echo "::error::#$pr does not merge cleanly into main"; exit 1
+              fi
+              changes="$changes + #$pr at ${head:0:12}"
+            done
+          fi
+          {
+            echo "label=$LABEL"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "base=$base"
+            echo "changes=$changes"
+            echo "target=$TARGET"
+            echo "workflow_run=$RUN_URL"
+          } > BUILD_INFO.txt
+          cat BUILD_INFO.txt
+
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: rustup target add ${{ matrix.target }}
+      # Its own cache, never saved from a build of someone else's code, so
+      # nothing from a pull request reaches the release builds' caches.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          prefix-key: bench
+          key: ${{ matrix.target }}
+          save-if: ${{ inputs.prs == '' && inputs.fork == '' }}
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
+      - run: cargo build --locked --release --features demo --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        env:
+          LABEL: ${{ inputs.label }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          name="zeus-bench-$LABEL-$TARGET"
+          mkdir -p "dist/$name"
+          exe=zeus
+          [ "$RUNNER_OS" = Windows ] && exe=zeus.exe
+          cp "target/$TARGET/release/$exe" BUILD_INFO.txt "dist/$name/"
+          mkdir -p "dist/$name/bench"
+          cp scripts/bench/*.sh scripts/bench/*.ps1 scripts/bench/*.py scripts/bench/README.md "dist/$name/bench/"
+          rm -f "dist/$name/bench/test_"*
+          cd dist
+          if [ "$RUNNER_OS" = Windows ]; then
+            7z a "$name.zip" "$name" >/dev/null
+          else
+            # A tarball keeps the executable bits that a plain download loses.
+            tar czf "$name.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: zeus-bench-${{ inputs.label }}-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
