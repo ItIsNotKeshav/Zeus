@@ -17,6 +17,7 @@
   <img src="https://img.shields.io/badge/Built_with-Rust-24292f" alt="Built with Rust">
   <img src="https://img.shields.io/badge/Windows_%C2%B7_macOS_%C2%B7_Linux-24292f" alt="Windows, macOS, and Linux">
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-24292f" alt="MIT license"></a>
+  <a href="https://github.com/ItIsNotKeshav/Zeus/releases"><img src="https://img.shields.io/github/downloads/ItIsNotKeshav/Zeus/total?label=Downloads&color=24292f" alt="Total downloads"></a>
 </p>
 
 Zeus is a fork of [ZapFast](https://github.com/crmne/zapfast) by
