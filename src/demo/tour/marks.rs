@@ -30,6 +30,8 @@ pub(super) struct Marks {
     intervals: Vec<f32>,
     /// Milliseconds from a frame's input to the end of its interface pass.
     work: Vec<f32>,
+    /// The graphics chip, as its OpenGL driver names it.
+    gpu: Option<String>,
 }
 
 impl Marks {
@@ -56,6 +58,15 @@ impl Marks {
         self.lines.push(line);
     }
 
+    /// Names the graphics chip in the start mark.
+    pub(super) fn set_gpu(&mut self, name: String) {
+        self.gpu = Some(name);
+    }
+
+    pub(super) fn knows_gpu(&self) -> bool {
+        self.gpu.is_some()
+    }
+
     pub(super) fn started(&self) -> bool {
         self.started
     }
@@ -77,6 +88,7 @@ impl Marks {
             "version": env!("CARGO_PKG_VERSION"),
             "pixels_per_point": pixels_per_point,
             "window": size.map(|size| [size.x.round(), size.y.round()]),
+            "gpu": self.gpu,
         }));
     }
 

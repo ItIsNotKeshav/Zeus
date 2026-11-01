@@ -39,7 +39,8 @@ if /i "%~1"=="bench" (
   exit /b 0
 )
 
-cargo build --release --locked || exit /b 1
+rem The demo feature carries the benchmark Settings > About runs.
+cargo build --release --locked --features demo || exit /b 1
 
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DVersion=%VERSION% /DArch=x86_64 ^
   "/DBinary=%CARGO_TARGET_DIR%\release\zeus.exe" "/DOutputDir=%CD%\dist" ^

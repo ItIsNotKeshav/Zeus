@@ -827,6 +827,16 @@ impl Shell {
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
         if let Some(tour) = self.tour.as_mut() {
+            // The benchmark's results name the graphics chip it drew on.
+            if tour.wants_gpu()
+                && let Some(gl) = frame.gl()
+            {
+                use eframe::glow::HasContext as _;
+                // SAFETY: a plain string query on the window's own current
+                // context, from the thread that draws with it.
+                let name = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
+                tour.note_gpu(name);
+            }
             tour.drive(app, ctx);
         }
         app.background_frame(ctx);

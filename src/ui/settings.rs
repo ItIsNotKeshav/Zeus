@@ -1179,6 +1179,15 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         |ui, app| about(app, ui),
     );
+    if crate::benchmark::AVAILABLE {
+        about_section.block(
+            vec![
+                translated(locale, "Performance benchmark"),
+                translated(locale, "Benchmark"),
+            ],
+            |ui, app| super::benchmark::show(app, ui),
+        );
+    }
 
     vec![
         appearance,

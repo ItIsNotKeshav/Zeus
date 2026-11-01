@@ -275,13 +275,17 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 raw-window-handle = "0.6"
 # Reads the locale's clock format.
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSDateFormatter", "NSFormatter", "NSLocale", "NSString"] }
+# The benchmark reads its window's memory and CPU time (proc_pid_rusage).
+# Already in the tree through many crates.
+libc = "0.2"
 # The camera for video calls, through AVFoundation.
 nokhwa = { version = "0.10.11", default-features = false, features = ["input-avfoundation"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-native-keyring-store = { version = "1.1", default-features = false }
-# Locale calls.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Registry"] }
+# Locale calls, and the benchmark's readings of its window's process
+# (memory, CPU time, the GPU Engine counters) and of the computer.
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 # Accesses the native window handle for the Messages theme's Mica backdrop.
 raw-window-handle = "0.6"
 # The camera for video calls, through Media Foundation.
@@ -318,7 +322,8 @@ name = "macos_menu"
 harness = false
 
 [features]
-# Sample data, layout tests, and screenshots. Not used in release builds.
+# Sample data, layout tests, screenshots, and the benchmark's scenario,
+# which Settings > About runs in a second window. Zeus releases include it.
 demo = []
 
 [profile.release]

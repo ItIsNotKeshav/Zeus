@@ -725,6 +725,10 @@ pub struct App {
     last_cache_prune: Option<Instant>,
     /// The check the reader asked for from Settings, and what it found.
     pub update_check: crate::updates::Check,
+    /// The benchmark About runs, under way or with its results.
+    pub benchmark: Option<crate::benchmark::Benchmark>,
+    /// Whether About shows what sharing the benchmark's results would send.
+    pub benchmark_share: bool,
     pub show_update: bool,
     pub update_download: crate::updates::DownloadState,
     pub update_support: Option<Result<crate::updates::Installation, String>>,
@@ -1497,6 +1501,8 @@ impl App {
             last_update_check: None,
             last_cache_prune: None,
             update_check: crate::updates::Check::default(),
+            benchmark: None,
+            benchmark_share: false,
             show_update: false,
             update_download: Default::default(),
             update_support: None,
@@ -8462,6 +8468,28 @@ impl App {
             Action::CloseUpdate => self.show_update = false,
             Action::CheckForUpdates => self.check_for_updates_now(),
             Action::SetUpdateChannel(channel) => self.set_update_channel(channel),
+            Action::StartBenchmark => {
+                if crate::benchmark::AVAILABLE
+                    && !self.benchmark.as_ref().is_some_and(|run| run.running())
+                {
+                    let ctx = ctx.clone();
+                    self.benchmark_share = false;
+                    self.benchmark = Some(crate::benchmark::Benchmark::start(move || {
+                        ctx.request_repaint();
+                    }));
+                }
+            }
+            Action::StopBenchmark => {
+                if let Some(run) = &self.benchmark {
+                    run.stop();
+                }
+            }
+            Action::SaveBenchmark => {
+                if let Some(run) = &self.benchmark {
+                    let ctx = ctx.clone();
+                    run.save(move || ctx.request_repaint());
+                }
+            }
             Action::DownloadUpdate => self.download_update(),
             Action::InstallUpdate => {
                 if matches!(

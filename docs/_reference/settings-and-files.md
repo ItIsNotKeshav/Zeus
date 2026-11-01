@@ -312,6 +312,30 @@ Applications. AUR, DEB, RPM, Flatpak, Nix, Cargo, and Homebrew installations
 update through their package manager; an AppImage is replaced by downloading
 the new one.
 
+## Performance benchmark
+
+**Settings > About > Run benchmark** opens a second Zeus window with the
+built-in sample chats, in a temporary folder, and plays a two-minute test in
+it: it settles, scrolls a chat full of photos, switches through chats, opens
+the sticker picker, minimizes and idles, then closes itself. Your archive,
+keys and WhatsApp connection are never opened, and nothing goes over the
+network. Leave the computer alone while it runs.
+
+Zeus measures that window from outside every 2 seconds: memory (PSS on Linux,
+the physical footprint on macOS, private bytes on Windows), CPU time, and GPU
+use where the system reports it (the window's 3D engine on Linux and Windows,
+the whole GPU on macOS). The window records its own frame times. The results
+show frames a second, median and 99th-percentile frame time, jitter, missed
+frames and the slowest frame for scrolling, switching chats and the sticker
+picker, and memory, CPU and GPU for every phase.
+
+**Save results…** writes them as JSON that `scripts/bench/compare.py` reads.
+**Share on GitHub…** first shows the exact text it would share: the app
+version, system, processor, core count, memory, graphics chip and the
+numbers, never chats, names or account details. **Open GitHub issue** opens a
+new issue with that text in your browser; nothing is sent unless you submit
+it there, and the issue is public under your GitHub account.
+
 ## The log
 
 Each run replaces `zapfast.log` and records warnings and errors, never

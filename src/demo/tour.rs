@@ -7,7 +7,7 @@ pub(super) mod media;
 mod session;
 mod whats_new;
 
-pub use bench::PHASES as BENCH_PHASES;
+pub use bench::{DURATION as BENCH_LENGTH, PHASES as BENCH_PHASES};
 pub use capture::Capture;
 pub use session::respond;
 
@@ -542,6 +542,16 @@ impl Tour {
     pub fn with_marks(mut self, path: Option<PathBuf>) -> Self {
         self.marks = marks::Marks::new(path, &bench::TIMED);
         self
+    }
+
+    /// Whether the marks still lack the graphics chip's name.
+    pub fn wants_gpu(&self) -> bool {
+        !self.marks.knows_gpu()
+    }
+
+    /// The graphics chip, as its OpenGL driver names it, for the start mark.
+    pub fn note_gpu(&mut self, name: String) {
+        self.marks.set_gpu(name);
     }
 
     pub fn input(&mut self, app: &mut App, ctx: &egui::Context, input: &mut egui::RawInput) {

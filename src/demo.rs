@@ -3180,6 +3180,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             part if let Some(salt) = part.strip_prefix("dropdown-open=") => {
                 crate::ui::controls::set_demo_open(&format!("{salt:?}"));
             }
+            // The About page's benchmark: run for real, or finished with
+            // sample results, and their share preview.
+            "benchmark-run" => app.actions.push(crate::model::Action::StartBenchmark),
+            "benchmark-results" => {
+                app.benchmark = Some(crate::benchmark::Benchmark::finished(
+                    crate::benchmark::Report::sample(),
+                ));
+            }
+            "benchmark-share" => app.benchmark_share = true,
             // A settings category beside the list of them, by its place.
             part if let Some(index) = part
                 .strip_prefix("section-")
