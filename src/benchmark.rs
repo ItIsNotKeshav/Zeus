@@ -630,7 +630,7 @@ impl Report {
         let mut out = String::new();
         out.push_str(&self.machine_line());
         out.push_str("\n\n| Smoothness | Scrolling | Switching chats | Sticker picker |\n|---|---|---|---|\n");
-        let rows: [(&str, fn(&Smoothness) -> String); 6] = [
+        let rows: [(&str, Cell); 6] = [
             ("Frames a second", |s| value_of(s.fps)),
             ("Frame time, median (ms)", |s| value_of(s.median_ms)),
             ("Frame time, 99th percentile (ms)", |s| value_of(s.p99_ms)),
@@ -741,6 +741,9 @@ impl Report {
         recorder.finish("TestOS 1".into(), hardware, jiff::Timestamp::UNIX_EPOCH)
     }
 }
+
+/// One smoothness figure, written out for the table.
+type Cell = fn(&Smoothness) -> String;
 
 fn value_of(value: Option<f64>) -> String {
     value.map_or("–".to_owned(), |value| format!("{value:.1}"))

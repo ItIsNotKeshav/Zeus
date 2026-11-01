@@ -46,9 +46,19 @@ pub(super) const SCROLL: &str = "scroll";
 const SETTLE: f32 = 10.0;
 /// One scroll pass: up to the oldest message, then down to the newest.
 const SWEEP: f32 = 8.0;
-/// Points a second. A sweep covers about twice the photo chat's height, so it
-/// reaches the end on any platform's fonts; the checks say whether it did.
-const SPEED: f32 = 8000.0;
+/// Points a second the transcript moves. A sweep covers more than the photo
+/// chat's height once its pictures have loaded, so it reaches the end on any
+/// platform's fonts; the checks say whether it did.
+const SCROLLED: f32 = 14_400.0;
+/// Points a second the tour's wheel events carry. They come in points, as a
+/// touchpad's do, and only Linux scales those up (to match a macOS
+/// touchpad), so elsewhere the events carry that much more: every platform
+/// scrolls the same distance.
+const SPEED: f32 = if cfg!(target_os = "linux") {
+    SCROLLED / fastframe_scroll::TOUCHPAD_SCALE
+} else {
+    SCROLLED
+};
 const PASSES: usize = 2;
 /// Pause after each sweep, where the check is made.
 const PAUSE: f32 = 0.5;
