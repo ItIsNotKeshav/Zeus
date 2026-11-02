@@ -135,7 +135,8 @@ impl Account {
         settings: AccountSettings,
         backend: Backend,
     ) -> Self {
-        let open_chat = settings.last_chat.clone();
+        // Zeus starts on its welcome page, not in the chat it was left in.
+        let open_chat = None;
         let chat_filter = match settings
             .list_filter
             .as_deref()
