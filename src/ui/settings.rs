@@ -2678,10 +2678,14 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             }
         }
     }
-    ui.add_space(14.0);
+    ui.add_space(PAGE_ROW_GAP + 4.0);
     doodle_ink_controls(ui, app);
     ui.add_space(4.0);
 }
+
+/// The space a doodle control's row leaves under itself, beyond the ten
+/// points `setting_row` does: as far apart as the page's own rows.
+const DOODLE_ROW_GAP: f32 = PAGE_ROW_GAP - 10.0;
 
 /// The doodles' colour, grey or the accent, and how strongly they show.
 fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
@@ -2709,6 +2713,7 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
             }
         },
     );
+    ui.add_space(DOODLE_ROW_GAP);
     let range = DOODLE_INTENSITY;
     let intensity = app
         .settings
@@ -2730,6 +2735,7 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
         app.actions
             .push(Action::SetDoodleIntensity(percent * range.end()));
     }
+    ui.add_space(DOODLE_ROW_GAP);
     let range = DOODLE_DENSITY;
     let density = app
         .settings
