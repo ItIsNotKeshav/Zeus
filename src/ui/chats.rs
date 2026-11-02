@@ -84,7 +84,7 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
         .ctx()
         .data(|data| data.get_temp::<bool>(slide_copy_id()))
         .is_some();
-    if copy || !app.palette.vibrant() || !crate::backdrop::blur() {
+    if copy || !app.palette.vibrant() || !crate::backdrop::frost() {
         header(app, ui);
         body(app, ui);
         return;

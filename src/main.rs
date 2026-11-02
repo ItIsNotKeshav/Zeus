@@ -647,6 +647,10 @@ fn native_options(
         // time, and opened smaller at every launch with the interface zoomed,
         // since its zoom comes back only once the window exists.
         persist_window: false,
+        // Metal through wgpu on macOS, where Apple's OpenGL ignored the swap
+        // interval and frames ran unpaced. OpenGL elsewhere.
+        #[cfg(target_os = "macos")]
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     }
 }

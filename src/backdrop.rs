@@ -8,6 +8,7 @@
 //! only whether the desktop shows through the window is decided here, once
 //! per frame, and [`active`] tells the rest of the interface.
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -33,8 +34,42 @@ pub fn blur() -> bool {
     glass() < 1.0
 }
 
-/// Records Settings' Glass for [`glass`]; the app does so every frame.
-pub fn set_glass(tint: f32) {
+/// Whether the renderer has frosted, or not yet failed to: the frost reads
+/// back what the frame has drawn so far, which wgpu, on macOS, allows only
+/// on a window it can copy from. A frame that could not frost clears it.
+static CAN_FROST: AtomicBool = AtomicBool::new(true);
+/// Repaints the window once frosting turns out to be impossible, so its
+/// surfaces turn solid without waiting for input.
+static REPAINT: OnceLock<egui::Context> = OnceLock::new();
+
+/// Whether glass inside the window is frosted: [`blur`] where the renderer
+/// can frost. Where it cannot, the header, composer and floating controls
+/// take the solid surfaces of Solid; the window's own material, which the
+/// system draws, still follows [`blur`].
+pub fn frost() -> bool {
+    frosts(CAN_FROST.load(Ordering::Relaxed), glass())
+}
+
+fn frosts(can_frost: bool, tint: f32) -> bool {
+    can_frost && tint < 1.0
+}
+
+/// Records that the renderer could not read back a frame to frost, so
+/// glass is solid from the next frame on.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn cannot_frost() {
+    if CAN_FROST.swap(false, Ordering::Relaxed) {
+        log::info!("the window cannot be copied from, so glass is solid");
+        if let Some(ctx) = REPAINT.get() {
+            ctx.request_repaint();
+        }
+    }
+}
+
+/// Records Settings' Glass for [`glass`], and the context that
+/// [`cannot_frost`] repaints; the app does so every frame.
+pub fn set_glass(ctx: &egui::Context, tint: f32) {
+    REPAINT.get_or_init(|| ctx.clone());
     GLASS.store(tint.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
 }
 
@@ -320,6 +355,17 @@ mod tests {
             transparent_window(true),
             cfg!(target_os = "macos") || platform::may_show_through()
         );
+    }
+
+    /// Glass frosts short of Solid, and only while the renderer can; once a
+    /// frame could not, it is solid whatever Glass says.
+    #[test]
+    fn glass_frosts_only_while_the_renderer_can() {
+        assert!(frosts(true, GLASS_DEFAULT));
+        assert!(frosts(true, 0.0));
+        assert!(!frosts(true, 1.0));
+        assert!(!frosts(false, GLASS_DEFAULT));
+        assert!(!frosts(false, 0.0));
     }
 
     /// The default tint keeps every fill as it was; Solid makes it opaque,
