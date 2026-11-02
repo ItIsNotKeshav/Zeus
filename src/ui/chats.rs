@@ -60,8 +60,10 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
 
 /// The gutter between the window's edges and the floating conversation card.
 pub(crate) const CARD_GAP: f32 = 8.0;
-/// How round the conversation card is.
-pub(crate) const CARD_RADIUS: u8 = 24;
+/// How round the conversation card is: the composer's field and the margin
+/// around it, so the card's bottom corners follow the field's.
+pub(crate) const CARD_RADIUS: u8 =
+    super::conversation::COMPOSER_RADIUS + super::conversation::COMPOSER_MARGIN as u8;
 /// How far the list sets its header below the top of its column. The chat
 /// header in the card beside it moves down as far, so the chat's name,
 /// picture and buttons sit on the same line as the list's title.

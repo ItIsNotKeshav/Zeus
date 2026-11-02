@@ -1439,10 +1439,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             Frame::new()
                 .fill(Color32::TRANSPARENT)
                 .inner_margin(Margin {
-                    left: 8,
-                    right: 8,
+                    left: COMPOSER_MARGIN,
+                    right: COMPOSER_MARGIN,
                     top: 12,
-                    bottom: 12,
+                    bottom: COMPOSER_MARGIN,
                 }),
         )
         .show(ui, |ui| {
@@ -2047,7 +2047,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
 }
 
 /// Corner radius of the composer's rounded field.
-const COMPOSER_RADIUS: u8 = 24;
+pub(crate) const COMPOSER_RADIUS: u8 = 24;
+/// Space between the composer's field and the chat card's sides and bottom.
+/// The card's corners are this much rounder than the field's, so the two
+/// curves run parallel (see `chats::CARD_RADIUS`).
+pub(crate) const COMPOSER_MARGIN: i8 = 12;
 /// Padding around the text of a one-line composer row. The row, and the send
 /// and record button, are one text line plus this; the controls are centred
 /// on it.
@@ -2065,7 +2069,7 @@ const COMPOSER_PAIR_GAP: f32 = -4.0;
 /// its box empty than the round emoji's, so this is wider than the pair's
 /// gap: at it, the text starts as far from the emoji's ink as the emoji
 /// starts from the plus's.
-pub(crate) const COMPOSER_TEXT_GAP: f32 = 6.0;
+pub(crate) const COMPOSER_TEXT_GAP: f32 = 10.0;
 /// Width of the plus button: its 22-point icon and `icon_button`'s padding.
 const PLUS_EDGE: f32 = 34.0;
 
