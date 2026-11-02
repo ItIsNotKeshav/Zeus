@@ -27,6 +27,20 @@ The earlier `FASTSAPP_GIPHY_KEY` build variable remains supported as a fallback.
 CI checks the complete lockfile against RustSec advisories with `cargo audit`.
 Candidate-specific manual checks and results are tracked in the release PR.
 
+## Benchmark
+
+`--demo-tour --demo-tour-script bench` plays the benchmark's scenario (a
+photo-heavy chat scrolled through, chats switched in turn, the sticker
+picker, a minimized window, idle stretches; about 2 minutes) and closes the
+window when it ends. `--demo-tour-marks FILE` writes when each phase ends and
+the frame times of the busy phases.
+The scripts in `scripts/bench/` run it and measure the process from outside;
+see `scripts/bench/README.md`. `--demo-shot` stops the clock at a fixed
+moment, so screenshots of two builds compare pixel for pixel.
+Settings > About runs the same scenario from a release build (which includes
+the `demo` feature for this) and measures it in Rust (`src/benchmark.rs`,
+`src/benchmark/probe.rs`), writing the same results file as the scripts.
+
 ## Recording a demo
 
 The `demo` feature uses offline sample chats in a fresh temporary directory.

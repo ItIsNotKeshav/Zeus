@@ -35,6 +35,11 @@ jobs:
       - name: Policy check regressions
         if: ${{ !cancelled() }}
         run: python3 .github/scripts/test-policy-checks.py
+      - name: Memory benchmark scripts
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m unittest discover -s scripts/bench -p 'test_*.py'
+          bash scripts/bench/test-lib.sh
 
   audit:
     name: Dependency advisories

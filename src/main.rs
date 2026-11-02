@@ -40,8 +40,9 @@ struct Cli {
     #[arg(long, requires = "demo_tour", value_name = "PATH")]
     demo_tour_events: Option<std::path::PathBuf>,
 
-    /// Which tour to play: `launch` (41 seconds) or `whats-new` (what 0.16
-    /// added, 86 seconds).
+    /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
+    /// added, 86 seconds), or `bench` (the benchmark's timed phases,
+    /// about 2 minutes, started at once; see scripts/bench).
     #[cfg(feature = "demo")]
     #[arg(
         long,
@@ -62,6 +63,12 @@ struct Cli {
         value_name = "DIR"
     )]
     demo_tour_frames: Option<std::path::PathBuf>,
+
+    /// Write the tour's phase marks here, one JSON object a line, for the
+    /// benchmark's sampler (scripts/bench).
+    #[cfg(feature = "demo")]
+    #[arg(long, requires = "demo_tour", value_name = "PATH")]
+    demo_tour_marks: Option<std::path::PathBuf>,
 
     /// Frames per second for `--demo-tour-frames` (default 30).
     #[cfg(feature = "demo")]
@@ -377,6 +384,11 @@ fn run() -> eframe::Result<()> {
     }
     #[cfg(feature = "demo")]
     if demo {
+        // A screenshot shows the same times whenever it is taken, so two
+        // builds' pictures compare pixel for pixel (scripts/bench/shots.sh).
+        if cli.demo_shot.is_some() {
+            zeus::util::freeze_demo_clock();
+        }
         zeus::demo::populate(&mut app);
         zeus::demo::apply_flags(&mut app, cli.demo_page.as_deref());
         if cli.demo_tour {
@@ -445,6 +457,7 @@ fn run() -> eframe::Result<()> {
                             fps: cli.demo_fps.unwrap_or(30),
                         }),
                 )
+                .with_marks(cli.demo_tour_marks.clone())
             });
             eframe::run_native(
                 "Zeus",
@@ -814,6 +827,16 @@ impl Shell {
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
         if let Some(tour) = self.tour.as_mut() {
+            // The benchmark's results name the graphics chip it drew on.
+            if tour.wants_gpu()
+                && let Some(gl) = frame.gl()
+            {
+                use eframe::glow::HasContext as _;
+                // SAFETY: a plain string query on the window's own current
+                // context, from the thread that draws with it.
+                let name = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
+                tour.note_gpu(name);
+            }
             tour.drive(app, ctx);
         }
         app.background_frame(ctx);
@@ -1078,6 +1101,29 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn tour_cli_runs_the_benchmark_with_its_marks() {
+        let cli = Cli::try_parse_from([
+            "zapfast",
+            "--demo-tour",
+            "--demo-tour-script",
+            "bench",
+            "--demo-tour-marks",
+            "marks.jsonl",
+        ])
+        .unwrap();
+        assert_eq!(
+            tour_script(&cli.demo_tour_script),
+            zeus::demo::tour::Script::Bench
+        );
+        assert_eq!(
+            cli.demo_tour_marks.as_deref(),
+            Some(std::path::Path::new("marks.jsonl"))
+        );
+        // Marks come only from a tour.
+        assert!(Cli::try_parse_from(["zapfast", "--demo-tour-marks", "marks.jsonl"]).is_err());
     }
 }
 

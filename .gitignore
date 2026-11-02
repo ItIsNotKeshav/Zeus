@@ -14,3 +14,7 @@
 /packaging/flatpak/flatpak-cargo-generator.py
 /.flatpak-builder/
 /build-dir/
+
+/bench-results/
+/bench-shots/
+__pycache__/

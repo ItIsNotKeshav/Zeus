@@ -12,6 +12,7 @@ pub mod audio;
 pub mod autostart;
 pub mod backdrop;
 pub mod backend;
+pub mod benchmark;
 pub mod bidi;
 pub mod brand;
 pub mod call_audio;

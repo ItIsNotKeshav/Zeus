@@ -1,6 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
+pub mod benchmark;
 pub mod call;
 pub mod calls;
 pub(crate) mod carry;

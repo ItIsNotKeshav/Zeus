@@ -3026,6 +3026,12 @@ pub enum Action {
     CheckForUpdates,
     /// Follows stable releases only, or betas too, from About.
     SetUpdateChannel(crate::updates::Channel),
+    /// Runs the benchmark in a second window, from About.
+    StartBenchmark,
+    /// Closes the benchmark window before it ends.
+    StopBenchmark,
+    /// Asks where to save the finished benchmark's results.
+    SaveBenchmark,
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),

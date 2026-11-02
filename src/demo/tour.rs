@@ -1,10 +1,13 @@
 //! A repeatable tour driven through the real pointer and keyboard handlers.
 
+mod bench;
 mod capture;
+mod marks;
 pub(super) mod media;
 mod session;
 mod whats_new;
 
+pub use bench::{DURATION as BENCH_LENGTH, PHASES as BENCH_PHASES};
 pub use capture::Capture;
 pub use session::respond;
 
@@ -34,16 +37,20 @@ pub enum Script {
     Launch,
     /// What ZapFast 0.16 added, about 90 seconds.
     WhatsNew,
+    /// The memory benchmark: timed phases over a photo-heavy chat, about 13
+    /// minutes, that starts at once and closes the window when it ends.
+    Bench,
 }
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 2] = ["launch", "whats-new"];
+    pub const NAMES: [&str; 3] = ["launch", "whats-new", "bench"];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "launch" => Some(Self::Launch),
             "whats-new" => Some(Self::WhatsNew),
+            "bench" => Some(Self::Bench),
             _ => None,
         }
     }
@@ -53,6 +60,7 @@ impl Script {
         match self {
             Self::Launch => DURATION,
             Self::WhatsNew => whats_new::DURATION,
+            Self::Bench => bench::DURATION,
         }
     }
 
@@ -61,6 +69,7 @@ impl Script {
         match self {
             Self::Launch => prepare(app),
             Self::WhatsNew => whats_new::prepare(app),
+            Self::Bench => bench::prepare(app),
         }
     }
 
@@ -68,6 +77,7 @@ impl Script {
         match self {
             Self::Launch => script(),
             Self::WhatsNew => whats_new::script(),
+            Self::Bench => bench::script(),
         }
     }
 
@@ -76,7 +86,14 @@ impl Script {
         match self {
             Self::Launch => &[(3.6, 4.6, 340.0)],
             Self::WhatsNew => &[],
+            Self::Bench => &bench::SCROLLS,
         }
+    }
+
+    /// Whether the tour sends input and asks for frames only around its cues,
+    /// so the stretches between them are as idle as an untouched window.
+    fn sparse(self) -> bool {
+        self == Self::Bench
     }
 }
 
@@ -209,7 +226,30 @@ enum Gesture {
     ClickWith(PointerButton, Modifiers, &'static str),
     /// Turns the wheel where the pointer is, by points; negative scrolls down.
     Wheel(f32),
+    /// Begins a measured phase, which ends the one before (the marks).
+    Phase(&'static str),
+    /// Records whether the target is on screen (the marks).
+    Expect(Target, &'static str),
+    /// Minimizes or restores the window.
+    Minimize(bool),
+    /// Records whether the window says it is minimized (the marks).
+    ExpectMinimized(&'static str),
+    /// Ends the last phase (the marks).
+    End,
 }
+
+impl Gesture {
+    /// Whether the gesture is input the app sees, as opposed to a mark.
+    fn is_input(&self) -> bool {
+        !matches!(
+            self,
+            Self::Phase(_) | Self::Expect(..) | Self::ExpectMinimized(_) | Self::End
+        )
+    }
+}
+
+/// How long a sparse tour keeps drawing frames after input.
+const SETTLE_AFTER_INPUT: f32 = 0.5;
 
 struct Cue {
     at: f32,
@@ -433,6 +473,16 @@ pub struct Tour {
     capture_at: Option<f32>,
     /// Modifier keys held for a click, with its button until released.
     holding: Option<(Option<PointerButton>, Modifiers)>,
+    /// Phase boundaries, checks and frame times, for the benchmark.
+    marks: marks::Marks,
+    /// Where the last pointer event put the pointer, for a sparse tour.
+    sent_pointer: Option<Pos2>,
+    /// A sparse tour draws frames until then after input, so what the input
+    /// opened is on screen (and its labels found) before the next cue.
+    settling_until: f32,
+    /// Whether the last frame asked for the next one at once, so the
+    /// interval between them is a frame time and not a pause.
+    continuous: bool,
 }
 
 impl Tour {
@@ -456,6 +506,12 @@ impl Tour {
                 None
             }
         });
+        // The benchmark starts as soon as the window is up.
+        let delay = if script.sparse() {
+            delay.or(Some(Duration::ZERO))
+        } else {
+            delay
+        };
         Self {
             script,
             delay,
@@ -474,7 +530,28 @@ impl Tour {
             capture,
             capture_at: None,
             holding: None,
+            marks: marks::Marks::default(),
+            sent_pointer: None,
+            settling_until: 0.0,
+            continuous: false,
         }
+    }
+
+    /// Writes phase boundaries, checks and the timed phase's frame times to
+    /// `path`, one JSON object a line, as they happen.
+    pub fn with_marks(mut self, path: Option<PathBuf>) -> Self {
+        self.marks = marks::Marks::new(path, &bench::TIMED);
+        self
+    }
+
+    /// Whether the marks still lack the graphics chip's name.
+    pub fn wants_gpu(&self) -> bool {
+        !self.marks.knows_gpu()
+    }
+
+    /// The graphics chip, as its OpenGL driver names it, for the start mark.
+    pub fn note_gpu(&mut self, name: String) {
+        self.marks.set_gpu(name);
     }
 
     pub fn input(&mut self, app: &mut App, ctx: &egui::Context, input: &mut egui::RawInput) {
@@ -485,11 +562,13 @@ impl Tour {
             }
             return;
         }
-        let replay = input.events.iter().any(|event| {
-            matches!(event,
+        self.marks.frame_began(Instant::now(), self.continuous);
+        let replay = !self.script.sparse()
+            && input.events.iter().any(|event| {
+                matches!(event,
             Event::Key { key: Key::Space, pressed: true, repeat: false, modifiers, .. }
                 if modifiers.is_none())
-        });
+            });
         if replay {
             input.events.retain(|event| {
                 !matches!(
@@ -600,11 +679,15 @@ impl Tour {
             None => {}
         }
         while self.next < self.cues.len() && at >= self.cues[self.next].at {
+            if self.cues[self.next].gesture.is_input() {
+                self.settling_until = at + SETTLE_AFTER_INPUT;
+            }
             match self.cues[self.next].gesture {
                 Gesture::Move(target) => {
                     let Some(end) = self.target(target, app, ctx) else {
                         self.failed = true;
                         log::error!("tour stopped: missing UI target at step {}", self.next);
+                        self.marks.failed(at, self.next);
                         return;
                     };
                     self.motion = Some((at, self.pointer, end));
@@ -638,6 +721,28 @@ impl Tour {
                     modifiers: Modifiers::NONE,
                     phase: egui::TouchPhase::Move,
                 }),
+                Gesture::Phase(name) => {
+                    if !self.marks.started() {
+                        let size = input.screen_rect.map(|rect| rect.size());
+                        self.marks.start(self.script, ctx.pixels_per_point(), size);
+                    }
+                    self.marks.phase(at, name);
+                }
+                Gesture::Expect(target, label) => {
+                    let shown = self.target(target, app, ctx).is_some();
+                    self.marks.check(at, label, shown);
+                }
+                Gesture::Minimize(minimized) => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(minimized));
+                }
+                Gesture::ExpectMinimized(label) => {
+                    let minimized = input
+                        .viewports
+                        .get(&input.viewport_id)
+                        .and_then(|viewport| viewport.minimized);
+                    self.marks.check(at, label, minimized == Some(true));
+                }
+                Gesture::End => self.marks.end(at),
             }
             self.next += 1;
         }
@@ -650,7 +755,7 @@ impl Tour {
         }
         for &(from, until, speed) in self.script.scrolls() {
             let scroll = (at.min(until) - self.previous.max(from)).max(0.0) * speed;
-            if scroll > 0.0
+            if scroll != 0.0
                 && let Some(view) = *app.selection_view.lock().unwrap_or_else(|p| p.into_inner())
             {
                 self.pointer = view.center();
@@ -662,7 +767,12 @@ impl Tour {
                 });
             }
         }
-        input.events.insert(0, Event::PointerMoved(self.pointer));
+        // A sparse tour moves the pointer only when it goes somewhere, so its
+        // idle stretches carry no input at all.
+        if !self.script.sparse() || self.sent_pointer != Some(self.pointer) {
+            input.events.insert(0, Event::PointerMoved(self.pointer));
+            self.sent_pointer = Some(self.pointer);
+        }
         if self.trace.last().is_none_or(|event| {
             !matches!(event.event,
             TraceEvent::Pointer { x, y } if x == self.pointer.x && y == self.pointer.y)
@@ -733,10 +843,53 @@ impl Tour {
         if now < start {
             ctx.request_repaint_after(start - now);
         } else if start.elapsed() < self.script.duration() && !self.failed {
-            ctx.request_repaint_after(Duration::from_millis(16));
+            let wake = if self.script.sparse() {
+                self.next_wake(start.elapsed().as_secs_f32())
+            } else {
+                Duration::from_millis(16)
+            };
+            self.continuous = wake <= Duration::from_millis(16);
+            ctx.request_repaint_after(wake);
         } else {
             self.save_trace(ctx);
+            // The benchmark closes its window a little after it ends, which
+            // leaves its sampler time for the last reading.
+            if self.script.sparse() {
+                let ended = if self.failed {
+                    Duration::from_secs_f32(self.previous)
+                } else {
+                    self.script.duration()
+                };
+                match (ended + marks::LINGER).checked_sub(start.elapsed()) {
+                    Some(left) if !left.is_zero() => ctx.request_repaint_after(left),
+                    _ => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                }
+            }
         }
+    }
+
+    /// How long a sparse tour may wait for its next frame at `at` seconds:
+    /// a frame's time while it moves the pointer or scrolls, else until its
+    /// next cue or scroll.
+    fn next_wake(&self, at: f32) -> Duration {
+        let scrolls = self.script.scrolls();
+        let busy = self.motion.is_some()
+            || self.holding.is_some()
+            || at < self.settling_until
+            || scrolls
+                .iter()
+                .any(|&(from, until, _)| at >= from && self.previous < until);
+        if busy {
+            return Duration::from_millis(16);
+        }
+        let duration = self.script.duration().as_secs_f32();
+        let due = scrolls
+            .iter()
+            .map(|&(from, ..)| from)
+            .filter(|&from| from > at)
+            .chain(self.cues.get(self.next).map(|cue| cue.at))
+            .fold(duration, f32::min);
+        Duration::from_secs_f32((due - at).max(0.0))
     }
 
     fn save_trace(&mut self, ctx: &egui::Context) {
@@ -758,6 +911,14 @@ impl Tour {
     /// hard-coded menu coordinates are needed. Called after frame_ui.
     pub fn observe(&mut self, app: &mut App, ctx: &egui::Context) {
         session::respond(app);
+        // The scroll finds nothing by its label, and its frame times should
+        // be the app's own.
+        if self.marks.timing() {
+            self.marks.frame_done(Instant::now());
+            if self.marks.phase_name() == Some(bench::SCROLL) {
+                return;
+            }
+        }
         self.labels.clear();
         self.spots.clear();
         let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
@@ -2127,5 +2288,84 @@ mod tests {
                 .iter()
                 .all(|row| !row.id.starts_with("tour-"))
         );
+    }
+
+    /// The benchmark plays every phase through real input on its timetable:
+    /// the photo chat scrolls to both ends twice, the churn opens 20
+    /// other chats, the sticker picker opens five times, and the marks name
+    /// each phase in order. Played on a stepped clock that skips the idle
+    /// stretches; the window cannot minimize headless.
+    #[test]
+    fn the_benchmark_plays_every_phase_through_real_input() {
+        let mut app = super::super::tests::app();
+        Script::Bench.prepare(&mut app);
+        assert_eq!(app.open_chat.as_deref(), Some(bench::PHOTO_CHAT));
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::scripted(Script::Bench, None, None, None).with_marks(None);
+        let duration = Script::Bench.duration().as_secs_f32();
+        let mut opened = std::collections::HashSet::new();
+        let (mut pickers, mut picker_open) = (0, false);
+        let (mut at, mut frame) = (0.0f32, 0);
+        while at <= duration + 0.5 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0))),
+                time: Some(f64::from(at)),
+                ..Default::default()
+            };
+            tour.input_at(&app, &ctx, &mut input, at);
+            let mut output = ctx.run_ui(input, |ui| {
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+                tour.observe(&mut app, &ctx);
+            });
+            output.textures_delta.clear();
+            assert!(
+                !tour.failed,
+                "missing target at {at:.2}s, cue {}",
+                tour.next
+            );
+            opened.insert(app.open_chat.clone());
+            let open = app.picker == Some(PickerTab::Stickers);
+            pickers += usize::from(open && !picker_open);
+            picker_open = open;
+            // A tenth of a second while the tour moves, else on towards its
+            // next cue, a second at most, as a window would draw while its
+            // pictures load.
+            let wake = tour.next_wake(at).as_secs_f32();
+            at += if wake <= 0.016 {
+                0.1
+            } else {
+                wake.clamp(0.01, 1.0)
+            };
+            frame += 1;
+        }
+        assert!(frame > 100);
+        let lines = &tour.marks.lines;
+        let phases: Vec<_> = lines
+            .iter()
+            .filter(|line| line["event"] == "phase")
+            .map(|line| line["phase"].as_str().unwrap())
+            .collect();
+        assert_eq!(phases, bench::PHASES);
+        assert_eq!(lines.first().unwrap()["event"], "start");
+        assert_eq!(lines.last().unwrap()["event"], "end");
+        let failed: Vec<_> = lines
+            .iter()
+            .filter(|line| line["event"] == "check" && line["ok"] != true)
+            .map(|line| line["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(failed, ["minimized: window reports minimized"]);
+        let checks = lines.iter().filter(|line| line["event"] == "check").count();
+        assert_eq!(checks, 6, "settle, four scroll ends, minimized");
+        let timed: Vec<_> = lines
+            .iter()
+            .filter(|line| line["event"] == "frames")
+            .map(|line| line["phase"].as_str().unwrap())
+            .collect();
+        assert_eq!(timed, bench::TIMED);
+        assert!(opened.len() >= 21, "opened {} chats", opened.len());
+        assert_eq!(pickers, 5);
+        assert!(app.picker.is_none());
     }
 }
