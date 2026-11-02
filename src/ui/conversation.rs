@@ -192,18 +192,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         header.right(),
         header.bottom(),
     );
-    // The chat list, or its rail of avatars, stands at the header's level
-    // beside the conversation: it casts the same shadow across it, from
-    // under the header down. A narrow window has no list beside it.
-    if !super::narrow(ui.ctx()) {
-        widgets::paint_shadow_beside(
-            ui,
-            &app.palette,
-            header.left(),
-            header.bottom(),
-            ui.max_rect().bottom(),
-        );
-    }
 }
 
 /// Rounds off the corners of the conversation's `card` over what is painted

@@ -1425,15 +1425,6 @@ pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
     );
 }
 
-/// The same shadow cast to the right of `edge`, from `top` to `bottom`: for
-/// a panel beside content on a lower level, as the chat list is beside the
-/// conversation. The panel draws its own hairline.
-pub fn paint_shadow_beside(ui: &Ui, palette: &Palette, edge: f32, top: f32, bottom: f32) {
-    let rect = Rect::from_min_max(pos2(edge, top), pos2(edge + SHADOW_REACH, bottom));
-    ui.painter()
-        .add(shadow_mesh(palette, rect, [true, false, false, true]));
-}
-
 /// One gradient quad over `rect`, dark at the corners marked in `dark`
 /// (left top, right top, right bottom, left bottom) and clear at the others.
 fn shadow_mesh(palette: &Palette, rect: Rect, dark: [bool; 4]) -> egui::Shape {

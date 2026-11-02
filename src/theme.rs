@@ -406,9 +406,9 @@ impl Palette {
     /// it a little; without one, it is the panel's own colour.
     pub fn sidebar(&self) -> Color32 {
         if self.bubbles == BubbleStyle::Nothing && crate::backdrop::active() {
-            glass_fill(self.panel, if self.dark { 210 } else { 230 })
+            window_fill(self.panel, if self.dark { 210 } else { 230 })
         } else if self.vibrant() && crate::backdrop::active() {
-            glass_multiply(self.panel, SIDEBAR_TINT)
+            window_multiply(self.panel, SIDEBAR_TINT)
         } else {
             self.panel
         }
@@ -442,9 +442,9 @@ impl Palette {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
-            glass_fill(color, if self.dark { 218 } else { 232 })
+            window_fill(color, if self.dark { 218 } else { 232 })
         } else {
-            glass_multiply(color, CHAT_TINT)
+            window_multiply(color, CHAT_TINT)
         }
     }
 
@@ -832,6 +832,19 @@ fn glass_fill(color: Color32, alpha: u8) -> Color32 {
 /// `color.gamma_multiply(factor)` for glass, as [`glass_fill`] tints it.
 fn glass_multiply(color: Color32, factor: f32) -> Color32 {
     color.gamma_multiply(crate::backdrop::tinted(factor))
+}
+
+/// [`glass_fill`] for the window's own surfaces: Glass's Clear end does not
+/// thin them, as [`crate::backdrop::tinted_window`] says.
+fn window_fill(color: Color32, alpha: u8) -> Color32 {
+    let [r, g, b, _] = color.to_srgba_unmultiplied();
+    let alpha = crate::backdrop::tinted_window(f32::from(alpha) / 255.0);
+    Color32::from_rgba_unmultiplied(r, g, b, (alpha * 255.0).round() as u8)
+}
+
+/// [`glass_multiply`] for the window's own surfaces.
+fn window_multiply(color: Color32, factor: f32) -> Color32 {
+    color.gamma_multiply(crate::backdrop::tinted_window(factor))
 }
 
 /// Converts HSL to color bytes for non-egui drawing.

@@ -44,6 +44,13 @@ pub fn tinted(alpha: f32) -> f32 {
     tinted_at(alpha, glass())
 }
 
+/// [`tinted`] for the window's own surfaces, the chat list and the chat's
+/// background: Clear leaves them as they are at the default, so only the
+/// floating glass thins out, and Solid still tints them opaque.
+pub fn tinted_window(alpha: f32) -> f32 {
+    tinted_at(alpha, glass().max(GLASS_DEFAULT))
+}
+
 fn tinted_at(alpha: f32, tint: f32) -> f32 {
     if tint <= GLASS_DEFAULT {
         alpha * (CLEAREST + (1.0 - CLEAREST) * tint / GLASS_DEFAULT)
