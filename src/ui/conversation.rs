@@ -724,7 +724,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     let more_glass = ui.painter().add(egui::Shape::Noop);
                     let more = theme::icon_button(
                         ui,
-                        theme::ellipsis_icon(),
+                        Icon::Ellipsis,
                         18.0,
                         palette.secondary,
                         palette.text,
@@ -841,7 +841,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                         } else {
                             (
                                 crate::i18n::gettext(app.locale, "Voice call").into_owned(),
-                                theme::phone_icon(),
+                                Icon::Phone,
                                 palette.secondary,
                                 Action::StartCall(chat.id.clone()),
                             )
@@ -875,7 +875,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             let video_glass = ui.painter().add(egui::Shape::Noop);
                             let video = theme::icon_button(
                                 ui,
-                                theme::video_icon(),
+                                Icon::Video,
                                 18.0,
                                 palette.secondary,
                                 palette.text,
@@ -902,7 +902,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     let search_glass = ui.painter().add(egui::Shape::Noop);
                     let search = theme::icon_button(
                         ui,
-                        theme::search_icon(),
+                        Icon::Search,
                         18.0,
                         if searching {
                             palette.accent
@@ -1681,7 +1681,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
                     // The button shows the picker's tab used last.
                     let (mode_icon, mode_label) = match app.settings.picker_mode {
-                        PickerTab::Emoji => (theme::smile_icon(), "Emoji, GIFs, and stickers"),
+                        PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
                         PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
                         PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
                     };
@@ -1942,7 +1942,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     // An empty composer changes the send button to record.
                     if theme::circle_button(
                         ui,
-                        theme::mic_icon(),
+                        Icon::Mic,
                         button_width,
                         fill,
                         hover,
@@ -1958,7 +1958,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     let icon_kind = if app.editing.is_some() {
                         Icon::Check
                     } else {
-                        theme::send_icon()
+                        Icon::Send
                     };
                     let send =
                         theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
@@ -11395,7 +11395,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             }
             if theme::circle_button(
                 ui,
-                theme::send_icon(),
+                Icon::Send,
                 button,
                 palette.accent,
                 palette.accent_hover,

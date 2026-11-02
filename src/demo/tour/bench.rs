@@ -99,8 +99,6 @@ pub(super) static SCROLLS: [(f32, f32, f32); PASSES * 2] = {
 /// other chats and the sticker picker's stickers in place.
 pub fn prepare(app: &mut App) {
     super::common_setup(app);
-    // One fixed look for every build and every date: the plain Dark theme.
-    app.settings.set_halloween(false);
     for chat in &mut app.chats {
         chat.unread_mention = None;
     }

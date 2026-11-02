@@ -239,8 +239,6 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             });
         } else if app.page == Page::Wallpaper {
             actions.push(Action::Open(Page::Settings));
-        } else if app.page == Page::Settings && app.settings_halloween {
-            actions.push(Action::ShowHalloweenPage(false));
         } else if app.page == Page::Settings && !app.settings_search.is_empty() {
             actions.push(Action::SearchSettings(String::new()));
         } else if app.page == Page::Calls && app.new_call {

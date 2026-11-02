@@ -383,7 +383,7 @@ fn script() -> Vec<Cue> {
     );
     add(33.0, Move(Label("Zeus")));
     add(33.35, Click(left));
-    // The mode sits below the Halloween row: bring it up.
+    // The mode sits below the theme cards: bring it up.
     add(33.4, Wheel(-200.0));
     add(33.65, Move(Label("Light")));
     add(34.05, Click(left));

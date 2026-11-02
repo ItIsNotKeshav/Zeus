@@ -2554,10 +2554,6 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.scroll_to_bottom = true;
             }
             "settings" => app.page = Page::Settings,
-            "halloween-page" => {
-                app.page = Page::Settings;
-                app.settings_halloween = true;
-            }
             // Settings' microphone and push to talk, with a check listening.
             "voice-settings" => {
                 voice_settings_sample(app);
@@ -3162,27 +3158,6 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.settings.doodle_style = style;
             }
             "always-time" => app.settings.always_show_time = true,
-            // Zeus's Halloween look, which ships on, put back or taken away.
-            "halloween-off" => app.settings.set_halloween(false),
-            "halloween-on" => app.settings.set_halloween(true),
-            "halloween-colors-off" => app
-                .settings
-                .set_halloween_part(crate::settings::HalloweenPart::Colors, false),
-            // A surprise held at a percentage of its time, such as ghost-at-40.
-            part if let Some(percent) = part
-                .strip_prefix("ghost-at-")
-                .and_then(|percent| percent.parse::<f32>().ok()) =>
-            {
-                app.surprise
-                    .hold(crate::surprise::Kind::Ghost, percent / 100.0);
-            }
-            part if let Some(percent) = part
-                .strip_prefix("candy-at-")
-                .and_then(|percent| percent.parse::<f32>().ok()) =>
-            {
-                app.surprise
-                    .hold(crate::surprise::Kind::Candy, percent / 100.0);
-            }
             // A dropdown held open, by its salt, such as dropdown-open=interface_font.
             part if let Some(salt) = part.strip_prefix("dropdown-open=") => {
                 crate::ui::controls::set_demo_open(&format!("{salt:?}"));
@@ -4247,7 +4222,7 @@ mod tests {
             .prefix("zapfast-demo-")
             .tempdir()
             .unwrap();
-        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::plain());
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
         ROOTS.with(|roots| roots.borrow_mut().push(root));
         populate(&mut app);
         app

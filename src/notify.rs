@@ -400,11 +400,6 @@ impl Notifications {
 /// Pidgin's message and alert sounds (GPL-2.0, see `assets/sounds/README.md`).
 const RECEIVE: &[u8] = include_bytes!("../assets/sounds/receive.wav");
 const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
-/// Zeus's own Halloween sounds, synthesised for it (see `assets/sounds/README.md`).
-const SPOOKY: &[u8] = include_bytes!("../assets/sounds/spooky.wav");
-const WITCHING: &[u8] = include_bytes!("../assets/sounds/witching.wav");
-/// The ghost surprise's soft "woooo", synthesised for Zeus.
-const BOO: &[u8] = include_bytes!("../assets/sounds/boo.wav");
 
 /// Whether the notification itself plays the sound, instead of ZapFast. On
 /// macOS a sound the notification plays is silenced along with the banner by
@@ -441,8 +436,6 @@ pub fn play_sound(sound: NotificationSound) {
     let source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send> = match sound {
         NotificationSound::Receive => Box::new(|| Ok(Box::new(std::io::Cursor::new(RECEIVE)))),
         NotificationSound::Alert => Box::new(|| Ok(Box::new(std::io::Cursor::new(ALERT)))),
-        NotificationSound::Spooky => Box::new(|| Ok(Box::new(std::io::Cursor::new(SPOOKY)))),
-        NotificationSound::Witching => Box::new(|| Ok(Box::new(std::io::Cursor::new(WITCHING)))),
         NotificationSound::Custom(path) => Box::new(move || {
             Ok(Box::new(std::io::BufReader::new(std::fs::File::open(
                 &path,
@@ -451,11 +444,6 @@ pub fn play_sound(sound: NotificationSound) {
         NotificationSound::System | NotificationSound::None => return,
     };
     play_source(source);
-}
-
-/// Plays the ghost surprise's sound.
-pub fn play_boo() {
-    play_source(Box::new(|| Ok(Box::new(std::io::Cursor::new(BOO)))));
 }
 
 fn play_source(source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send>) {
