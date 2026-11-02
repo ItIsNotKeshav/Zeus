@@ -14779,9 +14779,11 @@ mod tests {
             ctx,
             vec![
                 egui::Event::PointerMoved(centre),
+                // Notches, not a touchpad's points: Linux scales those up and
+                // glides after them, while a notch goes as far everywhere.
                 egui::Event::MouseWheel {
-                    unit: egui::MouseWheelUnit::Point,
-                    delta: egui::vec2(0.0, delta),
+                    unit: egui::MouseWheelUnit::Line,
+                    delta: egui::vec2(0.0, delta / fastframe_scroll::WHEEL_STEP),
                     modifiers: egui::Modifiers::NONE,
                     phase: egui::TouchPhase::Move,
                 },
