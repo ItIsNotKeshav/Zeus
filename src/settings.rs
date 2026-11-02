@@ -866,7 +866,7 @@ pub struct Settings {
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
     /// Whether the Halloween look, since removed, was on: read from older
-    /// files only, so [`Settings::migrate`] can put back the grey doodle ink
+    /// files only, so `Settings::migrate` can put back the grey doodle ink
     /// it had swapped for the accent.
     #[serde(rename = "halloween", skip_serializing)]
     pub legacy_halloween: bool,
