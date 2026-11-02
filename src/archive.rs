@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension, params};
 
-use crate::model::{Chat, ChatKind, Contact, Content, Delivery, LastMessage, MediaItem, Message};
+use crate::model::{
+    Chat, ChatKind, Contact, Content, Delivery, GroupSettings, LastMessage, MediaItem, Message,
+};
 
 mod calls;
 pub use calls::CALL_LOG_LIMIT;
@@ -22,6 +24,9 @@ mod pins;
 pub use pins::{Pinned, Pinner};
 mod polls;
 mod receipts;
+mod reconcile;
+#[cfg(test)]
+mod reconcile_tests;
 mod stars;
 mod stickers;
 pub use polls::PollVote;
@@ -162,6 +167,9 @@ CREATE TABLE IF NOT EXISTS group_receipts (
 CREATE TRIGGER IF NOT EXISTS delete_group_receipts AFTER DELETE ON messages BEGIN
     DELETE FROM group_receipts WHERE chat = OLD.chat AND id = OLD.id;
 END;
+-- One person can be both a privacy id and a phone number; merging the two
+-- looks receipts up by recipient, and the primary key cannot serve that.
+CREATE INDEX IF NOT EXISTS group_receipts_by_recipient ON group_receipts (recipient);
 ";
 
 const CHAT_COLUMNS: &str =
@@ -170,7 +178,8 @@ const CHAT_COLUMNS: &str =
                     c.pinned_at, c.ephemeral_expiration, c.locked, c.group_subject_known,
                     c.notification_sound, c.marked_unread,
                     (SELECT f.position FROM favorites f WHERE f.chat = c.id), c.left,
-                    c.info_locked, c.group_admin, c.group_description, c.voice_speed";
+                    c.info_locked, c.group_admin, c.group_description, c.voice_speed,
+                    c.group_settings";
 
 /// Adds columns introduced after the initial schema when missing.
 const MIGRATIONS: &[(&str, &str, &str)] = &[
@@ -216,6 +225,8 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     ("chats", "history_start", "INTEGER NOT NULL DEFAULT 0"),
     // NULL plays voice messages at the speed in Settings.
     ("chats", "voice_speed", "REAL"),
+    // A group's permissions and admins as JSON; NULL until its metadata says.
+    ("chats", "group_settings", "TEXT"),
     ("contacts", "first_name", "TEXT"),
 ];
 const CHAT_JOIN: &str = "FROM chats c
@@ -275,6 +286,9 @@ fn chat_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Chat> {
         admin: row.get(24)?,
         group_description: row.get(25)?,
         voice_speed: row.get(26)?,
+        group_settings: row
+            .get::<_, Option<String>>(27)?
+            .and_then(|settings| serde_json::from_str(&settings).ok()),
     })
 }
 
@@ -391,6 +405,10 @@ fn kind_from_name(name: &str) -> ChatKind {
 /// every item brings its thumbnail with it, so the album is a page of the chat
 /// rather than every photo it ever held.
 pub const GALLERY_PAGE: usize = 200;
+
+/// `meta` keys for the phone's "Keep chats archived" and when it changed.
+const UNARCHIVE_CHATS: &str = "unarchive_chats";
+const UNARCHIVE_CHATS_AT: &str = "unarchive_chats_at";
 
 impl Archive {
     /// Unlocks the on-disk archive with its OS keyring key, migrating plaintext
@@ -517,6 +535,32 @@ impl Archive {
         self.connection.execute(
             "UPDATE chats SET group_description = ?2 WHERE id = ?1",
             params![id, description],
+        )?;
+        Ok(())
+    }
+
+    /// Records a group's permissions and admins, from its metadata or a
+    /// change WhatsApp accepted.
+    pub fn set_group_settings(&self, id: &str, settings: &GroupSettings) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET group_settings = ?2 WHERE id = ?1",
+            params![
+                id,
+                serde_json::to_string(settings).unwrap_or_else(|_| "{}".into())
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Records the group's members alone, as a member change WhatsApp
+    /// accepted leaves them.
+    pub fn set_participants(&self, id: &str, participants: &[String]) -> Result<()> {
+        self.connection.execute(
+            "UPDATE chats SET participants = ?2 WHERE id = ?1",
+            params![
+                id,
+                serde_json::to_string(participants).unwrap_or_else(|_| "[]".into())
+            ],
         )?;
         Ok(())
     }
@@ -1144,6 +1188,7 @@ impl Archive {
                 history_order = COALESCE(messages.history_order, excluded.history_order)",
             params![lid_chat, phone_chat],
         )?;
+        Self::move_message_metadata(&transaction, &lid_chat, &phone_chat)?;
         transaction.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, secret) SELECT ?2, id, creator, secret FROM polls WHERE chat = ?1",
             params![lid_chat, phone_chat],
@@ -2263,6 +2308,40 @@ impl Archive {
         Ok(changed > 0)
     }
 
+    /// Replaces the local clock's stamp on a message we sent with the time
+    /// WhatsApp's server acknowledged it, which incoming messages are stamped
+    /// with too, so a reply never sorts above it when this computer's clock is
+    /// ahead. Returns whether the stamp changed.
+    /// The chat's activity follows: an activity time this message set moves
+    /// to the chat's newest message, and later activity stays.
+    pub fn restamp_sent(&self, chat: &str, id: &str, timestamp: i64) -> Result<bool> {
+        let transaction = self.connection.unchecked_transaction()?;
+        let Some(old) = transaction
+            .query_row(
+                "SELECT timestamp FROM messages
+                 WHERE chat = ?1 AND id = ?2 AND from_me = 1 AND timestamp != ?3",
+                params![chat, id, timestamp],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?
+        else {
+            return Ok(false);
+        };
+        transaction.execute(
+            "UPDATE messages SET timestamp = ?3 WHERE chat = ?1 AND id = ?2",
+            params![chat, id, timestamp],
+        )?;
+        transaction.execute(
+            "UPDATE chats SET last_activity = MAX(?3, CASE WHEN last_activity = ?2
+                 THEN COALESCE((SELECT MAX(timestamp) FROM messages WHERE chat = ?1), ?3)
+                 ELSE last_activity END)
+             WHERE id = ?1",
+            params![chat, old, timestamp],
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
     /// Advances outgoing messages through `timestamp` to `status` and returns changed ids.
     pub fn advance_statuses(
         &self,
@@ -2445,6 +2524,38 @@ impl Archive {
                 .query_row("SELECT EXISTS(SELECT 1 FROM chats)", [], |row| row.get(0))?;
         self.set_meta(KEY, "requested")?;
         Ok(existing)
+    }
+
+    /// The phone's "Keep chats archived", inverted as WhatsApp sends it:
+    /// `Some(true)` when a new message brings an archived chat back. `None`
+    /// until the phone has said.
+    pub fn unarchive_chats(&self) -> Result<Option<bool>> {
+        Ok(self.meta(UNARCHIVE_CHATS)?.map(|value| value == "1"))
+    }
+
+    /// Records the phone's "Keep chats archived" (inverted, as
+    /// [`Archive::unarchive_chats`]) changed at `timestamp` milliseconds,
+    /// unless a newer change is stored, so a replayed snapshot cannot undo
+    /// it. Returns the setting in force.
+    pub fn set_unarchive_chats_at(&self, unarchive: bool, timestamp: i64) -> Result<bool> {
+        let stored = self
+            .meta(UNARCHIVE_CHATS_AT)?
+            .and_then(|value| value.parse::<i64>().ok());
+        if stored.is_some_and(|stored| stored > timestamp) {
+            return Ok(self.unarchive_chats()?.unwrap_or(unarchive));
+        }
+        // One statement, so a failed write leaves the previous pair intact.
+        self.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2), (?3, ?4)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![
+                UNARCHIVE_CHATS,
+                if unarchive { "1" } else { "0" },
+                UNARCHIVE_CHATS_AT,
+                timestamp.to_string()
+            ],
+        )?;
+        Ok(unarchive)
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
@@ -3671,6 +3782,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_phones_keep_chats_archived_applies_in_timestamp_order() {
+        let archive = Archive::in_memory().unwrap();
+        assert_eq!(archive.unarchive_chats().unwrap(), None);
+        assert!(archive.set_unarchive_chats_at(true, 200).unwrap());
+        assert_eq!(archive.unarchive_chats().unwrap(), Some(true));
+        // A replayed older change does not undo it; a newer one does.
+        assert!(archive.set_unarchive_chats_at(false, 100).unwrap());
+        assert_eq!(archive.unarchive_chats().unwrap(), Some(true));
+        assert!(!archive.set_unarchive_chats_at(false, 300).unwrap());
+        assert_eq!(archive.unarchive_chats().unwrap(), Some(false));
+    }
+
+    #[test]
     fn mute_and_pin_versions_survive_restart_and_ignore_older_updates() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("fixture.db");
@@ -4571,6 +4695,39 @@ pub(crate) mod tests {
         archive.set_unread(chat, 4).unwrap();
         archive.mark_read_to(chat, "second").unwrap();
         assert_eq!(archive.chat(chat).unwrap().unwrap().unread, 2);
+    }
+
+    #[test]
+    fn a_sent_message_restamped_with_the_server_time_sorts_before_a_later_reply() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        // Our clock was ahead: the message was stamped 200, the reply came at 150.
+        archive
+            .insert_message(&message(chat, "mine", 200, true), None)
+            .unwrap();
+        archive
+            .insert_message(&message(chat, "reply", 150, false), None)
+            .unwrap();
+        let ids = |rows: Vec<Message>| rows.into_iter().map(|m| m.id).collect::<Vec<_>>();
+        assert_eq!(
+            ids(archive.messages(chat, None, 10).unwrap()),
+            ["reply", "mine"]
+        );
+        assert!(archive.restamp_sent(chat, "mine", 140).unwrap());
+        assert!(!archive.restamp_sent(chat, "mine", 140).unwrap());
+        // The chat's activity came from our message and now follows the reply.
+        assert_eq!(archive.chat(chat).unwrap().unwrap().last_activity, 150);
+        // Only our own messages are restamped.
+        assert!(!archive.restamp_sent(chat, "reply", 100).unwrap());
+        assert_eq!(
+            archive.message(chat, "reply").unwrap().unwrap().timestamp,
+            150
+        );
+        assert_eq!(
+            ids(archive.messages(chat, None, 10).unwrap()),
+            ["mine", "reply"]
+        );
     }
 
     #[test]

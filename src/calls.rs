@@ -750,8 +750,9 @@ pub struct VideoPipeline {
     /// What the peer's RTCP feedback has asked of our video, for the heartbeat's log line.
     feedback: crate::video_rate::PeerFeedback,
     /// The WhatsApp extension of the peer's latest report on our video: 24 bytes of transport
-    /// statistics after the standard report block, whose fields are not decoded yet. Logged so a
-    /// call's numbers can be set beside what we know we sent.
+    /// statistics after the standard report block, of which only the bytes and the rate received
+    /// are decoded ([`crate::video_rate::peer_receiving`]). Logged whole so a call's numbers can be
+    /// set beside what we know we sent.
     report_extension: Vec<u8>,
     /// The peer's latest interarrival jitter for our video, in the 90 kHz clock, for the log.
     peer_jitter: Option<u32>,
@@ -834,6 +835,14 @@ impl VideoPipeline {
         )
     }
 
+    /// What the peer says it receives of our video, from its report's extension.
+    fn on_peer_receiving(
+        &mut self,
+        receiving: crate::video_rate::PeerReceiving,
+    ) -> Option<RateChange> {
+        self.rate.on_peer_receiving(receiving, Instant::now())
+    }
+
     /// The relay connection could not take all the video queued for it.
     fn on_send_drops(&mut self) -> Option<RateChange> {
         self.rate.on_send_drops(Instant::now())
@@ -842,6 +851,12 @@ impl VideoPipeline {
     /// The camera thread could not hand all its frames to the engine.
     fn on_capture_drops(&mut self) -> Option<RateChange> {
         self.rate.on_capture_drops(Instant::now())
+    }
+
+    /// The FEC bytes the engine has sent so far in the call, which the encoder's share of the rate
+    /// is measured against.
+    fn on_fec_sent(&mut self, fec_bytes_total: u64) {
+        self.rate.on_fec_sent(fec_bytes_total);
     }
 
     fn source(&self) -> LocalVideoSource {
@@ -1174,7 +1189,8 @@ fn capture_frames(
             }
         }
         plan.setting.bitrate = wanted.bitrate;
-        encoder.set_bitrate(wanted.bitrate);
+        // The rate chosen is what goes on the wire, and the engine's FEC takes its share of it.
+        encoder.set_bitrate(controls.rate.encoder_bitrate(wanted));
 
         let send = countdown == 0;
         let read = if send {
@@ -1244,9 +1260,15 @@ fn capture_frames(
                 Ok(unit) => {
                     controls.diag.counters.sent(&unit);
                     controls.diag.sent.write(&unit);
+                    let len = unit.len();
+                    // The library's clock shares no origin with ours, so the capture goes over
+                    // by its age: the peer reads the time from capture to departure from it.
+                    let captured_at =
+                        whatsapp_rust::wacore::time::Instant::now() - captured.elapsed();
                     let frame = TimedVideoFrame::builder()
                         .data(unit)
                         .timestamp(clock.stamp(captured))
+                        .captured_at(captured_at)
                         .build();
                     // A full queue means the wire is behind. The frame is dropped, which leaves the
                     // peer's decoder without its reference, so the next frame sent starts afresh,
@@ -1254,8 +1276,11 @@ fn capture_frames(
                     if timed.try_send(frame).is_err() {
                         resync = true;
                         controls.rate.note_queue_drop();
-                    } else if keyframe {
-                        resync = false;
+                    } else {
+                        controls.rate.note_sent(len);
+                        if keyframe {
+                            resync = false;
+                        }
                     }
                 }
                 Err(error) => log::warn!("[CALL] camera frame could not be encoded: {error}"),
@@ -1460,6 +1485,9 @@ fn log_rate_change(call_id: &str, change: RateChange) {
         Reason::SendDrops => "video was dropped before it was sent".to_owned(),
         Reason::CaptureDrops => "camera frames backed up before the engine".to_owned(),
         Reason::Estimate(bitrate) => format!("the peer can take {} kbps", bitrate / 1000),
+        Reason::Receiving(bitrate) => {
+            format!("the peer receives only {} kbps", bitrate / 1000)
+        }
         Reason::Delay(queued) => format!(
             "the round trip stood {} ms above its shortest",
             queued.as_millis()
@@ -1521,6 +1549,97 @@ impl std::fmt::Display for Cancelled {
 }
 
 impl std::error::Error for Cancelled {}
+
+/// Whether ZapFast takes part in group calls: starts them from a group's header or the Calls
+/// page, rings for them, answers them, and joins call links.
+///
+/// On since 0.20, as an experiment: a three-person test carried audio every way and video both
+/// ways, though our video froze every few seconds without video FEC in group calls. Turned off, a
+/// group has no call button, a call link is not joined, and an incoming group call does not take
+/// the screen: the window only says who is calling and to answer on the phone, and sends WhatsApp
+/// nothing, so the phone keeps ringing. Both ways stay compiled and tested.
+/// Read it through [`group_calls_enabled`], which tests can override on their own thread.
+pub const GROUP_CALLS_ENABLED: bool = true;
+
+#[cfg(test)]
+thread_local! {
+    /// A test's own setting of [`GROUP_CALLS_ENABLED`], for this thread only.
+    static GROUP_CALLS_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Whether group calls are on: [`GROUP_CALLS_ENABLED`], or in a test what
+/// `override_group_calls` set.
+pub fn group_calls_enabled() -> bool {
+    #[cfg(test)]
+    if let Some(enabled) = GROUP_CALLS_OVERRIDE.with(std::cell::Cell::get) {
+        return enabled;
+    }
+    GROUP_CALLS_ENABLED
+}
+
+/// Sets group calls on or off on this thread, whatever [`GROUP_CALLS_ENABLED`] says, until the
+/// guard it returns is dropped, so the tests of either behaviour keep running with the switch in
+/// either position.
+#[cfg(test)]
+#[must_use]
+pub fn override_group_calls(enabled: bool) -> GroupCallsOverride {
+    GroupCallsOverride(GROUP_CALLS_OVERRIDE.with(|cell| cell.replace(Some(enabled))))
+}
+
+/// Puts back the setting [`override_group_calls`] replaced.
+#[cfg(test)]
+pub struct GroupCallsOverride(Option<bool>);
+
+#[cfg(test)]
+impl Drop for GroupCallsOverride {
+    fn drop(&mut self) {
+        GROUP_CALLS_OVERRIDE.with(|cell| cell.set(self.0));
+    }
+}
+
+/// What the window says when a call link is clicked while group calls are off: the English
+/// catalog key, translated where it is shown.
+pub const CALL_LINKS_OFF: &str = "ZapFast can't join group calls yet: open the link on your phone.";
+
+/// What the window says when the call service refused a group call we started with 427: the
+/// English catalog key, which the window translates when the worker hands it over as an error.
+pub const GROUP_CALLS_NOT_ENABLED: &str = "WhatsApp hasn't turned on group calls from a computer for your account yet. Ask someone in the group to call it, and answer here.";
+
+/// Why a group call we started did not go out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GroupRefusal {
+    /// WhatsApp has not turned on group calls from linked devices for this account: the call
+    /// service refuses such an offer with 427 ("group call not enabled"). Another member can
+    /// start the call, and this device answer it.
+    pub not_enabled: bool,
+    /// The library's own words, for the log and the generic failure.
+    pub detail: String,
+}
+
+impl GroupRefusal {
+    /// Reads a failed group offer. `gate` is the account's `enable_web_group_calling` flag, when
+    /// the server has sent it.
+    ///
+    /// whatsapp-rust does not hand over the code the call service refused an offer with: a 427
+    /// ack carries a `group_info` without the counters an accepted one has, and the library reports
+    /// only that it could not read it, as a call-service response error. So such an error reads as
+    /// the 427 when the account's gate is off, or when the library names the code itself (as its
+    /// other call acks do, "... rejected with error 427"). Anything else is an ordinary failure.
+    pub fn of(error: &whatsapp_rust::CallError, gate: Option<bool>) -> Self {
+        let detail = error.to_string();
+        let not_enabled = match error {
+            whatsapp_rust::CallError::Response(message) => {
+                message.contains("error 427") || gate == Some(false)
+            }
+            _ => false,
+        };
+        Self {
+            not_enabled,
+            detail,
+        }
+    }
+}
 
 /// Counter behind [`CallUpdate::generation`].
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -1595,9 +1714,23 @@ struct GroupRoster {
     video: Vec<Jid>,
     /// Whether we joined through a call link.
     link: bool,
+    /// Us (our privacy id and phone number), on a call we started: the roster lists our own entry
+    /// as on the call from the start, which is not anyone answering.
+    own: Vec<Jid>,
 }
 
 impl GroupRoster {
+    /// Whether anyone but us is on the call: what answers a group call we started.
+    fn others_joined(&self) -> bool {
+        self.participants.iter().any(|person| {
+            let ours = |own: &Jid| {
+                person.jid.user == own.user
+                    || person.pn.as_ref().is_some_and(|pn| pn.user == own.user)
+            };
+            person.is_connected() && !self.own.iter().any(ours)
+        })
+    }
+
     /// The roster an offer rang with: `None` unless the offer is a group call's.
     ///
     /// A group offer names its group (`group-jid`), carries the call's roster, or both; a call
@@ -1775,8 +1908,9 @@ impl Call {
             // The camera, if one started, is released as the pipeline drops.
             return Err(Cancelled.into());
         }
-        let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
-        let (output, output_tx) = AudioOutput::spawn(speaker.clone());
+        let far_end = crate::call_audio::FarEnd::new();
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
+        let (output, output_tx) = AudioOutput::spawn(speaker.clone(), &far_end);
 
         let voip = client.voip();
         let builder = voip.call(&peer).audio(mic_rx, output_tx);
@@ -1911,8 +2045,9 @@ impl Call {
         if cancel.load(Ordering::Relaxed) {
             return Err(Cancelled.into());
         }
-        let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
-        let (output, output_tx) = AudioOutput::spawn(None);
+        let far_end = crate::call_audio::FarEnd::new();
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
+        let (output, output_tx) = AudioOutput::spawn(None, &far_end);
         let endpoints = pipe
             .as_ref()
             .map(|(pipeline, _)| (pipeline.source(), pipeline.sink()));
@@ -1972,6 +2107,172 @@ impl Call {
             },
             frames,
         ))
+    }
+
+    /// Starts a call in a group, as WhatsApp's own clients do when the group's call button is
+    /// pressed: bound to the group, ringing its current members (`group_call_by_id`). `video`
+    /// starts it as a video call. The devices open as placing a 1:1 call does, then the offer goes
+    /// out on a task of its own, since the library waits for the call service's answer and the
+    /// relay before it hands the call back. That answer arrives on `done`, and
+    /// [`Call::group_started`] applies it. Until then the call reads as calling.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn place_group(
+        client: &Arc<Client>,
+        generation: u64,
+        chat: String,
+        video: bool,
+        camera: Option<String>,
+        cancel: &AtomicBool,
+        done: async_channel::Sender<std::result::Result<CallHandle, GroupRefusal>>,
+    ) -> Result<(Self, Option<async_channel::Receiver<VideoTick>>)> {
+        let group: Jid = chat
+            .parse()
+            .map_err(|error| anyhow!("not a WhatsApp JID: {error}"))?;
+        if let Some(missing) = missing_audio_device_off_thread(None, None).await {
+            return Err(anyhow!("no {missing} is available; a call needs one"));
+        }
+        let mut pipe = None;
+        if video {
+            match VideoPipeline::start(camera.clone(), "").await {
+                Ok((pipeline, frames)) => pipe = Some((pipeline, frames)),
+                Err(error) => log::warn!("[CALL] video pipeline could not start: {error}"),
+            }
+        }
+        require_video(video, pipe.is_some())?;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(Cancelled.into());
+        }
+        let far_end = crate::call_audio::FarEnd::new();
+        let (mic, mic_rx) = AudioInput::spawn(None, &far_end);
+        let (output, output_tx) = AudioOutput::spawn(None, &far_end);
+        let endpoints = pipe
+            .as_ref()
+            .map(|(pipeline, _)| (pipeline.source(), pipeline.sink()));
+        let own = [client.lid(), client.pn()]
+            .into_iter()
+            .flatten()
+            .map(|jid| jid.to_non_ad())
+            .collect();
+        let client = Arc::clone(client);
+        let task = tokio::spawn(async move {
+            // Whether WhatsApp lets this account start group calls from a linked device. The
+            // button is offered either way: the call service has the last word.
+            let gate = client
+                .ab_prop_enabled(whatsapp_rust::wacore::iq::abprops::web::ENABLE_WEB_GROUP_CALLING)
+                .await;
+            log::info!(
+                "[CALL] starting a group call video={video} group calling enabled={}",
+                gate.map_or("unknown".to_owned(), |gate| gate.to_string())
+            );
+            let voip = client.voip();
+            let builder = voip.group_call_by_id(&group).audio(mic_rx, output_tx);
+            let started = match endpoints {
+                Some((source, sink)) => builder.video(source, sink).start().await,
+                None => builder.start().await,
+            };
+            let started = started.map_err(|error| {
+                let refusal = GroupRefusal::of(&error, gate);
+                log::warn!(
+                    "[CALL] WhatsApp refused the group call: {} not_enabled={} (whatsapp-rust does not report the call service's error code)",
+                    refusal.detail,
+                    refusal.not_enabled
+                );
+                refusal
+            });
+            let _ = done.send(started).await;
+        });
+        let (video_pipe, frames) = match pipe {
+            Some((pipeline, frames)) => (Some(pipeline), Some(frames)),
+            None => (None, None),
+        };
+        Ok((
+            Self {
+                generation,
+                call_id: String::new(),
+                chat,
+                direction: CallDirection::Outgoing,
+                video: video_pipe.is_some(),
+                phase: CallPhase::Dialing,
+                started: None,
+                outcome: None,
+                peer_audio: None,
+                incoming: None,
+                handle: None,
+                media_ready: false,
+                mic: Some(mic),
+                mic_open: true,
+                speaker: Some(output),
+                camera_wanted: video_pipe
+                    .as_ref()
+                    .is_some_and(VideoPipeline::camera_running),
+                peer_video_request: None,
+                began: crate::util::now(),
+                video_pipe,
+                remote_video: false,
+                microphone: None,
+                speaker_device: None,
+                camera,
+                lost_devices: Vec::new(),
+                group: Some(GroupRoster {
+                    own,
+                    ..GroupRoster::default()
+                }),
+                join_task: Some(task.abort_handle()),
+            },
+            frames,
+        ))
+    }
+
+    /// Applies the call service's answer to a group call we started: the call is out, with the
+    /// roster it rang, or it was refused.
+    pub fn group_started(
+        &mut self,
+        started: std::result::Result<CallHandle, GroupRefusal>,
+    ) -> Option<CallUpdate> {
+        self.join_task = None;
+        if !self.phase.is_live() {
+            return None;
+        }
+        match started {
+            Ok(handle) => {
+                self.call_id = handle.call_id().to_owned();
+                if let Some(state) = handle.group_state()
+                    && let Some(update) = state.snapshot()
+                    && let Some(roster) = self.group.as_mut()
+                {
+                    roster.apply(update);
+                }
+                self.handle = Some(Arc::new(handle));
+                log::info!(
+                    "[CALL] group call started call_id={} listed={}",
+                    self.call_id,
+                    self.group
+                        .as_ref()
+                        .map_or(0, |roster| roster.participants.len())
+                );
+                self.someone_answered().or_else(|| Some(self.update()))
+            }
+            Err(refusal) => self.fail(format!("the group call was refused: {}", refusal.detail)),
+        }
+    }
+
+    /// Moves a group call we started on once anyone but us is on it: their joining is the answer,
+    /// as the peer's `<accept>` is on a 1:1 call.
+    fn someone_answered(&mut self) -> Option<CallUpdate> {
+        let roster = self.group.as_ref()?;
+        if self.direction != CallDirection::Outgoing
+            || roster.link
+            || !matches!(self.phase, CallPhase::Dialing | CallPhase::Ringing)
+            || !roster.others_joined()
+        {
+            return None;
+        }
+        log::info!(
+            "[CALL] someone joined the group call call_id={}",
+            self.call_id
+        );
+        self.phase = CallPhase::Connecting;
+        self.became_active().or_else(|| Some(self.update()))
     }
 
     /// Applies the answer of a call link's join: the call is in and its media coming up, or it
@@ -2237,9 +2538,10 @@ impl Call {
             }
         }
         require_video(self.video, pipe.is_some())?;
-        let (mic, mic_rx) = AudioInput::spawn(microphone.clone());
+        let far_end = crate::call_audio::FarEnd::new();
+        let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
         mic.set_open(self.mic_open);
-        let (output, output_tx) = AudioOutput::spawn(speaker.clone());
+        let (output, output_tx) = AudioOutput::spawn(speaker.clone(), &far_end);
 
         let voip = client.voip();
         // From here the library owns the answer: if it fails, its own guard ends the call with the
@@ -2395,7 +2697,10 @@ impl Call {
             match action {
                 // A newer roster: someone joined, left, or was asked in.
                 CallAction::GroupUpdate { update } => {
-                    return roster.apply(update).then(|| self.update());
+                    if !roster.apply(update) {
+                        return None;
+                    }
+                    return self.someone_answered().or_else(|| Some(self.update()));
                 }
                 // One invited member's answer speaks for that member alone; the call goes on for
                 // everyone else, and the roster says who is on it. The library leaves the call
@@ -2479,7 +2784,10 @@ impl Call {
                         update.participants.len()
                     );
                 }
-                changed.then(|| self.update())
+                if !changed {
+                    return None;
+                }
+                self.someone_answered().or_else(|| Some(self.update()))
             }
             CallEvent::RelayAllocated => {
                 self.media_ready = true;
@@ -2616,6 +2924,10 @@ impl Call {
                 let pipe = self.video_pipe.as_mut()?;
                 for item in feedback {
                     pipe.feedback.note(item.packet_type, item.fmt, &item.fci);
+                    // A PLI or a FIR: a picture the peer could not rebuild.
+                    if item.packet_type == 206 && matches!(item.fmt, 1 | 4) {
+                        pipe.rate.on_picture_lost(Instant::now());
+                    }
                 }
                 // The peer's native video report covers our video stream alone.
                 if *reports_video
@@ -2663,6 +2975,17 @@ impl Call {
                 {
                     log_rate_change(&self.call_id, change);
                 }
+                // After the estimates, so that a path falling short is capped at what it carries
+                // even when the same packet's REMB says more.
+                if *reports_video
+                    && !*reports_audio
+                    && let Some(block) = report_blocks.first()
+                    && let Some(receiving) =
+                        crate::video_rate::peer_receiving(&block.profile_extension)
+                    && let Some(change) = pipe.on_peer_receiving(receiving)
+                {
+                    log_rate_change(&self.call_id, change);
+                }
                 None
             }
             // The relay connection could not take all the video queued for it.
@@ -2694,6 +3017,19 @@ impl Call {
             && let Some(change) = pipe.on_capture_drops()
         {
             log_rate_change(&self.call_id, change);
+        }
+    }
+
+    /// Takes the share of our video's wire the engine's FEC used since the last heartbeat out of
+    /// the encoder's target, so video and FEC together stay at the rate the rate control chose.
+    /// Called from the call heartbeat.
+    pub fn budget_video_fec(&mut self) {
+        let Some(handle) = self.handle.as_ref() else {
+            return;
+        };
+        let fec_bytes = handle.media_stats().video_fec_bytes_sent;
+        if let Some(pipe) = self.video_pipe.as_mut() {
+            pipe.on_fec_sent(fec_bytes);
         }
     }
 
@@ -2737,7 +3073,8 @@ impl Call {
                  peer_nacked_packets={} peer_plis={} peer_firs={} peer_estimates={} \
                  peer_estimate_kbps={} rtt_ms={} rtt_floor_ms={} peer_jitter_ms={} \
                  peer_report_extension={} encoded_frames={} keyframes={} largest_keyframe_kb={} \
-                 peer_frames_decoded={} peer_frames_undecodable={}",
+                 peer_frames_decoded={} peer_frames_undecodable={} encoder_kbps={} \
+                 fec_packets_total={} fec_kb_total={}",
                 self.call_id,
                 marker,
                 rate.bitrate / 1000,
@@ -2760,6 +3097,9 @@ impl Call {
                 counts.largest_keyframe / 1024,
                 counts.decoded,
                 counts.undecodable,
+                pipe.rate_share.encoder_bitrate(rate) / 1000,
+                stats.video_fec_sent,
+                stats.video_fec_bytes_sent / 1024,
             );
         }
         self.log_audio_path(marker);
@@ -3370,8 +3710,8 @@ mod tests {
         let samples: Vec<f32> = (0..960).map(|sample| sample as f32 / 1_920.0).collect();
         let (_devices, speaker) = crate::call_audio::fake::install(samples, 2, 48_000, (48_000, 2));
         let mut call = dialing();
-        let (input, frames) = AudioInput::spawn(None);
-        let (output, _tx) = AudioOutput::spawn(None);
+        let (input, frames) = AudioInput::spawn(None, &crate::call_audio::FarEnd::new());
+        let (output, _tx) = AudioOutput::spawn(None, &crate::call_audio::FarEnd::new());
         call.mic = Some(input);
         call.speaker = Some(output);
 
@@ -3450,7 +3790,7 @@ mod tests {
         let (_devices, _speaker) =
             crate::call_audio::fake::install(samples, 2, 48_000, (48_000, 2));
         let mut call = dialing();
-        let (output, _frames) = AudioOutput::spawn(None);
+        let (output, _frames) = AudioOutput::spawn(None, &crate::call_audio::FarEnd::new());
         call.speaker = Some(output);
         call.video = true;
         call.video_pipe = Some(pipeline_with_a_running_camera());
@@ -3516,7 +3856,7 @@ mod tests {
         let samples: Vec<f32> = (0..960).map(|sample| sample as f32 / 1_920.0).collect();
         let (_devices, _speaker) =
             crate::call_audio::fake::install(samples, 2, 48_000, (48_000, 2));
-        let (input, frames) = AudioInput::spawn(None);
+        let (input, frames) = AudioInput::spawn(None, &crate::call_audio::FarEnd::new());
         let mut heard: Vec<Vec<i16>> = Vec::new();
         let mut quiet: Vec<Vec<i16>> = Vec::new();
         let mut microphone_while_muted: Vec<i16> = Vec::new();
@@ -3596,8 +3936,8 @@ mod tests {
         let samples: Vec<f32> = (0..960).map(|sample| sample as f32 / 1_920.0).collect();
         let (_devices, speaker) = crate::call_audio::fake::install(samples, 2, 48_000, (48_000, 2));
         let mut call = dialing();
-        let (input, frames) = AudioInput::spawn(None);
-        let (output, _tx) = AudioOutput::spawn(None);
+        let (input, frames) = AudioInput::spawn(None, &crate::call_audio::FarEnd::new());
+        let (output, _tx) = AudioOutput::spawn(None, &crate::call_audio::FarEnd::new());
         call.mic = Some(input);
         call.speaker = Some(output);
         call.signaling(&accept()).expect("the peer answered");
@@ -4164,8 +4504,8 @@ mod tests {
             plans.iter().map(|plan| plan.size).collect::<Vec<_>>(),
             [(852, 480), (960, 540), (1280, 720)]
         );
-        assert!(plans.iter().all(|plan| plan.every == 3), "{plans:?}");
-        assert!((plans[2].sent_fps() - 50.0 / 3.0).abs() < 1e-9);
+        assert!(plans.iter().all(|plan| plan.every == 2), "{plans:?}");
+        assert!((plans[2].sent_fps() - 25.0).abs() < 1e-9);
         assert_eq!(plans[2].frame_len(), 1280 * 720 * 3 / 2);
         // A portrait camera keeps its shape at every step.
         let upright = SendPlan::new(
@@ -4177,7 +4517,10 @@ mod tests {
             },
         );
         assert_eq!(upright.size, (480, 852));
-        assert_eq!(upright.every, 2, "15 frames a second from a 30 fps camera");
+        assert_eq!(
+            upright.every, 1,
+            "every frame of a 30 fps camera, the nearest to 25"
+        );
     }
 
     #[test]
@@ -4335,6 +4678,56 @@ mod tests {
             }
         );
         assert_eq!(pipe.report_extension, vec![0xab; 24]);
+    }
+
+    /// A report on our video alone whose extension says the peer receives far less than we send
+    /// caps the rate; the same extension on a report that covers audio as well does not.
+    #[test]
+    fn what_the_peer_receives_of_our_video_caps_the_rate() {
+        use whatsapp_rust::voip_control::MediaRtcpReportBlock;
+        let mut extension = vec![0; 24];
+        extension[..4].copy_from_slice(&2_000_000u32.to_be_bytes());
+        extension[20..].copy_from_slice(&400_000u32.to_be_bytes());
+        let report = |reports_audio: bool| CallEvent::RtcpReceived {
+            packet_types: vec![201],
+            sender_ssrc: 1,
+            referenced_ssrcs: vec![9],
+            reports_audio,
+            reports_video: true,
+            report_blocks: vec![
+                MediaRtcpReportBlock::builder()
+                    .ssrc(9)
+                    .fraction_lost(0)
+                    .cumulative_lost(0)
+                    .extended_highest_sequence(0)
+                    .jitter(0)
+                    .last_sender_report(0)
+                    .delay_since_last_sender_report(0)
+                    .profile_extension(extension.clone())
+                    .build(),
+            ],
+            feedback: Vec::new(),
+        };
+        let mut call = dialing();
+        call.video = true;
+        let mut pipe = pipeline_with_a_running_camera();
+        // Two seconds ago nothing had been sent; since then 700 kbit/s has.
+        let earlier = Instant::now() - std::time::Duration::from_secs(2);
+        let nothing_yet = crate::video_rate::PeerReceiving {
+            bytes: 0,
+            bitrate: 0,
+        };
+        assert_eq!(pipe.rate.on_peer_receiving(nothing_yet, earlier), None);
+        pipe.rate_share.note_sent(175_000);
+        call.video_pipe = Some(pipe);
+        let rate = |call: &Call| call.video_pipe.as_ref().expect("video").rate().bitrate;
+        assert_eq!(call.media(&report(true)), None);
+        assert!(
+            rate(&call) >= crate::video_rate::START_BITRATE,
+            "not about our video alone: read only for its clean loss"
+        );
+        assert_eq!(call.media(&report(false)), None, "nothing for the screen");
+        assert_eq!(rate(&call), 360_000);
     }
 
     #[test]
@@ -4558,6 +4951,123 @@ mod tests {
         assert_eq!(update.phase, CallPhase::Failed);
         assert_eq!(update.outcome, Some(CallOutcome::Failed));
         assert!(call.link_joined(Err("again".to_owned())).is_none());
+    }
+
+    /// A group call we started rings its members until one of them joins: our own entry on the
+    /// roster is not an answer, and the call is up only once someone else is on it and the media
+    /// is too.
+    #[tokio::test]
+    async fn a_group_call_we_started_is_answered_by_a_member_joining() {
+        let mut call = dialing();
+        call.chat = GROUP.to_owned();
+        call.group = Some(GroupRoster {
+            own: vec!["200000000000099@lid".parse().unwrap()],
+            ..GroupRoster::default()
+        });
+        let ringing = roster(
+            1,
+            vec![
+                member("200000000000099", true),
+                member("200000000000001", false),
+                member("200000000000002", false),
+            ],
+        );
+        let update = call
+            .media(&CallEvent::GroupUpdated(Box::new(ringing)))
+            .expect("the roster is drawn");
+        assert_eq!(update.phase, CallPhase::Dialing, "only we are on it");
+        assert!(call.media(&CallEvent::RelayAllocated).is_none());
+        assert_eq!(
+            call.phase(),
+            CallPhase::Dialing,
+            "a relay alone is no answer"
+        );
+
+        let joined = roster(
+            2,
+            vec![
+                member("200000000000099", true),
+                member("200000000000001", true),
+                member("200000000000002", false),
+            ],
+        );
+        let update = call
+            .signaling(&CallAction::GroupUpdate {
+                update: Box::new(joined),
+            })
+            .expect("a member joined");
+        assert_eq!(update.phase, CallPhase::Active);
+        assert!(update.started.is_some());
+
+        let ended = call.hangup(None).await;
+        assert_eq!(ended.outcome, Some(CallOutcome::Answered));
+    }
+
+    /// A group call nobody joined and we hung up was not answered.
+    #[tokio::test]
+    async fn a_group_call_we_started_that_nobody_joined_was_not_answered() {
+        let mut call = dialing();
+        call.chat = GROUP.to_owned();
+        call.group = Some(GroupRoster {
+            own: vec!["200000000000099@lid".parse().unwrap()],
+            ..GroupRoster::default()
+        });
+        call.media(&CallEvent::GroupUpdated(Box::new(roster(
+            1,
+            vec![
+                member("200000000000099", true),
+                member("200000000000001", false),
+            ],
+        ))));
+        let ended = call.hangup(None).await;
+        assert_eq!(ended.phase, CallPhase::Ended);
+        assert_eq!(ended.outcome, Some(CallOutcome::NoAnswer));
+    }
+
+    /// The call service refusing a group call we started fails it as a call that never came up,
+    /// and an answer arriving after a hang-up changes nothing.
+    #[test]
+    fn a_refused_group_call_fails() {
+        let mut call = dialing();
+        call.call_id = String::new();
+        call.chat = GROUP.to_owned();
+        call.group = Some(GroupRoster::default());
+        let refusal = GroupRefusal {
+            not_enabled: true,
+            detail: "call service response failed: missing group-call integer attribute".to_owned(),
+        };
+        let update = call
+            .group_started(Err(refusal.clone()))
+            .expect("the screen is told");
+        assert_eq!(update.phase, CallPhase::Failed);
+        assert_eq!(update.outcome, Some(CallOutcome::Failed));
+        assert!(
+            update.group.is_some(),
+            "drawn as the group's call to the end"
+        );
+        assert!(call.group_started(Err(refusal)).is_none());
+    }
+
+    /// A refused group offer reads as WhatsApp not having turned group calls on for the account
+    /// when the library names the 427, or the account's gate is off; anything else stays an
+    /// ordinary failure.
+    #[test]
+    fn a_427_refusal_reads_as_group_calls_not_enabled() {
+        use whatsapp_rust::CallError;
+        let unreadable = || CallError::Response("missing group-call integer attribute".to_owned());
+        assert!(GroupRefusal::of(&unreadable(), Some(false)).not_enabled);
+        assert!(!GroupRefusal::of(&unreadable(), Some(true)).not_enabled);
+        assert!(!GroupRefusal::of(&unreadable(), None).not_enabled);
+        let named = CallError::Response("offer rejected with error 427".to_owned());
+        assert!(GroupRefusal::of(&named, Some(true)).not_enabled);
+        assert!(GroupRefusal::of(&named, None).not_enabled);
+        let other = CallError::Setup("group call requires 2..=31 remote users".to_owned());
+        assert!(!GroupRefusal::of(&other, Some(false)).not_enabled);
+        assert!(!GroupRefusal::of(&CallError::ResponseTimeout, Some(false)).not_enabled);
+        assert_eq!(
+            GroupRefusal::of(&unreadable(), Some(false)).detail,
+            "call service response failed: missing group-call integer attribute"
+        );
     }
 
     #[test]

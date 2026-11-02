@@ -959,12 +959,17 @@ fn faces(ui: &mut egui::Ui, palette: &Palette, people: &[&CallPerson]) {
 const MAX_TILES: usize = 12;
 /// The gap between tiles.
 const TILE_GAP: f32 = 10.0;
-/// The shape a tile is laid out at, wide as a call's picture.
-const TILE_ASPECT: f32 = 4.0 / 3.0;
+/// The narrowest and the widest a tile may be. A tile fills its cell between
+/// the two, and each picture covers its tile from its middle: a phone's
+/// upright picture and a computer's wide one both fit, and the grid no longer
+/// leaves most of the room empty around 4:3 tiles, as a three-person call did.
+const TILE_ASPECT_MIN: f32 = 3.0 / 4.0;
+const TILE_ASPECT_MAX: f32 = 16.0 / 9.0;
 
-/// Lays out `count` tiles of [`TILE_ASPECT`] in `area`, as large as they
-/// fit: the column count that leaves the biggest tile wins, the grid sits
-/// in the middle, and a short last row is centred under the others.
+/// Lays out `count` tiles in `area`, as large as they fit: each fills its
+/// cell within [`TILE_ASPECT_MIN`] and [`TILE_ASPECT_MAX`], the column count
+/// that leaves the biggest tile wins, the grid sits in the middle, and a short
+/// last row is centred under the others.
 pub(crate) fn tile_grid(count: usize, area: Rect, gap: f32) -> Vec<Rect> {
     if count == 0 || area.width() <= 0.0 || area.height() <= 0.0 {
         return Vec::new();
@@ -979,10 +984,13 @@ pub(crate) fn tile_grid(count: usize, area: Rect, gap: f32) -> Vec<Rect> {
         if cell.x <= 0.0 || cell.y <= 0.0 {
             continue;
         }
-        let tile = if cell.x / cell.y > TILE_ASPECT {
-            vec2(cell.y * TILE_ASPECT, cell.y)
+        let aspect = cell.x / cell.y;
+        let tile = if aspect > TILE_ASPECT_MAX {
+            vec2(cell.y * TILE_ASPECT_MAX, cell.y)
+        } else if aspect < TILE_ASPECT_MIN {
+            vec2(cell.x, cell.x / TILE_ASPECT_MIN)
         } else {
-            vec2(cell.x, cell.x / TILE_ASPECT)
+            cell
         };
         if best.is_none_or(|(_, size)| tile.x * tile.y > size.x * size.y) {
             best = Some((columns, tile));
@@ -1409,7 +1417,8 @@ mod tests {
                     area.expand(0.5).contains_rect(*tile),
                     "{count} tiles: {tile:?} leaves the room"
                 );
-                assert!((tile.width() / tile.height() - TILE_ASPECT).abs() < 0.01);
+                let aspect = tile.width() / tile.height();
+                assert!((TILE_ASPECT_MIN - 0.01..=TILE_ASPECT_MAX + 0.01).contains(&aspect));
                 for other in &tiles[index + 1..] {
                     assert!(
                         !tile.shrink(0.5).intersects(other.shrink(0.5)),
@@ -1426,6 +1435,16 @@ mod tests {
         let middle = (five[3].left() + five[4].right()) / 2.0;
         assert!((middle - area.center().x).abs() < 0.5);
         assert!(tile_grid(0, area, TILE_GAP).is_empty());
+    }
+
+    /// Three people in a call screen beside the chat list: the tiles take the
+    /// room's height instead of shrinking to 4:3 strips across its middle.
+    #[test]
+    fn three_tiles_use_most_of_the_room() {
+        let area = Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(800.0, 700.0));
+        let tiles = tile_grid(3, area, TILE_GAP);
+        let used: f32 = tiles.iter().map(|tile| tile.area()).sum();
+        assert!(used > area.area() * 0.7, "{used} of {}", area.area());
     }
 
     #[test]

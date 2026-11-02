@@ -374,6 +374,9 @@ pub struct Chat {
     pub info_locked: Option<bool>,
     /// Whether we are an admin of this group, as its metadata last said.
     pub admin: bool,
+    /// Who may do what in the group, and who its admins are; `None` until
+    /// the group's metadata has said.
+    pub group_settings: Option<GroupSettings>,
     /// Hidden while WhatsApp chat lock is enabled on the phone.
     pub locked: bool,
     /// Disappearing-message duration in seconds. `Some(0)` is the timer
@@ -389,6 +392,25 @@ pub struct Chat {
     pub unread_mention: Option<String>,
     /// This chat's own voice message speed; `None` follows Settings.
     pub voice_speed: Option<f32>,
+}
+
+/// A group's permissions and admins, as its metadata says. Kept in the
+/// archive with the chat; a change made here lands once WhatsApp accepts it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GroupSettings {
+    /// Only admins may send messages (WhatsApp's announcement mode).
+    pub announce: bool,
+    /// Every member may add people, not only admins.
+    pub members_add: bool,
+    /// Admins approve people who join through the link.
+    pub approval: bool,
+    /// Every member may see and share the invite link, not only admins.
+    pub members_share_link: bool,
+    /// The admins under canonical chat ids, the creator included.
+    pub admins: Vec<String>,
+    /// The creator (WhatsApp's super admin), under canonical chat ids.
+    pub super_admins: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -455,6 +477,7 @@ impl Chat {
             left: false,
             info_locked: None,
             admin: false,
+            group_settings: None,
             locked: false,
             ephemeral_expiration: None,
             labels: Vec::new(),
@@ -476,6 +499,12 @@ impl Chat {
 
     pub fn is_group(&self) -> bool {
         self.kind == ChatKind::Group
+    }
+
+    /// Never held a message: history sync files such a conversation for
+    /// many contacts, and the phone lists none of them.
+    pub fn never_messaged(&self) -> bool {
+        self.last.is_none() && self.last_activity == 0
     }
 
     /// Counted unread, or marked unread with nothing pending.
@@ -509,6 +538,51 @@ impl Chat {
     /// not ours to edit.
     pub fn can_edit_info(&self) -> bool {
         self.is_group() && !self.left && (self.admin || self.info_locked == Some(false))
+    }
+
+    /// Whether we may add people to the group: admins always, other members
+    /// only while the group lets every member add (WhatsApp's "Add other
+    /// members"). Nothing is offered until the metadata says.
+    pub fn can_add_members(&self) -> bool {
+        self.is_group()
+            && !self.left
+            && (self.admin
+                || self
+                    .group_settings
+                    .as_ref()
+                    .is_some_and(|settings| settings.members_add))
+    }
+
+    /// Whether the group's invite link is shown: to admins, and to every
+    /// member while the group lets members share it.
+    pub fn can_share_invite_link(&self) -> bool {
+        self.is_group()
+            && !self.left
+            && (self.admin
+                || self
+                    .group_settings
+                    .as_ref()
+                    .is_some_and(|settings| settings.members_share_link))
+    }
+
+    /// Whether we run the group: its permissions, resetting its link, and
+    /// what its members may be made. Only admins do.
+    pub fn can_manage_group(&self) -> bool {
+        self.is_group() && !self.left && self.admin
+    }
+
+    /// Whether `member` is one of the group's admins, as its metadata said.
+    pub fn is_group_admin(&self, member: &str) -> bool {
+        self.group_settings
+            .as_ref()
+            .is_some_and(|settings| settings.admins.iter().any(|id| id == member))
+    }
+
+    /// Whether `member` created the group, whom nobody can dismiss or remove.
+    pub fn is_group_creator(&self, member: &str) -> bool {
+        self.group_settings
+            .as_ref()
+            .is_some_and(|settings| settings.super_admins.iter().any(|id| id == member))
     }
 
     /// Whether we may mention everyone. A group of at most
@@ -2267,6 +2341,8 @@ pub enum MediaTab {
 pub enum InfoView {
     Overview,
     Media(MediaTab),
+    /// A group's permissions, for its admins.
+    Permissions,
 }
 
 /// The info panel beside the conversation. It can show a member of the open
@@ -2355,6 +2431,15 @@ pub enum Dialog {
     Reactions {
         chat: ChatId,
         message: String,
+    },
+    /// Picks people to add to a group, with New group's check boxes.
+    AddGroupMembers(ChatId),
+    /// Confirms revoking a group's invite link for a new one.
+    ConfirmResetInviteLink(ChatId),
+    /// Confirms removing someone from a group.
+    ConfirmRemoveMember {
+        chat: ChatId,
+        member: ChatId,
     },
 }
 
@@ -2528,9 +2613,9 @@ pub enum Action {
     /// Loads a chat's newest messages ahead of opening it: a press on its row
     /// in the list, so the click that follows opens it with them in place.
     PreloadChat(ChatId),
-    /// Starts a 1:1 voice call with the chat.
+    /// Starts a voice call with the chat: the person, or everyone in a group.
     StartCall(ChatId),
-    /// Starts a 1:1 video call with the chat.
+    /// Starts a video call with the chat: the person, or everyone in a group.
     StartVideoCall(ChatId),
     /// Picks a call history row on the Calls page: its chat opens beside the
     /// list at the call, with the chat's own call buttons in its header.
@@ -2998,6 +3083,40 @@ pub enum Action {
     MuteAllChannels(bool),
     /// Joins the group of the invite being previewed.
     JoinGroup,
+    /// Gives the New chat dialog's contacts check boxes, to make a group.
+    StartNewGroup,
+    /// Picks someone for the new group, or lets them go.
+    ToggleNewGroupMember(ChatId),
+    /// From choosing the new group's members to naming it.
+    NewGroupNext,
+    /// One step back: from naming to choosing, from choosing to the list.
+    NewGroupBack,
+    /// Asks for a photo for the new group.
+    PickNewGroupPicture,
+    RemoveNewGroupPicture,
+    /// Creates the group the New chat dialog put together.
+    CreateGroup,
+    /// Asks WhatsApp for a group's invite link, for the info panel.
+    FetchInviteLink(ChatId),
+    /// Copies the group's invite link, once it is known, with a toast.
+    CopyInviteLink(ChatId),
+    /// Revokes the group's invite link; WhatsApp answers with a new one.
+    ResetInviteLink(ChatId),
+    /// Adds the people picked in the Add members dialog to its group.
+    AddGroupMembers,
+    /// Changes one of the group's permissions: `members` true lets every
+    /// member, false only admins (for approval: true turns it on).
+    SetGroupPermission {
+        chat: ChatId,
+        permission: crate::group_admin::Permission,
+        members: bool,
+    },
+    /// Makes a member an admin, dismisses one, or removes them.
+    ChangeGroupMember {
+        chat: ChatId,
+        member: ChatId,
+        change: crate::group_admin::MemberChange,
+    },
     /// A chat opened from the main list, kept there under the Unread filter.
     KeepUnread(ChatId),
     /// Focuses the chat-list search and leaves the open chat alone.
@@ -3205,6 +3324,8 @@ pub enum Action {
     },
     /// Removes one pending attachment.
     RemovePending(usize),
+    /// Sends the one eligible staged photo as a WhatsApp view-once message.
+    SetPendingViewOnce(bool),
     /// Opens the cropper on a staged picture.
     EditPicture(crate::app::AttachmentId),
     /// Keeps the crop and the turn, replacing the staged picture.

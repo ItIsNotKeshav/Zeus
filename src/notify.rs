@@ -502,6 +502,22 @@ pub fn lines(chat_name: &str, is_group: bool, sender: &str, summary: &str) -> (S
     (chat_name.to_owned(), body)
 }
 
+/// The bundle identifier packaging/macos gives the app.
+const MACOS_BUNDLE_ID: &str = "app.zeus.Zeus";
+
+/// The identity notifications are sent under. macOS refuses a client whose
+/// identity is not the running bundle's before it asks for permission, so a
+/// mismatch leaves the app out of Notification Center: no banners, no sound,
+/// and no Dock badge. Elsewhere it is the app id the desktop entry and the
+/// Windows shortcuts use.
+fn notification_app_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        MACOS_BUNDLE_ID
+    } else {
+        crate::brand::APP_USER_MODEL_ID
+    }
+}
+
 /// Fastframe owns the platform adapters and one bounded native worker. This
 /// thread only keeps ZapFast's account-scoped cancellation and click routing.
 #[expect(clippy::too_many_arguments)]
@@ -524,7 +540,7 @@ fn deliver(
     };
     let client = match CLIENT.get_or_init(|| {
         Client::new(
-            App::new(crate::brand::APP_USER_MODEL_ID, crate::brand::NAME)
+            App::new(notification_app_id(), crate::brand::NAME)
                 .desktop_entry(crate::brand::ID)
                 .icon(crate::brand::ID)
                 // The logo's violet behind it on Windows toasts, so Windows
@@ -641,6 +657,23 @@ mod tests {
             let now = t + Duration::from_secs(10 * i);
             assert_eq!(guard.judge("a", now), Burst::Show { sound: true });
         }
+    }
+
+    /// Notifications on macOS need the bundle's own identifier, or the
+    /// system never asks for permission.
+    #[test]
+    fn the_macos_notification_identity_is_the_bundle_identifier() {
+        let plist = include_str!("../packaging/macos/Info-zeus.plist");
+        let key = "<key>CFBundleIdentifier</key>";
+        let after = &plist[plist.find(key).expect("Info.plist names the bundle") + key.len()..];
+        let value = after
+            .trim_start()
+            .strip_prefix("<string>")
+            .and_then(|rest| rest.split_once("</string>"))
+            .map(|(value, _)| value);
+        assert_eq!(value, Some(super::MACOS_BUNDLE_ID));
+        #[cfg(target_os = "macos")]
+        assert_eq!(super::notification_app_id(), super::MACOS_BUNDLE_ID);
     }
 
     #[test]
