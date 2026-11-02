@@ -866,7 +866,7 @@ pub struct Settings {
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
     /// Whether the Halloween look, since removed, was on: read from older
-    /// files only, so [`Settings::migrate`] can put back the grey doodle ink
+    /// files only, so `Settings::migrate` can put back the grey doodle ink
     /// it had swapped for the accent.
     #[serde(rename = "halloween", skip_serializing)]
     pub legacy_halloween: bool,
@@ -991,6 +991,18 @@ pub struct Settings {
     pub window_y: Option<f32>,
     /// Whether the window was maximized when it last closed.
     pub window_maximized: bool,
+    /// Whether the first-run setup is behind us: set once an account links.
+    /// Until then an unlinked window opens on the welcome and the choices
+    /// before the phone link (`ui::setup`); after, only on the link. A file
+    /// written before the setup existed belongs to someone already set up.
+    #[serde(default = "set_up_before_setup_existed")]
+    pub setup_done: bool,
+}
+
+/// What a settings file from before the first-run setup says about it: the
+/// person is past it.
+fn set_up_before_setup_existed() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -1069,6 +1081,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            setup_done: false,
         }
     }
 }
@@ -1907,6 +1920,19 @@ mod tests {
         settings.save(&path).unwrap();
         let stored = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         (settings, stored)
+    }
+
+    /// A file from before the setup existed belongs to someone already set
+    /// up; only a new installation, with no file, opens on the setup, and a
+    /// setup left half way stays to be finished.
+    #[test]
+    fn only_a_new_installation_opens_on_the_setup() {
+        assert!(!Settings::default().setup_done);
+        let (settings, stored) = load_from(r#"{"version":4}"#);
+        assert!(settings.setup_done);
+        assert_eq!(stored["setup_done"], serde_json::json!(true));
+        let (settings, _) = load_from(r#"{"version":4,"setup_done":false}"#);
+        assert!(!settings.setup_done);
     }
 
     #[test]

@@ -61,6 +61,7 @@ Known contrast exceptions, kept on purpose: white on the Messages accent and own
 - Variable faces are drawn 30 units lighter than their named weight: regular 370, medium 470, semibold 570, bold 670. The type styles carry those numbers.
 - Use the scale: `message` 14.5 for message text, `body` 14 for prose, `label` 14 medium for settings labels, `menu` 13.5 for menus, previews and toasts, `control` 13 semibold for buttons, `caption` 12.5 for descriptions, `meta` 12 for times, `small` 11.5, `badge` 11 semibold. Headings: `section` 16, `name` 15, `title` 20 bold, `heading` 22.
 - Counting timers use `timer` (Inter, whose figures are all one width) so they don't shift.
+- The setup's step titles and the lock screen's line use `hero`: **Fraunces** (`--font-serif`, `theme::display`) at `opsz` 72, weight 480, `SOFT` 100, `WONK` 0, set 1.04x larger than asked. Nowhere else; the interface font stays the reader's choice.
 - One title per screen or dialog. Hierarchy comes from weight and colour (`text` vs `secondary`) before size.
 - Lay text out with BiDi shaping (`crate::bidi`); names and previews end in an ellipsis, never clip.
 

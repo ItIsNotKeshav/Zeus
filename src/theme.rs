@@ -1087,8 +1087,48 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     add_tabular(&mut fonts);
+    add_display(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// The face for a few large titles, on the setup and the lock screen:
+/// Fraunces, cut for display sizes, soft and a touch above regular weight,
+/// set a little larger than the size asked for to match the interface's
+/// titles in height.
+pub fn display(size: f32) -> egui::FontId {
+    egui::FontId::new(size * 1.04, display_family())
+}
+
+fn display_family() -> egui::FontFamily {
+    egui::FontFamily::Name("zapfast-display".into())
+}
+
+/// Registers the [`display`] family: the serif, then the interface's regular
+/// face behind it for the scripts the serif lacks.
+fn add_display(fonts: &mut egui::FontDefinitions) {
+    let mut family = Vec::new();
+    if !cfg!(test) {
+        let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/Fraunces.ttf"));
+        // Its display cut, fully soft, without the wonky alternates.
+        data.tweak.coords = egui::epaint::text::VariationCoords::new([
+            (b"opsz", 72.0),
+            (b"wght", 480.0),
+            (b"SOFT", 100.0),
+            (b"WONK", 0.0),
+        ]);
+        fonts
+            .font_data
+            .insert("zapfast-display".to_owned(), std::sync::Arc::new(data));
+        family.push("zapfast-display".to_owned());
+    }
+    if let Some(behind) = fonts
+        .families
+        .get(&fastframe_fonts::Weight::Regular.family())
+    {
+        family.extend(behind.iter().cloned());
+    }
+    fonts.families.insert(display_family(), family);
 }
 
 /// Puts a bundled variable font in front of each interface weight, with the
@@ -1249,6 +1289,7 @@ fastframe_icons::icons! {
         Moon => lucide "moon",
         Music => "music",
         PanelLeft => lucide "panel-left",
+        Palette => "palette",
         Paperclip => "paperclip",
         Pause => lucide "pause",
         Pencil => lucide "pencil",
@@ -1270,6 +1311,7 @@ fastframe_icons::icons! {
         Search => lucide "search",
         Send => "send",
         Settings => lucide "settings",
+        ShieldCheck => "shield-check",
         Smartphone => lucide "smartphone",
         Smile => "smile",
         SquarePen => lucide "square-pen",
@@ -1288,6 +1330,7 @@ fastframe_icons::icons! {
         VolumeX => lucide "volume-x",
         WifiOff => "wifi-off",
         X => lucide "x",
+        Zap => "zap",
     }
 }
 
@@ -1379,8 +1422,15 @@ pub fn circle_button(
 /// Draws the app's mark as it ships: the lit disc and the ink bubble of
 /// `packaging/icons/zapfast.svg`, rendered once per pixel size.
 pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
-    let ctx = ui.ctx();
-    let pixels = (diameter * ctx.pixels_per_point()).round().max(1.0) as usize;
+    paint_mark(ui.painter(), center, diameter, diameter);
+}
+
+/// The mark drawn `diameter` across from its picture at `size`: a mark that
+/// grows or shrinks as it moves keeps one picture rather than rendering one
+/// for every size it passes through.
+pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, diameter: f32, size: f32) {
+    let ctx = painter.ctx();
+    let pixels = (size * ctx.pixels_per_point()).round().max(1.0) as usize;
     let id = egui::Id::new(("zapfast-mark", pixels));
     let texture = match ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
         Some(texture) => texture,
@@ -1398,7 +1448,7 @@ pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
     };
     let rect = egui::Rect::from_center_size(center, Vec2::splat(diameter));
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+    painter.image(texture.id(), rect, uv, Color32::WHITE);
 }
 
 /// Draws the logo's shape in two flat colours, for the empty conversation's
