@@ -1,55 +1,172 @@
-//! Phone linking with a QR code or pairing code.
+//! The unlinked window: a splash while Zeus starts, then the first-run
+//! setup and the phone link (`super::setup`). The centred card here is the
+//! lock screen's.
 
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Stroke, Vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
-use crate::model::{Action, Dialog};
-use crate::qr::Qr;
-use crate::theme::{self, Icon};
+use crate::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    if matches!(app.link, LinkStatus::Starting | LinkStatus::Connecting) {
+    // Someone already in the setup stays in it while the link restarts; the
+    // link step says what it is waiting for.
+    let mid_setup = !app.settings.setup_done && app.setup_step != super::setup::Step::Welcome;
+    if matches!(app.link, LinkStatus::Starting | LinkStatus::Connecting) && !mid_setup {
         splash(app, ui, "Connecting…");
     } else {
-        card(app, ui, "login", "A native WhatsApp client.", body);
+        super::setup::show(app, ui);
     }
 }
 
-/// While ZapFast connects or waits for its chats there is nothing to do:
-/// only the mark, and a small spinner with one quiet line under it.
-fn splash(app: &App, ui: &mut egui::Ui, label: &str) {
+/// How long after a surface was last drawn it counts as gone, so that the
+/// next time it is drawn it appears afresh.
+const GONE: f64 = 0.25;
+/// The mark's size on the splash.
+const SPLASH_MARK: f32 = 72.0;
+/// How far above the window's centre the splash's mark sits, leaving the
+/// bar and its line under it centred as a whole.
+const SPLASH_LIFT: f32 = 22.0;
+
+/// How far a surface has come in since it appeared, eased: 0 on the frame
+/// it first shows (again), 1 once [`theme::MOTION_SCREEN`] has passed.
+fn appearance(ctx: &egui::Context, id: egui::Id) -> f32 {
+    let now = ctx.input(|input| input.time);
+    let (since, last) = ctx
+        .data(|data| data.get_temp::<(f64, f64)>(id))
+        .unwrap_or((now, f64::NEG_INFINITY));
+    let since = if now - last > GONE { now } else { since };
+    ctx.data_mut(|data| data.insert_temp(id, (since, now)));
+    if crate::motion::screen_reader_attached(ctx) {
+        return 1.0;
+    }
+    let progress = ((now - since) / f64::from(theme::MOTION_SCREEN)).clamp(0.0, 1.0) as f32;
+    if progress < 1.0 {
+        ctx.request_repaint();
+    }
+    theme::ease_out(progress)
+}
+
+fn splash_id() -> egui::Id {
+    egui::Id::new("launch-splash")
+}
+
+/// While Zeus starts there is nothing to do: the mark in a soft light of
+/// the accent, a slim bar running under it, and one quiet line. The mark
+/// settles in as the splash appears, and when the chats are ready the
+/// splash dissolves into them ([`dissolve`]).
+fn splash(app: &App, ui: &mut egui::Ui, label: &'static str) {
     let palette = app.palette;
     egui::CentralPanel::default()
         .frame(Frame::new().fill(palette.window))
         .show(ui, |ui| {
-            let size = 56.0;
-            let line = 16.0;
-            let block = Vec2::new(ui.available_width(), size + 20.0 + line);
-            let top = (ui.available_height() - block.y).max(0.0) / 2.0;
-            ui.add_space(top);
-            ui.vertical_centered(|ui| {
-                let (logo, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
-                theme::mark(ui, logo.center(), size);
-                ui.add_space(20.0);
-                ui.horizontal(|ui| {
-                    let width = 12.0
-                        + 6.0
-                        + ui.painter()
-                            .layout_no_wrap(label.to_owned(), theme::regular(12.5), palette.dim)
-                            .size()
-                            .x;
-                    ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    theme::spinner(ui, 12.0, palette.secondary);
-                    theme::text(ui, label, theme::regular(12.5), palette.dim);
-                });
-            });
+            let area = ui.max_rect();
+            super::setup::backdrop(ui, &palette, area);
+            let ctx = ui.ctx().clone();
+            let shown = appearance(&ctx, splash_id());
+            let center = area.center() - Vec2::new(0.0, SPLASH_LIFT);
+            let mut painter = ui.painter().clone();
+            painter.multiply_opacity(shown);
+            super::setup::glow(
+                &painter,
+                center,
+                Vec2::splat(SPLASH_MARK * 1.7),
+                palette
+                    .accent
+                    .gamma_multiply(if palette.dark { 0.16 } else { 0.10 }),
+            );
+            theme::paint_mark(
+                &painter,
+                center + Vec2::new(0.0, 6.0 * (1.0 - shown)),
+                SPLASH_MARK * egui::lerp(0.92..=1.0, shown),
+                SPLASH_MARK,
+            );
+            // An indeterminate bar: a short run of the accent gliding along
+            // a hairline track, easing in and out at each end.
+            let track = egui::Rect::from_center_size(
+                center + Vec2::new(0.0, SPLASH_MARK / 2.0 + 34.0),
+                Vec2::new(120.0, 4.0),
+            );
+            painter.rect_filled(track, 2.0, palette.surface_active);
+            let now = ctx.input(|input| input.time);
+            let phase = (now / 1.4).fract() as f32;
+            let run = 40.0;
+            let start = track.left() - run
+                + (track.width() + run) * egui::emath::easing::cubic_in_out(phase);
+            let lit = egui::Rect::from_min_max(
+                egui::pos2(start.max(track.left()), track.top()),
+                egui::pos2((start + run).min(track.right()), track.bottom()),
+            );
+            if lit.width() > 0.0 {
+                painter.rect_filled(lit, 2.0, palette.accent);
+            }
+            crate::motion::request_frame_after(&ctx, std::time::Duration::from_millis(16));
+            painter.text(
+                egui::pos2(center.x, track.bottom() + 20.0),
+                egui::Align2::CENTER_CENTER,
+                crate::i18n::gettext(app.locale, label),
+                theme::regular(12.5),
+                palette.dim,
+            );
         });
 }
 
-/// The centred card of the linking and lock screens: the logo, the name,
-/// a line under it, and `body`.
+/// The first frames after the splash: its colour lifts off the window the
+/// app now draws, while its mark grows a little and fades, so the chats come
+/// up through the splash rather than replacing it at once.
+pub fn dissolve(app: &App, ctx: &egui::Context) {
+    let now = ctx.input(|input| input.time);
+    let id = splash_id().with("dissolve");
+    let start = match ctx.data(|data| data.get_temp::<f64>(id)) {
+        Some(start) => start,
+        None => {
+            // Only straight after a splash: one drawn a while ago, before
+            // the setup or the lock screen, has nothing left to dissolve.
+            let Some((_, last)) = ctx.data(|data| data.get_temp::<(f64, f64)>(splash_id())) else {
+                return;
+            };
+            if now - last > GONE {
+                return;
+            }
+            ctx.data_mut(|data| data.insert_temp(id, now));
+            now
+        }
+    };
+    let seconds = if crate::motion::screen_reader_attached(ctx) {
+        0.0
+    } else {
+        f64::from(theme::MOTION_SCREEN)
+    };
+    let progress = if seconds > 0.0 {
+        ((now - start) / seconds).clamp(0.0, 1.0) as f32
+    } else {
+        1.0
+    };
+    if progress >= 1.0 {
+        ctx.data_mut(|data| {
+            data.remove::<f64>(id);
+            data.remove::<(f64, f64)>(splash_id());
+        });
+        return;
+    }
+    ctx.request_repaint();
+    let eased = theme::ease_out(progress);
+    let palette = app.palette;
+    let mut painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, id));
+    let area = ctx.content_rect();
+    painter.rect_filled(area, 0.0, palette.window.gamma_multiply(1.0 - eased));
+    painter.multiply_opacity(1.0 - eased);
+    theme::paint_mark(
+        &painter,
+        area.center() - Vec2::new(0.0, SPLASH_LIFT),
+        SPLASH_MARK * (1.0 + 0.12 * eased),
+        SPLASH_MARK,
+    );
+}
+
+/// The centred card of the lock screen: the mark, `tagline` as its title,
+/// and `body`, over the setup's soft light. It rises into place as it
+/// appears.
 pub(super) fn card(
     app: &mut App,
     ui: &mut egui::Ui,
@@ -62,44 +179,41 @@ pub(super) fn card(
         .frame(Frame::new().fill(palette.window))
         .show(ui, |ui| {
             let rect = ui.max_rect();
-            let top = theme::blend(palette.window, palette.accent, 0.10);
-            super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
-            let card_width = (460.0_f32.min(rect.width() - 24.0)).max(0.0);
+            super::setup::backdrop(ui, &palette, rect);
+            let shown = appearance(ui.ctx(), ui.id().with((salt, "card-appearance")));
+            let card_width = (440.0_f32.min(rect.width() - 24.0)).max(0.0);
             // Center the card using its previous height. Its content determines
             // the next frame's height.
             let height_id = ui.id().with(format!("{salt}-card-height"));
             let known_height = ui
                 .ctx()
                 .data(|data| data.get_temp::<f32>(height_id))
-                .unwrap_or(560.0);
+                .unwrap_or(420.0);
             let card_height = (known_height.min(rect.height() - 24.0)).max(0.0);
-            let card =
-                egui::Rect::from_center_size(rect.center(), Vec2::new(card_width, card_height));
+            let card = egui::Rect::from_center_size(
+                rect.center() + Vec2::new(0.0, 12.0 * (1.0 - shown)),
+                Vec2::new(card_width, card_height),
+            );
             let mut card_ui = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(card)
                     .layout(Layout::top_down(Align::Center)),
             );
+            card_ui.multiply_opacity(shown);
             let shown = Frame::new()
                 .fill(palette.panel)
                 .stroke(Stroke::new(1.0, palette.outline))
                 .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
-                .inner_margin(Margin::same(32))
-                .shadow(egui::epaint::Shadow {
-                    offset: [0, 16],
-                    blur: 48,
-                    spread: 0,
-                    color: palette.shadow,
-                })
+                .inner_margin(Margin::same(36))
+                .shadow(palette.modal_shadow())
                 .show(&mut card_ui, |ui| {
-                    ui.set_width((card_width - 64.0).max(0.0));
+                    ui.set_width((card_width - 72.0).max(0.0));
                     ui.spacing_mut().item_spacing.y = 8.0;
-                    let (logo, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
-                    theme::mark(ui, logo.center(), 64.0);
-                    ui.add_space(4.0);
-                    theme::text(ui, "Zeus", theme::bold(28.0), palette.text);
-                    theme::text(ui, tagline, theme::regular(14.5), palette.secondary);
-                    ui.add_space(16.0);
+                    let (logo, _) = ui.allocate_exact_size(Vec2::splat(60.0), egui::Sense::hover());
+                    theme::mark(ui, logo.center(), 60.0);
+                    ui.add_space(12.0);
+                    theme::text(ui, tagline, theme::bold(24.0), palette.text);
+                    ui.add_space(10.0);
                     body(app, ui);
                 });
             let height = shown.response.rect.height();
@@ -109,93 +223,6 @@ pub(super) fn card(
                 ui.ctx().request_repaint();
             }
         });
-}
-
-fn body(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    match app.link.clone() {
-        LinkStatus::Starting | LinkStatus::Connecting => {
-            busy(ui, palette.accent, "Connecting to WhatsApp…");
-        }
-        LinkStatus::Connected | LinkStatus::Disconnected { .. } => {
-            busy(ui, palette.accent, "Linked. Waiting for your chats…");
-        }
-        LinkStatus::LoggedOut => {
-            theme::icon(ui, Icon::Smartphone, 28.0, palette.warning);
-            theme::paragraph(
-                ui,
-                "This computer was unlinked from your phone. Requesting a new code.",
-                theme::regular(14.0),
-                palette.text,
-            );
-            ui.add_space(8.0);
-            busy(ui, palette.accent, "Requesting a new code…");
-        }
-        LinkStatus::Failed(message) => {
-            let key_lost = archive_key_lost(&message);
-            theme::icon(ui, Icon::CircleAlert, 28.0, palette.danger);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(message)
-                        .font(theme::regular(13.5))
-                        .color(palette.danger),
-                )
-                .wrap(),
-            );
-            ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if theme::pill_button(
-                    ui,
-                    &palette,
-                    &crate::i18n::gettext(app.locale, "Try again"),
-                    true,
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::Reconnect);
-                }
-                if key_lost
-                    && theme::pill_button(
-                        ui,
-                        &palette,
-                        &crate::i18n::gettext(app.locale, "Start over…"),
-                        false,
-                    )
-                    .clicked()
-                {
-                    app.actions
-                        .push(Action::ShowDialog(crate::model::Dialog::ConfirmStartOver));
-                }
-            });
-        }
-        LinkStatus::Unlinked {
-            qr,
-            pair_code,
-            pairing_phone,
-        } => {
-            if let Some(code) = pair_code {
-                pair_code_view(app, ui, &code, pairing_phone.as_deref());
-            } else if let Some(phone) = pairing_phone {
-                busy(
-                    ui,
-                    palette.accent,
-                    &format!("Requesting a code for +{phone}…"),
-                );
-            } else if let Some(qr) = qr {
-                qr_view(app, ui, &qr);
-            } else {
-                busy(ui, palette.accent, "Waiting for a code from WhatsApp…");
-            }
-        }
-    }
-    super::accounts::login_choices(app, ui);
-    ui.add_space(18.0);
-    theme::paragraph(
-        ui,
-        "Unofficial client. Using it may be against WhatsApp's terms of service.",
-        theme::regular(11.5),
-        palette.dim,
-    );
 }
 
 pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
@@ -212,114 +239,9 @@ pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
     });
 }
 
-fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
-    let palette = app.palette;
-    theme::text(
-        ui,
-        "Link this computer",
-        theme::semibold(16.0),
-        palette.text,
-    );
-    let side = 260.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-    match Qr::encode(code) {
-        Some(qr) => qr.paint(ui, rect, egui::Color32::BLACK, egui::Color32::WHITE),
-        None => {
-            ui.painter()
-                .rect_filled(rect, theme::RADIUS, palette.surface);
-            theme::paint_icon(ui, Icon::CircleAlert, rect, 32.0, palette.danger);
-        }
-    }
-    ui.add_space(4.0);
-    let steps = [
-        "Open WhatsApp on your phone",
-        "Tap Menu or Settings, then Linked devices",
-        "Tap Link a device and point the phone at this code",
-    ];
-    for (index, step) in steps.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            theme::text(
-                ui,
-                format!("{}.", index + 1),
-                theme::semibold(13.0),
-                palette.accent,
-            );
-            theme::text(ui, *step, theme::regular(13.0), palette.secondary);
-        });
-    }
-    ui.add_space(10.0);
-    if theme::link(
-        ui,
-        "Link with phone number instead",
-        theme::medium(13.0),
-        palette.link,
-    )
-    .clicked()
-    {
-        app.actions.push(Action::ShowDialog(Dialog::PairWithPhone));
-    }
-}
-
-fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&str>) {
-    let palette = app.palette;
-    theme::text(
-        ui,
-        "Enter this code on your phone",
-        theme::semibold(16.0),
-        palette.text,
-    );
-    if let Some(phone) = phone {
-        theme::text(
-            ui,
-            format!("for +{phone}"),
-            theme::regular(13.0),
-            palette.secondary,
-        );
-    }
-    ui.add_space(8.0);
-    let shown = if code.len() == 8 && !code.contains('-') {
-        format!("{}-{}", &code[..4], &code[4..])
-    } else {
-        code.to_owned()
-    };
-    Frame::new()
-        .fill(palette.surface)
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(Margin::symmetric(22, 12))
-        .show(ui, |ui| {
-            theme::text(ui, &shown, theme::bold(30.0), palette.text);
-        });
-    ui.add_space(8.0);
-    let steps = [
-        "Open WhatsApp on your phone",
-        "Tap Menu or Settings, then Linked devices",
-        "Tap Link a device, then Link with phone number instead",
-    ];
-    for (index, step) in steps.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            theme::text(
-                ui,
-                format!("{}.", index + 1),
-                theme::semibold(13.0),
-                palette.accent,
-            );
-            theme::text(ui, *step, theme::regular(13.0), palette.secondary);
-        });
-    }
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        ui.add_space((ui.available_width() - 200.0).max(0.0) / 2.0);
-        if theme::soft_button(ui, &palette, Some(Icon::Copy), "Copy code", false).clicked() {
-            app.actions.push(Action::CopyText(code.to_owned()));
-        }
-    });
-}
-
 /// Whether the archive's key is gone for good, rather than the keyring being
 /// locked or unavailable, which "Try again" can fix.
-fn archive_key_lost(message: &str) -> bool {
+pub(super) fn archive_key_lost(message: &str) -> bool {
     message.contains("OS keyring key is missing")
         || message.contains("archive key in the OS keyring is invalid")
         || message.contains("could not be unlocked with its OS keyring key")

@@ -1249,6 +1249,7 @@ fastframe_icons::icons! {
         Moon => lucide "moon",
         Music => "music",
         PanelLeft => lucide "panel-left",
+        Palette => "palette",
         Paperclip => "paperclip",
         Pause => lucide "pause",
         Pencil => lucide "pencil",
@@ -1270,6 +1271,7 @@ fastframe_icons::icons! {
         Search => lucide "search",
         Send => "send",
         Settings => lucide "settings",
+        ShieldCheck => "shield-check",
         Smartphone => lucide "smartphone",
         Smile => "smile",
         SquarePen => lucide "square-pen",
@@ -1288,6 +1290,7 @@ fastframe_icons::icons! {
         VolumeX => lucide "volume-x",
         WifiOff => "wifi-off",
         X => lucide "x",
+        Zap => "zap",
     }
 }
 
@@ -1379,8 +1382,15 @@ pub fn circle_button(
 /// Draws the app's mark as it ships: the lit disc and the ink bubble of
 /// `packaging/icons/zapfast.svg`, rendered once per pixel size.
 pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
-    let ctx = ui.ctx();
-    let pixels = (diameter * ctx.pixels_per_point()).round().max(1.0) as usize;
+    paint_mark(ui.painter(), center, diameter, diameter);
+}
+
+/// The mark drawn `diameter` across from its picture at `size`: a mark that
+/// grows or shrinks as it moves keeps one picture rather than rendering one
+/// for every size it passes through.
+pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, diameter: f32, size: f32) {
+    let ctx = painter.ctx();
+    let pixels = (size * ctx.pixels_per_point()).round().max(1.0) as usize;
     let id = egui::Id::new(("zapfast-mark", pixels));
     let texture = match ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
         Some(texture) => texture,
@@ -1398,7 +1408,7 @@ pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
     };
     let rect = egui::Rect::from_center_size(center, Vec2::splat(diameter));
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+    painter.image(texture.id(), rect, uv, Color32::WHITE);
 }
 
 /// Draws the logo's shape in two flat colours, for the empty conversation's

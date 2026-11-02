@@ -27,6 +27,7 @@ pub mod polls;
 pub mod rail;
 pub mod reaction_list;
 pub mod settings;
+pub mod setup;
 pub(crate) mod swipe;
 pub mod update;
 pub mod widgets;
@@ -122,6 +123,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let status = banner(app, ctx, floor);
     toasts(app, ctx, floor, status);
     carry::show(app, ctx);
+    login::dissolve(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
 }

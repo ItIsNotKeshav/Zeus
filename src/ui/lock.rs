@@ -98,7 +98,14 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
     } else {
         submit |= ui
             .add_enabled_ui(ready, |ui| {
-                theme::pill_button(ui, &palette, &gettext(locale, "Unlock"), true)
+                let width = ui.available_width();
+                super::setup::sized_primary_button(
+                    ui,
+                    &palette,
+                    &gettext(locale, "Unlock"),
+                    None,
+                    width,
+                )
             })
             .inner
             .clicked();

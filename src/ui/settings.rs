@@ -1891,6 +1891,16 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
         &description,
     );
     let enabled = !custom && chat_theme.takes_accent();
+    accent_swatches(ui, app, enabled);
+    ui.add_space(16.0);
+}
+
+/// The accent swatches alone, the theme's own first: Settings' Accent and
+/// the first-run setup's. Dimmed and inert unless `enabled`.
+pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let chat_theme = app.settings.chat_theme;
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -1964,7 +1974,6 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add_space(16.0);
 }
 
 /// The least width of a theme card.
@@ -2101,7 +2110,7 @@ fn card_grid(
 
 /// One theme card: its conversation with a bubble each way, over its name
 /// on its own list colour, with its accent beside the name.
-fn theme_card(
+pub(super) fn theme_card(
     ui: &egui::Ui,
     palette: &Palette,
     rect: Rect,

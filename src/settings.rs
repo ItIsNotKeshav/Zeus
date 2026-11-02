@@ -991,6 +991,18 @@ pub struct Settings {
     pub window_y: Option<f32>,
     /// Whether the window was maximized when it last closed.
     pub window_maximized: bool,
+    /// Whether the first-run setup is behind us: set once an account links.
+    /// Until then an unlinked window opens on the welcome and the choices
+    /// before the phone link (`ui::setup`); after, only on the link. A file
+    /// written before the setup existed belongs to someone already set up.
+    #[serde(default = "set_up_before_setup_existed")]
+    pub setup_done: bool,
+}
+
+/// What a settings file from before the first-run setup says about it: the
+/// person is past it.
+fn set_up_before_setup_existed() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -1069,6 +1081,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            setup_done: false,
         }
     }
 }
