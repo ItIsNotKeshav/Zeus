@@ -1087,8 +1087,41 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     add_tabular(&mut fonts);
+    add_display(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// The face for a few large titles, on the setup and the lock screen:
+/// Instrument Serif, which has one weight and runs small, so it is set a
+/// little larger than the size asked for.
+pub fn display(size: f32) -> egui::FontId {
+    egui::FontId::new(size * 1.22, display_family())
+}
+
+fn display_family() -> egui::FontFamily {
+    egui::FontFamily::Name("zapfast-display".into())
+}
+
+/// Registers the [`display`] family: the serif, then the interface's regular
+/// face behind it for the scripts the serif lacks.
+fn add_display(fonts: &mut egui::FontDefinitions) {
+    let mut family = Vec::new();
+    if !cfg!(test) {
+        let data =
+            egui::FontData::from_static(include_bytes!("../assets/fonts/InstrumentSerif.ttf"));
+        fonts
+            .font_data
+            .insert("zapfast-display".to_owned(), std::sync::Arc::new(data));
+        family.push("zapfast-display".to_owned());
+    }
+    if let Some(behind) = fonts
+        .families
+        .get(&fastframe_fonts::Weight::Regular.family())
+    {
+        family.extend(behind.iter().cloned());
+    }
+    fonts.families.insert(display_family(), family);
 }
 
 /// Puts a bundled variable font in front of each interface weight, with the

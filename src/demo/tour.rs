@@ -5,6 +5,7 @@ mod capture;
 mod marks;
 pub(super) mod media;
 mod session;
+mod setup;
 mod whats_new;
 
 pub use bench::{DURATION as BENCH_LENGTH, PHASES as BENCH_PHASES};
@@ -40,17 +41,20 @@ pub enum Script {
     /// The memory benchmark: timed phases over a photo-heavy chat, about 13
     /// minutes, that starts at once and closes the window when it ends.
     Bench,
+    /// The first-run setup, step by step, about 24 seconds.
+    Setup,
 }
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 3] = ["launch", "whats-new", "bench"];
+    pub const NAMES: [&str; 4] = ["launch", "whats-new", "bench", "setup"];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "launch" => Some(Self::Launch),
             "whats-new" => Some(Self::WhatsNew),
             "bench" => Some(Self::Bench),
+            "setup" => Some(Self::Setup),
             _ => None,
         }
     }
@@ -61,6 +65,7 @@ impl Script {
             Self::Launch => DURATION,
             Self::WhatsNew => whats_new::DURATION,
             Self::Bench => bench::DURATION,
+            Self::Setup => setup::DURATION,
         }
     }
 
@@ -70,6 +75,7 @@ impl Script {
             Self::Launch => prepare(app),
             Self::WhatsNew => whats_new::prepare(app),
             Self::Bench => bench::prepare(app),
+            Self::Setup => setup::prepare(app),
         }
     }
 
@@ -78,6 +84,7 @@ impl Script {
             Self::Launch => script(),
             Self::WhatsNew => whats_new::script(),
             Self::Bench => bench::script(),
+            Self::Setup => setup::script(),
         }
     }
 
@@ -87,6 +94,7 @@ impl Script {
             Self::Launch => &[(3.6, 4.6, 340.0)],
             Self::WhatsNew => &[],
             Self::Bench => &bench::SCROLLS,
+            Self::Setup => &[],
         }
     }
 

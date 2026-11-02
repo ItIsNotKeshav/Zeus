@@ -271,6 +271,7 @@
   --accent-purple: #bf5af2;
   --accent-yellow: #ffd60a;
   --font-sans: "Google Sans Flex", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
   --font-tabular: "Inter", "Google Sans Flex", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
   --space-2: 2px;
@@ -336,6 +337,7 @@
   --blur-saturation: 1.3;
 }
 
+.zeus-hero { font-family: var(--font-serif); font-size: 39px; line-height: 44px; font-weight: 400; }
 .zeus-display { font-family: var(--font-sans); font-size: 24px; line-height: 30px; font-weight: 670; }
 .zeus-heading { font-family: var(--font-sans); font-size: 22px; line-height: 28px; font-weight: 570; }
 .zeus-title { font-family: var(--font-sans); font-size: 20px; line-height: 26px; font-weight: 670; }

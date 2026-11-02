@@ -25,6 +25,7 @@ use crate::settings::{DoodleStyle, FontChoice, NotificationSound};
 use crate::theme::{self, BubbleStyle, Icon, Palette};
 use crate::wallpaper;
 
+use super::arrive::{self, Cascade};
 use super::widgets;
 
 /// The steps of the first-run setup, in order.
@@ -114,10 +115,20 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 Step::Link
             };
             let area = ui.max_rect();
-            backdrop(ui, &palette, area);
+            // Seconds since the setup opened: the light comes up, the card
+            // rises into place, and what is on it follows top to bottom.
+            let opened = arrive::shown_for(ui.ctx(), Id::new("setup-entrance"));
+            let light = arrive::painted(ui);
+            backdrop(ui, &palette, area, true);
+            arrive::fade_since(
+                ui,
+                light,
+                theme::ease_out((opened / (theme::MOTION_SCREEN * 2.0)).clamp(0.0, 1.0)),
+            );
             keys(app, ui, step, first_run);
             let wide = area.width() >= WIDE;
             let card = card_rect(area, wide);
+            let start = arrive::painted(ui);
             paint_card(ui, &palette, card);
             if wide {
                 let left = (card.width() * 0.46).clamp(400.0, 480.0);
@@ -125,12 +136,26 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     pos2(card.left() + left, card.top() + STAGE_INSET),
                     card.max - Vec2::splat(STAGE_INSET),
                 );
-                self::stage(app, ui, stage, step);
+                self::stage(app, ui, stage, step, opened);
                 let column = Rect::from_min_max(card.min, pos2(card.left() + left, card.bottom()))
                     .shrink2(vec2(40.0, 36.0));
-                self::column(app, ui, column, step, first_run, false);
+                self::column(app, ui, column, step, first_run, false, opened);
             } else {
-                self::column(app, ui, card.shrink(28.0), step, first_run, true);
+                self::column(app, ui, card.shrink(28.0), step, first_run, true, opened);
+            }
+            let rise = theme::ease_out((opened / theme::MOTION_SCREEN).clamp(0.0, 1.0));
+            if rise < 1.0 {
+                arrive::transform(
+                    ui,
+                    start,
+                    arrive::about(
+                        card.center(),
+                        0.965 + 0.035 * rise,
+                        vec2(0.0, 22.0 * (1.0 - rise)),
+                    ),
+                );
+                arrive::fade_since(ui, start, rise);
+                ui.ctx().request_repaint();
             }
         });
 }
@@ -167,36 +192,64 @@ fn paint_card(ui: &egui::Ui, palette: &Palette, card: Rect) {
 
 /// The window behind the card: its own colour, lit softly from above by the
 /// accent, and from the far corner by the link colour.
-pub(super) fn backdrop(ui: &egui::Ui, palette: &Palette, area: Rect) {
+pub(super) fn backdrop(ui: &egui::Ui, palette: &Palette, area: Rect, drift: bool) {
+    let still = !drift || crate::motion::screen_reader_attached(ui.ctx());
+    let time = if still {
+        0.0
+    } else {
+        // Slow enough that a frame every 50 ms is smooth.
+        crate::motion::request_frame_after(ui.ctx(), std::time::Duration::from_millis(50));
+        ui.input(|input| input.time) as f32
+    };
+    // Each light sways on its own slow period, so they never line up.
+    let sway = |period: f32, phase: f32| (time * std::f32::consts::TAU / period + phase).sin();
+    let (w, h) = (area.width(), area.height());
     // Light from above: the accent's own in the dark, and white in the
     // light, where a dark accent would read as a smudge rather than light.
-    let (top, corner) = if palette.dark {
-        (
-            palette.accent.gamma_multiply(0.14),
-            palette.link.gamma_multiply(0.07),
-        )
+    let top = if palette.dark {
+        palette.accent.gamma_multiply(0.13)
     } else {
-        let corner = if colourful(palette.accent) {
-            palette.accent.gamma_multiply(0.06)
-        } else {
-            Color32::TRANSPARENT
-        };
-        (Color32::WHITE.gamma_multiply(0.9), corner)
+        Color32::WHITE.gamma_multiply(0.9)
     };
     glow(
         ui.painter(),
-        pos2(area.center().x, area.top()),
-        vec2(area.width() * 0.75, area.height() * 0.7),
+        pos2(area.center().x + w * 0.06 * sway(31.0, 0.0), area.top()),
+        vec2(w * 0.75, h * 0.7),
         top,
     );
-    if corner != Color32::TRANSPARENT {
-        glow(
-            ui.painter(),
-            area.right_bottom(),
-            vec2(area.width() * 0.5, area.height() * 0.55),
-            corner,
-        );
-    }
+    // Two colours drifting round the corners behind the card: the accent's
+    // and its neighbour when it has a hue, and a blue and a violet when it
+    // is a grey.
+    let (first, second) = if colourful(palette.accent) {
+        (
+            palette.accent,
+            theme::blend(palette.accent, palette.link, 0.6),
+        )
+    } else {
+        (
+            Color32::from_rgb(86, 132, 255),
+            Color32::from_rgb(168, 112, 255),
+        )
+    };
+    let strength = if palette.dark { 0.11 } else { 0.13 };
+    glow(
+        ui.painter(),
+        pos2(
+            area.left() + w * (0.16 + 0.06 * sway(23.0, 1.0)),
+            area.bottom() - h * (0.14 + 0.08 * sway(29.0, 2.0)),
+        ),
+        vec2(w * 0.42, h * 0.55),
+        first.gamma_multiply(strength),
+    );
+    glow(
+        ui.painter(),
+        pos2(
+            area.right() - w * (0.14 + 0.06 * sway(27.0, 3.0)),
+            area.top() + h * (0.36 + 0.1 * sway(19.0, 0.5)),
+        ),
+        vec2(w * 0.38, h * 0.55),
+        second.gamma_multiply(strength * 0.85),
+    );
 }
 
 /// Whether a colour has a hue to speak of, rather than being a grey.
@@ -249,14 +302,15 @@ fn keys(app: &mut App, ui: &egui::Ui, step: Step, first_run: bool) {
     }
 }
 
-/// How far the step on screen has come in, eased, and the side it comes
-/// from: 1 from the right (forwards), -1 from the left (back).
+/// Seconds since the step on screen came in, and the side it came from: 1
+/// from the right (forwards), -1 from the left (back). The first step is
+/// already in; the setup's own entrance brings it.
 fn transition(ctx: &egui::Context, step: Step) -> (f32, f32) {
     let id = Id::new("setup-step-transition");
     let now = ctx.input(|input| input.time);
     let (shown, since, direction) = ctx
         .data(|data| data.get_temp::<(Step, f64, f32)>(id))
-        .unwrap_or((step, now, 1.0));
+        .unwrap_or((step, f64::NEG_INFINITY, 1.0));
     let (since, direction) = if shown == step {
         (since, direction)
     } else if step.index() > shown.index() {
@@ -266,13 +320,9 @@ fn transition(ctx: &egui::Context, step: Step) -> (f32, f32) {
     };
     ctx.data_mut(|data| data.insert_temp(id, (step, since, direction)));
     if crate::motion::screen_reader_attached(ctx) {
-        return (1.0, direction);
+        return (f32::INFINITY, direction);
     }
-    let progress = ((now - since) / f64::from(theme::MOTION_SCREEN)).clamp(0.0, 1.0) as f32;
-    if progress < 1.0 {
-        ctx.request_repaint();
-    }
-    (theme::ease_out(progress), direction)
+    ((now - since) as f32, direction)
 }
 
 /// The choices: the steps' dots along the top, the step itself, and Back
@@ -284,7 +334,9 @@ fn column(
     step: Step,
     first_run: bool,
     narrow: bool,
+    opened: f32,
 ) {
+    let everything = arrive::painted(ui);
     let mut top = column.top();
     if first_run {
         let header = Rect::from_min_size(column.min, vec2(column.width(), 24.0));
@@ -297,22 +349,19 @@ fn column(
         column.bottom()
     };
     let body = Rect::from_min_max(pos2(column.left(), top), pos2(column.right(), bottom));
-    let (shown, direction) = transition(ui.ctx(), step);
+    let (since, direction) = transition(ui.ctx(), step);
+    let start = arrive::painted(ui);
     // A little wider than the column, with the room given back inside, so
     // focus rings at its edges are not cut off.
     let room = 4.0;
     let mut content = ui.new_child(
         UiBuilder::new()
             .id_salt("setup-body")
-            .max_rect(
-                body.expand2(vec2(room, 0.0))
-                    .translate(vec2(direction * SLIDE * (1.0 - shown), 0.0)),
-            )
+            .max_rect(body.expand2(vec2(room, 0.0)))
             .layout(Layout::top_down(Align::Min)),
     );
     // Nothing past the card's own column while a step slides in.
     content.set_clip_rect(body.expand2(vec2(room + 2.0, 4.0)));
-    content.multiply_opacity(shown);
     // Linking on its own has no dots or footer to hang from, so it sits in
     // the middle of the column, by the height it had last frame.
     let height_id = Id::new(("setup-body-height", step.index()));
@@ -348,10 +397,39 @@ fn column(
                 ui.ctx().request_discard("setup body height changed");
             }
         });
+    // A new step slides in from the side it comes from, its lines a beat
+    // apart from the top down.
+    arrive::cascade(
+        ui,
+        start,
+        body,
+        since,
+        Cascade {
+            delay: 0.0,
+            spread: 0.12,
+            duration: theme::MOTION_SCREEN,
+            offset: vec2(direction * SLIDE, 0.0),
+            from_opacity: 0.0,
+        },
+    );
     if first_run {
         let row = Rect::from_min_max(pos2(column.left(), column.bottom() - FOOTER), column.max);
         footer(app, ui, row, step);
     }
+    // As the setup opens, the column follows the card up, top to bottom.
+    arrive::cascade(
+        ui,
+        everything,
+        column,
+        opened,
+        Cascade {
+            delay: 0.08,
+            spread: 0.3,
+            duration: theme::MOTION_SCREEN,
+            offset: vec2(0.0, 16.0),
+            from_opacity: 0.0,
+        },
+    );
 }
 
 /// One dot for each step, the one on screen stretched into a bar, and Skip
@@ -562,7 +640,7 @@ fn title(ui: &mut egui::Ui, palette: &Palette, title: &str, subtitle: &str) {
     ui.add(
         egui::Label::new(
             egui::RichText::new(title)
-                .font(theme::bold(30.0))
+                .font(theme::display(32.0))
                 .color(palette.text),
         )
         .wrap()
@@ -739,6 +817,7 @@ fn mode_tiles(ui: &mut egui::Ui, app: &mut App) {
         theme::focus_outline(ui, response.id, rect, radius);
         let chosen = !custom && app.settings.mode == mode;
         let label = gettext(app.locale, mode.label());
+        let start = arrive::painted(ui);
         if ui.is_rect_visible(rect) {
             let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
             let painter = ui.painter_at(rect.expand(4.0));
@@ -789,6 +868,7 @@ fn mode_tiles(ui: &mut egui::Ui, app: &mut App) {
             );
             ring(&painter, &palette, rect, radius, response.hovered(), t);
         }
+        arrive::spring(ui, start, &response, chosen);
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::RadioButton,
@@ -901,6 +981,7 @@ fn look_cards(ui: &mut egui::Ui, app: &mut App) {
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS_CARD));
         let selected = !custom && app.settings.chat_theme == choice;
+        let start = arrive::painted(ui);
         if ui.is_rect_visible(rect) {
             super::settings::theme_card(
                 ui,
@@ -912,6 +993,7 @@ fn look_cards(ui: &mut egui::Ui, app: &mut App) {
                 response.hovered(),
             );
         }
+        arrive::spring(ui, start, &response, selected);
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::RadioButton,
@@ -976,6 +1058,7 @@ fn theme_chip(
             label,
         )
     });
+    let start = arrive::painted(ui);
     if ui.is_rect_visible(rect) {
         let hover = theme::animate(
             ui.ctx(),
@@ -1014,6 +1097,7 @@ fn theme_chip(
             color,
         );
     }
+    arrive::spring(ui, start, &response, selected);
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -1051,7 +1135,10 @@ fn personal(app: &mut App, ui: &mut egui::Ui) {
                 _ => choice.label().into(),
             };
             let chosen = app.settings.font == choice;
-            if theme::soft_button(ui, &palette, None, &label, chosen).clicked() && !chosen {
+            let start = arrive::painted(ui);
+            let response = theme::soft_button(ui, &palette, None, &label, chosen);
+            arrive::spring(ui, start, &response, chosen);
+            if response.clicked() && !chosen {
                 app.actions.push(Action::SetFont(choice));
             }
         }
@@ -1109,6 +1196,7 @@ fn doodle_tiles(ui: &mut egui::Ui, app: &mut App) {
         let response = ui.interact(rect, Id::new(("setup-doodle", index)), Sense::click());
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, radius);
+        let start = arrive::painted(ui);
         if ui.is_rect_visible(rect) {
             let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
             let painter = ui.painter_at(rect.expand(4.0));
@@ -1163,6 +1251,7 @@ fn doodle_tiles(ui: &mut egui::Ui, app: &mut App) {
             );
             ring(&painter, &palette, rect, radius, response.hovered(), t);
         }
+        arrive::spring(ui, start, &response, chosen);
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::RadioButton,
@@ -1686,7 +1775,15 @@ fn qr_tile(ui: &egui::Ui, palette: &Palette, tile: Rect, code: &str) {
         Some(qr) => qr.paint(ui, inner, Color32::BLACK, Color32::WHITE),
         None => theme::paint_icon(ui, Icon::CircleAlert, inner, 32.0, palette.danger),
     }
-    let frame = tile.expand(10.0);
+    // The viewfinder breathes, slowly, as if looking for the phone.
+    let breath = if crate::motion::screen_reader_attached(ui.ctx()) {
+        0.0
+    } else {
+        crate::motion::request_frame_after(ui.ctx(), std::time::Duration::from_millis(33));
+        let time = ui.input(|input| input.time) as f32;
+        (1.0 - (time * std::f32::consts::TAU / 2.8).cos()) / 2.0
+    };
+    let frame = tile.expand(10.0 + 4.0 * theme::ease_out(breath));
     let stroke = Stroke::new(3.0, palette.accent);
     for (corner, out) in [
         (frame.left_top(), vec2(1.0, 1.0)),
@@ -1764,7 +1861,7 @@ fn pair_code_tile(app: &mut App, ui: &mut egui::Ui, code: &str) {
 }
 
 /// The right of the card: the small window, or on the link step the code.
-fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step) {
+fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step, opened: f32) {
     let palette = app.palette;
     let radius = f32::from(theme::RADIUS_DIALOG) - STAGE_INSET;
     // A shade off the card, lit from above by the accent.
@@ -1800,7 +1897,37 @@ fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step) {
         let height = (stage.height() - margin * 2.0).min(width * 0.8);
         let window = Rect::from_center_size(stage.center(), vec2(width, height))
             .translate(vec2(-24.0 * link, 0.0));
+        let start = arrive::painted(ui);
         preview(app, &mut layer, window, step);
+        // Each choice redraws the window from the top down, so the change
+        // reads as it lands; and as the setup opens, the window rises
+        // after the card.
+        arrive::cascade(
+            ui,
+            start,
+            window,
+            changed_for(ui.ctx(), app),
+            Cascade {
+                delay: 0.0,
+                spread: 0.16,
+                duration: theme::MOTION_PANEL * 1.5,
+                offset: vec2(0.0, 6.0),
+                from_opacity: 0.35,
+            },
+        );
+        arrive::cascade(
+            ui,
+            start,
+            window,
+            opened,
+            Cascade {
+                delay: 0.18,
+                spread: 0.2,
+                duration: theme::MOTION_SCREEN,
+                offset: vec2(0.0, 28.0),
+                from_opacity: 0.0,
+            },
+        );
     }
     if link > 0.0 {
         let mut layer = ui.new_child(UiBuilder::new().id_salt("setup-code").max_rect(stage));
@@ -1812,6 +1939,38 @@ fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step) {
             stage.translate(vec2(24.0 * (1.0 - link), 0.0)),
         );
     }
+}
+
+/// Seconds since a choice the preview draws last changed: the mode, the
+/// theme, the accent, the font, the doodles or read receipts.
+fn changed_for(ctx: &egui::Context, app: &App) -> f32 {
+    use std::hash::{Hash, Hasher};
+    let settings = &app.settings;
+    let mut hasher = std::hash::DefaultHasher::new();
+    format!(
+        "{} {:?} {:?} {:?} {:?} {} {} {}",
+        app.palette.dark,
+        settings.chat_theme,
+        settings.accent,
+        settings.font,
+        settings.doodle_style,
+        settings.show_wallpaper,
+        settings.custom_theme.is_some(),
+        app.account().settings.send_read_receipts,
+    )
+    .hash(&mut hasher);
+    let look = hasher.finish();
+    let id = Id::new("setup-preview-look");
+    let now = ctx.input(|input| input.time);
+    let (was, since) = ctx
+        .data(|data| data.get_temp::<(u64, f64)>(id))
+        .unwrap_or((look, f64::NEG_INFINITY));
+    let since = if was == look { since } else { now };
+    ctx.data_mut(|data| data.insert_temp(id, (look, since)));
+    if crate::motion::screen_reader_attached(ctx) {
+        return f32::INFINITY;
+    }
+    (now - since) as f32
 }
 
 /// The stage of the link step: the code to scan or type, or what the link
@@ -2368,4 +2527,40 @@ fn notification(app: &App, ui: &mut egui::Ui, window: Rect, shown: f32) {
         line.galley.clone(),
         palette.secondary,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_steps_run_in_order_and_stop_at_either_end() {
+        assert_eq!(Step::Welcome.previous(), Step::Welcome);
+        assert_eq!(Step::Link.next(), Step::Link);
+        let mut step = Step::Welcome;
+        for expected in &Step::ALL[1..] {
+            step = step.next();
+            assert_eq!(step, *expected);
+        }
+        for page in [
+            "setup",
+            "setup-look",
+            "setup-personal",
+            "setup-notifications",
+            "setup-privacy",
+            "setup-link",
+        ] {
+            assert!(Step::named(page).is_some(), "{page}");
+        }
+        assert_eq!(Step::named("login"), None);
+    }
+
+    /// The background lights stay quiet: a grey accent leaves the corner
+    /// lights to their own blue and violet, and a coloured one leads them.
+    #[test]
+    fn only_a_coloured_accent_tints_the_corner_lights() {
+        assert!(!colourful(Color32::WHITE));
+        assert!(!colourful(Color32::from_rgb(20, 20, 22)));
+        assert!(colourful(Color32::from_rgb(10, 132, 255)));
+    }
 }

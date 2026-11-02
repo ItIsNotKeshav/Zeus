@@ -1922,6 +1922,19 @@ mod tests {
         (settings, stored)
     }
 
+    /// A file from before the setup existed belongs to someone already set
+    /// up; only a new installation, with no file, opens on the setup, and a
+    /// setup left half way stays to be finished.
+    #[test]
+    fn only_a_new_installation_opens_on_the_setup() {
+        assert!(!Settings::default().setup_done);
+        let (settings, stored) = load_from(r#"{"version":4}"#);
+        assert!(settings.setup_done);
+        assert_eq!(stored["setup_done"], serde_json::json!(true));
+        let (settings, _) = load_from(r#"{"version":4,"setup_done":false}"#);
+        assert!(!settings.setup_done);
+    }
+
     #[test]
     fn removed_settings_are_ignored_and_dropped_on_save() {
         let (settings, stored) = load_from(

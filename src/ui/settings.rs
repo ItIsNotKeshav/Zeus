@@ -1921,6 +1921,7 @@ pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
                     color.gamma_multiply(0.4)
                 };
                 let center = rect.center();
+                let start = super::arrive::painted(ui);
                 if on {
                     ui.painter().circle_stroke(
                         center,
@@ -1955,6 +1956,7 @@ pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
                         tick,
                     );
                 }
+                super::arrive::spring(ui, start, &response, on);
                 let label = crate::i18n::gettext(locale, accent.label());
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(

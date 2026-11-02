@@ -31,16 +31,7 @@ const SPLASH_LIFT: f32 = 22.0;
 /// How far a surface has come in since it appeared, eased: 0 on the frame
 /// it first shows (again), 1 once [`theme::MOTION_SCREEN`] has passed.
 fn appearance(ctx: &egui::Context, id: egui::Id) -> f32 {
-    let now = ctx.input(|input| input.time);
-    let (since, last) = ctx
-        .data(|data| data.get_temp::<(f64, f64)>(id))
-        .unwrap_or((now, f64::NEG_INFINITY));
-    let since = if now - last > GONE { now } else { since };
-    ctx.data_mut(|data| data.insert_temp(id, (since, now)));
-    if crate::motion::screen_reader_attached(ctx) {
-        return 1.0;
-    }
-    let progress = ((now - since) / f64::from(theme::MOTION_SCREEN)).clamp(0.0, 1.0) as f32;
+    let progress = (super::arrive::shown_for(ctx, id) / theme::MOTION_SCREEN).clamp(0.0, 1.0);
     if progress < 1.0 {
         ctx.request_repaint();
     }
@@ -61,7 +52,7 @@ fn splash(app: &App, ui: &mut egui::Ui, label: &'static str) {
         .frame(Frame::new().fill(palette.window))
         .show(ui, |ui| {
             let area = ui.max_rect();
-            super::setup::backdrop(ui, &palette, area);
+            super::setup::backdrop(ui, &palette, area, true);
             let ctx = ui.ctx().clone();
             let shown = appearance(&ctx, splash_id());
             let center = area.center() - Vec2::new(0.0, SPLASH_LIFT);
@@ -179,8 +170,10 @@ pub(super) fn card(
         .frame(Frame::new().fill(palette.window))
         .show(ui, |ui| {
             let rect = ui.max_rect();
-            super::setup::backdrop(ui, &palette, rect);
-            let shown = appearance(ui.ctx(), ui.id().with((salt, "card-appearance")));
+            super::setup::backdrop(ui, &palette, rect, false);
+            let appearance_id = ui.id().with((salt, "card-appearance"));
+            let shown = appearance(ui.ctx(), appearance_id);
+            let opened = super::arrive::shown_for(ui.ctx(), appearance_id);
             let card_width = (440.0_f32.min(rect.width() - 24.0)).max(0.0);
             // Center the card using its previous height. Its content determines
             // the next frame's height.
@@ -200,6 +193,9 @@ pub(super) fn card(
                     .layout(Layout::top_down(Align::Center)),
             );
             card_ui.multiply_opacity(shown);
+            // The card's own fill is the first shape; what is on it follows
+            // the card up, top to bottom.
+            let first = super::arrive::painted(&card_ui);
             let shown = Frame::new()
                 .fill(palette.panel)
                 .stroke(Stroke::new(1.0, palette.outline))
@@ -212,10 +208,23 @@ pub(super) fn card(
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(60.0), egui::Sense::hover());
                     theme::mark(ui, logo.center(), 60.0);
                     ui.add_space(12.0);
-                    theme::text(ui, tagline, theme::bold(24.0), palette.text);
+                    theme::text(ui, tagline, theme::display(28.0), palette.text);
                     ui.add_space(10.0);
                     body(app, ui);
                 });
+            super::arrive::cascade(
+                &card_ui,
+                egui::layers::ShapeIdx(first.0 + 1),
+                shown.response.rect,
+                opened,
+                super::arrive::Cascade {
+                    delay: 0.06,
+                    spread: 0.22,
+                    duration: theme::MOTION_SCREEN,
+                    offset: Vec2::new(0.0, 10.0),
+                    from_opacity: 0.0,
+                },
+            );
             let height = shown.response.rect.height();
             if (height - known_height).abs() > 2.0 {
                 ui.ctx()
