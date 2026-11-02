@@ -2866,7 +2866,6 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
             }
         },
     );
-    ui.add_space(10.0);
     let range = DOODLE_INTENSITY;
     let intensity = app
         .settings
@@ -2877,61 +2876,80 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
     if let Some(percent) = doodle_slider(
         ui,
         app,
-        "Doodle intensity",
+        (
+            "Doodle intensity",
+            "How strongly the doodles stand out from the wallpaper.",
+        ),
+        ("Subtle", "Strong"),
         intensity / range.end(),
         range.start() / range.end()..=1.0,
     ) {
         app.actions
             .push(Action::SetDoodleIntensity(percent * range.end()));
     }
-    ui.add_space(6.0);
     let range = DOODLE_DENSITY;
     let density = app
         .settings
         .doodle_density
         .clamp(*range.start(), *range.end());
     // How many doodles there are against the default tile, which is 100%.
-    if let Some(density) = doodle_slider(ui, app, "Doodle density", density, range) {
+    if let Some(density) = doodle_slider(
+        ui,
+        app,
+        ("Doodle density", "How many doodles fill the wallpaper."),
+        ("Sparse", "Dense"),
+        density,
+        range,
+    ) {
         app.actions.push(Action::SetDoodleDensity(density));
     }
 }
 
-/// How wide a doodle slider's name is, so that its sliders line up.
-const DOODLE_SLIDER_LABEL: f32 = 128.0;
-
-/// One of the doodle sliders: its name, a Glass slider and the value as a
-/// percentage. `value` is a multiple of 1.0, and what the slider moves to is
-/// returned.
+/// One of the doodle sliders, laid out as Glass's is: a row with its
+/// description and, on the right, the slider between its two ends' names.
+/// `value` is a multiple of 1.0, and what the slider moves to is returned.
 fn doodle_slider(
     ui: &mut egui::Ui,
     app: &App,
-    label: &'static str,
+    (label, description): (&'static str, &'static str),
+    (low, high): (&'static str, &'static str),
     value: f32,
     range: std::ops::RangeInclusive<f32>,
 ) -> Option<f32> {
     let palette = app.palette;
+    let locale = app.locale;
     let mut moved = None;
-    ui.horizontal(|ui| {
-        ui.scope(|ui| {
-            ui.set_min_width(DOODLE_SLIDER_LABEL);
-            theme::text(
-                ui,
-                crate::i18n::gettext(app.locale, label).into_owned(),
-                theme::medium(13.5),
-                palette.text,
-            );
-        });
-        ui.add_space(6.0);
-        let mut value = value;
-        let shown = format!("{:.0}%", value * 100.0);
-        let value_width = 48.0;
-        let width = ui.available_width() - value_width - ui.spacing().item_spacing.x;
-        let slider = widgets::glass_slider(ui, &palette, &mut value, range, width);
-        theme::text(ui, shown, theme::medium(13.0), palette.secondary);
-        if slider.changed() {
-            moved = Some(value);
-        }
-    });
+    widgets::setting_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(locale, label),
+        &crate::i18n::gettext(locale, description),
+        |ui| {
+            let mut value = value;
+            // As in `glass_slider`: the row lays its first item last.
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(locale, high).into_owned(),
+                    theme::medium(12.5),
+                    palette.secondary,
+                );
+                let slider = widgets::glass_slider(ui, &palette, &mut value, range, 150.0);
+                slider.widget_info(|| {
+                    egui::WidgetInfo::slider(ui.is_enabled(), f64::from(value), label)
+                });
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(locale, low).into_owned(),
+                    theme::medium(12.5),
+                    palette.secondary,
+                );
+                if slider.changed() {
+                    moved = Some(value);
+                }
+            });
+        },
+    );
     moved
 }
 
