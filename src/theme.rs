@@ -1093,10 +1093,11 @@ fn install_fonts(ctx: &egui::Context) {
 }
 
 /// The face for a few large titles, on the setup and the lock screen:
-/// Instrument Serif, which has one weight and runs small, so it is set a
-/// little larger than the size asked for.
+/// Fraunces, cut for display sizes, soft and a touch above regular weight,
+/// set a little larger than the size asked for to match the interface's
+/// titles in height.
 pub fn display(size: f32) -> egui::FontId {
-    egui::FontId::new(size * 1.22, display_family())
+    egui::FontId::new(size * 1.04, display_family())
 }
 
 fn display_family() -> egui::FontFamily {
@@ -1108,8 +1109,14 @@ fn display_family() -> egui::FontFamily {
 fn add_display(fonts: &mut egui::FontDefinitions) {
     let mut family = Vec::new();
     if !cfg!(test) {
-        let data =
-            egui::FontData::from_static(include_bytes!("../assets/fonts/InstrumentSerif.ttf"));
+        let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/Fraunces.ttf"));
+        // Its display cut, fully soft, without the wonky alternates.
+        data.tweak.coords = egui::epaint::text::VariationCoords::new([
+            (b"opsz", 72.0),
+            (b"wght", 480.0),
+            (b"SOFT", 100.0),
+            (b"WONK", 0.0),
+        ]);
         fonts
             .font_data
             .insert("zapfast-display".to_owned(), std::sync::Arc::new(data));

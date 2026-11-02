@@ -85,7 +85,7 @@ controls. Built-in choices (`settings::ThemeChoice`): System, Light, Dark,
 Messages, Nothing Dark, Nothing Light, plus custom JSON palettes. Fonts
 (`settings::FontChoice`): System, Inter, Geist, Google Sans Flex, Figtree, Plus Jakarta Sans, Manrope, DM Sans. Tests always
 lay out in Inter. The setup's titles and the lock screen's line are set in
-Instrument Serif (`theme::display`), with the interface font behind it.
+Fraunces (`theme::display`), with the interface font behind it.
 
 ## Calls
 
