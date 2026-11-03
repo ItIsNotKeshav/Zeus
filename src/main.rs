@@ -482,8 +482,10 @@ fn run() -> eframe::Result<()> {
                         update_receipt: receipt,
                         #[cfg(target_os = "windows")]
                         taskbar: Default::default(),
+                        // Metal's present waits for the display itself; the
+                        // pacer makes up for OpenGL's swap, which does not.
                         #[cfg(target_os = "macos")]
-                        pacer: zeus::pacing::for_display(),
+                        pacer: None,
                         #[cfg(feature = "demo")]
                         shot,
                         #[cfg(feature = "demo")]
@@ -867,6 +869,12 @@ impl Shell {
                 // context, from the thread that draws with it.
                 let name = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
                 tour.note_gpu(name);
+            }
+            #[cfg(target_os = "macos")]
+            if tour.wants_gpu()
+                && let Some(render_state) = frame.wgpu_render_state()
+            {
+                tour.note_gpu(render_state.adapter.get_info().name);
             }
             tour.drive(app, ctx);
         }

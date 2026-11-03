@@ -78,6 +78,25 @@ pub fn rounded(rect: egui::Rect, radius: f32) -> egui::Shape {
     frost(rect, 0.0, radius, MENU)
 }
 
+/// `glass.rs` shares one blurred sheet between a frame's frosts. Here each
+/// frost copies what it covers, so there is no sheet to start.
+pub fn new_sheet() {}
+
+/// Like [`shape`]; `glass.rs` draws it on the frame's sheet.
+pub fn sheet_shape(rect: egui::Rect, fade: f32, radius: f32) -> egui::Shape {
+    shape(rect, fade, radius)
+}
+
+/// Like [`rounded`]; `glass.rs` draws it on the frame's sheet.
+pub fn sheet_rounded(rect: egui::Rect, radius: f32) -> egui::Shape {
+    rounded(rect, radius)
+}
+
+/// Like [`progressive`]; `glass.rs` draws it on the frame's sheet.
+pub fn sheet_progressive(rect: egui::Rect, fade: f32) -> egui::Shape {
+    progressive(rect, fade)
+}
+
 fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::Shape {
     // Settings' Blur off: nothing is frosted, and what floats above is solid.
     if !crate::backdrop::frost() {

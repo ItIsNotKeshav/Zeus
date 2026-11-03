@@ -549,7 +549,7 @@ impl Tour {
         !self.marks.knows_gpu()
     }
 
-    /// The graphics chip, as its OpenGL driver names it, for the start mark.
+    /// The graphics chip, as its driver names it, for the start mark.
     pub fn note_gpu(&mut self, name: String) {
         self.marks.set_gpu(name);
     }

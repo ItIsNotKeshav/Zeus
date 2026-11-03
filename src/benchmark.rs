@@ -533,7 +533,12 @@ impl Recorder {
                 .to_string(),
             os,
             hardware,
-            renderer: "OpenGL (glow)".into(),
+            renderer: if cfg!(target_os = "macos") {
+                "Metal (wgpu)"
+            } else {
+                "OpenGL (glow)"
+            }
+            .into(),
             app: self.app,
             metric: probe::METRIC.into(),
             metric_other: probe::METRIC_OTHER.into(),
