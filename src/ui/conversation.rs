@@ -2491,7 +2491,7 @@ fn leaving_rows(
                     ui,
                     &ghost_view,
                     message,
-                    None,
+                    (!ghost.album.is_empty()).then_some(ghost.album.as_slice()),
                     RunPlace {
                         show_sender: false,
                         show_avatar: false,
@@ -2508,7 +2508,7 @@ fn leaving_rows(
     }
 }
 
-fn album_id(message: &Message) -> Option<&str> {
+pub(super) fn album_id(message: &Message) -> Option<&str> {
     match &message.content {
         Content::Image { media, .. }
         | Content::Video {
@@ -5405,6 +5405,11 @@ fn bubble_row(
                 });
                 ui.add_space(2.0);
             }
+            // Members without a pill record that, so the first reaction
+            // that arrives live pops like any later change.
+            for member in members.iter().filter(|member| member.reactions.is_empty()) {
+                note_no_reactions(ui, view, member);
+            }
         },
     );
     // A picture without a caption already carries its time over its corner:
@@ -5614,10 +5619,17 @@ fn tick_motion(ui: &mut egui::Ui, view: &View<'_>, message: &Message, shown: Del
     let status_id = egui::Id::new(("tick-status", &view.chat.id, &message.id));
     let motion_id = egui::Id::new(("tick-motion", &view.chat.id, &message.id));
     let calm = crate::motion::screen_reader_attached(ui.ctx());
-    let previous: Option<Delivery> = ui.ctx().data(|data| data.get_temp(status_id));
+    // Only a status seen on the frame before counts as earlier: a bubble
+    // scrolled back into view after a change shows its ticks as they are.
+    let frame = ui.ctx().cumulative_frame_nr();
+    let previous = seen_last_frame(
+        ui.ctx()
+            .data(|data| data.get_temp::<(u64, Delivery)>(status_id)),
+        frame,
+    );
     let advanced = status_advanced(previous, shown);
     ui.ctx().data_mut(|data| {
-        data.insert_temp(status_id, shown);
+        data.insert_temp(status_id, (frame, shown));
         if advanced && !calm {
             data.insert_temp(motion_id, (now, previous.unwrap_or(shown)));
         }
@@ -7751,7 +7763,7 @@ fn footer(
     let mut x = rect.right();
     if message.from_me {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
-        widgets::ticks(ui, palette, ticks, shown_delivery(view, message));
+        tick_motion(ui, view, message, shown_delivery(view, message), ticks);
         x -= tick_width;
     }
     x -= time.size().x;
@@ -7900,10 +7912,15 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     let calm = crate::motion::screen_reader_attached(ui.ctx());
     let tally_id = egui::Id::new(("reaction-tally", &view.chat.id, &message.id));
     let motion_id = egui::Id::new(("reaction-motion", &view.chat.id, &message.id));
-    let previous: Option<Vec<(String, u32)>> = ui.ctx().data(|data| data.get_temp(tally_id));
+    let frame = ui.ctx().cumulative_frame_nr();
+    let previous = seen_last_frame(
+        ui.ctx()
+            .data(|data| data.get_temp::<(u64, Vec<(String, u32)>)>(tally_id)),
+        frame,
+    );
     let change = reaction_change(previous.as_deref(), &counts);
     ui.ctx().data_mut(|data| {
-        data.insert_temp(tally_id, counts.clone());
+        data.insert_temp(tally_id, (frame, counts.clone()));
         if change != ReactionChange::None && !calm {
             data.insert_temp(motion_id, (now, change == ReactionChange::Arrived));
         }
@@ -8009,8 +8026,24 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     }
 }
 
+/// Records that a message was drawn with no reactions.
+fn note_no_reactions(ui: &egui::Ui, view: &View<'_>, message: &Message) {
+    let tally_id = egui::Id::new(("reaction-tally", &view.chat.id, &message.id));
+    let frame = ui.ctx().cumulative_frame_nr();
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(tally_id, (frame, Vec::<(String, u32)>::new())));
+}
+
 /// How long a reaction pill's pop runs.
 const REACTION_POP_SECONDS: f64 = 0.35;
+
+/// The value recorded for a row when it was last drawn, if that was the frame
+/// before this one (or this frame). A row that was off screen since, scrolled
+/// back into view, has no earlier state: a change made while it was away is
+/// not a live one, so nothing pops for it.
+fn seen_last_frame<T>(stored: Option<(u64, T)>, frame: u64) -> Option<T> {
+    stored.and_then(|(at, value)| (frame.saturating_sub(at) <= 1).then_some(value))
+}
 
 /// What a message's reaction tally did since it was last drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -14887,6 +14920,28 @@ mod reaction_tests {
         assert_eq!(reaction_change(Some(&one), &one), ReactionChange::None);
         assert_eq!(reaction_change(Some(&one), &two), ReactionChange::Changed);
         assert_eq!(reaction_change(Some(&[]), &one), ReactionChange::Arrived);
+    }
+
+    #[test]
+    fn earlier_state_counts_only_from_the_frame_before() {
+        assert_eq!(seen_last_frame(Some((9, 'a')), 10), Some('a'));
+        assert_eq!(seen_last_frame(Some((10, 'a')), 10), Some('a'));
+        assert_eq!(seen_last_frame(Some((5, 'a')), 10), None);
+        assert_eq!(seen_last_frame::<char>(None, 10), None);
+    }
+
+    #[test]
+    fn first_reaction_and_own_pick_are_live_changes() {
+        let none: Vec<(String, u32)> = Vec::new();
+        let mine = vec![("❤️".to_owned(), 1)];
+        // A message drawn with no pill, then our pick landing, pops.
+        assert_eq!(reaction_change(Some(&none), &mine), ReactionChange::Arrived);
+        // A tally last drawn long ago is not a live change.
+        let stale = seen_last_frame(Some((1, none.clone())), 100);
+        assert_eq!(
+            reaction_change(stale.as_deref(), &mine),
+            ReactionChange::None
+        );
     }
 
     #[test]

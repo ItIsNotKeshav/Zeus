@@ -34,6 +34,9 @@ pub(crate) struct Leaving {
     /// The id of the message that was just above it, or `None` when it was
     /// the first loaded one.
     pub after: Option<String>,
+    /// The whole album, oldest first, when several items of one album were
+    /// removed: they leave together as one row. Empty for a single message.
+    pub album: Vec<Message>,
 }
 
 /// How long a message takes to leave.
@@ -41,18 +44,45 @@ pub(crate) fn duration() -> Duration {
     Duration::from_secs_f32(theme::MOTION_PANEL)
 }
 
-/// Records `message` as leaving, then [`settle`]s the list.
+/// Records `message` as leaving, then [`settle`]s the list. An item of an
+/// album joins the album already leaving from the same sender, so the whole
+/// album goes as one row, not item by item.
 pub(crate) fn record(
     leaving: &mut Vec<Leaving>,
     message: Message,
     after: Option<String>,
     now: Instant,
 ) {
-    leaving.push(Leaving {
-        message,
-        since: now,
-        after,
+    let key = super::conversation::album_id(&message).map(str::to_owned);
+    let joined = key.and_then(|key| {
+        leaving.iter_mut().find(|ghost| {
+            super::conversation::album_id(&ghost.message) == Some(key.as_str())
+                && ghost.message.from_me == message.from_me
+                && ghost.message.sender == message.sender
+        })
     });
+    if let Some(ghost) = joined {
+        // The row sits under whatever was above the album's first item. An
+        // item taken out from below another names that one, not the one above.
+        if ghost.after.as_deref() == Some(message.id.as_str()) {
+            ghost.after = after;
+        }
+        if ghost.album.is_empty() {
+            ghost.album.push(ghost.message.clone());
+        }
+        ghost.album.push(message);
+        ghost
+            .album
+            .sort_by_key(|item| (item.timestamp, item.history_order));
+        ghost.message = ghost.album[0].clone();
+    } else {
+        leaving.push(Leaving {
+            message,
+            since: now,
+            after,
+            album: Vec::new(),
+        });
+    }
     settle(leaving, now);
 }
 
@@ -180,6 +210,70 @@ mod tests {
         assert!((progress(&leaving[0], start + duration() / 2) - 0.5).abs() < 0.01);
         settle(&mut leaving, start + duration());
         assert!(leaving.is_empty());
+    }
+
+    fn album_item(id: &str, album: &str, timestamp: i64) -> Message {
+        let mut item = message(id);
+        item.timestamp = timestamp;
+        item.content = crate::model::Content::Image {
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 0,
+                width: None,
+                height: None,
+                album: Some(album.to_owned()),
+                path: None,
+                state: Default::default(),
+            },
+            caption: None,
+            motion: None,
+        };
+        item
+    }
+
+    #[test]
+    fn a_deleted_album_leaves_as_one_row() {
+        let start = Instant::now();
+        let mut leaving = Vec::new();
+        // Taken out last item first: each names the one before it.
+        record(
+            &mut leaving,
+            album_item("c", "x", 3),
+            Some("b".into()),
+            start,
+        );
+        record(
+            &mut leaving,
+            album_item("b", "x", 2),
+            Some("a".into()),
+            start,
+        );
+        record(
+            &mut leaving,
+            album_item("a", "x", 1),
+            Some("top".into()),
+            start,
+        );
+        assert_eq!(leaving.len(), 1);
+        let ids: Vec<_> = leaving[0]
+            .album
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(ids, ["a", "b", "c"]);
+        assert_eq!(leaving[0].message.id, "a");
+        assert_eq!(leaving[0].after.as_deref(), Some("top"));
+    }
+
+    #[test]
+    fn other_albums_and_plain_messages_leave_separately() {
+        let start = Instant::now();
+        let mut leaving = Vec::new();
+        record(&mut leaving, album_item("a", "x", 1), None, start);
+        record(&mut leaving, album_item("b", "y", 2), None, start);
+        record(&mut leaving, message("c"), None, start);
+        assert_eq!(leaving.len(), 3);
+        assert!(leaving.iter().all(|ghost| ghost.album.is_empty()));
     }
 
     #[test]
