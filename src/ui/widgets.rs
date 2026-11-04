@@ -475,6 +475,147 @@ pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool
     width
 }
 
+/// What a chat row's unread badge remembers between frames, for its motion.
+#[derive(Clone, Copy)]
+struct BadgeMotion {
+    count: u32,
+    old: u32,
+    width: f32,
+    from_width: f32,
+    width_start: f64,
+    changed: f64,
+    born: f64,
+}
+
+/// Seconds a badge takes to pop in, and to fade in.
+const BADGE_POP: f32 = 0.18;
+const BADGE_FADE: f32 = 0.1;
+/// Points the old and new count slide when the number changes.
+const BADGE_SLIDE: f32 = 6.0;
+
+/// Scale of a badge `t` (0 to 1) of the way through popping in: from 0.6, a
+/// little past 1 (at most 1.08), and back to 1.
+pub fn badge_pop_scale(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let c1 = 1.0;
+    let c3 = c1 + 1.0;
+    let back = 1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2);
+    // `back` overshoots by about 8% with c1 = 1.
+    0.6 + 0.4 * back
+}
+
+/// [`badge`] with motion: it pops in when it appears on a row already on
+/// screen (`live`), the old count slides up and the new one in from below
+/// when the number changes, and the pill's width eases. `id` is the row's.
+/// The first frame of a row draws it still.
+pub fn badge_animated(
+    ui: &Ui,
+    id: egui::Id,
+    palette: &Palette,
+    at: egui::Pos2,
+    count: u32,
+    muted: bool,
+    live: bool,
+) -> f32 {
+    let key = id.with("badge-motion");
+    if crate::motion::screen_reader_attached(ui.ctx()) {
+        ui.data_mut(|data| data.remove::<BadgeMotion>(key));
+        return badge(ui, palette, at, count, muted);
+    }
+    let now = ui.input(|input| input.time);
+    let layout = |count: u32| {
+        ui.painter()
+            .layout_no_wrap(count.to_string(), theme::semibold(11.0), palette.on_accent)
+    };
+    let galley = layout(count);
+    let target = (galley.size().x + 12.0).max(20.0);
+    let width_at = |m: &BadgeMotion, now: f64| {
+        let t = ((now - m.width_start) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0);
+        m.from_width + (m.width - m.from_width) * theme::ease_out(t)
+    };
+    let state = match ui.data(|data| data.get_temp::<BadgeMotion>(key)) {
+        Some(previous) if previous.count != count => BadgeMotion {
+            count,
+            old: previous.count,
+            width: target,
+            from_width: width_at(&previous, now),
+            width_start: now,
+            changed: now,
+            born: previous.born,
+        },
+        Some(previous) => previous,
+        None => BadgeMotion {
+            count,
+            old: count,
+            width: target,
+            from_width: target,
+            width_start: f64::NEG_INFINITY,
+            changed: f64::NEG_INFINITY,
+            born: if live { now } else { f64::NEG_INFINITY },
+        },
+    };
+    ui.data_mut(|data| data.insert_temp(key, state));
+    let width = width_at(&state, now);
+    let rect = Rect::from_min_max(
+        pos2(at.x + 10.0 - width, at.y - 10.0),
+        pos2(at.x + 10.0, at.y + 10.0),
+    );
+    let fill = if muted { palette.dim } else { palette.accent };
+    let mut shapes = vec![egui::Shape::rect_filled(rect, 10.0, fill)];
+    let slide = ((now - state.changed) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0);
+    let slide = theme::ease_out(slide);
+    let place = |galley: &std::sync::Arc<egui::Galley>, shift: f32, opacity: f32| {
+        let mut shape = egui::Shape::galley(
+            pos2(
+                rect.center().x - galley.size().x / 2.0,
+                rect.center().y - galley.size().y / 2.0 + shift,
+            ),
+            galley.clone(),
+            palette.on_accent,
+        );
+        egui::epaint::shape_transform::adjust_colors(&mut shape, move |colour| {
+            if *colour != egui::Color32::PLACEHOLDER {
+                *colour = colour.gamma_multiply(opacity);
+            }
+        });
+        shape
+    };
+    let mut moving = slide < 1.0 || width_at(&state, now) != state.width;
+    if slide < 1.0 && state.old != count {
+        shapes.push(place(&layout(state.old), -BADGE_SLIDE * slide, 1.0 - slide));
+        shapes.push(place(&galley, BADGE_SLIDE * (1.0 - slide), slide));
+    } else {
+        shapes.push(place(&galley, 0.0, 1.0));
+    }
+    let age = (now - state.born) as f32;
+    if age < BADGE_POP {
+        moving = true;
+        let scale = badge_pop_scale(age / BADGE_POP);
+        let opacity = (age / BADGE_FADE).clamp(0.0, 1.0);
+        let pivot = rect.center();
+        let transform = egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale);
+        for shape in &mut shapes {
+            shape.transform(transform);
+            egui::epaint::shape_transform::adjust_colors(shape, move |colour| {
+                if *colour != egui::Color32::PLACEHOLDER {
+                    *colour = colour.gamma_multiply(opacity);
+                }
+            });
+        }
+    }
+    ui.painter().extend(shapes);
+    if moving {
+        ui.ctx().request_repaint();
+    }
+    width
+}
+
+/// Forgets a row's badge motion once the badge is gone, so the next one pops
+/// in again.
+pub fn badge_gone(ui: &Ui, id: egui::Id) {
+    ui.data_mut(|data| data.remove::<BadgeMotion>(id.with("badge-motion")));
+}
+
 /// "@" in the round of a count badge: an unread message mentions us.
 pub fn mention_badge(ui: &Ui, palette: &Palette, at: egui::Pos2) -> f32 {
     let galley =
@@ -3063,5 +3204,20 @@ mod tests {
         }
         // Four fans of eight triangles.
         assert_eq!(mesh.indices.len(), 4 * 8 * 3);
+    }
+}
+
+#[cfg(test)]
+mod badge_motion_tests {
+    use super::badge_pop_scale;
+
+    #[test]
+    fn pop_starts_small_overshoots_a_little_and_settles() {
+        assert!((badge_pop_scale(0.0) - 0.6).abs() < 1e-6);
+        assert!((badge_pop_scale(1.0) - 1.0).abs() < 1e-6);
+        let peak = (0..=100)
+            .map(|n| badge_pop_scale(n as f32 / 100.0))
+            .fold(0.0, f32::max);
+        assert!(peak > 1.0 && peak <= 1.08, "peak {peak}");
     }
 }

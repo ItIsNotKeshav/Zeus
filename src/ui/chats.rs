@@ -1210,14 +1210,75 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
                 range.start,
             );
         }
+        let motion = !copy && !crate::motion::screen_reader_attached(ui.ctx());
+        let now = ui.input(|input| input.time);
+        let origin = ui.max_rect().top() - inset - range.start as f32 * step;
+        let before = if motion {
+            ui.ctx()
+                .data(|data| data.get_temp::<RowFlips>(list_id.with("flips")))
+                .filter(|flips| flips.view == view)
+        } else {
+            None
+        };
+        let mut flips = RowFlips {
+            view,
+            born: before.as_ref().map_or(now, |flips| flips.born),
+            first: range.start,
+            last: range.end,
+            rows: std::collections::HashMap::new(),
+        };
+        let mut animating = false;
         for index in range {
             let Some(chat) = app.chats.get(chats[index]).cloned() else {
                 continue;
             };
+            let natural = origin + inset + index as f32 * step;
+            let previous = before.as_ref().and_then(|flips| flips.rows.get(&chat.id));
+            if motion {
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(chat_row_id(&chat.id).with("live"), previous.is_some())
+                });
+            }
+            let mark = super::swipe::mark(ui);
             // Key by chat so an open menu survives list reordering.
             let response = ui
                 .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
                 .inner;
+            if motion {
+                let mut flip = match previous {
+                    Some(flip) => *flip,
+                    None => RowFlip {
+                        top: natural,
+                        origin,
+                        from: 0.0,
+                        start: f64::NEG_INFINITY,
+                        shift: 0.0,
+                        born: before
+                            .as_ref()
+                            .filter(|flips| {
+                                now - flips.born > 0.5 && (flips.first..flips.last).contains(&index)
+                            })
+                            .map_or(f64::NEG_INFINITY, |_| now),
+                    },
+                };
+                // Where the row was last drawn, in this frame's scroll.
+                let drawn = flip.top + (origin - flip.origin) + flip.shift;
+                if previous.is_some() && (drawn - flip.shift - natural).abs() > 0.5 {
+                    flip.from = drawn - natural;
+                    flip.start = now;
+                }
+                flip.top = natural;
+                flip.origin = origin;
+                flip.shift = row_flip_shift(flip.from, (now - flip.start) as f32);
+                let age = (now - flip.born) as f32;
+                let appear = row_appear(age);
+                if flip.shift != 0.0 || appear.is_some() {
+                    let (opacity, scale) = appear.unwrap_or((1.0, 1.0));
+                    shift_row(ui, mark, flip.shift, opacity, scale, response.rect.center());
+                    animating = true;
+                }
+                flips.rows.insert(chat.id.clone(), flip);
+            }
             // Store the row rect for interaction tests.
             ui.ctx()
                 .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
@@ -1227,6 +1288,13 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
             });
             if response.clicked() && !app.show_archived {
                 app.actions.push(Action::KeepUnread(chat.id.clone()));
+            }
+        }
+        if motion {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(list_id.with("flips"), flips));
+            if animating {
+                ui.ctx().request_repaint();
             }
         }
     });
@@ -1251,6 +1319,105 @@ struct ShownRows {
     pass: u64,
     first: usize,
     ids: Vec<String>,
+}
+
+/// Seconds a row takes to glide to its new place in the list.
+const ROW_GLIDE: f32 = 0.25;
+
+/// One row's motion: where it was drawn last frame (before any shift),
+/// under which scroll origin, and the glide it is in the middle of.
+#[derive(Clone, Copy)]
+struct RowFlip {
+    top: f32,
+    origin: f32,
+    from: f32,
+    start: f64,
+    shift: f32,
+    born: f64,
+}
+
+/// The rows a list drew last frame, for [`RowFlip`]s, and the range of
+/// positions they covered: a row missing from it that sits in the range is
+/// a new chat, one beyond it only scrolled into view.
+#[derive(Clone)]
+struct RowFlips {
+    view: egui::Id,
+    born: f64,
+    first: usize,
+    last: usize,
+    rows: std::collections::HashMap<String, RowFlip>,
+}
+
+/// How far a row is still from its place, `from` points off when it began
+/// and `elapsed` seconds ago.
+fn row_flip_shift(from: f32, elapsed: f32) -> f32 {
+    if from == 0.0 || elapsed >= ROW_GLIDE {
+        return 0.0;
+    }
+    from * (1.0 - theme::ease_out(elapsed / ROW_GLIDE))
+}
+
+/// Opacity and scale of a new chat's row `age` seconds in, or `None` when it
+/// is not appearing (never, or done).
+fn row_appear(age: f32) -> Option<(f32, f32)> {
+    if !(0.0..theme::MOTION_PANEL).contains(&age) {
+        return None;
+    }
+    let eased = theme::ease_out(age / theme::MOTION_PANEL);
+    Some((eased, 0.97 + 0.03 * eased))
+}
+
+/// Paints the shapes the row drew since `from` moved down by `shift`, faded
+/// to `opacity` and scaled about `pivot`. The clip stays: a gliding row
+/// slides inside the list.
+fn shift_row(
+    ui: &egui::Ui,
+    from: egui::layers::ShapeIdx,
+    shift: f32,
+    opacity: f32,
+    scale: f32,
+    pivot: egui::Pos2,
+) {
+    let transform =
+        egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale) + vec2(0.0, shift), scale);
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(ui.layer_id());
+        for index in from.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                if opacity < 1.0 {
+                    egui::epaint::shape_transform::adjust_colors(&mut clipped.shape, move |c| {
+                        if *c != egui::Color32::PLACEHOLDER {
+                            *c = c.gamma_multiply(opacity);
+                        }
+                    });
+                }
+                clipped.shape.transform(transform);
+            });
+        }
+    });
+}
+
+#[cfg(test)]
+mod row_motion_tests {
+    use super::*;
+
+    #[test]
+    fn glide_runs_from_the_old_place_to_none() {
+        assert_eq!(row_flip_shift(80.0, 0.0), 80.0);
+        let middle = row_flip_shift(80.0, 0.1);
+        assert!(middle > 0.0 && middle < 40.0, "{middle}");
+        assert_eq!(row_flip_shift(80.0, ROW_GLIDE), 0.0);
+        assert_eq!(row_flip_shift(-80.0, 1.0), 0.0);
+    }
+
+    #[test]
+    fn a_new_row_fades_and_grows_in() {
+        assert_eq!(row_appear(0.0), Some((0.0, 0.97)));
+        let (opacity, scale) = row_appear(0.1).unwrap();
+        assert!(opacity > 0.0 && opacity < 1.0 && scale > 0.97 && scale < 1.0);
+        assert_eq!(row_appear(theme::MOTION_PANEL), None);
+        assert_eq!(row_appear(f32::NEG_INFINITY.max(-1.0)), None);
+    }
 }
 
 /// What the list under `view` shows: a change of filter or archive is a new
@@ -1903,15 +2070,34 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         let mut badge_right = right;
         let line_y = rect.top() + 38.0;
         if unread {
-            let width = widgets::unread_indicator(
-                ui,
-                &palette,
-                pos2(badge_right - 10.0, line_y + 8.0),
-                chat.unread,
-                chat.marked_unread,
-                muted,
-            );
+            let width = if chat.unread > 0 {
+                let live = ui
+                    .ctx()
+                    .data(|data| data.get_temp::<bool>(chat_row_id(&chat.id).with("live")))
+                    .unwrap_or(false);
+                widgets::badge_animated(
+                    ui,
+                    ui.id(),
+                    &palette,
+                    pos2(badge_right - 10.0, line_y + 8.0),
+                    chat.unread,
+                    muted,
+                    live,
+                )
+            } else {
+                widgets::badge_gone(ui, ui.id());
+                widgets::unread_indicator(
+                    ui,
+                    &palette,
+                    pos2(badge_right - 10.0, line_y + 8.0),
+                    chat.unread,
+                    chat.marked_unread,
+                    muted,
+                )
+            };
             badge_right -= width + 6.0;
+        } else {
+            widgets::badge_gone(ui, ui.id());
         }
         if chat.unread > 0 && chat.unread_mention.is_some() {
             // A mention calls even in a muted chat, as on WhatsApp.
