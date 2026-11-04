@@ -616,6 +616,103 @@ pub fn badge_gone(ui: &Ui, id: egui::Id) {
     ui.data_mut(|data| data.remove::<BadgeMotion>(id.with("badge-motion")));
 }
 
+/// What a small chat-row mark (the mention badge, the manual-unread dot)
+/// remembers: whether it was drawn last frame, and when that last changed.
+#[derive(Clone, Copy)]
+struct MarkMotion {
+    present: bool,
+    since: f64,
+}
+
+/// Seconds a mark takes to pop out.
+const MARK_OUT: f32 = 0.14;
+
+/// How far a mark's motion is: `Some((scale, opacity, room))` while it pops
+/// in (`present`) or out, `None` when it is still. `age` is the seconds since
+/// it changed. `room` is the share of its slot it takes.
+pub fn mark_pop(present: bool, age: f32) -> Option<(f32, f32, f32)> {
+    if present {
+        (0.0..BADGE_POP).contains(&age).then(|| {
+            (
+                badge_pop_scale(age / BADGE_POP),
+                (age / BADGE_FADE).clamp(0.0, 1.0),
+                1.0,
+            )
+        })
+    } else {
+        (0.0..MARK_OUT).contains(&age).then(|| {
+            let t = theme::ease_out(age / MARK_OUT);
+            (1.0 - 0.4 * t, 1.0 - t, 1.0 - t)
+        })
+    }
+}
+
+/// Draws a chat-row mark with `draw`, which paints it and returns its slot's
+/// width, popping it in when it appears on a row already on screen (`live`)
+/// and out when it goes. Call it every frame, `present` or not, so a change
+/// is seen. Returns the slot's width now, closing as the mark leaves. The
+/// first frame of a row, and a screen reader, show it still.
+pub fn pop_mark(
+    ui: &Ui,
+    id: egui::Id,
+    present: bool,
+    live: bool,
+    pivot: egui::Pos2,
+    draw: impl FnOnce(&Ui) -> f32,
+) -> f32 {
+    if crate::motion::screen_reader_attached(ui.ctx()) {
+        ui.data_mut(|data| data.remove::<MarkMotion>(id));
+        return if present { draw(ui) } else { 0.0 };
+    }
+    let now = ui.input(|input| input.time);
+    let state = match ui.data(|data| data.get_temp::<MarkMotion>(id)) {
+        Some(previous) if previous.present != present => MarkMotion {
+            present,
+            since: now,
+        },
+        Some(previous) => previous,
+        None => MarkMotion {
+            present,
+            since: if present && live {
+                now
+            } else {
+                f64::NEG_INFINITY
+            },
+        },
+    };
+    ui.data_mut(|data| data.insert_temp(id, state));
+    let motion = mark_pop(present, (now - state.since) as f32);
+    if !present && motion.is_none() {
+        return 0.0;
+    }
+    let layer = ui.layer_id();
+    let first = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let width = draw(ui);
+    let Some((scale, opacity, room)) = motion else {
+        return width;
+    };
+    let transform = egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale);
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for index in first.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                egui::epaint::shape_transform::adjust_colors(&mut clipped.shape, move |colour| {
+                    if *colour != egui::Color32::PLACEHOLDER {
+                        *colour = colour.gamma_multiply(opacity);
+                    }
+                });
+                clipped.shape.transform(transform);
+            });
+        }
+    });
+    ui.ctx().request_repaint();
+    width * room
+}
+
 /// "@" in the round of a count badge: an unread message mentions us.
 pub fn mention_badge(ui: &Ui, palette: &Palette, at: egui::Pos2) -> f32 {
     let galley =

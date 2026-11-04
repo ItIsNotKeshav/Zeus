@@ -1411,6 +1411,17 @@ mod row_motion_tests {
     }
 
     #[test]
+    fn marks_pop_in_and_out_then_rest() {
+        let (scale, opacity, room) = widgets::mark_pop(true, 0.0).unwrap();
+        assert!((scale - 0.6).abs() < 1e-4 && opacity == 0.0 && room == 1.0);
+        assert!(widgets::mark_pop(true, 1.0).is_none());
+        assert!(widgets::mark_pop(true, f32::NEG_INFINITY).is_none());
+        let (scale, opacity, room) = widgets::mark_pop(false, 0.05).unwrap();
+        assert!(scale < 1.0 && opacity < 1.0 && room < 1.0);
+        assert!(widgets::mark_pop(false, 1.0).is_none());
+    }
+
+    #[test]
     fn a_new_row_fades_and_grows_in() {
         assert_eq!(row_appear(0.0), Some((0.0, 0.97)));
         let (opacity, scale) = row_appear(0.1).unwrap();
@@ -2069,42 +2080,39 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;
         let line_y = rect.top() + 38.0;
-        if unread {
-            let width = if chat.unread > 0 {
-                let live = ui
-                    .ctx()
-                    .data(|data| data.get_temp::<bool>(chat_row_id(&chat.id).with("live")))
-                    .unwrap_or(false);
-                widgets::badge_animated(
-                    ui,
-                    ui.id(),
-                    &palette,
-                    pos2(badge_right - 10.0, line_y + 8.0),
-                    chat.unread,
-                    muted,
-                    live,
-                )
-            } else {
-                widgets::badge_gone(ui, ui.id());
-                widgets::unread_indicator(
-                    ui,
-                    &palette,
-                    pos2(badge_right - 10.0, line_y + 8.0),
-                    chat.unread,
-                    chat.marked_unread,
-                    muted,
-                )
-            };
+        let live = ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(chat_row_id(&chat.id).with("live")))
+            .unwrap_or(false);
+        let mark_at = pos2(badge_right - 10.0, line_y + 8.0);
+        if chat.unread > 0 {
+            let width =
+                widgets::badge_animated(ui, ui.id(), &palette, mark_at, chat.unread, muted, live);
             badge_right -= width + 6.0;
         } else {
             widgets::badge_gone(ui, ui.id());
         }
-        if chat.unread > 0 && chat.unread_mention.is_some() {
-            // A mention calls even in a muted chat, as on WhatsApp.
-            let width =
-                widgets::mention_badge(ui, &palette, pos2(badge_right - 10.0, line_y + 8.0));
-            badge_right -= width + 6.0;
-        }
+        // The empty dot of a chat marked unread by hand pops in and out.
+        let dot = widgets::pop_mark(
+            ui,
+            ui.id().with("unread-dot"),
+            chat.unread == 0 && chat.marked_unread,
+            live,
+            mark_at,
+            |ui| widgets::unread_dot(ui, &palette, mark_at, muted) + 6.0,
+        );
+        badge_right -= dot;
+        // A mention calls even in a muted chat, as on WhatsApp.
+        let mention_at = pos2(badge_right - 10.0, line_y + 8.0);
+        let mention = widgets::pop_mark(
+            ui,
+            ui.id().with("mention-badge"),
+            chat.unread > 0 && chat.unread_mention.is_some(),
+            live,
+            mention_at,
+            |ui| widgets::mention_badge(ui, &palette, mention_at) + 6.0,
+        );
+        badge_right -= mention;
         if muted {
             let icon_rect =
                 Rect::from_center_size(pos2(badge_right - 8.0, line_y + 8.0), Vec2::splat(15.0));
