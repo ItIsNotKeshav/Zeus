@@ -5892,35 +5892,114 @@ fn start_inline_edit(ctx: &egui::Context, view: &View<'_>, message: &Message) {
     let Content::Text { text, .. } = &message.content else {
         return;
     };
+    // The body's width as it was drawn, so the bubble keeps its size until
+    // the text outgrows it.
+    let body =
+        ctx.data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("body")));
+    let slot = inline_edit_slot(&view.chat.id);
     ctx.data_mut(|data| {
-        data.insert_temp(
-            inline_edit_slot(&view.chat.id),
-            (message.id.clone(), text.clone()),
-        );
+        data.insert_temp(slot, (message.id.clone(), text.clone()));
+        data.insert_temp(slot.with("width"), body.map_or(0.0, |body| body.width()));
     });
     ctx.request_repaint();
 }
 
+/// How wide the editor of `text` is: as wide as the body was drawn, or the
+/// text's own width once it outgrows that, with the time on its last line
+/// when it fits there as it does beside the text. Never past `width`.
+/// Returns the width and whether the time fits on the last line.
+fn inline_editor_width(
+    text_width: f32,
+    last_row: f32,
+    drawn: f32,
+    width: f32,
+    reserve: Option<f32>,
+) -> (f32, bool) {
+    // Room for the caret after the last character.
+    let text_width = text_width + 2.0;
+    let inline = reserve.filter(|reserve| last_row + 2.0 + 8.0 + reserve <= width);
+    let needed = match inline {
+        Some(reserve) => text_width.max(last_row + 2.0 + 8.0 + reserve),
+        None => text_width,
+    };
+    (needed.max(drawn).min(width), inline.is_some())
+}
+
+/// A small label over the bubble being edited, so it is clear that typing
+/// goes into it and not into the composer. It floats over the transcript,
+/// so the bubble keeps its place and size.
+fn editing_label(ui: &egui::Ui, view: &View<'_>, message: &Message, editor: egui::Id, at: Rect) {
+    let ctx = ui.ctx();
+    let id = editor.with("label");
+    let shown = theme::animate(ctx, id, true, theme::MOTION_QUICK);
+    // Where the bubble was last drawn, moved with the editor in case the
+    // row has moved since.
+    let bubble = ctx
+        .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")))
+        .zip(ctx.data(|data| data.get_temp::<Rect>(editor.with("rect"))))
+        .map_or(at, |(bubble, before)| bubble.translate(at.min - before.min));
+    ctx.data_mut(|data| data.insert_temp(editor.with("rect"), at));
+    let (anchor, pivot) = if message.from_me {
+        (bubble.right_top(), egui::Align2::RIGHT_BOTTOM)
+    } else {
+        (bubble.left_top(), egui::Align2::LEFT_BOTTOM)
+    };
+    let label = crate::i18n::gettext(view.locale, "Editing message");
+    let palette = view.palette;
+    egui::Area::new(id)
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .fixed_pos(anchor + vec2(0.0, -6.0 + 4.0 * (1.0 - shown)))
+        .pivot(pivot)
+        .constrain_to(ui.clip_rect())
+        .show(ctx, |ui| {
+            ui.multiply_opacity(shown);
+            widgets::menu_frame(&palette)
+                .inner_margin(Margin::symmetric(10, 5))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let (icon, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
+                        theme::paint_icon(ui, Icon::Pencil, icon, 12.0, palette.accent);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(label.as_ref())
+                                    .font(theme::semibold(12.0))
+                                    .color(palette.accent),
+                            )
+                            .selectable(false)
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                    });
+                });
+        });
+}
+
 /// Draws the editor in place of the message's text when it is being edited.
 /// Enter saves, Shift+Enter breaks the line, Escape or a click elsewhere
-/// puts the old text back. Returns whether it drew the editor.
+/// puts the old text back. The bubble keeps the size it had and grows only
+/// as the text outgrows it, with the time beside the last line where it
+/// was. Returns `None` when this message is not being edited, else the
+/// footer's place on the last line, as [`rich_body`] does.
 fn inline_editor(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
     width: f32,
+    reserve: Option<f32>,
     actions: &mut Vec<Action>,
-) -> bool {
+) -> Option<Option<Rect>> {
     let slot = inline_edit_slot(&view.chat.id);
-    let Some((id, mut text)) = ui
+    let (id, mut text) = ui
         .ctx()
-        .data(|data| data.get_temp::<(String, String)>(slot))
-    else {
-        return false;
-    };
+        .data(|data| data.get_temp::<(String, String)>(slot))?;
     if id != message.id {
-        return false;
+        return None;
     }
+    let drawn = ui
+        .ctx()
+        .data(|data| data.get_temp::<f32>(slot.with("width")))
+        .unwrap_or(0.0);
     let palette = view.palette;
     let editor = bubble_id(&view.chat.id, &message.id).with("inline-editor");
     let focused = ui.memory(|memory| memory.has_focus(editor));
@@ -5934,6 +6013,13 @@ fn inline_editor(
     } else {
         (false, false)
     };
+    // Measured as it would wrap in the widest bubble, then drawn no wider
+    // than that needs, so the bubble does not jump to its widest.
+    let measured = ui.ctx().fonts_mut(|fonts| {
+        fonts.layout(text.clone(), theme::regular(BODY_SIZE), palette.text, width)
+    });
+    let last_row = measured.rows.last().map_or(0.0, |row| row.row.size.x);
+    let (fitted, inline) = inline_editor_width(measured.size().x, last_row, drawn, width, reserve);
     let output = egui::TextEdit::multiline(&mut text)
         .id(editor)
         .frame(Frame::NONE)
@@ -5941,8 +6027,9 @@ fn inline_editor(
         .font(theme::regular(BODY_SIZE))
         .text_color(palette.text)
         .desired_rows(1)
-        .desired_width(width)
+        .desired_width(fitted)
         .show(ui);
+    editing_label(ui, view, message, editor, output.response.rect);
     let first = !ui
         .ctx()
         .data(|data| data.get_temp::<bool>(editor.with("seen")).unwrap_or(false));
@@ -5964,7 +6051,9 @@ fn inline_editor(
     let finish = |ctx: &egui::Context| {
         ctx.data_mut(|data| {
             data.remove::<(String, String)>(slot);
+            data.remove::<f32>(slot.with("width"));
             data.remove::<bool>(editor.with("seen"));
+            data.remove::<Rect>(editor.with("rect"));
         });
     };
     let lost = output.response.lost_focus() && !save && !cancel;
@@ -5982,7 +6071,13 @@ fn inline_editor(
     } else if cancel || lost {
         finish(ui.ctx());
     }
-    true
+    let rect = output.response.rect;
+    Some(inline.then(|| {
+        Rect::from_min_max(
+            pos2(rect.right() - reserve.unwrap_or(0.0), rect.bottom() - 15.0),
+            rect.right_bottom(),
+        )
+    }))
 }
 
 /// Stable message-bubble id used by interaction tests.
@@ -8780,8 +8875,8 @@ fn content(
             if let Some(preview) = preview {
                 preview_card(ui, view, message, preview, width, actions);
             }
-            if inline_editor(ui, view, message, width, actions) {
-                return None;
+            if let Some(footer) = inline_editor(ui, view, message, width, footer_reserve, actions) {
+                return footer;
             }
             let span = (message.quoted.is_some() || preview.is_some()).then_some(width);
             rich_body(
@@ -14151,6 +14246,22 @@ mod tests {
     fn the_star_mark_tint_is_not_the_secondary() {
         let palette = Palette::dark();
         assert_ne!(FOOTER_STAR, palette.secondary);
+    }
+
+    #[test]
+    fn an_edited_bubble_keeps_its_size_until_the_text_outgrows_it() {
+        // A short text keeps the body's drawn width, time beside it.
+        let (width, inline) = inline_editor_width(40.0, 40.0, 110.0, 400.0, Some(50.0));
+        assert_eq!(width, 110.0);
+        assert!(inline);
+        // Typing past it grows the bubble to the text and the time.
+        let (width, inline) = inline_editor_width(150.0, 150.0, 110.0, 400.0, Some(50.0));
+        assert_eq!(width, 152.0 + 8.0 + 50.0);
+        assert!(inline);
+        // Never past the widest bubble; the time moves under a full line.
+        let (width, inline) = inline_editor_width(398.0, 398.0, 110.0, 400.0, Some(50.0));
+        assert_eq!(width, 400.0);
+        assert!(!inline);
     }
 
     #[test]
