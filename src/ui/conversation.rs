@@ -2391,6 +2391,7 @@ pub(crate) fn reply_strip_id() -> egui::Id {
 }
 
 /// App data needed while drawing a checked-out conversation.
+#[derive(Clone)]
 struct View<'a> {
     palette: Palette,
     locale: crate::i18n::Locale,
@@ -2453,6 +2454,60 @@ struct View<'a> {
 }
 
 /// Protocol album parent carried by pictures and ordinary videos.
+/// Draws the deleted messages leaving from just below the message `above`
+/// (`None` for the top of the loaded history). They only paint: their view
+/// has no copy rows, menus or selection, and their actions are dropped.
+fn leaving_rows(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    leaving: &[super::leaving::Leaving],
+    above: Option<&str>,
+    now: std::time::Instant,
+) {
+    for ghost in leaving
+        .iter()
+        .filter(|ghost| ghost.after.as_deref() == above)
+    {
+        let ghost_view = View {
+            selecting: false,
+            selected: &[],
+            anchor: None,
+            open_menu: None,
+            reaction: None,
+            copy_rows: None,
+            scrims: None,
+            ..view.clone()
+        };
+        let message = &ghost.message;
+        let id = bubble_id(&view.chat.id, &message.id).with("leaving");
+        super::leaving::show(
+            ui,
+            id,
+            super::leaving::progress(ghost, now),
+            message.from_me,
+            |ui| {
+                let mut dropped = Vec::new();
+                bubble(
+                    ui,
+                    &ghost_view,
+                    message,
+                    None,
+                    RunPlace {
+                        show_sender: false,
+                        show_avatar: false,
+                        tailed: true,
+                        first_in_run: true,
+                        last_in_run: true,
+                        last_outgoing: false,
+                    },
+                    true,
+                    &mut dropped,
+                );
+            },
+        );
+    }
+}
+
 fn album_id(message: &Message) -> Option<&str> {
     match &message.content {
         Content::Image { media, .. }
@@ -3143,6 +3198,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let mut pinned = false;
     let mut visible_day = None;
     let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
+    // Deleted messages still leaving go at once without motion.
+    let leaving_now = std::time::Instant::now();
+    if reduce_motion || !view.animate {
+        conversation.leaving.clear();
+    } else {
+        super::leaving::settle(&mut conversation.leaving, leaving_now);
+    }
+    if !conversation.leaving.is_empty() {
+        ui.ctx().request_repaint();
+    }
     let layer = ui.layer_id();
     let first_shape = ui.ctx().graphics(|graphics| {
         graphics
@@ -3301,6 +3366,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     });
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
+                        let above = message_index
+                            .checked_sub(1)
+                            .map(|before| conversation.messages[before].id.as_str());
+                        leaving_rows(ui, &view, &conversation.leaving, above, leaving_now);
                         // WhatsApp marks every item in a media album with the
                         // same parent id. Only its first item owns a row; the
                         // remaining consecutive items are painted in that row.
@@ -3764,6 +3833,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         );
                         previous = Some(message);
                     }
+                    let newest = conversation
+                        .messages
+                        .last()
+                        .map(|message| message.id.as_str());
+                    leaving_rows(ui, &view, &conversation.leaving, newest, leaving_now);
                     if let Some((anchor, to)) = &sweep
                         && let Some(row) = swept_to.or(first_row)
                         && row != to
