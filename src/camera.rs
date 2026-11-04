@@ -196,6 +196,24 @@ pub fn choose_mode(modes: &[Mode], budget: (usize, usize), fps: u32) -> Option<M
         .copied()
 }
 
+/// The modes nokhwa can set on macOS: the fastest of each size and layout. It lists each
+/// frame-rate range's lowest rate as a mode of its own, but can set only a range's highest, and
+/// the fastest mode of a size is always a range's highest.
+#[cfg(any(test, target_os = "macos"))]
+fn settable_on_macos(modes: Vec<Mode>) -> Vec<Mode> {
+    let mut fastest: Vec<Mode> = Vec::with_capacity(modes.len());
+    for mode in modes {
+        let same = |kept: &&mut Mode| {
+            (kept.width, kept.height, kept.pixel) == (mode.width, mode.height, mode.pixel)
+        };
+        match fastest.iter_mut().find(same) {
+            Some(kept) => kept.fps = kept.fps.max(mode.fps),
+            None => fastest.push(mode),
+        }
+    }
+    fastest
+}
+
 /// Scales `size` to the largest even size with the same shape that fits
 /// `bounds` either way round, never upscaling.
 pub fn fit_even(size: (usize, usize), bounds: (usize, usize)) -> (usize, usize) {
@@ -687,6 +705,21 @@ mod backend {
         Ok(())
     }
 
+    /// The mode a camera is first opened in, before its modes can be read.
+    ///
+    /// On macOS nokhwa lists each of a format's frame-rate ranges as two modes, its lowest
+    /// rate and its highest, but can set only a range's highest. The first mode it lists is a
+    /// lowest rate, so asking for any mode fails on a camera whose range starts above one frame
+    /// a second ("Could not set device property CameraFormat with value 640x480@15FPS"). The
+    /// fastest mode is always some range's highest rate, which it can set.
+    fn first_request() -> RequestedFormatType {
+        if cfg!(target_os = "macos") {
+            RequestedFormatType::AbsoluteHighestFrameRate
+        } else {
+            RequestedFormatType::None
+        }
+    }
+
     pub struct Camera {
         camera: nokhwa::Camera,
         mode: Mode,
@@ -701,7 +734,7 @@ mod backend {
                 Ok(number) => CameraIndex::Index(number),
                 Err(_) => CameraIndex::String(id.to_owned()),
             };
-            let any = RequestedFormat::with_formats(RequestedFormatType::None, &READABLE);
+            let any = RequestedFormat::with_formats(first_request(), &READABLE);
             let mut camera = nokhwa::Camera::new(index, any)
                 .map_err(|error| format!("the camera could not be opened: {error}"))?;
             let modes: Vec<Mode> = camera
@@ -715,6 +748,8 @@ mod backend {
                     pixel: pixel(format.format()),
                 })
                 .collect();
+            #[cfg(target_os = "macos")]
+            let modes = super::settable_on_macos(modes);
             if let Some(chosen) = super::choose_mode(&modes, budget, fps) {
                 let format = CameraFormat::new(
                     Resolution::new(chosen.width, chosen.height),
@@ -879,5 +914,31 @@ mod tests {
         // A portrait camera fits the budget turned upright.
         let upright = [mode(720, 1280, Pixel::Nv12, 30)];
         assert_eq!(choose_mode(&upright, (1280, 720), 20).unwrap().height, 1280);
+    }
+
+    #[test]
+    fn macos_keeps_only_the_fastest_rate_of_each_mode() {
+        let mode = |width, height, pixel, fps| Mode {
+            width,
+            height,
+            fps,
+            pixel,
+        };
+        // A 15 to 30 fps range is listed as 15 and 30; only 30 can be set.
+        let listed = vec![
+            mode(640, 480, Pixel::Yuyv, 15),
+            mode(640, 480, Pixel::Yuyv, 30),
+            mode(1280, 720, Pixel::Yuyv, 15),
+            mode(1280, 720, Pixel::Yuyv, 30),
+            mode(1280, 720, Pixel::Mjpeg, 24),
+        ];
+        assert_eq!(
+            settable_on_macos(listed),
+            vec![
+                mode(640, 480, Pixel::Yuyv, 30),
+                mode(1280, 720, Pixel::Yuyv, 30),
+                mode(1280, 720, Pixel::Mjpeg, 24),
+            ]
+        );
     }
 }
