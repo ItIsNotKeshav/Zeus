@@ -2021,26 +2021,24 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 let text = std::mem::take(&mut app.composer);
                 if app.pending.is_empty() {
-                    if let Some(from) =
-                        ui.ctx().data(|data| data.get_temp::<Rect>(send_flight_id().with("button")))
-                    {
-                        let flight = SendFlight {
-                            chat: chat.id.clone(),
-                            from,
-                            sent: ui.input(|input| input.time),
-                            wall: crate::util::now(),
-                            message: None,
-                        };
-                        // Fast sends queue: each keeps its own flight.
-                        let now = flight.sent;
-                        ui.ctx().data_mut(|data| {
-                            let flights = data.get_temp_mut_or_default::<Vec<SendFlight>>(
-                                send_flight_id(),
-                            );
-                            flights.retain(|old| now - old.sent < 3.0);
-                            flights.push(flight);
-                        });
-                    }
+                    // The bubble leaves from the field the text was typed in,
+                    // as Telegram's does, not from the send button.
+                    let flight = SendFlight {
+                        chat: chat.id.clone(),
+                        from: pill.response.rect,
+                        field: composer_pill(&palette).fill,
+                        sent: ui.input(|input| input.time),
+                        wall: crate::util::now(),
+                        message: None,
+                    };
+                    // Fast sends queue: each keeps its own flight.
+                    let now = flight.sent;
+                    ui.ctx().data_mut(|data| {
+                        let flights =
+                            data.get_temp_mut_or_default::<Vec<SendFlight>>(send_flight_id());
+                        flights.retain(|old| now - old.sent < 3.0);
+                        flights.push(flight);
+                    });
                     app.actions.push(Action::SendText {
                         chat: chat.id.clone(),
                         text,
@@ -2774,8 +2772,10 @@ fn sticky_date<R>(
 }
 
 /// How long the list takes to ease up for a message that lands at its end.
-/// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`, and under 300ms.
-const GLIDE_SECONDS: f64 = 0.25;
+/// The send flight's own duration and vertical curve, so a sent bubble and
+/// the list that makes room for it move as one, as in Telegram. A received
+/// message moves the list the same way.
+const GLIDE_SECONDS: f64 = SEND_SECONDS;
 
 /// The tail still counts as the bottom this far from the content end.
 /// `scroll_to_rect` stops a few points short, so a one-point test never sees
@@ -2802,14 +2802,15 @@ impl Glide {
         egui::Id::new(("message-glide", chat))
     }
 
-    /// How far below its place the list is drawn at `now`. Strong ease-out:
-    /// it leaves the old place at once and settles gently.
+    /// How far below its place the list is drawn at `now`, on the send
+    /// flight's vertical curve: a soft start, a quick middle and a long
+    /// settle.
     fn shift(&self, now: f64) -> f32 {
         let t = ((now - self.start) / GLIDE_SECONDS) as f32;
         if t >= 1.0 || self.distance <= 0.0 {
             0.0
         } else {
-            self.distance * (1.0 - ease_out_strong(t))
+            self.distance * (1.0 - ease_send_vertical(t))
         }
     }
 }
@@ -4266,6 +4267,16 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
         fill,
         egui::epaint::RectShape::filled(inner.response.rect, corners, palette.bubble_in),
     );
+    // Where and when it was drawn, so the message it announced can grow out
+    // of it.
+    let time = ui.input(|input| input.time);
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(typing_bubble_id(&view.chat.id), (inner.response.rect, time));
+    });
+}
+
+fn typing_bubble_id(chat: &str) -> egui::Id {
+    egui::Id::new(("typing-bubble", chat))
 }
 
 fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
@@ -4504,13 +4515,14 @@ fn send_flight_id() -> egui::Id {
     egui::Id::new("send-flight")
 }
 
-/// A sent text on its way from the send button to its bubble: `from` is the
-/// button, and `message` the row it became, with the time that row was
-/// first drawn.
+/// A sent text on its way from the composer to its bubble: `from` is the
+/// composer's field and `field` its fill, and `message` the row it became,
+/// with the time that row was first drawn.
 #[derive(Clone)]
 struct SendFlight {
     chat: String,
     from: Rect,
+    field: Color32,
     sent: f64,
     /// Unix seconds at the send, to tell its message from older fresh ones.
     wall: i64,
@@ -4584,11 +4596,33 @@ const ARRIVE_BOUNCE: f64 = 0.2;
 const ARRIVE_FROM_SCALE: f32 = 0.95;
 /// How far below its row a new bubble starts. The spring carries it up.
 const ARRIVE_DROP: f32 = 8.0;
+/// How long ago the typing bubble may have been drawn for a received
+/// message to grow out of it: the frame before, with room for a slow one.
+const TYPING_HANDOFF: f64 = 0.2;
 
-/// Strong ease-out for the transcript, `cubic-bezier(0.23, 1, 0.32, 1)`.
+/// How long a sent bubble takes from the composer to its place, as
+/// Telegram's send transition.
+const SEND_SECONDS: f64 = 0.3;
+/// Telegram's vertical curve for a sent bubble, and for the list that makes
+/// room for it.
+const SEND_CURVE_Y: (f32, f32, f32, f32) = (0.19919, 0.01064, 0.27921, 0.91025);
+
+/// Telegram's vertical send curve, `cubic-bezier(0.19919, 0.01064, 0.27921, 0.91025)`.
+fn ease_send_vertical(t: f32) -> f32 {
+    let (x1, y1, x2, y2) = SEND_CURVE_Y;
+    cubic_bezier(t, x1, y1, x2, y2)
+}
+
+/// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`: the transcript's, and
+/// Telegram's horizontal send curve.
 fn ease_out_strong(t: f32) -> f32 {
+    cubic_bezier(t, 0.23, 1.0, 0.32, 1.0)
+}
+
+/// CSS `cubic-bezier(x1, y1, x2, y2)` at time `t`: Newton's method finds the
+/// curve parameter whose x is `t`, and its y is the eased value.
+fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
-    let (x1, y1, x2, y2) = (0.23, 1.0, 0.32, 1.0);
     let mut u = t;
     for _ in 0..8 {
         let x = bezier_sample(u, x1, x2);
@@ -4806,9 +4840,10 @@ fn swipe_chat(app: &mut App, ui: &egui::Ui, chat: &Chat, area: Rect, actions: &m
     super::swipe::edge_badge(ui, id, area, pull, whole, &app.palette);
 }
 
-/// Draws a message row. A message just sent springs from the send button
-/// into its bubble; one just received, or a send that did not leave the
-/// button, springs in from its side.
+/// Draws a message row. A message just sent glides from the composer's
+/// field into its bubble, as Telegram's does; one just received grows out of
+/// the typing bubble, or springs in from its side, as does a send that left
+/// no flight.
 fn bubble_arriving(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -4854,13 +4889,13 @@ fn bubble_arriving(
             }
             claimed(flights).map(|index| flights[index].clone())
         });
-        if let Some((from, landed)) = flight.and_then(|flight| {
+        if let Some((from, field, landed)) = flight.and_then(|flight| {
             let (_, at) = flight.message?;
-            Some((flight.from, at))
+            Some((flight.from, flight.field, at))
         }) {
             let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
             let elapsed = now - landed;
-            if elapsed >= ARRIVE_SECONDS {
+            if elapsed >= SEND_SECONDS {
                 return response;
             }
             let Some(rect) = ui.ctx().data(|data| {
@@ -4868,22 +4903,23 @@ fn bubble_arriving(
             }) else {
                 return response;
             };
-            // It grows out of the button: its corner there, a quarter of its
-            // size, and both spring to its own place and size together.
-            // The button is the origin, so the scale starts at the button's
-            // size rather than at an entrance scale.
-            let p = arrive_spring(elapsed);
+            // Telegram's send: the bubble keeps its own size and starts with its
+            // bottom left on the field's, then slides there on two curves over
+            // 0.3 s, a soft vertical one and a strong ease-out across.
+            let t = (elapsed / SEND_SECONDS) as f32;
+            let across = ease_out_strong(t);
+            let up = ease_send_vertical(t);
             // The list slides up to meet a new last message; aim where the row
             // is drawn now, not where it ends, or the bubble overshoots it.
             let gliding = ui
                 .ctx()
                 .data(|data| data.get_temp::<Glide>(Glide::id(&view.chat.id)))
                 .map_or(0.0, |glide| glide.shift(now));
-            let corner = rect.right_bottom() + vec2(0.0, gliding);
-            let at = from.center() + (corner - from.center()) * p;
-            let transform = egui::emath::TSTransform::from_translation(at.to_vec2())
-                * egui::emath::TSTransform::from_scaling(0.25 + 0.75 * p)
-                * egui::emath::TSTransform::from_translation(-corner.to_vec2());
+            let offset = vec2(
+                (from.left() - rect.left()) * (1.0 - across),
+                gliding + (from.bottom() - (rect.bottom() + gliding)) * (1.0 - up),
+            );
+            let transform = egui::emath::TSTransform::from_translation(offset);
             // Lifted onto a layer above the chat, so it can cross the composer
             // and the list's edge on its way, and the list's own glide leaves it be.
             let flying = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("send-flight"));
@@ -4901,25 +4937,31 @@ fn bubble_arriving(
                     list.reset_shape(egui::layers::ShapeIdx(index));
                 }
                 let above = graphics.entry(flying);
+                // Under the bubble, the field's own shape morphs into it: the
+                // field's rect, fill and corners towards the bubble's, faded
+                // out over the first 60% so the real bubble shows through.
+                let bubble = transform.mul_rect(rect);
+                let morph = Rect::from_min_max(
+                    pos2(
+                        egui::lerp(from.left()..=bubble.left(), across),
+                        egui::lerp(from.top()..=bubble.top(), up),
+                    ),
+                    pos2(
+                        egui::lerp(from.right()..=bubble.right(), across),
+                        egui::lerp(from.bottom()..=bubble.bottom(), up),
+                    ),
+                );
+                let radius =
+                    egui::lerp(f32::from(COMPOSER_RADIUS)..=18.0, up).min(morph.height() / 2.0);
+                let fade = (1.0 - t / 0.6).clamp(0.0, 1.0);
+                above.add(
+                    clip,
+                    egui::Shape::rect_filled(morph, radius, field.gamma_multiply(fade)),
+                );
                 for mut shape in shapes {
                     shape.transform(transform);
                     above.add(clip, shape);
                 }
-                // The button itself leaves its place and stretches into the
-                // bubble, fading as the message shows through.
-                let bubble = transform.mul_rect(rect);
-                let blob =
-                    Rect::from_min_max(from.min.lerp(bubble.min, p), from.max.lerp(bubble.max, p));
-                let radius = egui::lerp(from.height() / 2.0..=18.0, p).min(blob.height() / 2.0);
-                let fade = (1.0 - (elapsed as f32) / (ARRIVE_SECONDS as f32 * 0.6)).clamp(0.0, 1.0);
-                above.add(
-                    clip,
-                    egui::Shape::rect_filled(
-                        blob,
-                        radius,
-                        view.palette.accent.gamma_multiply(fade),
-                    ),
-                );
             });
             ui.ctx().request_repaint();
             return response;
@@ -4931,14 +4973,29 @@ fn bubble_arriving(
     let shown = egui::Id::new(("chat-shown", &view.chat.id));
     let shown = ui.ctx().data_mut(|data| *data.get_temp_mut_or(shown, now));
     let id = egui::Id::new(("landing", &view.chat.id, &message.id));
-    let landed = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
+    // A received message whose typing bubble was drawn a frame ago grows out
+    // of that bubble. Taken once, when it lands: the typing bubble is gone
+    // after that.
+    let typing = (!message.from_me)
+        .then(|| {
+            ui.ctx()
+                .data(|data| data.get_temp::<(Rect, f64)>(typing_bubble_id(&view.chat.id)))
+        })
+        .flatten()
+        .filter(|(_, drawn)| now - drawn <= TYPING_HANDOFF)
+        .map(|(rect, _)| rect);
+    let (landed, typing) = ui
+        .ctx()
+        .data_mut(|data| *data.get_temp_mut_or_insert_with(id, || (now, typing)));
     let elapsed = now - landed;
     if elapsed >= ARRIVE_SECONDS || landed <= shown {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
     }
     let p = arrive_spring(elapsed);
     let row = ui.scope(|ui| {
-        ui.multiply_opacity(p.clamp(0.0, 1.0));
+        if typing.is_none() {
+            ui.multiply_opacity(p.clamp(0.0, 1.0));
+        }
         bubble_row(ui, view, message, album, place, reduce_motion, actions)
     });
     // Grows from the tail's side. Scale starts at 0.95 and the spring may
@@ -4948,11 +5005,22 @@ fn bubble_arriving(
     } else {
         row.response.rect.left_bottom()
     };
-    let scale = ARRIVE_FROM_SCALE + (1.0 - ARRIVE_FROM_SCALE) * p;
-    let drop = ARRIVE_DROP * (1.0 - p);
-    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2() + vec2(0.0, drop))
-        * egui::emath::TSTransform::from_scaling(scale)
-        * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
+    let transform = if let Some(typing) = typing {
+        // Out of the typing bubble: from its bottom left and its height,
+        // fully opaque, springing to the row's own place and size.
+        let from_scale = (typing.height() / row.response.rect.height().max(1.0)).clamp(0.5, 1.0);
+        let scale = from_scale + (1.0 - from_scale) * p;
+        let offset = (typing.left_bottom() - pivot) * (1.0 - p);
+        egui::emath::TSTransform::from_translation(pivot.to_vec2() + offset)
+            * egui::emath::TSTransform::from_scaling(scale)
+            * egui::emath::TSTransform::from_translation(-pivot.to_vec2())
+    } else {
+        let scale = ARRIVE_FROM_SCALE + (1.0 - ARRIVE_FROM_SCALE) * p;
+        let drop = ARRIVE_DROP * (1.0 - p);
+        egui::emath::TSTransform::from_translation(pivot.to_vec2() + vec2(0.0, drop))
+            * egui::emath::TSTransform::from_scaling(scale)
+            * egui::emath::TSTransform::from_translation(-pivot.to_vec2())
+    };
     ui.ctx().graphics_mut(|graphics| {
         let list = graphics.entry(layer);
         let end = list.next_idx();
@@ -5299,7 +5367,7 @@ fn reference_timestamp(
                         Delivery::Sent | Delivery::Delivered | Delivery::Read | Delivery::Played
                     ) {
                         let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                        widgets::ticks(ui, &view.palette, rect, ticks);
+                        tick_motion(ui, view, message, ticks, rect);
                     }
                 }
             }
@@ -5341,6 +5409,82 @@ fn widen_to(span: egui::Rangef, needed: f32, bounds: egui::Rangef) -> egui::Rang
     }
     let left = (span.max - needed).max(bounds.min);
     egui::Rangef::new(left, (left + needed).max(span.max))
+}
+
+/// How long a delivery tick's change runs.
+const TICK_SECONDS: f64 = 0.14;
+
+/// Whether a status moved on since it was last drawn. No earlier status, or a
+/// failure, is not an advance.
+fn status_advanced(previous: Option<Delivery>, now: Delivery) -> bool {
+    matches!(previous, Some(before) if before != now) && now != Delivery::Failed
+}
+
+/// Draws the delivery ticks. A live advance scales the new glyph in about its
+/// centre with a fade, and a change to read blends the colour.
+fn tick_motion(ui: &mut egui::Ui, view: &View<'_>, message: &Message, shown: Delivery, rect: Rect) {
+    let now = ui.input(|input| input.time);
+    let status_id = egui::Id::new(("tick-status", &view.chat.id, &message.id));
+    let motion_id = egui::Id::new(("tick-motion", &view.chat.id, &message.id));
+    let calm = crate::motion::screen_reader_attached(ui.ctx());
+    let previous: Option<Delivery> = ui.ctx().data(|data| data.get_temp(status_id));
+    let advanced = status_advanced(previous, shown);
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(status_id, shown);
+        if advanced && !calm {
+            data.insert_temp(motion_id, (now, previous.unwrap_or(shown)));
+        }
+    });
+    let motion: Option<(f64, Delivery)> = ui.ctx().data(|data| data.get_temp(motion_id));
+    let live = motion.filter(|(start, _)| now - start < TICK_SECONDS && !calm);
+    let Some((start, before)) = live else {
+        widgets::ticks(ui, &view.palette, rect, shown);
+        return;
+    };
+    let t = theme::ease_out(((now - start) / TICK_SECONDS) as f32);
+    let layer = ui.layer_id();
+    let first_shape = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let same_glyph = matches!(
+        before,
+        Delivery::Delivered | Delivery::Read | Delivery::Played
+    ) && matches!(
+        shown,
+        Delivery::Delivered | Delivery::Read | Delivery::Played
+    );
+    if same_glyph {
+        // Only the colour moves, from the old state's to the new one's.
+        let palette = &view.palette;
+        let colour = |status: Delivery| match status {
+            Delivery::Read | Delivery::Played => palette.read,
+            _ => palette.secondary,
+        };
+        let blended = colour(before).lerp_to_gamma(colour(shown), t);
+        widgets::ticks_in(ui, palette, rect, Delivery::Sent, blended);
+    } else {
+        let old_opacity = ui.opacity();
+        ui.multiply_opacity(t);
+        widgets::ticks(ui, &view.palette, rect, shown);
+        ui.set_opacity(old_opacity);
+        let scale = 0.7 + 0.3 * t;
+        let pivot = rect.center();
+        let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2())
+            * egui::emath::TSTransform::from_scaling(scale)
+            * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
+        ui.ctx().graphics_mut(|graphics| {
+            let list = graphics.entry(layer);
+            let end = list.next_idx();
+            for index in first_shape.0..end.0 {
+                list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                    clipped.shape.transform(transform);
+                });
+            }
+        });
+    }
+    ui.ctx().request_repaint();
 }
 
 /// Clamps message-selection drags to the view while the pointer is outside it.
@@ -7468,18 +7612,37 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     let palette = view.palette;
     let counts = super::reaction_list::tally(message);
     let mine = message.reactions.iter().any(|reaction| reaction.from_me);
-    // The pill fades in as it arrives, and again when its emoji change.
-    let arrived = ui.ctx().animate_bool_with_time_and_easing(
-        egui::Id::new(("reaction-chips", &view.chat.id, &message.id, counts.len())),
-        true,
-        if crate::motion::screen_reader_attached(ui.ctx()) {
-            0.0
-        } else {
-            theme::MOTION_QUICK
-        },
-        theme::ease_out,
-    );
-    ui.multiply_opacity(arrived);
+    // The pill pops in when a reaction arrives live and pops again when its
+    // emoji or counts change. The first sight of a message only records.
+    let now = ui.input(|input| input.time);
+    let calm = crate::motion::screen_reader_attached(ui.ctx());
+    let tally_id = egui::Id::new(("reaction-tally", &view.chat.id, &message.id));
+    let motion_id = egui::Id::new(("reaction-motion", &view.chat.id, &message.id));
+    let previous: Option<Vec<(String, u32)>> = ui.ctx().data(|data| data.get_temp(tally_id));
+    let change = reaction_change(previous.as_deref(), &counts);
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(tally_id, counts.clone());
+        if change != ReactionChange::None && !calm {
+            data.insert_temp(motion_id, (now, change == ReactionChange::Arrived));
+        }
+    });
+    let motion: Option<(f64, bool)> = ui.ctx().data(|data| data.get_temp(motion_id));
+    let live = motion.filter(|(start, _)| now - start < REACTION_POP_SECONDS && !calm);
+    let old_opacity = ui.opacity();
+    let first_shape = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(ui.layer_id())
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let progress = live.map(|(start, arrived)| {
+        let (stiffness, damping) = spring_from_duration(350.0, 0.3);
+        let spring = spring_unit((now - start) * 1000.0, stiffness, damping) as f32;
+        let fade = theme::ease_out(((now - start) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0));
+        (spring, arrived, fade)
+    });
+    if let Some((_, true, fade)) = progress {
+        ui.multiply_opacity(fade);
+    }
     let shown: Vec<&str> = counts
         .iter()
         .take(4)
@@ -7532,11 +7695,57 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
             format!("{} {who}", reaction.emoji)
         })
         .collect();
+    if let Some((spring, arrived, _)) = progress {
+        let from = if arrived { 0.8 } else { 0.92 };
+        let scale = from + (1.0 - from) * spring;
+        let pivot = if message.from_me {
+            rect.right_bottom()
+        } else {
+            rect.left_bottom()
+        };
+        let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2())
+            * egui::emath::TSTransform::from_scaling(scale)
+            * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
+        let layer = ui.layer_id();
+        ui.ctx().graphics_mut(|graphics| {
+            let list = graphics.entry(layer);
+            let end = list.next_idx();
+            for index in first_shape.0..end.0 {
+                list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                    clipped.shape.transform(transform);
+                });
+            }
+        });
+        ui.ctx().request_repaint();
+    }
+    ui.set_opacity(old_opacity);
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(names.join("\n"));
     if response.clicked() {
         actions.push(super::reaction_list::open(&view.chat.id, &message.id));
+    }
+}
+
+/// How long a reaction pill's pop runs.
+const REACTION_POP_SECONDS: f64 = 0.35;
+
+/// What a message's reaction tally did since it was last drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReactionChange {
+    None,
+    Arrived,
+    Changed,
+}
+
+/// Compares the tally drawn before with the one now. No earlier tally means
+/// the message was only just seen, which is not a change.
+fn reaction_change(previous: Option<&[(String, u32)]>, now: &[(String, u32)]) -> ReactionChange {
+    match previous {
+        None => ReactionChange::None,
+        Some(before) if before == now => ReactionChange::None,
+        Some([]) if !now.is_empty() => ReactionChange::Arrived,
+        Some(_) => ReactionChange::Changed,
     }
 }
 
@@ -12706,9 +12915,30 @@ mod tests {
         };
         assert!((glide.shift(0.0) - 40.0).abs() < 0.01);
         assert_eq!(glide.shift(GLIDE_SECONDS), 0.0);
-        // Strong ease-out is ahead of halfway by the middle of the slide.
-        assert!(glide.shift(GLIDE_SECONDS * 0.5) < 20.0);
+        // Telegram's vertical curve starts softly, then is about three
+        // quarters of the way by the middle of the slide.
+        assert!(glide.shift(GLIDE_SECONDS * 0.1) > 35.0);
+        assert!((glide.shift(GLIDE_SECONDS * 0.5) - 40.0 * (1.0 - 0.742)).abs() < 0.5);
         assert!((ease_out_strong(0.2) - 0.682).abs() < 0.01);
+    }
+
+    #[test]
+    fn cubic_bezier_runs_from_zero_to_one_and_never_turns_back() {
+        let curves = [(0.23, 1.0, 0.32, 1.0), SEND_CURVE_Y, (0.42, 0.0, 0.58, 1.0)];
+        for (x1, y1, x2, y2) in curves {
+            assert!(cubic_bezier(0.0, x1, y1, x2, y2).abs() < 1e-4);
+            assert!((cubic_bezier(1.0, x1, y1, x2, y2) - 1.0).abs() < 1e-4);
+            let mut last = 0.0;
+            for step in 1..=100 {
+                let value = cubic_bezier(step as f32 / 100.0, x1, y1, x2, y2);
+                assert!(value >= last - 1e-4, "{value} after {last}");
+                last = value;
+            }
+        }
+        // Out of range clamps to the ends.
+        assert!(cubic_bezier(-1.0, 0.23, 1.0, 0.32, 1.0).abs() < 1e-4);
+        assert!((cubic_bezier(2.0, 0.23, 1.0, 0.32, 1.0) - 1.0).abs() < 1e-4);
+        assert!((ease_send_vertical(0.5) - 0.742).abs() < 0.01);
     }
 
     /// A row that was on screen while the reader was following the tail keeps
@@ -14081,6 +14311,26 @@ mod tests {
 #[cfg(test)]
 mod reaction_tests {
     use super::*;
+
+    #[test]
+    fn reaction_change_needs_an_earlier_tally() {
+        let one = vec![("👍".to_owned(), 1)];
+        let two = vec![("👍".to_owned(), 2)];
+        assert_eq!(reaction_change(None, &one), ReactionChange::None);
+        assert_eq!(reaction_change(Some(&one), &one), ReactionChange::None);
+        assert_eq!(reaction_change(Some(&one), &two), ReactionChange::Changed);
+        assert_eq!(reaction_change(Some(&[]), &one), ReactionChange::Arrived);
+    }
+
+    #[test]
+    fn status_advance_is_silent_on_first_sight_and_failure() {
+        assert!(!status_advanced(None, Delivery::Sent));
+        assert!(status_advanced(Some(Delivery::Pending), Delivery::Sent));
+        assert!(status_advanced(Some(Delivery::Delivered), Delivery::Read));
+        assert!(!status_advanced(Some(Delivery::Sent), Delivery::Sent));
+        assert!(!status_advanced(Some(Delivery::Pending), Delivery::Failed));
+    }
+
     use crate::model::{Delivery, Reaction};
 
     fn with_reactions(reactions: Vec<Reaction>) -> Message {
