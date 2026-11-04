@@ -245,6 +245,12 @@ fn run() -> eframe::Result<()> {
     let waker = backend::Waker::default();
     #[cfg(feature = "demo")]
     let demo = cli.demo || cli.demo_shot.is_some() || cli.demo_tour;
+    // A saved picture must show every emoji; the live app and the benchmark
+    // draw new ones off the interface thread.
+    #[cfg(feature = "demo")]
+    if cli.demo_shot.is_some() || cli.demo_tour_frames.is_some() {
+        zeus::emoji::draw_in_frame();
+    }
     #[cfg(not(feature = "demo"))]
     let demo = false;
     // Keep one linked instance. Demo runs do not participate.
@@ -896,6 +902,7 @@ impl Shell {
                 let name = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
                 tour.note_gpu(name);
             }
+            tour.note_frame_cost(frame.info().cpu_usage);
             tour.drive(app, ctx);
         }
         app.background_frame(ctx);
