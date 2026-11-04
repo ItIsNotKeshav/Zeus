@@ -6210,6 +6210,28 @@ pub fn bubble_id(chat: &str, message: &str) -> egui::Id {
     egui::Id::new(("bubble", chat, message))
 }
 
+/// Where a video was drawn in its bubble, the rect the viewer flies from and
+/// back to.
+pub fn video_flight_id(chat: &str, message: &str) -> egui::Id {
+    bubble_id(chat, message).with("video-flight")
+}
+
+/// Empties the message's picture while the viewer flies it, so it is not seen
+/// twice: everything painted until [`show_source`] is drawn clear. Returns the
+/// opacity to give back.
+fn hide_source(ui: &mut egui::Ui, message: &Message) -> f32 {
+    let before = ui.opacity();
+    if crate::ui::image_preview::source_hidden(ui.ctx(), &message.chat, &message.id) {
+        ui.set_opacity(0.0);
+    }
+    before
+}
+
+/// Gives back what [`hide_source`] took.
+fn show_source(ui: &mut egui::Ui, opacity: f32) {
+    ui.set_opacity(opacity);
+}
+
 /// Lets go of what a message's row left in `ctx.data` once the row has left the
 /// layout. egui never frees temporary data, and every message that was ever on
 /// screen would keep a dozen entries for the whole session. These are only
@@ -6230,12 +6252,14 @@ fn forget_bubble(ctx: &egui::Context, chat: &str, message: &str) {
             "card",
             "call-box",
             "album-tile",
+            "video-flight",
             "forwarded",
             "carousel-viewport",
         ] {
             data.remove::<Rect>(id.with(part));
         }
         data.remove::<bool>(id.with("swiping"));
+        data.remove::<bool>(id.with("video-flight").with("note"));
     });
 }
 
@@ -9165,6 +9189,7 @@ fn content(
             // A photo with a caption, a quote or a label reaches the
             // bubble's ring, as a quote does.
             let bleed = picture_bleed(ui, &palette, message, caption.is_some());
+            let opacity = hide_source(ui, message);
             let drawn = Frame::new()
                 .outer_margin(bleed)
                 .show(ui, |ui| {
@@ -9179,6 +9204,7 @@ fn content(
                     )
                 })
                 .inner;
+            show_source(ui, opacity);
             if let Some(motion) = motion {
                 motion_clip(ui, view, message, motion, drawn, actions);
             }
@@ -9229,6 +9255,7 @@ fn content(
             } else {
                 picture_bleed(ui, &palette, message, caption.is_some())
             };
+            let opacity = hide_source(ui, message);
             let shown = Frame::new().outer_margin(bleed).show(ui, |ui| {
                 if *note {
                     video_note(ui, view, message, media, *seconds, actions)
@@ -9237,6 +9264,7 @@ fn content(
                     video(ui, view, message, media, *seconds, *gif, width, actions)
                 }
             });
+            show_source(ui, opacity);
             // Its click plays it; the bubble's own click must not count it.
             ui.ctx().data_mut(|data| {
                 data.insert_temp(
@@ -10150,6 +10178,7 @@ fn album_tile(
     });
     theme::reveal_focus(&response);
     if ui.is_rect_visible(rect) {
+        let opacity = hide_source(ui, message);
         ui.painter()
             .rect_filled(rect, corners, view.palette.surface);
         let uri = media
@@ -10200,6 +10229,7 @@ fn album_tile(
             let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
             footer_over_picture(ui, view, message, rect, starred, pinned, actions);
         }
+        show_source(ui, opacity);
     }
     // A motion photo in an album keeps its own badge and clip.
     if let Content::Image {
@@ -11539,6 +11569,8 @@ fn video(
         PICTURE_HEIGHT.min(limit * 1.3),
     );
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(video_flight_id(&message.chat, &message.id), rect));
     let playing = match (&media.path, gif) {
         (Some(path), true) => Some(animation::frame(
             ui,
@@ -11972,6 +12004,16 @@ fn video_note(
     use crate::video::State;
     let palette = view.palette;
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(NOTE_SIDE), Sense::click());
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            video_flight_id(&message.chat, &message.id),
+            rect.shrink(5.0),
+        );
+        data.insert_temp(
+            crate::ui::image_preview::video_note_id(&message.chat, &message.id),
+            true,
+        );
+    });
     let status = media
         .path
         .as_ref()

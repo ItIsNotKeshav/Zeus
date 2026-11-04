@@ -15,7 +15,7 @@ use crate::model::MediaItem;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
-use super::conversation::{album_tile_id, bubble_id, thumbnail_uri};
+use super::conversation::{album_tile_id, bubble_id, thumbnail_uri, video_flight_id};
 
 /// Height of the header across the top.
 const HEADER: f32 = 56.0;
@@ -40,11 +40,77 @@ struct Opened {
     pass: u64,
 }
 
+/// Where a flight starts: the bubble's rect, how far along it is, and the
+/// corner radius the picture has in its bubble.
+type Flight = (Rect, f32, f32);
+
+/// What the picture flying back to its bubble is made of.
+#[derive(Clone)]
+enum GhostPicture {
+    /// A photo, read from its file.
+    File(std::path::PathBuf),
+    /// The frame a video had decoded.
+    Frame(egui::TextureHandle),
+    /// A video's poster, by its image URI.
+    Poster(String),
+}
+
+/// The message whose picture is in the air, until `ends`, so its bubble keeps
+/// that picture empty instead of showing it twice.
+#[derive(Clone)]
+struct Flying {
+    chat: String,
+    message: String,
+    ends: f64,
+}
+
+fn flying_id() -> egui::Id {
+    egui::Id::new("image-preview-flying")
+}
+
+/// Whether the message's picture is flying between its bubble and the viewer
+/// right now.
+pub fn source_hidden(ctx: &egui::Context, chat: &str, message: &str) -> bool {
+    let now = ctx.input(|input| input.time);
+    ctx.data(|data| data.get_temp::<Flying>(flying_id()))
+        .is_some_and(|flying| flying.chat == chat && flying.message == message && now < flying.ends)
+}
+
+/// Says the message's picture is in the air for another `seconds`.
+fn mark_flying(ctx: &egui::Context, chat: &str, message: &str, seconds: f32) {
+    let ends = ctx.input(|input| input.time) + f64::from(seconds);
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            flying_id(),
+            Flying {
+                chat: chat.to_owned(),
+                message: message.to_owned(),
+                ends,
+            },
+        );
+    });
+}
+
+/// The corner radius a message's picture has in its bubble: a round video
+/// note is a circle, everything else the bubble's own corner.
+fn source_radius(ctx: &egui::Context, chat: &str, message: &str, from: Rect) -> f32 {
+    if ctx.data(|data| data.get_temp::<bool>(video_note_id(chat, message))) == Some(true) {
+        from.width() / 2.0
+    } else {
+        FLIGHT_RADIUS
+    }
+}
+
+/// Marks a message's video as a round note, which flies as a circle.
+pub fn video_note_id(chat: &str, message: &str) -> egui::Id {
+    video_flight_id(chat, message).with("note")
+}
+
 /// The picture the viewer last settled on, kept so the viewer can fly it back
 /// to its bubble after the app has dropped the preview.
 #[derive(Clone)]
 struct Ghost {
-    path: std::path::PathBuf,
+    picture: GhostPicture,
     chat: String,
     message: String,
     /// Where the picture sat in the viewer.
@@ -65,7 +131,8 @@ fn ghost_id() -> egui::Id {
 /// screen.
 fn source_rect(ctx: &egui::Context, chat: &str, message: &str) -> Option<Rect> {
     let rect = ctx.data(|data| {
-        data.get_temp::<Rect>(album_tile_id(chat, message))
+        data.get_temp::<Rect>(video_flight_id(chat, message))
+            .or_else(|| data.get_temp::<Rect>(album_tile_id(chat, message)))
             .or_else(|| data.get_temp::<Rect>(bubble_id(chat, message).with("picture")))
     })?;
     (rect.is_positive() && ctx.content_rect().intersects(rect)).then_some(rect)
@@ -185,7 +252,16 @@ fn fly_back(ctx: &egui::Context, palette: &crate::theme::Palette) {
     let t = theme::ease_out(linear);
     let screen = ctx.content_rect();
     let (rect, radius, opacity) = match source_rect(ctx, &ghost.chat, &ghost.message) {
-        Some(target) => (lerp_rect(ghost.rect, target, t), FLIGHT_RADIUS * t, 1.0),
+        Some(target) => {
+            mark_flying(
+                ctx,
+                &ghost.chat,
+                &ghost.message,
+                seconds - (now - closed) as f32,
+            );
+            let end = source_radius(ctx, &ghost.chat, &ghost.message, target);
+            (lerp_rect(ghost.rect, target, t), end * t, 1.0)
+        }
         None => {
             let scale = 1.0 - (1.0 - theme::CLOSE_SCALE) * t;
             (
@@ -205,7 +281,14 @@ fn fly_back(ctx: &egui::Context, palette: &crate::theme::Palette) {
                 .rect_filled(screen, 0.0, palette.shadow.gamma_multiply(back));
             ui.painter()
                 .rect_filled(screen, 0.0, palette.overlay.gamma_multiply(back));
-            crate::ui::widgets::full_size_file_image(ui, &ghost.path)
+            let image = match &ghost.picture {
+                GhostPicture::File(path) => crate::ui::widgets::full_size_file_image(ui, path),
+                GhostPicture::Frame(frame) => {
+                    egui::Image::from_texture(egui::load::SizedTexture::from_handle(frame))
+                }
+                GhostPicture::Poster(uri) => egui::Image::new(uri.clone()),
+            };
+            image
                 .fit_to_exact_size(rect.size())
                 .corner_radius(radius)
                 .tint(egui::Color32::WHITE.gamma_multiply(opacity))
@@ -262,10 +345,19 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let linear = (elapsed / FLIGHT_SECONDS).clamp(0.0, 1.0);
     let fade = theme::ease_out((elapsed / theme::MOTION_PANEL).clamp(0.0, 1.0));
     let chrome = ((linear - 0.6) / 0.4).clamp(0.0, 1.0);
-    let flight = (linear < 1.0 && !clip)
+    let flight = (linear < 1.0)
         .then(|| source_rect(ctx, &chat, &message))
         .flatten()
-        .map(|from| (from, flight_progress(elapsed)));
+        .map(|from| {
+            (
+                from,
+                flight_progress(elapsed),
+                source_radius(ctx, &chat, &message, from),
+            )
+        });
+    if flight.is_some() {
+        mark_flying(ctx, &chat, &message, FLIGHT_SECONDS * (1.0 - linear));
+    }
     if linear < 1.0 {
         ctx.request_repaint();
     }
@@ -326,6 +418,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     stage,
                     &chat,
                     &message,
+                    flight,
                     &mut actions,
                 )
             } else {
@@ -343,10 +436,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     &mut actions,
                 )
             };
-            if clip {
-                // Only a still picture flies back; a clip leaves at once.
-                ctx.data_mut(|data| data.remove::<Ghost>(ghost_id()));
-            }
             if strip {
                 navigation_overlay(
                     ui,
@@ -747,7 +836,7 @@ fn still(
     chat: &str,
     message: &str,
     stage: Rect,
-    flight: Option<(Rect, f32)>,
+    flight: Option<Flight>,
     actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let palette = app.palette;
@@ -774,12 +863,12 @@ fn still(
             }
             // Flying out of the bubble: the picture is painted by itself on
             // its way, and the scroll area takes over once it has landed.
-            if let Some((from, progress)) = flight {
+            if let Some((from, progress, radius)) = flight {
                 let to = Rect::from_center_size(stage.center(), size);
                 let rect = lerp_rect(from, to, progress);
                 image
                     .fit_to_exact_size(rect.size())
-                    .corner_radius(FLIGHT_RADIUS * (1.0 - progress).max(0.0))
+                    .corner_radius(radius * (1.0 - progress).max(0.0))
                     .paint_at(ui, rect);
                 return Some(to);
             }
@@ -878,7 +967,7 @@ fn still(
                     data.insert_temp(
                         ghost_id(),
                         Ghost {
-                            path: path.to_owned(),
+                            picture: GhostPicture::File(path.to_owned()),
                             chat: chat.to_owned(),
                             message: message.to_owned(),
                             rect,
@@ -1050,6 +1139,7 @@ fn video(
     stage: Rect,
     chat: &str,
     message: &str,
+    flight: Option<Flight>,
     actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let palette = app.palette;
@@ -1070,6 +1160,62 @@ fn video(
     // The player pauses a clip it has not been told about for 1.5 s, so the
     // viewer has to say it is still on screen, as the chat renderer does.
     app.video.saw(message);
+    // What flies back to the bubble when the viewer closes: the frame on
+    // screen, else the poster.
+    let ghost = match (
+        status.as_ref().and_then(|status| status.frame.clone()),
+        thumbnail,
+    ) {
+        (Some(frame), _) => Some(GhostPicture::Frame(frame)),
+        (None, Some(bytes)) => Some(GhostPicture::Poster(thumbnail_uri(
+            ui.ctx(),
+            chat,
+            message,
+            bytes,
+        ))),
+        (None, None) => None,
+    };
+    ui.ctx().data_mut(|data| match &ghost {
+        Some(picture) => {
+            data.insert_temp(
+                ghost_id(),
+                Ghost {
+                    picture: picture.clone(),
+                    chat: chat.to_owned(),
+                    message: message.to_owned(),
+                    rect: media,
+                    closed: None,
+                },
+            );
+        }
+        None => {
+            data.remove::<Ghost>(ghost_id());
+        }
+    });
+    // Flying out of the bubble: the frame is painted by itself on its way,
+    // and the player's controls arrive once it has landed.
+    if let Some((from, progress, radius)) = flight {
+        let rect = lerp_rect(from, media, progress);
+        let radius = radius * (1.0 - progress).max(0.0);
+        match ghost {
+            Some(GhostPicture::Frame(frame)) => {
+                egui::Image::from_texture(egui::load::SizedTexture::from_handle(&frame))
+                    .fit_to_exact_size(rect.size())
+                    .corner_radius(radius)
+                    .paint_at(ui, rect);
+            }
+            Some(GhostPicture::Poster(uri)) => {
+                egui::Image::new(uri)
+                    .fit_to_exact_size(rect.size())
+                    .corner_radius(radius)
+                    .paint_at(ui, rect);
+            }
+            _ => {
+                ui.painter().rect_filled(rect, radius, palette.shadow);
+            }
+        }
+        return Some(media);
+    }
     match status.as_ref().and_then(|status| status.frame.clone()) {
         Some(frame) => {
             ui.painter().image(
@@ -1676,6 +1822,56 @@ mod tests {
         assert_eq!(flight_progress(FLIGHT_SECONDS), 1.0);
         let middle = flight_progress(FLIGHT_SECONDS / 2.0);
         assert!(middle > 0.5 && middle < 1.2, "{middle}");
+    }
+
+    #[test]
+    fn a_flying_picture_hides_its_bubbles_picture_until_it_lands() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let ctx = ui.ctx();
+            assert!(!source_hidden(ctx, "chat", "one"));
+            mark_flying(ctx, "chat", "one", 0.4);
+            assert!(source_hidden(ctx, "chat", "one"));
+            assert!(!source_hidden(ctx, "chat", "two"));
+            assert!(!source_hidden(ctx, "other", "one"));
+        });
+        output.textures_delta.clear();
+        // Once its time is up the bubble shows the picture again.
+        let input = egui::RawInput {
+            time: Some(1.0),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let ctx = ui.ctx();
+            assert!(!source_hidden(ctx, "chat", "one"));
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn a_video_note_flies_as_a_circle_and_a_clip_with_the_bubbles_corner() {
+        let ctx = egui::Context::default();
+        let from = Rect::from_min_size(pos2(10.0, 10.0), vec2(180.0, 180.0));
+        assert_eq!(source_radius(&ctx, "chat", "clip", from), FLIGHT_RADIUS);
+        ctx.data_mut(|data| data.insert_temp(video_note_id("chat", "note"), true));
+        assert_eq!(source_radius(&ctx, "chat", "note", from), 90.0);
+    }
+
+    #[test]
+    fn a_video_flies_from_where_its_bubble_drew_it() {
+        let ctx = egui::Context::default();
+        let rect = Rect::from_min_size(pos2(20.0, 30.0), vec2(200.0, 120.0));
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let ctx = ui.ctx();
+            ctx.data_mut(|data| data.insert_temp(video_flight_id("chat", "clip"), rect));
+            assert_eq!(source_rect(ctx, "chat", "clip"), Some(rect));
+            assert_eq!(source_rect(ctx, "chat", "other"), None);
+        });
+        output.textures_delta.clear();
     }
 
     #[test]
