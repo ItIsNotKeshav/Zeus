@@ -24,6 +24,11 @@ struct Cli {
     /// and ZapFast keeps running in the background. For login autostart.
     #[arg(long)]
     start_hidden: bool,
+    /// Keep this copy's accounts, settings and caches in this folder rather
+    /// than the usual ones, so it runs beside the installed copy as a linked
+    /// device of its own: for trying a test build on a real account.
+    #[arg(long, value_name = "DIR")]
+    profile: Option<std::path::PathBuf>,
 
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
@@ -209,7 +214,16 @@ fn run() -> eframe::Result<()> {
     // `--update-receipt` and `--update-error` off the command line.
     let launch = fastframe_update::intercept(&zeus::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
-    let discovered = paths::AppDirs::discover();
+    let profile = cli
+        .profile
+        .as_deref()
+        .map(std::path::absolute)
+        .transpose()
+        .map_err(|error| eframe::Error::AppCreation(error.into()))?;
+    let discovered = match &profile {
+        Some(root) => paths::AppDirs::under(root),
+        None => paths::AppDirs::discover(),
+    };
     // A control command only talks to the running copy: whatever the answer,
     // it never starts ZapFast and never stops a process itself.
     if let Some(command) = &cli.command {
@@ -314,7 +328,8 @@ fn run() -> eframe::Result<()> {
     };
     // A demo's folders are throwaway; remove them when the run returns.
     let _demo_root = demo_root.map(RemoveOnDrop);
-    if !demo {
+    // A profile starts on its own, without the previous app's settings.
+    if !demo && profile.is_none() {
         dirs.adopt_previous_names()
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     }
@@ -356,6 +371,17 @@ fn run() -> eframe::Result<()> {
         log::warn!("could not set the Dock icon: {error}");
     }
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
+    // A copy on a profile of its own names it, apart from the installed one.
+    let title = match (&demo_persistence, &profile) {
+        (Some(_), _) => "Zeus Demo".to_owned(),
+        (None, Some(root)) => format!(
+            "Zeus ({})",
+            root.file_name()
+                .unwrap_or(root.as_os_str())
+                .to_string_lossy()
+        ),
+        (None, None) => "Zeus".to_owned(),
+    };
 
     #[allow(unused_mut)]
     let mut app = if demo {
@@ -476,7 +502,7 @@ fn run() -> eframe::Result<()> {
             });
             eframe::run_native(
                 "Zeus",
-                native_options(demo_persistence.clone(), geometry, transparent),
+                native_options(demo_persistence.clone(), &title, geometry, transparent),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
@@ -653,13 +679,14 @@ fn tour_script(name: &str) -> zeus::demo::tour::Script {
 
 fn native_options(
     demo_persistence: Option<std::path::PathBuf>,
+    title: &str,
     geometry: fastframe_shell::window::Geometry,
     transparent: bool,
 ) -> eframe::NativeOptions {
     let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
     let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
-        .with_title(if demo { "Zeus Demo" } else { "Zeus" })
+        .with_title(title)
         .with_app_id(if demo {
             "zapfast-demo".to_owned()
         } else {
@@ -1104,6 +1131,12 @@ mod target_cli_tests {
         let cli = Cli::try_parse_from(["zapfast", "--start-hidden"]).unwrap();
         assert!(cli.start_hidden);
         assert!(cli.target.is_none());
+        let cli = Cli::try_parse_from(["zapfast", "--profile", "ZeusTest", "quit"]).unwrap();
+        assert_eq!(
+            cli.profile.as_deref(),
+            Some(std::path::Path::new("ZeusTest"))
+        );
+        assert!(matches!(cli.command, Some(Control::Quit)));
     }
 
     /// A link asked to be seen: `--start-hidden` with a chat to open must not

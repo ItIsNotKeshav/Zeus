@@ -46,6 +46,11 @@ On macOS, settings, state, and the logs are in
 `%LOCALAPPDATA%\paolino\zapfast\data`, and the caches in
 `%LOCALAPPDATA%\paolino\zapfast\cache`.
 
+`--profile <folder>` keeps everything in that folder instead (`config`,
+`state`, `cache` and `run` under it), with its own keyring key and its own
+running copy, so a second build can run beside the installed one. It links as
+a separate device: scan its code from the phone as for a new computer.
+
 On first start, ZapFast moves the corresponding `fastsapp` directories (or
 `fastwhatsapp` from earlier versions), including the session, archive, saved
 stickers, and window state. Existing ZapFast directories are never overwritten.
