@@ -1402,12 +1402,8 @@ pub fn circle_button(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
     if ui.is_rect_visible(rect) {
-        let hovered = response.hovered();
-        let grow = if hovered { 1.05 } else { 1.0 };
-        let radius = diameter / 2.0 * grow;
-        let fill = if hovered { fill_hover } else { fill };
-        ui.painter().circle_filled(rect.center(), radius, fill);
-        let icon_size = diameter * 0.46;
+        let scale = circle_body(ui, &response, rect, diameter, fill, fill_hover);
+        let icon_size = diameter * 0.46 * scale;
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
         icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
     }
@@ -1417,6 +1413,148 @@ pub fn circle_button(
     } else {
         response.on_hover_text(tooltip)
     }
+}
+
+/// What a morphing circle button last showed, kept between frames.
+#[derive(Clone, Copy)]
+struct Morph {
+    from_icon: Icon,
+    from_fill: Color32,
+    icon: Icon,
+    fill: Color32,
+    start: f64,
+}
+
+/// A [`circle_button`] whose icon and fill change with a morph: the old icon
+/// shrinks and fades out while the new one grows and fades in, and the fill
+/// blends from the old colour, over [`MOTION_QUICK`]. The first frame it is
+/// seen has no morph. `id_salt` names the button between frames.
+#[allow(clippy::too_many_arguments)]
+pub fn circle_button_morph(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    icon: Icon,
+    diameter: f32,
+    fill: Color32,
+    fill_hover: Color32,
+    icon_color: Color32,
+    tooltip: &str,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
+    reveal_focus(&response);
+    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, fill);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    if ui.is_rect_visible(rect) {
+        let ctx = ui.ctx().clone();
+        let key = egui::Id::new(("circle-morph", id_salt));
+        let now = ctx.input(|input| input.time);
+        let mut morph = ctx
+            .data_mut(|data| data.get_temp::<Morph>(key))
+            .unwrap_or(Morph {
+                from_icon: icon,
+                from_fill: fill,
+                icon,
+                fill,
+                start: f64::NEG_INFINITY,
+            });
+        if morph.icon != icon {
+            // Start from the fill that was showing, so a change mid-morph does not jump.
+            morph = Morph {
+                from_icon: morph.icon,
+                from_fill: morph.fill,
+                icon,
+                fill,
+                start: now,
+            };
+        }
+        morph.fill = fill;
+        ctx.data_mut(|data| data.insert_temp(key, morph));
+        let seconds = if crate::motion::screen_reader_attached(&ctx) {
+            0.0
+        } else {
+            MOTION_QUICK
+        };
+        let raw = if seconds <= 0.0 {
+            1.0
+        } else {
+            ((now - morph.start) as f32 / seconds).clamp(0.0, 1.0)
+        };
+        if raw < 1.0 {
+            ctx.request_repaint();
+        }
+        let t = ease_out(raw);
+        let blended = morph.from_fill.lerp_to_gamma(fill, t);
+        let hover_blended = morph.from_fill.lerp_to_gamma(fill_hover, t);
+        let scale = circle_body(ui, &response, rect, diameter, blended, hover_blended);
+        let base = diameter * 0.46 * scale;
+        let paint = |icon: Icon, incoming: bool| {
+            let (grow, alpha) = morph_phase(t, incoming);
+            let size = base * grow;
+            let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(size));
+            icon.image(icon_color.gamma_multiply(alpha), size)
+                .paint_at(ui, icon_rect);
+        };
+        if raw < 1.0 {
+            paint(morph.from_icon, false);
+        }
+        paint(icon, true);
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
+}
+
+/// Seconds a pressed circle button takes to shrink and to spring back.
+const PRESS_SECONDS: f32 = 0.1;
+/// How far a pressed circle button shrinks.
+const PRESS_SCALE: f32 = 0.94;
+/// How far a hovered circle button grows.
+const HOVER_GROW: f32 = 1.05;
+/// The size an icon has at the far end of its morph, in or out.
+const MORPH_SCALE: f32 = 0.6;
+
+/// The scale and opacity of an icon `t` (0 to 1, already eased) of the way
+/// through a morph: the new one grows in from `MORPH_SCALE` while it fades
+/// in, the old one shrinks to it while it fades out.
+fn morph_phase(t: f32, incoming: bool) -> (f32, f32) {
+    let t = t.clamp(0.0, 1.0);
+    let k = if incoming { t } else { 1.0 - t };
+    (MORPH_SCALE + (1.0 - MORPH_SCALE) * k, k)
+}
+
+/// Paints a circle button's disc, easing hover and press instead of
+/// snapping, and returns the scale of the whole button.
+fn circle_body(
+    ui: &egui::Ui,
+    response: &Response,
+    rect: egui::Rect,
+    diameter: f32,
+    fill: Color32,
+    fill_hover: Color32,
+) -> f32 {
+    let ctx = ui.ctx();
+    let hover = animate(
+        ctx,
+        response.id.with("hover"),
+        response.hovered(),
+        MOTION_QUICK,
+    );
+    let press = animate(
+        ctx,
+        response.id.with("press"),
+        response.is_pointer_button_down_on(),
+        PRESS_SECONDS,
+    );
+    let scale = (1.0 + (HOVER_GROW - 1.0) * hover) * (1.0 + (PRESS_SCALE - 1.0) * press);
+    let fill = fill.lerp_to_gamma(fill_hover, hover);
+    ui.painter()
+        .circle_filled(rect.center(), diameter / 2.0 * scale, fill);
+    scale
 }
 
 /// Draws the app's mark as it ships: the lit disc and the ink bubble of
@@ -1898,6 +2036,16 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn morph_phase_runs_from_small_and_clear_to_full() {
+        assert_eq!(super::morph_phase(0.0, true), (0.6, 0.0));
+        assert_eq!(super::morph_phase(1.0, true), (1.0, 1.0));
+        assert_eq!(super::morph_phase(0.0, false), (1.0, 1.0));
+        assert_eq!(super::morph_phase(1.0, false), (0.6, 0.0));
+        let (scale, alpha) = super::morph_phase(0.5, true);
+        assert!((scale - 0.8).abs() < 1e-6 && (alpha - 0.5).abs() < 1e-6);
+    }
+
     use super::*;
 
     /// Rebuilding the atlas installs the very fonts again, so epaint starts a
