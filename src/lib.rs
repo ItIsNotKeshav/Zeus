@@ -29,6 +29,7 @@ pub mod drag_out;
 pub mod emoji;
 pub mod geo;
 pub mod group_admin;
+pub mod haptics;
 pub mod i18n;
 pub mod image_cache;
 pub mod image_preview;
