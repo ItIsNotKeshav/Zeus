@@ -3113,6 +3113,19 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .filter(|jump| jump.chat == chat.id);
     let jump_since = std::cell::Cell::new(jump.as_ref().and_then(|jump| jump.since));
     let time = ui.input(|input| input.time);
+    // A jump to a message glides there instead of cutting, and its flash
+    // starts once the glide settles. Reduced motion and a scroll that keeps
+    // the reader's place (older history loading in) stay instant.
+    let jump_glides = jump.as_ref().is_some_and(|jump| {
+        jump.since.is_none()
+            && app.scroll_anchor.as_deref() == Some(jump.message.as_str())
+            && view.animate
+            && !crate::motion::screen_reader_attached(ui.ctx())
+    });
+    let jump_moving = std::cell::Cell::new(false);
+    let jump_scroll_id = ui
+        .make_persistent_id(egui::IdSalt::new(("messages", &chat.id)))
+        .with("jump-scroll");
     // Do not animate programmatic scrolling. Pending animations can delay a
     // later request to reach the end. Keyboard page, Home, and End scrolls
     // ease by applying small instant steps each frame instead (`KeyScroll`).
@@ -3616,7 +3629,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                             )
                         };
                         if let Some((slot, top)) = flash {
-                            if row_is_anchor && response.is_some() {
+                            if row_is_anchor && response.is_some() && !jump_glides {
                                 jump_since.set(Some(time));
                             }
                             let strength = jump_since
@@ -3809,8 +3822,84 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         if let Some(response) = response
                             && row_is_anchor
                         {
-                            response.scroll_to_me(Some(Align::Center));
-                            anchored = true;
+                            if jump_glides {
+                                let state = ui
+                                    .ctx()
+                                    .data(|data| data.get_temp::<(f64, f32)>(jump_scroll_id));
+                                // Rows are laid out in full while the anchor
+                                // is set, so the distance is exact.
+                                let distance = response.rect.center().y - viewport.center().y;
+                                let interrupted = ui.input(|input| {
+                                    input.smooth_scroll_delta != Vec2::ZERO
+                                        || input.events.iter().any(|event| {
+                                            matches!(event, egui::Event::MouseWheel { .. })
+                                        })
+                                        || (input.pointer.is_decidedly_dragging()
+                                            && input
+                                                .pointer
+                                                .press_origin()
+                                                .is_some_and(|origin| viewport.contains(origin)))
+                                        || input.events.iter().any(|event| {
+                                            matches!(event, egui::Event::Key { pressed: true, .. })
+                                        })
+                                });
+                                match state {
+                                    None => {
+                                        let (instant, _) = jump_plan(distance, viewport.height());
+                                        if instant != 0.0 {
+                                            ui.scroll_with_delta_animation(
+                                                vec2(0.0, -instant),
+                                                egui::style::ScrollAnimation::none(),
+                                            );
+                                        }
+                                        ui.ctx().data_mut(|data| {
+                                            data.insert_temp(jump_scroll_id, (time, 0.0_f32))
+                                        });
+                                        jump_moving.set(true);
+                                        ui.ctx().request_repaint();
+                                    }
+                                    Some(_) if interrupted => {
+                                        ui.ctx().data_mut(|data| {
+                                            data.remove_temp::<(f64, f32)>(jump_scroll_id)
+                                        });
+                                        jump_since.set(Some(time));
+                                        anchored = true;
+                                    }
+                                    Some((start, done)) => {
+                                        let raw = ((time - start) as f32 / JUMP_SCROLL_SECONDS)
+                                            .clamp(0.0, 1.0);
+                                        let eased = ease_out_strong(raw);
+                                        let share = if eased >= 1.0 {
+                                            1.0
+                                        } else {
+                                            ((eased - done) / (1.0 - done)).clamp(0.0, 1.0)
+                                        };
+                                        ui.scroll_with_delta_animation(
+                                            vec2(0.0, -distance * share),
+                                            egui::style::ScrollAnimation::none(),
+                                        );
+                                        if raw >= 1.0 {
+                                            ui.ctx().data_mut(|data| {
+                                                data.remove_temp::<(f64, f32)>(jump_scroll_id)
+                                            });
+                                            jump_since.set(Some(time));
+                                            anchored = true;
+                                        } else {
+                                            ui.ctx().data_mut(|data| {
+                                                data.insert_temp(
+                                                    jump_scroll_id,
+                                                    (start, eased.max(done)),
+                                                )
+                                            });
+                                            jump_moving.set(true);
+                                            ui.ctx().request_repaint();
+                                        }
+                                    }
+                                }
+                            } else {
+                                response.scroll_to_me(Some(Align::Center));
+                                anchored = true;
+                            }
                         }
                         let measured = ui.cursor().top() - before;
                         if visible_day.is_none()
@@ -4073,6 +4162,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         {
             app.jump_highlight = None;
         }
+    }
+    if jump_moving.get()
+        && let Some(divider) = app
+            .unread_divider
+            .as_mut()
+            .filter(|divider| divider.chat == chat.id)
+    {
+        divider.placed = true;
     }
     if anchored {
         app.scroll_anchor = None;
@@ -4685,6 +4782,22 @@ const SEND_CURVE_Y: (f32, f32, f32, f32) = (0.19919, 0.01064, 0.27921, 0.91025);
 fn ease_send_vertical(t: f32) -> f32 {
     let (x1, y1, x2, y2) = SEND_CURVE_Y;
     cubic_bezier(t, x1, y1, x2, y2)
+}
+
+/// How long the glide to a jumped-to message takes, in seconds.
+const JUMP_SCROLL_SECONDS: f32 = 0.35;
+
+/// Plans a jump of `distance` points (positive scrolls down) in a view
+/// `viewport` points tall: a target more than two views away is first reached
+/// instantly up to one view short of it, and the rest glides. Returns the
+/// instant part and the gliding part.
+fn jump_plan(distance: f32, viewport: f32) -> (f32, f32) {
+    if distance.abs() > viewport * 2.0 {
+        let instant = distance - distance.signum() * viewport;
+        (instant, distance - instant)
+    } else {
+        (0.0, distance)
+    }
 }
 
 /// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`: the transcript's, and
@@ -8184,6 +8297,90 @@ fn selection_delete_items(
     }
 }
 
+/// Delay between one quick reaction starting to spring in and the next.
+const QUICK_STAGGER: f32 = 0.025;
+/// Length of a quick reaction's spring, in seconds.
+const QUICK_SPRING_SECONDS: f32 = 0.35;
+/// Bounce of a quick reaction's spring.
+const QUICK_SPRING_BOUNCE: f64 = 0.3;
+/// Size of the quick reaction under the pointer.
+const QUICK_HOVER_SCALE: f32 = 1.3;
+/// Size of the quick reaction while it is pressed.
+const QUICK_PRESS_SCALE: f32 = 0.9;
+
+/// Seconds since the quick reactions were first drawn for this menu. A gap
+/// of a few frames between draws means the menu was closed, so it starts over.
+fn quick_reactions_opened(ui: &egui::Ui, calm: bool) -> f32 {
+    if calm {
+        return 0.0;
+    }
+    let now = ui.input(|input| input.time);
+    let id = ui.id().with("quick-reactions-open");
+    let (start, _) = ui
+        .ctx()
+        .data(|data| data.get_temp::<(f64, f64)>(id))
+        .filter(|(_, seen)| now - seen < 0.25)
+        .unwrap_or((now, now));
+    ui.ctx().data_mut(|data| data.insert_temp(id, (start, now)));
+    let elapsed = (now - start) as f32;
+    if elapsed < QUICK_SPRING_SECONDS + QUICK_STAGGER * 8.0 {
+        ui.ctx().request_repaint();
+    }
+    elapsed
+}
+
+/// How far along the spring the `index`th quick reaction is, 0 to 1 with
+/// a little overshoot, `elapsed` seconds after the menu opened.
+fn quick_reaction_progress(elapsed: f32, index: usize) -> f32 {
+    let local = elapsed - QUICK_STAGGER * index as f32;
+    if local <= 0.0 {
+        return 0.0;
+    }
+    if local >= QUICK_SPRING_SECONDS * 1.5 {
+        return 1.0;
+    }
+    let (stiffness, damping) = spring_from_duration(
+        f64::from(QUICK_SPRING_SECONDS) * 1000.0,
+        QUICK_SPRING_BOUNCE,
+    );
+    spring_unit(f64::from(local) * 1000.0, stiffness, damping) as f32
+}
+
+/// The spring-driven size of a quick reaction chasing `target`, kept per
+/// emoji so a new target starts from where it is now.
+fn quick_reaction_lift(ctx: &egui::Context, id: egui::Id, target: f32, calm: bool) -> f32 {
+    if calm {
+        return target;
+    }
+    let id = id.with("lift");
+    let (mut value, mut velocity) = ctx
+        .data(|data| data.get_temp::<(f32, f32)>(id))
+        .unwrap_or((1.0, 0.0));
+    let dt = ctx.input(|input| input.stable_dt).min(0.05);
+    let (stiffness, damping) = spring_from_duration(
+        f64::from(QUICK_SPRING_SECONDS) * 1000.0,
+        QUICK_SPRING_BOUNCE,
+    );
+    // The constants already read in seconds, as `spring_unit` scales its ms.
+    let (stiffness, damping) = (stiffness as f32, damping as f32);
+    let steps = 4;
+    let h = dt / steps as f32;
+    for _ in 0..steps {
+        let pull = stiffness * (target - value) - damping * velocity;
+        velocity += pull * h;
+        value += velocity * h;
+    }
+    let settled = (value - target).abs() < 0.001 && velocity.abs() < 0.01;
+    if settled {
+        value = target;
+        velocity = 0.0;
+    } else {
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|data| data.insert_temp(id, (value, velocity)));
+    value
+}
+
 /// Offers actions supported by the selected message, including private replies for eligible group senders.
 fn context_menu(
     ui: &mut egui::Ui,
@@ -8205,10 +8402,31 @@ fn context_menu(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            for emoji in quick_reactions(message, view.reaction_emoji) {
+            let calm = crate::motion::screen_reader_attached(ui.ctx());
+            let opened = quick_reactions_opened(ui, calm);
+            for (index, emoji) in quick_reactions(message, view.reaction_emoji)
+                .into_iter()
+                .enumerate()
+            {
                 let chosen = mine == Some(emoji);
                 let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+                let first_shape = super::swipe::mark(ui);
+                let old_opacity = ui.opacity();
+                let entry = if calm {
+                    1.0
+                } else {
+                    quick_reaction_progress(opened, index)
+                };
+                let target = if response.is_pointer_button_down_on() {
+                    QUICK_PRESS_SCALE
+                } else if response.hovered() {
+                    QUICK_HOVER_SCALE
+                } else {
+                    1.0
+                };
+                let lift = quick_reaction_lift(ui.ctx(), response.id, target, calm);
+                ui.set_opacity(old_opacity * entry.clamp(0.0, 1.0));
                 theme::focus_outline(ui, response.id, rect, 17.0);
                 if chosen {
                     ui.painter()
@@ -8223,6 +8441,21 @@ fn context_menu(
                         .circle_filled(rect.center(), 17.0, palette.surface_hover);
                 }
                 line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+                ui.set_opacity(old_opacity);
+                let scale = (0.4 + 0.6 * entry) * lift;
+                if (scale - 1.0).abs() > f32::EPSILON {
+                    let centre = rect.center().to_vec2();
+                    let transform = egui::emath::TSTransform::new(centre * (1.0 - scale), scale);
+                    let layer = ui.layer_id();
+                    ui.ctx().graphics_mut(|graphics| {
+                        let list = graphics.entry(layer);
+                        for shape in first_shape.0..list.next_idx().0 {
+                            list.mutate_shape(egui::layers::ShapeIdx(shape), |clipped| {
+                                clipped.shape.transform(transform);
+                            });
+                        }
+                    });
+                }
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
                 let response = if chosen {
                     response.on_hover_text(
@@ -8232,6 +8465,7 @@ fn context_menu(
                     response
                 };
                 if response.clicked() {
+                    crate::haptics::tap(crate::haptics::Feel::Alignment);
                     // Selecting our current reaction removes it.
                     actions.push(Action::React {
                         chat: chat.clone(),
@@ -12341,12 +12575,24 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
         .round()
         .max(COMPOSER_CONTROL);
     let button = row_height;
+    let ctx = ui.ctx().clone();
+    let (entry, loudness, slide) = recording_motion(&ctx, &levels);
     // As in WhatsApp: discard at the start, the light and the time, the
-    // waveform across the rest, and send at the end.
-    ui.allocate_ui_with_layout(
+    // waveform across the rest, and send at the end. The row slides in from
+    // the right as it appears; only its drawing moves, never its layout.
+    let (row_rect, _) = ui.allocate_exact_size(
         vec2(ui.available_width().max(0.0), row_height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
+        Sense::hover(),
+    );
+    let mut row = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(row_rect.translate(vec2(RECORDING_SLIDE * (1.0 - entry), 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    row.set_opacity(entry);
+    let ui = &mut row;
+    {
+        {
             ui.spacing_mut().item_spacing.x = 10.0;
             if theme::circle_button(
                 ui,
@@ -12359,18 +12605,19 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             )
             .clicked()
             {
+                crate::haptics::tap(crate::haptics::Feel::Alignment);
                 app.actions.push(Action::CancelRecording);
             }
-            // The light pulses red once sound arrives; while the microphone
-            // wakes it stays dim, and the time at zero.
+            // The light breathes while recording; while the microphone wakes
+            // it stays dim, and the time at zero.
             let (dot, _) = ui.allocate_exact_size(Vec2::splat(12.0), Sense::hover());
             let light = if listening {
-                let pulse = 0.55 + 0.45 * (elapsed.as_secs_f32() * 3.0).sin().abs();
-                palette.danger.gamma_multiply(pulse)
+                let (scale, opacity) = recording_breath(ctx.input(|input| input.time) as f32);
+                (palette.danger.gamma_multiply(opacity), 5.0 * scale)
             } else {
-                palette.secondary.gamma_multiply(0.5)
+                (palette.secondary.gamma_multiply(0.5), 5.0)
             };
-            ui.painter().circle_filled(dot.center(), 5.0, light);
+            ui.painter().circle_filled(dot.center(), light.1, light.0);
             theme::text(
                 ui,
                 crate::util::duration(elapsed.as_secs() as u32),
@@ -12386,15 +12633,25 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             let pitch = 3.0;
             let count = (rect.width() / pitch).floor() as usize;
             let shown = &levels[levels.len().saturating_sub(count)..];
+            // The newest bar slides in from the right by the share of its
+            // interval not yet elapsed, so bars glide rather than step.
+            let wave = ui.painter().with_clip_rect(rect.expand2(vec2(0.0, 4.0)));
             for (index, level) in shown.iter().enumerate() {
                 let height = 2.0_f32 + (level * 4.0).min(1.0) * 24.0;
-                let x = rect.right() - (shown.len() - index) as f32 * pitch + 1.0;
-                ui.painter().rect_filled(
+                let x = rect.right() - (shown.len() - index) as f32 * pitch + 1.0 + slide * pitch;
+                wave.rect_filled(
                     Rect::from_center_size(egui::pos2(x, rect.center().y), vec2(2.0, height)),
                     1.0,
                     palette.accent,
                 );
             }
+            // A soft circle behind send swells with the voice.
+            let glow_center = egui::pos2(ui.cursor().min.x + button / 2.0, rect.center().y);
+            ui.painter().circle_filled(
+                glow_center,
+                button / 2.0 * (1.0 + 0.35 * loudness),
+                palette.accent.gamma_multiply(0.25),
+            );
             if theme::circle_button(
                 ui,
                 Icon::Send,
@@ -12406,10 +12663,91 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
             )
             .clicked()
             {
+                crate::haptics::tap(crate::haptics::Feel::Alignment);
                 app.actions.push(Action::SendRecording);
             }
-        },
-    );
+        }
+    }
+    // The light and the level keep moving only while recording.
+    ctx.request_repaint_after(std::time::Duration::from_millis(16));
+}
+
+/// How far the strip starts to the right of its place, in points.
+const RECORDING_SLIDE: f32 = 12.0;
+/// Seconds one pass of the recording light's breath takes.
+const RECORDING_BREATH: f32 = 1.2;
+/// Seconds the level circle takes to follow the voice (the time constant).
+const RECORDING_LEVEL_TAU: f32 = 0.08;
+/// Seconds between two recorded levels.
+const RECORDING_LEVEL_STEP: f32 = 0.05;
+
+/// The recording light's size and opacity at `time` seconds: a sine loop
+/// between 0.85 and 1.0 of its size and 0.6 and 1.0 of its opacity.
+fn recording_breath(time: f32) -> (f32, f32) {
+    let wave = 0.5 + 0.5 * (std::f32::consts::TAU * time / RECORDING_BREATH).sin();
+    (0.85 + 0.15 * wave, 0.6 + 0.4 * wave)
+}
+
+/// Moves `value` toward `target` over `dt` seconds with an exponential ease
+/// of time constant `tau`.
+fn ease_level(value: f32, target: f32, dt: f32, tau: f32) -> f32 {
+    value + (target - value) * (1.0 - (-dt.max(0.0) / tau).exp())
+}
+
+/// The strip's motion state: how far it has slid in (0..1), the smoothed
+/// loudness (0..1) and the share of the newest bar's slide still to go
+/// (1..0). The first frame of a recording starts the entry and taps once.
+fn recording_motion(ctx: &egui::Context, levels: &[f32]) -> (f32, f32, f32) {
+    #[derive(Clone, Copy)]
+    struct State {
+        started: f64,
+        seen: f64,
+        loudness: f32,
+        count: usize,
+        changed: f64,
+    }
+    let id = egui::Id::new("recording-motion");
+    let now = ctx.input(|input| input.time);
+    let still = crate::motion::screen_reader_attached(ctx);
+    let previous: Option<State> = ctx.data(|data| data.get_temp(id));
+    // A gap of more than half a second means a new recording began.
+    let mut state = match previous {
+        Some(state) if now - state.seen < 0.5 => state,
+        _ => {
+            crate::haptics::tap(crate::haptics::Feel::Generic);
+            State {
+                started: now,
+                seen: now,
+                loudness: 0.0,
+                count: levels.len(),
+                changed: now,
+            }
+        }
+    };
+    let dt = (now - state.seen) as f32;
+    let target = levels.last().map_or(0.0, |level| (level * 4.0).min(1.0));
+    state.loudness = if still {
+        target
+    } else {
+        ease_level(state.loudness, target, dt, RECORDING_LEVEL_TAU)
+    };
+    if levels.len() != state.count {
+        state.count = levels.len();
+        state.changed = now;
+    }
+    state.seen = now;
+    let entry = if still {
+        1.0
+    } else {
+        theme::ease_out((now - state.started) as f32 / theme::MOTION_PANEL)
+    };
+    let slide = if still {
+        0.0
+    } else {
+        1.0 - theme::ease_out((now - state.changed) as f32 / RECORDING_LEVEL_STEP)
+    };
+    ctx.data_mut(|data| data.insert_temp(id, state));
+    (entry, state.loudness, slide)
 }
 
 /// Where the recorder's waveform was drawn, for layout tests.
@@ -13054,6 +13392,40 @@ fn progress_ring(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recording_breath_stays_in_range_and_loops() {
+        for step in 0..240 {
+            let time = step as f32 * 0.01;
+            let (scale, opacity) = recording_breath(time);
+            assert!((0.85..=1.0).contains(&scale));
+            assert!((0.6..=1.0).contains(&opacity));
+            let (again, _) = recording_breath(time + RECORDING_BREATH);
+            assert!((scale - again).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn level_ease_follows_target_without_overshoot() {
+        let mut value = 0.0;
+        for _ in 0..10 {
+            let next = ease_level(value, 1.0, 0.016, RECORDING_LEVEL_TAU);
+            assert!(next > value && next <= 1.0);
+            value = next;
+        }
+        assert!(
+            (ease_level(0.0, 1.0, RECORDING_LEVEL_TAU, RECORDING_LEVEL_TAU) - 0.632).abs() < 0.01
+        );
+        assert_eq!(ease_level(0.3, 1.0, 0.0, RECORDING_LEVEL_TAU), 0.3);
+    }
+
+    #[test]
+    fn jump_plan_glides_near_targets_and_cuts_far_ones_short() {
+        assert_eq!(jump_plan(500.0, 400.0), (0.0, 500.0));
+        assert_eq!(jump_plan(-800.0, 400.0), (0.0, -800.0));
+        assert_eq!(jump_plan(5000.0, 400.0), (4600.0, 400.0));
+        assert_eq!(jump_plan(-5000.0, 400.0), (-4600.0, -400.0));
+    }
+
     use super::*;
 
     #[test]
@@ -13071,6 +13443,16 @@ mod tests {
             flight_progress(1.0, 1.0 + f64::from(STICKER_FLIGHT) * 2.0),
             1.0
         );
+    }
+
+    #[test]
+    fn quick_reactions_spring_in_one_after_another() {
+        assert_eq!(quick_reaction_progress(0.0, 0), 0.0);
+        // The third waits for its turn, the first has begun by then.
+        assert_eq!(quick_reaction_progress(0.05, 2), 0.0);
+        assert!(quick_reaction_progress(0.05, 0) > 0.0);
+        assert_eq!(quick_reaction_progress(1.0, 5), 1.0);
+        assert!(quick_reaction_progress(0.1, 0) > quick_reaction_progress(0.1, 3));
     }
 
     #[test]
