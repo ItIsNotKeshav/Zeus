@@ -30,6 +30,9 @@ pub(super) struct Marks {
     intervals: Vec<f32>,
     /// Milliseconds from a frame's input to the end of its interface pass.
     work: Vec<f32>,
+    /// Milliseconds of CPU eframe spent on a frame: the interface pass,
+    /// tessellation and painting, without the wait to present it.
+    cost: Vec<f32>,
     /// The graphics chip, as its OpenGL driver names it.
     gpu: Option<String>,
 }
@@ -126,6 +129,7 @@ impl Marks {
             "frames": self.intervals.len(),
             "interval_ms": summary(&self.intervals),
             "work_ms": summary(&self.work),
+            "cpu_ms": summary(&self.cost),
             "fps": fps(&self.intervals),
             "missed": missed(&self.intervals),
             "jitter_ms": jitter(&self.intervals),
@@ -134,6 +138,7 @@ impl Marks {
         self.write(line);
         self.intervals.clear();
         self.work.clear();
+        self.cost.clear();
         self.last_frame = None;
         self.frame_began = None;
     }
@@ -158,6 +163,12 @@ impl Marks {
         }
         self.last_frame = Some(now);
         self.frame_began = Some(now);
+    }
+
+    pub(super) fn frame_cost(&mut self, seconds: Option<f32>) {
+        if let Some(seconds) = seconds.filter(|_| self.timing()) {
+            self.cost.push(seconds * 1000.0);
+        }
     }
 
     pub(super) fn frame_done(&mut self, now: Instant) {

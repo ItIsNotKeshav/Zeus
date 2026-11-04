@@ -554,6 +554,12 @@ impl Tour {
         self.marks.set_gpu(name);
     }
 
+    /// The CPU time eframe measured for the previous frame (the interface
+    /// pass, tessellation and painting, not the wait to present it).
+    pub fn note_frame_cost(&mut self, seconds: Option<f32>) {
+        self.marks.frame_cost(seconds);
+    }
+
     pub fn input(&mut self, app: &mut App, ctx: &egui::Context, input: &mut egui::RawInput) {
         if let Some(frames) = self.capture.as_mut() {
             self.capture_at = frames.begin(input);

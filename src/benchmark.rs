@@ -533,7 +533,12 @@ impl Recorder {
                 .to_string(),
             os,
             hardware,
-            renderer: "OpenGL (glow)".into(),
+            renderer: if cfg!(target_os = "macos") {
+                "wgpu (Metal)"
+            } else {
+                "OpenGL (glow)"
+            }
+            .into(),
             app: self.app,
             metric: probe::METRIC.into(),
             metric_other: probe::METRIC_OTHER.into(),
@@ -559,6 +564,10 @@ pub struct Smoothness {
     pub jitter_ms: Option<f64>,
     pub missed: Option<u64>,
     pub slowest_ms: Option<f64>,
+    /// The CPU time of a frame, the interface pass, tessellation and
+    /// painting without the wait for the display: high with a high frame
+    /// time means the app was slow, low means the frames waited elsewhere.
+    pub cpu_p99_ms: Option<f64>,
 }
 
 impl Report {
@@ -574,6 +583,7 @@ impl Report {
             jitter_ms: frames["jitter_ms"].as_f64(),
             missed: frames["missed"].as_u64(),
             slowest_ms: interval["max"].as_f64(),
+            cpu_p99_ms: frames["cpu_ms"]["p99"].as_f64(),
         }
     }
 
@@ -630,7 +640,7 @@ impl Report {
         let mut out = String::new();
         out.push_str(&self.machine_line());
         out.push_str("\n\n| Smoothness | Scrolling | Switching chats | Sticker picker |\n|---|---|---|---|\n");
-        let rows: [(&str, Cell); 6] = [
+        let rows: [(&str, Cell); 7] = [
             ("Frames a second", |s| value_of(s.fps)),
             ("Frame time, median (ms)", |s| value_of(s.median_ms)),
             ("Frame time, 99th percentile (ms)", |s| value_of(s.p99_ms)),
@@ -639,6 +649,9 @@ impl Report {
                 s.missed.map_or("–".into(), |n| n.to_string())
             }),
             ("Slowest frame (ms)", |s| value_of(s.slowest_ms)),
+            ("CPU per frame, 99th percentile (ms)", |s| {
+                value_of(s.cpu_p99_ms)
+            }),
         ];
         let smooth: Vec<Smoothness> = TIMED.iter().map(|phase| self.smoothness(phase)).collect();
         for (label, cell) in rows {
@@ -727,7 +740,8 @@ impl Report {
         recorder.frames.insert(
             "scroll".into(),
             json!({"fps": 59.9, "missed": 2, "jitter_ms": 1.25,
-                   "interval_ms": {"p50": 16.7, "p99": 33.4, "max": 50.0}}),
+                   "interval_ms": {"p50": 16.7, "p99": 33.4, "max": 50.0},
+                   "cpu_ms": {"p50": 4.0, "p99": 9.5}}),
         );
         recorder
             .checks
@@ -791,6 +805,7 @@ mod tests {
         let smooth = report.smoothness("scroll");
         assert_eq!(smooth.fps, Some(59.9));
         assert_eq!(smooth.missed, Some(2));
+        assert_eq!(smooth.cpu_p99_ms, Some(9.5));
         assert_eq!(report.smoothness("churn"), Smoothness::default());
     }
 

@@ -99,9 +99,10 @@ function Read-BenchGpu([int]$ProcessId) {
 # Names the renderer from the graphics libraries the process loaded.
 function Get-BenchRenderer([string[]]$Modules) {
     $names = $Modules | ForEach-Object { $_.ToLowerInvariant() }
+    # OpenGL first: Intel's OpenGL driver loads d3d12.dll as well.
+    if ($names -contains "opengl32.dll") { return "OpenGL (glow)" }
     if ($names -contains "vulkan-1.dll") { return "wgpu (Vulkan)" }
     if ($names -contains "d3d12.dll") { return "wgpu (DirectX 12)" }
-    if ($names -contains "opengl32.dll") { return "OpenGL (glow)" }
     return "unknown"
 }
 

@@ -425,6 +425,9 @@ fn smoothness_table(
             s.missed.map_or_else(|| "–".to_owned(), |n| n.to_string())
         }),
         line("Slowest frame (ms)", |s| number(s.slowest_ms)),
+        line("CPU per frame, 99th percentile (ms)", |s| {
+            number(s.cpu_p99_ms)
+        }),
     ];
     table(ui, palette, &header, &rows);
 }
