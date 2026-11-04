@@ -375,6 +375,8 @@ fn lift(ctx: &egui::Context, carry: &mut Carry) {
     let now = ctx.input(|input| input.time);
     carry.phase = Phase::Lifted { at: now };
     carry.moved = now;
+    // The fingers feel the message come away from the chat.
+    crate::haptics::tap(crate::haptics::Feel::Generic);
     // The card owns the drag from here: text under the press stops
     // selecting, and a selection's rows stop sweeping.
     ctx.set_dragged_id(carry_id());
@@ -527,6 +529,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Some(target) if !target.accepts => egui::CursorIcon::NotAllowed,
                 _ => egui::CursorIcon::Grabbing,
             });
+            tap_on_new_target(ctx, over.filter(|target| target.accepts));
         }
     }
     let lit = match carry.phase {
@@ -538,6 +541,22 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     paint(app, ctx, &mut carry, pointer, over, now, reduce_motion);
     store(ctx, Some(carry));
     ctx.request_repaint();
+}
+
+/// Taps the trackpad as the card comes over a chat that would take it, once
+/// per chat, so the fingers feel where it can land.
+fn tap_on_new_target(ctx: &egui::Context, over: Option<&Target>) {
+    let id = carry_id().with("tapped-over");
+    let chat = over.map(|target| target.chat.clone());
+    let before = ctx
+        .data(|data| data.get_temp::<Option<ChatId>>(id))
+        .flatten();
+    if chat != before {
+        if chat.is_some() {
+            crate::haptics::tap(crate::haptics::Feel::Alignment);
+        }
+        ctx.data_mut(|data| data.insert_temp(id, chat));
+    }
 }
 
 /// The light on the chat under the card: it slides from row to row and
