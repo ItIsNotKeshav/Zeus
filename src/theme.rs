@@ -541,8 +541,9 @@ impl Palette {
         }
     }
 
-    /// The soft shadow that lifts message bubbles and date chips off the
-    /// wallpaper: two points down with a short blur, a little denser than
+    /// The soft shadow that lifts date chips, the composer and the message
+    /// buttons off the wallpaper (message bubbles cast none): two points
+    /// down with a short blur, a little denser than
     /// the palette's own shadow colour, so custom themes steer it. A shadow
     /// alone barely darkens a dark chat; [`Palette::raised_edge`] lights
     /// the top as well.
