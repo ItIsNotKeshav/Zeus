@@ -1334,9 +1334,9 @@ pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color3
 }
 
 /// Horizontal inset of the elevated hover and selection card from a list row.
-/// `ROW_SIDE` is where the avatar and the trailing text sit, eight points
+/// `ROW_SIDE` is where the avatar and the trailing text sit, sixteen points
 /// inside that card.
-pub const ROW_CARD_X: f32 = 16.0;
+pub const ROW_CARD_X: f32 = 8.0;
 /// How far a list row's avatar and trailing text sit from the row's sides.
 pub const ROW_SIDE: f32 = 24.0;
 
@@ -2735,8 +2735,13 @@ mod tests {
             .collect();
         assert_eq!(fills, vec![card]);
         assert!(
-            card.left() - rect.left() >= 16.0 && rect.right() - card.right() >= 16.0,
+            card.left() - rect.left() >= 8.0 && rect.right() - card.right() >= 8.0,
             "the elevated card needs room at both sides"
+        );
+        assert!(
+            rect.left() + ROW_SIDE - card.left() >= 16.0
+                && card.right() - (rect.right() - ROW_SIDE) >= 16.0,
+            "the avatar and trailing text sit well inside the card"
         );
     }
 
