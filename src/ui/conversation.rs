@@ -2021,12 +2021,27 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             {
                 let text = std::mem::take(&mut app.composer);
                 if app.pending.is_empty() {
-                    // The bubble leaves from the field the text was typed in,
-                    // as Telegram's does, not from the send button.
+                    // The bubble leaves from where its text sat in the field,
+                    // as iMessage's does, in the field's colours. A draft
+                    // scrolled past the field's edge leaves from inside it.
+                    let pill_rect = pill.response.rect;
+                    let typed = ui
+                        .ctx()
+                        .data(|data| data.get_temp::<Rect>(composer_text_id()))
+                        .map(|typed| {
+                            let bottom =
+                                typed.bottom().min(pill_rect.bottom()).max(pill_rect.top());
+                            Rect::from_x_y_ranges(
+                                typed.x_range(),
+                                (bottom - typed.height()).max(pill_rect.top())..=bottom,
+                            )
+                        })
+                        .unwrap_or(pill_rect);
                     let flight = SendFlight {
                         chat: chat.id.clone(),
-                        from: pill.response.rect,
+                        from: typed,
                         field: composer_pill(&palette).fill,
+                        ink: palette.text,
                         sent: ui.input(|input| input.time),
                         wall: crate::util::now(),
                         message: None,
@@ -2451,6 +2466,10 @@ struct View<'a> {
     /// the bubble above it, and would otherwise veil that bubble's lower
     /// edge and text. A row drawn alone paints its scrim in place.
     scrims: Option<&'a std::cell::RefCell<Vec<(egui::LayerId, egui::layers::ShapeIdx)>>>,
+    /// Where the transcript collects the top of each message row it lays
+    /// out, so the list can rise for a new message in a wave, each row a
+    /// little after the one below it.
+    rows: Option<&'a std::cell::RefCell<Vec<f32>>>,
 }
 
 /// Protocol album parent carried by pictures and ordinary videos.
@@ -2476,6 +2495,7 @@ fn leaving_rows(
             reaction: None,
             copy_rows: None,
             scrims: None,
+            rows: None,
             ..view.clone()
         };
         let message = &ghost.message;
@@ -2826,30 +2846,38 @@ fn sticky_date<R>(
     );
 }
 
-/// How long the list takes to ease up for a message that lands at its end.
-/// The send flight's own duration and vertical curve, so a sent bubble and
-/// the list that makes room for it move as one, as in Telegram. A received
-/// message moves the list the same way.
-const GLIDE_SECONDS: f64 = SEND_SECONDS;
-
 /// The tail still counts as the bottom this far from the content end.
 /// `scroll_to_rect` stops a few points short, so a one-point test never sees
 /// a reader who is following the newest message.
 const BOTTOM_SLACK: f32 = 24.0;
+
+/// Each row of the list starts rising for a new message this long after
+/// the row below it, as in iMessage, so the list ripples up from the bottom.
+const WAVE_STEP: f64 = 0.015;
+/// Rows this far up and beyond all start together.
+const WAVE_ROWS: usize = 6;
+/// The longest any row waits to start rising.
+const WAVE_CAP: f64 = WAVE_STEP * WAVE_ROWS as f64;
+
+/// How long a row with `rows_below` rows under it waits before it rises.
+fn wave_delay(rows_below: usize) -> f64 {
+    WAVE_STEP * rows_below.min(WAVE_ROWS) as f64
+}
 
 /// Slides the list up into place when a new last message lands while the
 /// reader is at the bottom, instead of jumping by its height in one frame.
 /// Only the picture moves: the scroll offset, and so every click, is already
 /// where it ends.
 /// A glide under way: the list's last height and newest message, to notice
-/// the next one, and when the slide began and how far it goes.
+/// the next one, and each lift still under way: when it began and how far
+/// it carries the list. A message landing mid-glide adds a lift of its own,
+/// so the one in flight carries on rather than snapping back.
 #[derive(Clone)]
 struct Glide {
     newest: Option<String>,
     height: f32,
     at_bottom: bool,
-    start: f64,
-    distance: f32,
+    lifts: Vec<(f64, f32)>,
 }
 
 impl Glide {
@@ -2857,16 +2885,38 @@ impl Glide {
         egui::Id::new(("message-glide", chat))
     }
 
-    /// How far below its place the list is drawn at `now`, on the send
-    /// flight's vertical curve: a soft start, a quick middle and a long
-    /// settle.
-    fn shift(&self, now: f64) -> f32 {
-        let t = ((now - self.start) / GLIDE_SECONDS) as f32;
-        if t >= 1.0 || self.distance <= 0.0 {
-            0.0
-        } else {
-            self.distance * (1.0 - ease_send_vertical(t))
+    /// How far below its place a row with `rows_below` rows under it is
+    /// drawn at `now`: every lift rises on the sent bubble's own vertical
+    /// spring, the row starting [`wave_delay`] after the newest.
+    fn shift(&self, now: f64, rows_below: usize) -> f32 {
+        let delay = wave_delay(rows_below);
+        self.lifts
+            .iter()
+            .map(|&(start, distance)| distance * (1.0 - SEND_RISE.value(now - start - delay)))
+            .sum()
+    }
+
+    /// Whether any row is still on its way at `now`.
+    fn moving(&self, now: f64) -> bool {
+        self.lifts
+            .iter()
+            .any(|&(start, _)| !SEND_RISE.settled(now - start - WAVE_CAP))
+    }
+}
+
+/// Moves `shape` down by what `shift_at` gives for the height of its
+/// middle. A list of shapes moves each by its own, as the bubbles' scrims
+/// gathered under the first row are.
+fn shift_shape(shape: &mut egui::Shape, shift_at: &impl Fn(f32) -> f32) {
+    if let egui::Shape::Vec(shapes) = shape {
+        for shape in shapes {
+            shift_shape(shape, shift_at);
         }
+        return;
+    }
+    let shift = shift_at(shape.visual_bounding_rect().center().y);
+    if shift != 0.0 {
+        shape.translate(vec2(0.0, shift));
     }
 }
 
@@ -2889,6 +2939,9 @@ fn shape_follows_transcript(shape: &egui::Shape, viewport: Rect) -> bool {
     bounds.intersects(viewport) && bounds.left() < viewport.right() - 18.0
 }
 
+/// Lifts the list for a new last message and draws it rising into place:
+/// each row a [`wave_delay`] after the row below it, on the sent bubble's
+/// vertical spring. `rows` are the tops of the rows laid out this pass.
 fn glide_new_message<R>(
     ui: &egui::Ui,
     chat: &str,
@@ -2896,6 +2949,7 @@ fn glide_new_message<R>(
     output: &egui::scroll_area::ScrollAreaOutput<R>,
     layer: egui::LayerId,
     first_shape: egui::layers::ShapeIdx,
+    rows: &[f32],
 ) {
     let id = Glide::id(chat);
     let now = ui.input(|input| input.time);
@@ -2903,12 +2957,15 @@ fn glide_new_message<R>(
     let viewport = output.inner_rect;
     let at_bottom = output.state.offset.y + viewport.height() >= height - BOTTOM_SLACK;
     let before = ui.ctx().data(|data| data.get_temp::<Glide>(id));
+    let mut lifts = before
+        .as_ref()
+        .map_or_else(Vec::new, |glide| glide.lifts.clone());
+    lifts.retain(|&(start, _)| !SEND_RISE.settled(now - start - WAVE_CAP));
     let mut glide = Glide {
         newest: newest.clone(),
         height,
         at_bottom,
-        start: before.as_ref().map_or(0.0, |glide| glide.start),
-        distance: before.as_ref().map_or(0.0, |glide| glide.distance),
+        lifts,
     };
     // The offset this pass just stored is what the next pass lays out at.
     // Discard once so the shown pass is already there, and the shift below
@@ -2922,11 +2979,15 @@ fn glide_new_message<R>(
         && at_bottom
         && height > before.height
     {
-        // A message arriving mid-glide adds to what is left of it, so fast
-        // sends do not snap the list back to its old place.
-        glide.distance = (before.shift(now) + (height - before.height)).min(viewport.height());
-        glide.start = now;
-        started = true;
+        // A message arriving mid-glide adds a lift to what is left, so fast
+        // sends do not snap the list back to its old place. The newest row
+        // never starts more than a view below its place.
+        let left = before.shift(now, 0);
+        let lift = (height - before.height).min((viewport.height() - left).max(0.0));
+        if lift > 0.0 {
+            glide.lifts.push((now, lift));
+            started = true;
+        }
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(id, glide.clone()));
@@ -2934,10 +2995,20 @@ fn glide_new_message<R>(
         ui.ctx()
             .request_discard("easing the transcript for a new message");
     }
-    let shift = glide.shift(now);
-    if shift <= 0.0 {
+    if !glide.moving(now) {
         return;
     }
+    // Rows are laid out top down; sorted all the same, so a row's place in
+    // the wave is a search: the rows whose tops lie below a point.
+    let mut tops = rows.to_vec();
+    tops.sort_by(f32::total_cmp);
+    let shifts: Vec<f32> = (0..=WAVE_ROWS)
+        .map(|below| glide.shift(now, below).min(viewport.height()))
+        .collect();
+    let shift_at = |y: f32| {
+        let below = tops.len() - tops.partition_point(|top| *top <= y);
+        shifts[below.min(WAVE_ROWS)]
+    };
     ui.ctx().graphics_mut(|graphics| {
         let list = graphics.entry(layer);
         for index in first_shape.0..list.next_idx().0 {
@@ -2947,7 +3018,7 @@ fn glide_new_message<R>(
                     // The clip stays on a viewport-shaped shape. Panel-clipped
                     // text would otherwise slide over the header, so that clip
                     // is cut to the viewport for the slide.
-                    clipped.shape.translate(vec2(0.0, shift));
+                    shift_shape(&mut clipped.shape, &shift_at);
                     if !clip_slides {
                         clipped.clip_rect = clipped.clip_rect.intersect(viewport);
                     }
@@ -2999,6 +3070,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let mention_names = |id: &str| app.mention_name(id);
     let keyboard_navigation = std::cell::Cell::new(false);
     let scrims = std::cell::RefCell::new(Vec::new());
+    let row_tops = std::cell::RefCell::new(Vec::new());
     let view = View {
         palette,
         locale: app.locale,
@@ -3061,6 +3133,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         swipes: app.settings.swipes,
         doodles: app.doodles_behind(),
         scrims: Some(&scrims),
+        rows: Some(&row_tops),
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -3113,6 +3186,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .filter(|jump| jump.chat == chat.id);
     let jump_since = std::cell::Cell::new(jump.as_ref().and_then(|jump| jump.since));
     let time = ui.input(|input| input.time);
+    // When the transcript was first drawn: messages already there appear in
+    // place, and only later ones arrive with motion. Marked here rather
+    // than at the first new message, or that one would never pop in.
+    ui.ctx().data_mut(|data| {
+        data.get_temp_mut_or(chat_shown_id(&chat.id), time);
+    });
     // A jump to a message glides there instead of cutting, and its flash
     // starts once the glide settles. Reduced motion and a scroll that keeps
     // the reader's place (older history loading in) stay instant.
@@ -4027,7 +4106,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     if let Some(slot) = scrim_slot {
         lay_scrims_under(ui.ctx(), layer, slot, &scrims.borrow());
     }
-    glide_new_message(ui, &chat.id, newest, &output, layer, first_shape);
+    glide_new_message(
+        ui,
+        &chat.id,
+        newest,
+        &output,
+        layer,
+        first_shape,
+        &row_tops.borrow(),
+    );
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
@@ -4439,15 +4526,94 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
         egui::epaint::RectShape::filled(inner.response.rect, corners, palette.bubble_in),
     );
     // Where and when it was drawn, so the message it announced can grow out
-    // of it.
+    // of it, and since when it has been up, for its pop and its breath.
     let time = ui.input(|input| input.time);
-    ui.ctx().data_mut(|data| {
-        data.insert_temp(typing_bubble_id(&view.chat.id), (inner.response.rect, time));
+    let pass = ui.ctx().cumulative_pass_nr();
+    let id = typing_bubble_id(&view.chat.id);
+    let (seen, shown) = ui.ctx().data_mut(|data| {
+        let seen = TypingSeen::after(
+            data.get_temp::<TypingSeen>(id),
+            inner.response.rect,
+            time,
+            pass,
+        );
+        data.insert_temp(id, seen);
+        (seen, data.get_temp::<f64>(chat_shown_id(&view.chat.id)))
     });
+    // Still while motion is reduced or the window rests.
+    if !view.animate || crate::motion::screen_reader_attached(ui.ctx()) {
+        return;
+    }
+    let elapsed = time - seen.since;
+    // It pops out of its tail corner as iMessage's does, unless it was
+    // already up when the chat appeared, and breathes while it stays.
+    let popping = shown.is_none_or(|shown| seen.since > shown) && !POP.settled(elapsed);
+    let (pop, opacity) = if popping {
+        (pop_scale(elapsed), pop_opacity(elapsed))
+    } else {
+        (1.0, 1.0)
+    };
+    let transform = scale_about(
+        inner.response.rect.left_bottom(),
+        pop * breath_scale(elapsed),
+    );
+    let layer = ui.layer_id();
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        let end = list.next_idx();
+        for index in fill.0..end.0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                clipped.shape.transform(transform);
+                if opacity < 1.0 {
+                    egui::epaint::shape_transform::adjust_colors(
+                        &mut clipped.shape,
+                        move |colour| {
+                            if *colour != Color32::PLACEHOLDER {
+                                *colour = colour.gamma_multiply(opacity);
+                            }
+                        },
+                    );
+                }
+            });
+        }
+    });
+    // The dots ask for every frame while they show; the pop needs them even
+    // so, and the breath rides on theirs.
+    if popping {
+        crate::motion::request_frame(ui.ctx());
+    }
 }
 
 fn typing_bubble_id(chat: &str) -> egui::Id {
     egui::Id::new(("typing-bubble", chat))
+}
+
+/// Where and when the typing bubble was last drawn, in which pass, and
+/// since when it has been up without a break.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TypingSeen {
+    rect: Rect,
+    drawn: f64,
+    pass: u64,
+    since: f64,
+}
+
+impl TypingSeen {
+    /// The record for a typing bubble drawn at `rect` at `time`, in `pass`,
+    /// after `before`. Drawn in the pass before, or earlier in this one, it
+    /// is the same appearance however long ago that was, since a resting
+    /// window draws seldom; after a gap it has appeared again.
+    fn after(before: Option<Self>, rect: Rect, time: f64, pass: u64) -> Self {
+        let since = before
+            .filter(|seen| seen.pass + 1 >= pass)
+            .map_or(time, |seen| seen.since);
+        Self {
+            rect,
+            drawn: time,
+            pass,
+            since,
+        }
+    }
 }
 
 fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
@@ -4686,14 +4852,16 @@ fn send_flight_id() -> egui::Id {
     egui::Id::new("send-flight")
 }
 
-/// A sent text on its way from the composer to its bubble: `from` is the
-/// composer's field and `field` its fill, and `message` the row it became,
-/// with the time that row was first drawn.
+/// A sent text on its way from the composer to its bubble: `from` is where
+/// its text sat in the composer's field, `field` and `ink` the field's fill
+/// and text colour, and `message` the row it became, with the time that row
+/// was first drawn.
 #[derive(Clone)]
 struct SendFlight {
     chat: String,
     from: Rect,
     field: Color32,
+    ink: Color32,
     sent: f64,
     /// Unix seconds at the send, to tell its message from older fresh ones.
     wall: i64,
@@ -4760,28 +4928,60 @@ fn doodle_scrim(
 /// How old a message may be when first drawn and still be animated in: one
 /// just sent or received, not history or a chat opened later.
 const ARRIVAL_FRESH: i64 = 3;
-/// Apple-style spring for a bubble arriving: duration 0.5s, bounce 0.2.
-const ARRIVE_SECONDS: f64 = 0.5;
-const ARRIVE_BOUNCE: f64 = 0.2;
-/// A new bubble starts a little small. Nothing arrives from nothing.
-const ARRIVE_FROM_SCALE: f32 = 0.95;
-/// How far below its row a new bubble starts. The spring carries it up.
-const ARRIVE_DROP: f32 = 8.0;
 /// How long ago the typing bubble may have been drawn for a received
 /// message to grow out of it: the frame before, with room for a slow one.
 const TYPING_HANDOFF: f64 = 0.2;
 
-/// How long a sent bubble takes from the composer to its place, as
-/// Telegram's send transition.
-const SEND_SECONDS: f64 = 0.3;
-/// Telegram's vertical curve for a sent bubble, and for the list that makes
-/// room for it.
-const SEND_CURVE_Y: (f32, f32, f32, f32) = (0.19919, 0.01064, 0.27921, 0.91025);
+// iMessage's send and receive, as observed: Apple publishes no values.
 
-/// Telegram's vertical send curve, `cubic-bezier(0.19919, 0.01064, 0.27921, 0.91025)`.
-fn ease_send_vertical(t: f32) -> f32 {
-    let (x1, y1, x2, y2) = SEND_CURVE_Y;
-    cubic_bezier(t, x1, y1, x2, y2)
+/// A sent bubble's way up from the composer, and the list's as it makes
+/// room for any new last message: a spring that passes its place a little.
+const SEND_RISE: crate::motion::Spring = crate::motion::Spring::new(0.5, 0.2);
+/// A sent bubble's way across to its column: critically damped, so it never
+/// swings past it.
+const SEND_ACROSS: crate::motion::Spring = crate::motion::Spring::new(0.35, 0.0);
+/// How long a sent bubble takes to turn from the composer field's colours
+/// to its own.
+const SEND_TINT_SECONDS: f64 = 0.18;
+/// A received bubble pops out of its tail corner on this spring, from
+/// [`POP_FROM_SCALE`] of its size; so does the typing bubble.
+const POP: crate::motion::Spring = crate::motion::Spring::new(0.45, 0.25);
+const POP_FROM_SCALE: f32 = 0.6;
+/// How long a popping bubble takes to become opaque: quickly, so it is seen
+/// growing rather than fading.
+const POP_FADE_SECONDS: f64 = 0.1;
+/// How much the typing bubble swells at the top of a breath, and how long
+/// one breath takes.
+const BREATH_SCALE: f32 = 0.03;
+const BREATH_SECONDS: f64 = 1.8;
+
+/// Whether a sent bubble has reached its place, both ways, `elapsed`
+/// seconds after its row was first drawn.
+fn send_settled(elapsed: f64) -> bool {
+    SEND_RISE.settled(elapsed) && SEND_ACROSS.settled(elapsed)
+}
+
+/// The size of a popping bubble `elapsed` seconds in: from
+/// [`POP_FROM_SCALE`] to a hair past 1, settling on 1.
+fn pop_scale(elapsed: f64) -> f32 {
+    POP_FROM_SCALE + (1.0 - POP_FROM_SCALE) * POP.value(elapsed)
+}
+
+/// The opacity of a popping bubble `elapsed` seconds in.
+fn pop_opacity(elapsed: f64) -> f32 {
+    theme::ease_out((elapsed / POP_FADE_SECONDS) as f32)
+}
+
+/// The typing bubble's size `elapsed` seconds after it appeared: a slow
+/// breath from 1 to `1 + BREATH_SCALE` and back.
+fn breath_scale(elapsed: f64) -> f32 {
+    let phase = (elapsed.max(0.0) * std::f64::consts::TAU / BREATH_SECONDS).cos() as f32;
+    1.0 + BREATH_SCALE * 0.5 * (1.0 - phase)
+}
+
+/// Scales about `pivot`.
+fn scale_about(pivot: egui::Pos2, scale: f32) -> egui::emath::TSTransform {
+    egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale)
 }
 
 /// How long the glide to a jumped-to message takes, in seconds.
@@ -4800,8 +5000,8 @@ fn jump_plan(distance: f32, viewport: f32) -> (f32, f32) {
     }
 }
 
-/// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`: the transcript's, and
-/// Telegram's horizontal send curve.
+/// Strong ease-out, `cubic-bezier(0.23, 1, 0.32, 1)`: a jump's glide to a
+/// quoted message.
 fn ease_out_strong(t: f32) -> f32 {
     cubic_bezier(t, 0.23, 1.0, 0.32, 1.0)
 }
@@ -4830,20 +5030,6 @@ fn bezier_sample(t: f32, a: f32, b: f32) -> f32 {
 fn bezier_slope(t: f32, a: f32, b: f32) -> f32 {
     let u = 1.0 - t;
     3.0 * u * u * a + 6.0 * u * t * (b - a) + 3.0 * t * t * (1.0 - b)
-}
-
-/// Where a unit spring (`duration` ms, `bounce`) is after `elapsed` seconds.
-/// Motion's duration/bounce solver: bounce 0.2 is damping ratio 0.8, and the
-/// duration is when the motion has settled.
-fn arrive_spring(elapsed: f64) -> f32 {
-    if elapsed <= 0.0 {
-        return 0.0;
-    }
-    if elapsed >= ARRIVE_SECONDS {
-        return 1.0;
-    }
-    let (stiffness, damping) = spring_from_duration(ARRIVE_SECONDS * 1000.0, ARRIVE_BOUNCE);
-    spring_unit(elapsed * 1000.0, stiffness, damping) as f32
 }
 
 /// Stiffness and damping for Motion's `{ duration, bounce }` spring. `duration`
@@ -4921,6 +5107,10 @@ fn bubble(
             .get(layer)
             .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
     });
+    // Where the row starts, for its place in the list's wave.
+    if let Some(rows) = view.rows {
+        rows.borrow_mut().push(ui.cursor().top());
+    }
     let response = match super::carry::ghost(ui.ctx(), &view.chat.id, &message.id) {
         Some(opacity) => {
             ui.scope(|ui| {
@@ -5027,10 +5217,10 @@ fn swipe_chat(app: &mut App, ui: &egui::Ui, chat: &Chat, area: Rect, actions: &m
     super::swipe::edge_badge(ui, id, area, pull, whole, &app.palette);
 }
 
-/// Draws a message row. A message just sent glides from the composer's
-/// field into its bubble, as Telegram's does; one just received grows out of
-/// the typing bubble, or springs in from its side, as does a send that left
-/// no flight.
+/// Draws a message row. A message just sent rises out of the composer into
+/// its place, as iMessage's does; one just received grows out of the typing
+/// bubble, or pops out of its tail corner, as does a send that left no
+/// flight.
 fn bubble_arriving(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -5040,7 +5230,7 @@ fn bubble_arriving(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    // Half a second, only on a send or a receipt: unlike the looping
+    // Under a second, only on a send or a receipt: unlike the looping
     // animations `motion` paces, these need no screen-reader exception (and
     // on Windows any accessibility client, not only a reader, sets it).
     let fresh = view.animate && (crate::util::now() - message.timestamp).abs() <= ARRIVAL_FRESH;
@@ -5076,13 +5266,13 @@ fn bubble_arriving(
             }
             claimed(flights).map(|index| flights[index].clone())
         });
-        if let Some((from, field, landed)) = flight.and_then(|flight| {
-            let (_, at) = flight.message?;
-            Some((flight.from, flight.field, at))
+        if let Some((flight, landed)) = flight.and_then(|flight| {
+            let landed = flight.message.as_ref()?.1;
+            Some((flight, landed))
         }) {
             let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
             let elapsed = now - landed;
-            if elapsed >= SEND_SECONDS {
+            if send_settled(elapsed) {
                 return response;
             }
             let Some(rect) = ui.ctx().data(|data| {
@@ -5090,23 +5280,32 @@ fn bubble_arriving(
             }) else {
                 return response;
             };
-            // Telegram's send: the bubble keeps its own size and starts with its
-            // bottom left on the field's, then slides there on two curves over
-            // 0.3 s, a soft vertical one and a strong ease-out across.
-            let t = (elapsed / SEND_SECONDS) as f32;
-            let across = ease_out_strong(t);
-            let up = ease_send_vertical(t);
-            // The list slides up to meet a new last message; aim where the row
-            // is drawn now, not where it ends, or the bubble overshoots it.
+            // iMessage's send: the bubble keeps its own size and leaves with
+            // its text where the composer's text sat, then rises on a spring
+            // that passes its place a little while it slides across on a
+            // critically damped one.
+            let margin = bubble_margin(&view.palette, message, false);
+            let leave = vec2(
+                flight.from.left() - (rect.left() + f32::from(margin.left)),
+                flight.from.bottom() - (rect.bottom() - f32::from(margin.bottom)),
+            );
+            let across = SEND_ACROSS.value(elapsed);
+            let up = SEND_RISE.value(elapsed);
+            // The list rises to meet a new last message; aim where the row is
+            // drawn now, not where it ends, or the bubble passes it.
             let gliding = ui
                 .ctx()
                 .data(|data| data.get_temp::<Glide>(Glide::id(&view.chat.id)))
-                .map_or(0.0, |glide| glide.shift(now));
+                .map_or(0.0, |glide| glide.shift(now, 0));
             let offset = vec2(
-                (from.left() - rect.left()) * (1.0 - across),
-                gliding + (from.bottom() - (rect.bottom() + gliding)) * (1.0 - up),
+                leave.x * (1.0 - across),
+                gliding + (leave.y - gliding) * (1.0 - up),
             );
             let transform = egui::emath::TSTransform::from_translation(offset);
+            // It leaves in the field's colours and turns into its own over
+            // the first moments: the field's version lies over it, fading.
+            let veil = 1.0 - theme::ease_out((elapsed / SEND_TINT_SECONDS) as f32);
+            let own_text = view.palette.on_bubble(true).text;
             // Lifted onto a layer above the chat, so it can cross the composer
             // and the list's edge on its way, and the list's own glide leaves it be.
             let flying = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("send-flight"));
@@ -5123,29 +5322,13 @@ fn bubble_arriving(
                 for index in start.0..end.0 {
                     list.reset_shape(egui::layers::ShapeIdx(index));
                 }
+                let veiled = if veil > 0.0 {
+                    field_veil(&shapes, rect, (flight.field, flight.ink), own_text, veil)
+                } else {
+                    Vec::new()
+                };
                 let above = graphics.entry(flying);
-                // Under the bubble, the field's own shape morphs into it: the
-                // field's rect, fill and corners towards the bubble's, faded
-                // out over the first 60% so the real bubble shows through.
-                let bubble = transform.mul_rect(rect);
-                let morph = Rect::from_min_max(
-                    pos2(
-                        egui::lerp(from.left()..=bubble.left(), across),
-                        egui::lerp(from.top()..=bubble.top(), up),
-                    ),
-                    pos2(
-                        egui::lerp(from.right()..=bubble.right(), across),
-                        egui::lerp(from.bottom()..=bubble.bottom(), up),
-                    ),
-                );
-                let radius =
-                    egui::lerp(f32::from(COMPOSER_RADIUS)..=18.0, up).min(morph.height() / 2.0);
-                let fade = (1.0 - t / 0.6).clamp(0.0, 1.0);
-                above.add(
-                    clip,
-                    egui::Shape::rect_filled(morph, radius, field.gamma_multiply(fade)),
-                );
-                for mut shape in shapes {
+                for mut shape in shapes.into_iter().chain(veiled) {
                     shape.transform(transform);
                     above.add(clip, shape);
                 }
@@ -5154,11 +5337,12 @@ fn bubble_arriving(
             return response;
         }
     }
-    // Received, or a send that did not leave the button. The first time it
-    // is drawn starts its spring, unless it was already there when the chat
-    // itself first appeared.
-    let shown = egui::Id::new(("chat-shown", &view.chat.id));
-    let shown = ui.ctx().data_mut(|data| *data.get_temp_mut_or(shown, now));
+    // Received, or a send that left no flight. The first time it is drawn
+    // starts its spring, unless it was already there when the chat itself
+    // first appeared.
+    let shown = ui
+        .ctx()
+        .data_mut(|data| *data.get_temp_mut_or(chat_shown_id(&view.chat.id), now));
     let id = egui::Id::new(("landing", &view.chat.id, &message.id));
     // A received message whose typing bubble was drawn a frame ago grows out
     // of that bubble. Taken once, when it lands: the typing bubble is gone
@@ -5166,47 +5350,47 @@ fn bubble_arriving(
     let typing = (!message.from_me)
         .then(|| {
             ui.ctx()
-                .data(|data| data.get_temp::<(Rect, f64)>(typing_bubble_id(&view.chat.id)))
+                .data(|data| data.get_temp::<TypingSeen>(typing_bubble_id(&view.chat.id)))
         })
         .flatten()
-        .filter(|(_, drawn)| now - drawn <= TYPING_HANDOFF)
-        .map(|(rect, _)| rect);
+        .filter(|seen| now - seen.drawn <= TYPING_HANDOFF)
+        .map(|seen| seen.rect);
     let (landed, typing) = ui
         .ctx()
         .data_mut(|data| *data.get_temp_mut_or_insert_with(id, || (now, typing)));
     let elapsed = now - landed;
-    if elapsed >= ARRIVE_SECONDS || landed <= shown {
+    if POP.settled(elapsed) || landed <= shown {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
     }
-    let p = arrive_spring(elapsed);
     let row = ui.scope(|ui| {
         if typing.is_none() {
-            ui.multiply_opacity(p.clamp(0.0, 1.0));
+            ui.multiply_opacity(pop_opacity(elapsed));
         }
         bubble_row(ui, view, message, album, place, reduce_motion, actions)
     });
-    // Grows from the tail's side. Scale starts at 0.95 and the spring may
-    // pass 1 before it settles.
+    // From the tail's corner of the bubble itself, not of the row around it
+    // with its picture and reactions.
+    let bubble = ui
+        .ctx()
+        .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")))
+        .unwrap_or(row.response.rect);
     let pivot = if message.from_me {
-        row.response.rect.right_bottom()
+        bubble.right_bottom()
     } else {
-        row.response.rect.left_bottom()
+        bubble.left_bottom()
     };
     let transform = if let Some(typing) = typing {
         // Out of the typing bubble: from its bottom left and its height,
         // fully opaque, springing to the row's own place and size.
+        let p = POP.value(elapsed);
         let from_scale = (typing.height() / row.response.rect.height().max(1.0)).clamp(0.5, 1.0);
         let scale = from_scale + (1.0 - from_scale) * p;
         let offset = (typing.left_bottom() - pivot) * (1.0 - p);
-        egui::emath::TSTransform::from_translation(pivot.to_vec2() + offset)
-            * egui::emath::TSTransform::from_scaling(scale)
-            * egui::emath::TSTransform::from_translation(-pivot.to_vec2())
+        egui::emath::TSTransform::from_translation(offset) * scale_about(pivot, scale)
     } else {
-        let scale = ARRIVE_FROM_SCALE + (1.0 - ARRIVE_FROM_SCALE) * p;
-        let drop = ARRIVE_DROP * (1.0 - p);
-        egui::emath::TSTransform::from_translation(pivot.to_vec2() + vec2(0.0, drop))
-            * egui::emath::TSTransform::from_scaling(scale)
-            * egui::emath::TSTransform::from_translation(-pivot.to_vec2())
+        // iMessage's receive: it pops out of its tail corner, from a little
+        // over half its size to a hair past its own, and settles.
+        scale_about(pivot, pop_scale(elapsed))
     };
     ui.ctx().graphics_mut(|graphics| {
         let list = graphics.entry(layer);
@@ -5219,6 +5403,85 @@ fn bubble_arriving(
     });
     ui.ctx().request_repaint();
     row.inner
+}
+
+/// When the open chat's transcript was first drawn: messages already there
+/// then appear in place.
+fn chat_shown_id(chat: &str) -> egui::Id {
+    egui::Id::new(("chat-shown", chat))
+}
+
+/// The composer field's version of a sent bubble, to lay over the bubble
+/// at `opacity` as it leaves: its backdrop in the field's `fill`, and its
+/// body text, in the bubble's own `text` colour, in the field's `ink`.
+/// Fading it out turns the field into the bubble. The time, ticks and
+/// scrim are left to the bubble beneath.
+fn field_veil(
+    shapes: &[egui::Shape],
+    bubble: Rect,
+    (fill, ink): (Color32, Color32),
+    text: Color32,
+    opacity: f32,
+) -> Vec<egui::Shape> {
+    // The backdrop is the first shape the size of the bubble: its tail may
+    // reach a few points past it, a scrim or shadow further, blurred.
+    let near = bubble.expand(8.0);
+    let core = bubble.shrink(1.0);
+    let mut backdrop = false;
+    let mut veil = Vec::new();
+    for shape in shapes {
+        let mut shape = shape.clone();
+        match &shape {
+            // The body, not the time beside it.
+            egui::Shape::Text(body)
+                if body.fallback_color == text
+                    || body.override_text_color == Some(text)
+                    || body
+                        .galley
+                        .job
+                        .sections
+                        .iter()
+                        .any(|section| section.format.color == text) =>
+            {
+                egui::epaint::shape_transform::adjust_colors(&mut shape, move |colour| {
+                    if *colour == text {
+                        *colour = ink;
+                    }
+                });
+            }
+            // Emoji are pictures painted over the text, the same in both.
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {}
+            _ if !backdrop && !blurred(&shape) && {
+                let bounds = shape.visual_bounding_rect();
+                near.contains_rect(bounds) && bounds.contains_rect(core)
+            } =>
+            {
+                backdrop = true;
+                egui::epaint::shape_transform::adjust_colors(&mut shape, move |colour| {
+                    if *colour != Color32::PLACEHOLDER && colour.a() > 0 {
+                        *colour = fill.gamma_multiply(f32::from(colour.a()) / 255.0);
+                    }
+                });
+            }
+            _ => continue,
+        }
+        egui::epaint::shape_transform::adjust_colors(&mut shape, move |colour| {
+            if *colour != Color32::PLACEHOLDER {
+                *colour = colour.gamma_multiply(opacity);
+            }
+        });
+        veil.push(shape);
+    }
+    veil
+}
+
+/// Whether a shape is a soft one, a shadow or scrim, rather than a solid.
+fn blurred(shape: &egui::Shape) -> bool {
+    match shape {
+        egui::Shape::Rect(rect) => rect.blur_width > 0.0,
+        egui::Shape::Vec(shapes) => shapes.iter().any(blurred),
+        _ => false,
+    }
 }
 
 /// Draws a message row and returns its bubble response for scrolling.
@@ -8229,6 +8492,7 @@ pub(crate) fn list_menu(
         swipes: app.settings.swipes,
         doodles: app.doodles_behind(),
         scrims: None,
+        rows: None,
         selecting: false,
         selected: &[],
         motion_playing: None,
@@ -13531,26 +13795,153 @@ mod tests {
     }
 
     #[test]
-    fn a_new_row_eases_the_transcript_out() {
+    fn a_new_row_lifts_the_transcript_in_a_wave() {
         let glide = Glide {
             newest: None,
             height: 0.0,
             at_bottom: true,
-            start: 0.0,
-            distance: 40.0,
+            lifts: vec![(0.0, 40.0)],
         };
-        assert!((glide.shift(0.0) - 40.0).abs() < 0.01);
-        assert_eq!(glide.shift(GLIDE_SECONDS), 0.0);
-        // Telegram's vertical curve starts softly, then is about three
-        // quarters of the way by the middle of the slide.
-        assert!(glide.shift(GLIDE_SECONDS * 0.1) > 35.0);
-        assert!((glide.shift(GLIDE_SECONDS * 0.5) - 40.0 * (1.0 - 0.742)).abs() < 0.5);
-        assert!((ease_out_strong(0.2) - 0.682).abs() < 0.01);
+        // Every row starts on its old line.
+        for below in 0..=WAVE_ROWS + 2 {
+            assert_eq!(glide.shift(0.0, below), 40.0);
+        }
+        // The newest row is on its way before the rows above it start.
+        assert!(glide.shift(0.05, 0) < 39.0);
+        assert!(glide.shift(0.05, 0) < glide.shift(0.05, 2));
+        assert_eq!(glide.shift(0.03, 2), 40.0);
+        // Rows past the cap all wait the same.
+        assert_eq!(glide.shift(0.2, WAVE_ROWS), glide.shift(0.2, WAVE_ROWS + 5));
+        // On the send's own spring: past its place a little, then on it.
+        let lowest = (0..200)
+            .map(|step| glide.shift(f64::from(step) / 200.0, 0))
+            .fold(f32::MAX, f32::min);
+        assert!(lowest < 0.0 && lowest > -2.0, "overshoot {lowest}");
+        let rest = SEND_RISE.settle_time() + WAVE_CAP;
+        assert!(glide.moving(rest - 0.05));
+        assert!(!glide.moving(rest + 0.001));
+        for below in 0..=WAVE_ROWS {
+            assert_eq!(glide.shift(rest + 0.001, below), 0.0);
+        }
+    }
+
+    #[test]
+    fn the_wave_waits_one_step_a_row_up_to_its_cap() {
+        assert_eq!(wave_delay(0), 0.0);
+        assert!((wave_delay(1) - WAVE_STEP).abs() < 1e-12);
+        assert!((wave_delay(WAVE_ROWS) - WAVE_CAP).abs() < 1e-12);
+        assert_eq!(wave_delay(WAVE_ROWS + 30), wave_delay(WAVE_ROWS));
+        assert!(wave_delay(usize::MAX) <= 0.09 + 1e-12);
+    }
+
+    #[test]
+    fn a_lift_mid_glide_adds_to_what_is_left() {
+        let mut glide = Glide {
+            newest: None,
+            height: 0.0,
+            at_bottom: true,
+            lifts: vec![(0.0, 40.0)],
+        };
+        let before = glide.shift(0.1, 3);
+        glide.lifts.push((0.1, 30.0));
+        // The second lift holds the list a row lower; the first carries on.
+        assert!((glide.shift(0.1, 3) - (before + 30.0)).abs() < 1e-4);
+        assert!(glide.moving(0.1 + SEND_RISE.settle_time()));
+    }
+
+    #[test]
+    fn a_received_bubble_pops_from_six_tenths_to_its_size() {
+        assert_eq!(pop_scale(0.0), POP_FROM_SCALE);
+        assert_eq!(pop_scale(POP.settle_time() + 0.01), 1.0);
+        let peak = (0..200)
+            .map(|step| pop_scale(f64::from(step) / 200.0))
+            .fold(0.0, f32::max);
+        assert!(peak > 1.0 && peak < 1.03, "a little past its size: {peak}");
+        // Seen early, and opaque well before it has grown.
+        assert_eq!(pop_opacity(0.0), 0.0);
+        assert_eq!(pop_opacity(POP_FADE_SECONDS), 1.0);
+        assert!(pop_scale(POP_FADE_SECONDS) < 0.95);
+    }
+
+    #[test]
+    fn a_sent_bubble_rises_with_bounce_and_slides_across_without() {
+        let across: Vec<f32> = (0..=200)
+            .map(|step| SEND_ACROSS.value(f64::from(step) / 200.0))
+            .collect();
+        assert!(across.windows(2).all(|pair| pair[1] >= pair[0]));
+        assert!(across.iter().all(|value| *value <= 1.0));
+        let rise_peak = (0..=200)
+            .map(|step| SEND_RISE.value(f64::from(step) / 200.0))
+            .fold(0.0, f32::max);
+        assert!(rise_peak > 1.0, "{rise_peak}");
+        assert!(!send_settled(0.3));
+        assert!(send_settled(
+            SEND_RISE.settle_time().max(SEND_ACROSS.settle_time()) + 0.001
+        ));
+    }
+
+    #[test]
+    fn the_typing_bubble_breathes_slightly_and_slowly() {
+        assert_eq!(breath_scale(0.0), 1.0);
+        let top = breath_scale(BREATH_SECONDS / 2.0);
+        assert!((top - (1.0 + BREATH_SCALE)).abs() < 1e-5, "{top}");
+        assert!((breath_scale(BREATH_SECONDS) - 1.0).abs() < 1e-5);
+        for step in 0..100 {
+            let scale = breath_scale(f64::from(step) * 0.05);
+            assert!((1.0..=1.0 + BREATH_SCALE + 1e-5).contains(&scale));
+        }
+        assert!((1.5..=2.0).contains(&BREATH_SECONDS));
+    }
+
+    #[test]
+    fn the_typing_bubble_counts_as_up_while_every_pass_draws_it() {
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(60.0, 36.0));
+        let first = TypingSeen::after(None, rect, 1.0, 5);
+        assert_eq!(first.since, 1.0);
+        // The next pass, however late a resting window draws it.
+        let next = TypingSeen::after(Some(first), rect, 9.0, 6);
+        assert_eq!((next.since, next.drawn), (1.0, 9.0));
+        // A discarded pass draws it again in the same one.
+        assert_eq!(TypingSeen::after(Some(next), rect, 9.0, 6).since, 1.0);
+        // A pass without it ends the appearance: the next one pops again.
+        assert_eq!(TypingSeen::after(Some(next), rect, 9.5, 8).since, 9.5);
+    }
+
+    #[test]
+    fn the_field_veil_recolours_the_backdrop_and_body_text_only() {
+        let bubble = Rect::from_min_size(pos2(100.0, 100.0), vec2(120.0, 40.0));
+        let (own_fill, own_text) = (Color32::from_rgb(0, 120, 255), Color32::WHITE);
+        let (field, ink) = (
+            Color32::from_rgb(40, 40, 40),
+            Color32::from_rgb(230, 230, 230),
+        );
+        let scrim = egui::Shape::Rect(
+            egui::epaint::RectShape::filled(bubble.expand(12.0), 18.0, Color32::BLACK)
+                .with_blur_width(24.0),
+        );
+        let backdrop = egui::Shape::rect_filled(bubble, 18.0, own_fill);
+        let tick = egui::Shape::line_segment(
+            [pos2(200.0, 130.0), pos2(205.0, 135.0)],
+            Stroke::new(1.0, own_text),
+        );
+        let veil = field_veil(
+            &[scrim, backdrop, tick],
+            bubble,
+            (field, ink),
+            own_text,
+            0.5,
+        );
+        assert_eq!(veil.len(), 1, "only the backdrop: {veil:?}");
+        let egui::Shape::Rect(rect) = &veil[0] else {
+            panic!("{veil:?}");
+        };
+        assert_eq!(rect.fill, field.gamma_multiply(0.5));
+        assert_eq!(rect.rect, bubble);
     }
 
     #[test]
     fn cubic_bezier_runs_from_zero_to_one_and_never_turns_back() {
-        let curves = [(0.23, 1.0, 0.32, 1.0), SEND_CURVE_Y, (0.42, 0.0, 0.58, 1.0)];
+        let curves = [(0.23, 1.0, 0.32, 1.0), (0.42, 0.0, 0.58, 1.0)];
         for (x1, y1, x2, y2) in curves {
             assert!(cubic_bezier(0.0, x1, y1, x2, y2).abs() < 1e-4);
             assert!((cubic_bezier(1.0, x1, y1, x2, y2) - 1.0).abs() < 1e-4);
@@ -13564,9 +13955,8 @@ mod tests {
         // Out of range clamps to the ends.
         assert!(cubic_bezier(-1.0, 0.23, 1.0, 0.32, 1.0).abs() < 1e-4);
         assert!((cubic_bezier(2.0, 0.23, 1.0, 0.32, 1.0) - 1.0).abs() < 1e-4);
-        assert!((ease_send_vertical(0.5) - 0.742).abs() < 0.01);
+        assert!((ease_out_strong(0.2) - 0.682).abs() < 0.01);
     }
-
     /// A row that was on screen while the reader was following the tail keeps
     /// most of its place on the frame a send lands, then finishes the move
     /// over the glide. An instant stick-to-bottom would already be at the end.
@@ -13645,22 +14035,23 @@ mod tests {
         let y_next = text_top(&next, "keep-me").expect("the anchor stays on the next frame");
         let glide_next = ctx.data(|data| data.get_temp::<Glide>(Glide::id(&chat.id)));
         let gap_next = gap_of(&glide_next, metrics());
-        let done = frame(&mut app, 0.32 + GLIDE_SECONDS + 0.05);
+        let done = frame(&mut app, 0.32 + SEND_RISE.settle_time() + WAVE_CAP + 0.05);
         let y2 = text_top(&done, "keep-me").expect("the anchor is on screen after the glide");
         let travelled = y0.0 - y2.0;
         let early = y0.0 - y1.0;
         // One frame after the row lands, a real ease still has most of the
-        // distance left. An instant stick is already on the final line.
+        // distance left. An instant stick is already on the final line. The
+        // anchor has two rows under it, so it waits its turn in the wave.
         let left = y_next.0 - y2.0;
         let describe = |glide: &Option<Glide>| {
             glide.as_ref().map_or("none".to_owned(), |glide| {
                 format!(
-                    "newest={:?} height={} at_bottom={} distance={} shift_now={}",
+                    "newest={:?} height={} at_bottom={} lifts={:?} shift_now={}",
                     glide.newest,
                     glide.height,
                     glide.at_bottom,
-                    glide.distance,
-                    glide.shift(0.32)
+                    glide.lifts,
+                    glide.shift(0.32, 2)
                 )
             })
         };
@@ -13727,17 +14118,6 @@ mod tests {
         shapes
             .iter()
             .find_map(|clipped| walk(&clipped.shape, clipped.clip_rect, needle))
-    }
-
-    #[test]
-    fn a_new_bubble_springs_past_its_place_then_settles() {
-        assert_eq!(arrive_spring(0.0), 0.0);
-        assert_eq!(arrive_spring(ARRIVE_SECONDS), 1.0);
-        assert_eq!(arrive_spring(ARRIVE_SECONDS + 1.0), 1.0);
-        let early = arrive_spring(0.1);
-        assert!(early > 0.5 && early < 0.8, "early {early}");
-        let past = arrive_spring(0.3);
-        assert!(past > 1.0 && past < 1.05, "overshoot {past}");
     }
 
     #[test]
@@ -14614,6 +14994,7 @@ mod tests {
             swipes: app.settings.swipes,
             doodles: None,
             scrims: None,
+            rows: None,
             selecting: false,
             selected: &[],
             motion_playing: None,
