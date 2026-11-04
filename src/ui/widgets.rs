@@ -1626,13 +1626,9 @@ pub fn bubble_shape(
         return egui::Shape::mesh(fill_outline(&outline, color, 1.0 / pixels_per_point));
     }
     let corners = bubble_corners(tail);
-    // Light bubbles stay flat. The lift shadow reads as a grey halo on a
-    // light chat.
-    let shadow = palette.dark.then(|| palette.bubble_shadow());
+    // Bubbles cast no shadow in either theme: under a dark bubble it read as
+    // a dark band along its bottom edge.
     let mut shapes = Vec::new();
-    if let Some(shadow) = shadow {
-        shapes.push(egui::Shape::Rect(shadow.as_shape(rect, corners)));
-    }
     // The tail overlaps the bubble by a few points so no seam shows where
     // the two anti-aliased edges meet.
     let tail_points = tail.map(|side| {
@@ -1653,11 +1649,6 @@ pub fn bubble_shape(
         }
         points
     });
-    if let Some((points, shadow)) = tail_points.as_ref().zip(shadow) {
-        let offset = vec2(shadow.offset[0].into(), shadow.offset[1].into());
-        let points: Vec<_> = points.iter().map(|point| *point + offset).collect();
-        shapes.push(soft_triangle(&points, shadow.color, shadow.blur.into()));
-    }
     // The raised edge: the same outline a hair higher, under the fill, so
     // only its top shows, thinning out down the rounded corners.
     let edge = palette.raised_edge(fill);
@@ -2063,32 +2054,6 @@ fn ear_clip(points: &[egui::Pos2], winding: f32) -> Vec<[u32; 3]> {
     }
     triangles.push([left[0], left[1], left[2]].map(|v| v as u32));
     triangles
-}
-
-/// A triangle in `color` that fades out over `blur` points around its
-/// edges, like the blurred shadow of the bubble it belongs to: a sharp one
-/// showed as a grey wedge beneath the tail's tip. Six vertices.
-fn soft_triangle(points: &[egui::Pos2], color: Color32, blur: f32) -> egui::Shape {
-    let centre = (points
-        .iter()
-        .fold(Vec2::ZERO, |sum, point| sum + point.to_vec2())
-        / points.len() as f32)
-        .to_pos2();
-    let mut mesh = egui::Mesh::default();
-    for point in points {
-        let out = (*point - centre).normalized();
-        mesh.colored_vertex(*point - out * blur / 4.0, color);
-        mesh.colored_vertex(*point + out * blur / 2.0, Color32::TRANSPARENT);
-    }
-    let count = points.len() as u32;
-    // Inner vertices are even, their faded partners odd.
-    mesh.add_triangle(0, 2, 4);
-    for index in 0..count {
-        let next = (index + 1) % count;
-        mesh.add_triangle(2 * index, 2 * index + 1, 2 * next + 1);
-        mesh.add_triangle(2 * index, 2 * next + 1, 2 * next);
-    }
-    egui::Shape::mesh(mesh)
 }
 
 /// Small pill label used for date separators and pinned markers.
@@ -2644,24 +2609,27 @@ mod tests {
         );
     }
 
-    /// A light WhatsApp bubble and date chip cast no shadow. A hovered or
-    /// selected list row is flat black at 5%, in either state. Dark keeps
-    /// the lift.
+    /// A WhatsApp bubble casts no shadow in either theme, and a light date
+    /// chip casts none. A hovered or selected light list row is flat black
+    /// at 5%, in either state; a dark row keeps the lift.
     #[test]
     fn light_messages_and_rows_are_flat() {
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
         let light = Palette::light();
         let shadow = light.bubble_shadow().color;
-        for tail in [None, Some(Side::Left), Some(Side::Right)] {
-            let shape = bubble_shape(&light, rect, light.bubble_out, tail, 2.0, SCREEN);
-            assert!(!uses_color(&shape, shadow), "light bubble casts a shadow");
-        }
         let dark = Palette::dark();
-        let shape = bubble_shape(&dark, rect, dark.bubble_in, None, 2.0, SCREEN);
-        assert!(
-            uses_color(&shape, dark.bubble_shadow().color),
-            "a dark bubble keeps its shadow"
-        );
+        for palette in [&light, &dark] {
+            for fill in [palette.bubble_out, palette.bubble_in] {
+                for tail in [None, Some(Side::Left), Some(Side::Right)] {
+                    let shape = bubble_shape(palette, rect, fill, tail, 2.0, SCREEN);
+                    assert!(
+                        !uses_color(&shape, palette.bubble_shadow().color),
+                        "a bubble casts a shadow (dark: {})",
+                        palette.dark
+                    );
+                }
+            }
+        }
 
         let ctx = egui::Context::default();
         // Medium text uses the named inter-medium family, which exists only

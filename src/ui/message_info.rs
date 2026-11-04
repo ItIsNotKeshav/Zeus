@@ -136,7 +136,7 @@ fn bubble(
     width: f32,
     delivery: Delivery,
 ) {
-    // Drawn as the chat draws our own messages: shadow, raised edge, tail.
+    // Drawn as the chat draws our own messages: raised edge, tail.
     let backdrop = ui.painter().add(egui::Shape::Noop);
     let shown = Frame::new()
         .inner_margin(Margin::symmetric(12, 8))
