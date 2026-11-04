@@ -243,6 +243,10 @@ pub fn release(ctx: &egui::Context) {
 /// cropped to cover its frame, `fit://{width}x{height}/{file URI}` for one
 /// shown whole within it.
 const FIT: &str = "fit://";
+/// Ends a [`fit_still_uri`], so egui sees no `.webp` at the end and asks
+/// for the picture as it is, not frame by frame under `#0`, which named its
+/// texture apart from the URI this cache releases.
+const STILL: &str = "?still";
 
 /// How large a fitted picture is decoded.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -282,7 +286,7 @@ pub fn fit_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
 /// opened on it.
 pub fn fit_still_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
     let side = step(size.x.max(size.y) * ctx.pixels_per_point());
-    fitted(ctx, path, true, |file| format!("{FIT}{side}/{file}"))
+    fitted(ctx, path, true, |file| format!("{FIT}{side}/{file}{STILL}"))
 }
 
 /// Like [`fit_uri`], for a picture shown whole within `bounds` points: only
@@ -341,6 +345,7 @@ fn fits(path: &Path, still: bool) -> bool {
 /// The file URI a [`fit_uri`] or [`fit_uri_within`] was made from, and the
 /// size it asks for.
 fn parse_fit(uri: &str) -> Option<(Fit, &str)> {
+    let uri = uri.strip_suffix(STILL).unwrap_or(uri);
     let (size, file) = uri.strip_prefix(FIT)?.split_once('/')?;
     let fit = match size.split_once('x') {
         Some((width, height)) => Fit::Within(width.parse().ok()?, height.parse().ok()?),
@@ -368,15 +373,10 @@ fn uri_path(file: &str) -> Option<&str> {
 /// as its source size, so layouts that read it see the photo's real shape
 /// and dimensions.
 fn decode_fitted(path: &Path, fit: Fit) -> Result<egui::ColorImage, String> {
-    use image::ImageDecoder as _;
-    let reader = image::ImageReader::open(path)
-        .and_then(image::ImageReader::with_guessed_format)
-        .map_err(|error| error.to_string())?;
-    let mut decoder = reader.into_decoder().map_err(|error| error.to_string())?;
-    let orientation = decoder.orientation().map_err(|error| error.to_string())?;
-    let mut picture =
-        image::DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
-    picture.apply_orientation(orientation);
+    let picture = match decode_whole(path) {
+        Ok(picture) => picture,
+        Err(error) => first_webp_frame(path).ok_or(error)?,
+    };
     let (width, height) = (picture.width().max(1), picture.height().max(1));
     let (short, long) = (width.min(height), width.max(height));
     let scale = match fit {
@@ -399,6 +399,37 @@ fn decode_fitted(path: &Path, fit: Fit) -> Result<egui::ColorImage, String> {
     );
     image.source_size = egui::vec2(width as f32, height as f32);
     Ok(image)
+}
+
+/// The whole picture at `path`, turned as its metadata says. Metadata it
+/// cannot read, such as a sticker's pack details, leaves it as it is.
+fn decode_whole(path: &Path) -> Result<image::DynamicImage, String> {
+    use image::ImageDecoder as _;
+    let reader = image::ImageReader::open(path)
+        .and_then(image::ImageReader::with_guessed_format)
+        .map_err(|error| error.to_string())?;
+    let mut decoder = reader.into_decoder().map_err(|error| error.to_string())?;
+    let orientation = decoder
+        .orientation()
+        .unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut picture =
+        image::DynamicImage::from_decoder(decoder).map_err(|error| error.to_string())?;
+    picture.apply_orientation(orientation);
+    Ok(picture)
+}
+
+/// A WebP's first frame, read as egui's own WebP loader reads it, for a
+/// sticker the general decoder refuses: one that moves after all, as a
+/// still.
+fn first_webp_frame(path: &Path) -> Option<image::DynamicImage> {
+    use image::AnimationDecoder as _;
+    let bytes = std::fs::read(path).ok()?;
+    let decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    if decoder.has_animation() {
+        let frame = decoder.into_frames().next()?.ok()?;
+        return Some(image::DynamicImage::ImageRgba8(frame.into_buffer()));
+    }
+    image::DynamicImage::from_decoder(decoder).ok()
 }
 
 /// Where a fitted picture is in [`FitLoader`].
@@ -555,7 +586,10 @@ fn decode_jobs(receiver: &mpsc::Receiver<(String, egui::Context)>, fits: &Fits) 
         if let Some(entry @ Fitted::Pending) = fits.get_mut(&uri) {
             *entry = match result {
                 Ok(image) => Fitted::Ready(Arc::new(image)),
-                Err(error) => Fitted::Failed(error),
+                Err(error) => {
+                    log::warn!("could not decode a picture: {error}");
+                    Fitted::Failed(error)
+                }
             };
             drop(fits);
             ctx.request_repaint();
@@ -878,15 +912,24 @@ mod tests {
             file,
             "a WebP that may move keeps egui's loader"
         );
-        assert_eq!(
-            fit_still_uri(&ctx, sticker, egui::vec2(60.0, 60.0)),
-            format!("fit://128/{file}")
+        let still = fit_still_uri(&ctx, sticker, egui::vec2(60.0, 60.0));
+        assert_eq!(still, format!("fit://128/{file}?still"));
+        assert!(
+            !egui::load::has_extension(&still, "webp"),
+            "egui must not ask for it frame by frame"
         );
-        let dir = tempfile::tempdir().expect("temp");
-        let path = picture(dir.path(), "still.webp", 512, 512);
+        assert_eq!(parse_fit(&still), Some((Fit::Cover(128), file.as_str())));
+        // Lossy with an alpha channel, as WhatsApp's stickers are.
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/demo/stickers/cat.webp");
         let image = decode_fitted(&path, Fit::Cover(128)).expect("decoded");
         assert_eq!(image.size, [128, 128], "decoded at the tile's size");
         assert_eq!(image.source_size, egui::vec2(512.0, 512.0));
+        let moving =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/demo/stickers/astronaut-float.webp");
+        assert!(
+            decode_fitted(&moving, Fit::Cover(128)).is_ok(),
+            "its first frame"
+        );
     }
 
     #[test]

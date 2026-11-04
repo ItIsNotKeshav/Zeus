@@ -95,10 +95,14 @@ pub(super) static SCROLLS: [(f32, f32, f32); PASSES * 2] = {
     sweeps
 };
 
-/// Opens the photo chat at its newest message, in the dark theme, with the
-/// other chats and the sticker picker's stickers in place.
+/// Opens the photo chat at its newest message, in Zeus's own Dark theme with
+/// the glass at its clearest, so the frost is measured too, with the other
+/// chats and the sticker picker's stickers in place.
 pub fn prepare(app: &mut App) {
     super::common_setup(app);
+    app.settings
+        .set_theme(crate::settings::ThemeChoice::NothingDark);
+    app.settings.set_glass(0.0);
     for chat in &mut app.chats {
         chat.unread_mention = None;
     }
