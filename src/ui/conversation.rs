@@ -10511,13 +10511,18 @@ fn picture(
         let pixels_id = egui::Id::new(("picture-pixels", path));
         let drawn = ui.ctx().data(|data| data.get_temp::<Vec2>(pixels_id));
         let reserved = drawn.map_or_else(|| frame_size(media, None, max_width, max_height), fit);
+        // Shown whole, so decoded only as large as it fits the bounds. A
+        // sticker here is still (a moving one played above), so its WebP
+        // decodes off the interface thread like a photo.
+        let image = if sticker.is_some() {
+            widgets::fitted_sticker(ui, path, vec2(max_width, max_height))
+        } else {
+            widgets::fitted_image_within(ui, path, vec2(max_width, max_height))
+        };
         let position = ui.next_widget_position();
         if !ui.is_rect_visible(Rect::from_min_size(position, reserved)) {
             return ui.allocate_exact_size(reserved, Sense::hover()).0;
         }
-        // Stickers are WebP, which keep egui's own loader and their motion.
-        // Shown whole, so decoded only as large as it fits the bounds.
-        let image = widgets::fitted_image_within(ui, path, vec2(max_width, max_height));
         // While the picture decodes its blurred thumbnail stands in, and the
         // sharp picture fades in over it once ready. One already decoded, as
         // when scrolled back to, shows at once.
@@ -12300,7 +12305,7 @@ fn sticker_texture(ui: &egui::Ui, path: &Path, rect: Rect) -> Option<(egui::Text
             _ => None,
         };
     }
-    let poll = widgets::file_image(ui, path)
+    let poll = widgets::fitted_sticker(ui, path, rect.size())
         .load_for_size(ui.ctx(), rect.size())
         .ok()?;
     Some((poll.texture_id()?, poll.size()?))

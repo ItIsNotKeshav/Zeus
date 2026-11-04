@@ -312,6 +312,12 @@ pub fn fitted_image(ui: &Ui, path: &Path, size: Vec2) -> egui::Image<'static> {
     egui::Image::new(crate::image_cache::fit_uri(ui.ctx(), path, size))
 }
 
+/// Like [`fitted_image`], for a sticker found still (`picker::moves`), which
+/// then decodes off the interface thread even as a WebP.
+pub fn fitted_sticker(ui: &Ui, path: &Path, size: Vec2) -> egui::Image<'static> {
+    egui::Image::new(crate::image_cache::fit_still_uri(ui.ctx(), path, size))
+}
+
 /// Like [`fitted_image`], for a picture shown whole within `bounds` points
 /// rather than cropped to fill them: decoded only as large as it fits.
 pub fn fitted_image_within(ui: &Ui, path: &Path, bounds: Vec2) -> egui::Image<'static> {

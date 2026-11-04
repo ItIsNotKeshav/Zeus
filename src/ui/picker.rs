@@ -1877,7 +1877,7 @@ fn probe_motion(path: &Path) -> Option<bool> {
 }
 
 fn sticker_picture(ui: &egui::Ui, path: &Path, rect: Rect) {
-    widgets::file_image(ui, path)
+    widgets::fitted_sticker(ui, path, rect.size())
         .fit_to_exact_size(rect.size())
         .paint_at(ui, rect);
 }

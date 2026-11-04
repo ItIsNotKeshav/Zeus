@@ -271,7 +271,18 @@ const LONGEST: u32 = 4096;
 /// [`crate::util::image_uri`] instead.
 pub fn fit_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
     let side = step(size.x.max(size.y) * ctx.pixels_per_point());
-    fitted(ctx, path, |file| format!("{FIT}{side}/{file}"))
+    fitted(ctx, path, false, |file| format!("{FIT}{side}/{file}"))
+}
+
+/// Like [`fit_uri`], for a sticker its caller found still
+/// (`picker::moves`): a WebP, which [`fit_uri`] leaves to egui's own loader
+/// for its motion, decodes on [`FitLoader`]'s thread too. egui's WebP loader
+/// decodes in the frame that first draws the picture, so a shelf of stickers
+/// held the window for a third of a second to two seconds when the picker
+/// opened on it.
+pub fn fit_still_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
+    let side = step(size.x.max(size.y) * ctx.pixels_per_point());
+    fitted(ctx, path, true, |file| format!("{FIT}{side}/{file}"))
 }
 
 /// Like [`fit_uri`], for a picture shown whole within `bounds` points: only
@@ -281,7 +292,9 @@ pub fn fit_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
 pub fn fit_uri_within(ctx: &egui::Context, path: &Path, bounds: egui::Vec2) -> String {
     let pixels = ctx.pixels_per_point();
     let (width, height) = (step(bounds.x * pixels), step(bounds.y * pixels));
-    fitted(ctx, path, |file| format!("{FIT}{width}x{height}/{file}"))
+    fitted(ctx, path, false, |file| {
+        format!("{FIT}{width}x{height}/{file}")
+    })
 }
 
 /// The side in [`SIDES`] at or above `pixels`, or the largest.
@@ -296,19 +309,30 @@ fn step(pixels: f32) -> u32 {
 
 /// The fitted URI `uri` makes of the file's, for a picture [`FitLoader`]
 /// decodes, or the file's own, and registered as drawn this frame.
-fn fitted(ctx: &egui::Context, path: &Path, uri: impl FnOnce(&str) -> String) -> String {
+fn fitted(
+    ctx: &egui::Context,
+    path: &Path,
+    still: bool,
+    uri: impl FnOnce(&str) -> String,
+) -> String {
     let file = crate::util::image_uri(path);
-    let uri = if fits(path) { uri(&file) } else { file };
+    let uri = if fits(path, still) { uri(&file) } else { file };
     touch(ctx, &uri);
     uri
 }
 
-/// Whether [`FitLoader`] decodes the file: the still formats photos come in.
-fn fits(path: &Path) -> bool {
+/// Whether [`FitLoader`] decodes the file: the still formats photos come in,
+/// and a WebP known to be `still`.
+fn fits(path: &Path, still: bool) -> bool {
+    let known: &[&str] = if still {
+        &["jpg", "jpeg", "png", "webp"]
+    } else {
+        &["jpg", "jpeg", "png"]
+    };
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| {
-            ["jpg", "jpeg", "png"]
+            known
                 .iter()
                 .any(|known| extension.eq_ignore_ascii_case(known))
         })
@@ -842,6 +866,27 @@ mod tests {
             fit_uri_within(&ctx, gif, egui::vec2(300.0, 440.0)),
             crate::util::image_uri(gif)
         );
+    }
+
+    #[test]
+    fn a_still_sticker_is_fitted_where_one_that_may_move_is_not() {
+        let ctx = egui::Context::default();
+        let sticker = Path::new("/tmp/sticker.webp");
+        let file = crate::util::image_uri(sticker);
+        assert_eq!(
+            fit_uri(&ctx, sticker, egui::vec2(60.0, 60.0)),
+            file,
+            "a WebP that may move keeps egui's loader"
+        );
+        assert_eq!(
+            fit_still_uri(&ctx, sticker, egui::vec2(60.0, 60.0)),
+            format!("fit://128/{file}")
+        );
+        let dir = tempfile::tempdir().expect("temp");
+        let path = picture(dir.path(), "still.webp", 512, 512);
+        let image = decode_fitted(&path, Fit::Cover(128)).expect("decoded");
+        assert_eq!(image.size, [128, 128], "decoded at the tile's size");
+        assert_eq!(image.source_size, egui::vec2(512.0, 512.0));
     }
 
     #[test]
