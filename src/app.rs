@@ -235,6 +235,9 @@ pub struct Conversation {
     /// and that top's distance from the start of the transcript, which the
     /// list keeps in place when rows above it change height or arrive.
     pub(crate) top_row: Option<(String, f32)>,
+    /// Messages just deleted from this chat while it was open, drawn
+    /// leaving for a moment where they were.
+    pub(crate) leaving: Vec<crate::ui::leaving::Leaving>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -4036,7 +4039,26 @@ impl App {
                 }
             }
             Event::MessageDeleted { chat, id } => {
+                let open = live && self.open_chat.as_deref() == Some(chat.as_str());
                 if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    // A message deleted from the open chat leaves with motion.
+                    if open
+                        && let Some(index) = conversation
+                            .messages
+                            .iter()
+                            .position(|message| message.id == id)
+                    {
+                        let after = index
+                            .checked_sub(1)
+                            .map(|before| conversation.messages[before].id.clone());
+                        let message = conversation.messages[index].clone();
+                        crate::ui::leaving::record(
+                            &mut conversation.leaving,
+                            message,
+                            after,
+                            Instant::now(),
+                        );
+                    }
                     conversation.messages.retain(|message| message.id != id);
                 }
                 if live && self.editing.as_deref() == Some(id.as_str()) {
