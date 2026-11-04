@@ -1970,35 +1970,37 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 } else {
                     (palette.surface, palette.surface_hover, palette.dim)
                 };
-                last_line(ui, line, |ui| if !ready && app.editing.is_none() {
+                last_line(ui, line, |ui| {
                     // An empty composer changes the send button to record.
-                    if theme::circle_button(
+                    let recording = !ready && app.editing.is_none();
+                    let (icon_kind, tint, tip) = if recording {
+                        (Icon::Mic, palette.secondary, "Record a voice message")
+                    } else if app.editing.is_some() {
+                        (Icon::Check, icon, "Send")
+                    } else {
+                        (Icon::Send, icon, "Send")
+                    };
+                    let send = theme::circle_button_morph(
                         ui,
-                        Icon::Mic,
+                        "composer-send",
+                        icon_kind,
                         button_width,
                         fill,
                         hover,
-                        palette.secondary,
-                        "Record a voice message",
+                        tint,
+                        tip,
                     )
-                    .tab_stop(Stop::Send)
-                    .clicked()
-                    {
-                        app.actions.push(Action::StartRecording);
-                    }
-                } else {
-                    let icon_kind = if app.editing.is_some() {
-                        Icon::Check
+                    .tab_stop(Stop::Send);
+                    if recording {
+                        if send.clicked() {
+                            app.actions.push(Action::StartRecording);
+                        }
                     } else {
-                        Icon::Send
-                    };
-                    let send =
-                        theme::circle_button(ui, icon_kind, button_width, fill, hover, icon, "Send")
-                            .tab_stop(Stop::Send);
                     ui.ctx()
                         .data_mut(|data| data.insert_temp(send_flight_id().with("button"), send.rect));
                     if send.clicked() {
                         send_click = true;
+                    }
                     }
                 });
             },
