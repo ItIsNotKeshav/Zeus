@@ -15,7 +15,7 @@ use crate::model::MediaItem;
 use crate::model::{Action, Dialog};
 use crate::theme::{self, Icon};
 
-use super::conversation::thumbnail_uri;
+use super::conversation::{album_tile_id, bubble_id, thumbnail_uri};
 
 /// Height of the header across the top.
 const HEADER: f32 = 56.0;
@@ -24,6 +24,195 @@ const STRIP: f32 = 78.0;
 const THUMB: f32 = 56.0;
 const STRIP_GAP: f32 = 6.0;
 const STRIP_PAD: f32 = 4.0;
+
+/// How long a picture takes to fly between its bubble and the viewer.
+const FLIGHT_SECONDS: f32 = 0.4;
+/// The spring's bounce: a shade, so the picture settles instead of stopping.
+const FLIGHT_BOUNCE: f64 = 0.12;
+/// The picture's corner radius in its bubble, which the viewer squares off.
+const FLIGHT_RADIUS: f32 = theme::RADIUS as f32;
+
+/// When the viewer opened and the pass it was last drawn in, to tell a new
+/// opening from a later frame or a step to another picture.
+#[derive(Clone, Copy)]
+struct Opened {
+    start: f64,
+    pass: u64,
+}
+
+/// The picture the viewer last settled on, kept so the viewer can fly it back
+/// to its bubble after the app has dropped the preview.
+#[derive(Clone)]
+struct Ghost {
+    path: std::path::PathBuf,
+    chat: String,
+    message: String,
+    /// Where the picture sat in the viewer.
+    rect: Rect,
+    /// When the viewer closed, once it has.
+    closed: Option<f64>,
+}
+
+fn opened_id() -> egui::Id {
+    egui::Id::new("image-preview-opened")
+}
+
+fn ghost_id() -> egui::Id {
+    egui::Id::new("image-preview-ghost")
+}
+
+/// Where the message's picture was last drawn in its bubble, when that is on
+/// screen.
+fn source_rect(ctx: &egui::Context, chat: &str, message: &str) -> Option<Rect> {
+    let rect = ctx.data(|data| {
+        data.get_temp::<Rect>(album_tile_id(chat, message))
+            .or_else(|| data.get_temp::<Rect>(bubble_id(chat, message).with("picture")))
+    })?;
+    (rect.is_positive() && ctx.content_rect().intersects(rect)).then_some(rect)
+}
+
+/// `a` moved `t` of the way to `b`; `t` may overshoot for a spring.
+fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
+    Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t))
+}
+
+/// How far the opening flight has come at `elapsed` seconds, on the spring.
+fn flight_progress(elapsed: f32) -> f32 {
+    if elapsed <= 0.0 {
+        return 0.0;
+    }
+    if elapsed >= FLIGHT_SECONDS {
+        return 1.0;
+    }
+    let (stiffness, damping) =
+        spring_from_duration(f64::from(FLIGHT_SECONDS) * 1000.0, FLIGHT_BOUNCE);
+    spring_unit(f64::from(elapsed) * 1000.0, stiffness, damping) as f32
+}
+
+/// Seconds since the viewer opened, restarting when it is new this pass.
+fn open_elapsed(ctx: &egui::Context) -> f32 {
+    let now = ctx.input(|input| input.time);
+    let pass = ctx.cumulative_pass_nr();
+    let opened = ctx.data_mut(|data| {
+        let opened = match data.get_temp::<Opened>(opened_id()) {
+            Some(opened) if opened.pass + 1 >= pass => Opened {
+                start: opened.start,
+                pass,
+            },
+            _ => Opened { start: now, pass },
+        };
+        data.insert_temp(opened_id(), opened);
+        opened
+    });
+    (now - opened.start) as f32
+}
+
+/// Stiffness and damping for Motion's `{ duration, bounce }` spring, as the
+/// conversation uses for a message arriving. `duration_ms` is milliseconds.
+fn spring_from_duration(duration_ms: f64, bounce: f64) -> (f64, f64) {
+    const SAFE_MIN: f64 = 0.001;
+    const ROOT_STEPS: i32 = 12;
+    let mass = 1.0;
+    let velocity = 0.0;
+    let damping_ratio = (1.0 - bounce).clamp(0.05, 1.0);
+    let duration = (duration_ms / 1000.0).clamp(0.01, 10.0);
+    let angular = |undamped: f64| undamped * (1.0 - damping_ratio * damping_ratio).sqrt();
+    let envelope = |undamped: f64| {
+        let decay = undamped * damping_ratio;
+        let delta = decay * duration;
+        let a = decay - velocity;
+        let b = angular(undamped);
+        SAFE_MIN - (a / b) * (-delta).exp()
+    };
+    let derivative = |undamped: f64| {
+        let decay = undamped * damping_ratio;
+        let delta = decay * duration;
+        let d = delta * velocity + velocity;
+        let e = damping_ratio.powi(2) * undamped.powi(2) * duration;
+        let f = (-delta).exp();
+        let g = angular(undamped.powi(2));
+        let factor = if -envelope(undamped) + SAFE_MIN > 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        (factor * ((d - e) * f)) / g
+    };
+    let mut undamped = 5.0 / duration;
+    for _ in 1..ROOT_STEPS {
+        let slope = derivative(undamped);
+        if slope.abs() < 1e-9 {
+            break;
+        }
+        undamped -= envelope(undamped) / slope;
+    }
+    let stiffness = undamped * undamped * mass;
+    let damping = damping_ratio * 2.0 * (mass * stiffness).sqrt();
+    (stiffness, damping)
+}
+
+/// Underdamped spring from 0 to 1 at `t_ms`, the form Motion samples.
+fn spring_unit(t_ms: f64, stiffness: f64, damping: f64) -> f64 {
+    let mass = 1.0;
+    let damping_ratio = damping / (2.0 * (stiffness * mass).sqrt());
+    let undamped = (stiffness / mass).sqrt() / 1000.0;
+    let angular = undamped * (1.0 - damping_ratio * damping_ratio).sqrt();
+    let envelope = (-damping_ratio * undamped * t_ms).exp();
+    1.0 - envelope
+        * ((damping_ratio * undamped) / angular * (angular * t_ms).sin() + (angular * t_ms).cos())
+}
+
+/// Plays the picture back into its bubble once the app has dropped the
+/// viewer: the picture flies to where it was drawn in the chat, or fades and
+/// shrinks when that is off screen, while the field fades out.
+fn fly_back(ctx: &egui::Context, palette: &crate::theme::Palette) {
+    let Some(mut ghost) = ctx.data(|data| data.get_temp::<Ghost>(ghost_id())) else {
+        return;
+    };
+    let now = ctx.input(|input| input.time);
+    let closed = *ghost.closed.get_or_insert(now);
+    let seconds = FLIGHT_SECONDS * theme::CLOSE;
+    let linear = if crate::motion::screen_reader_attached(ctx) || seconds <= 0.0 {
+        1.0
+    } else {
+        ((now - closed) as f32 / seconds).clamp(0.0, 1.0)
+    };
+    if linear >= 1.0 {
+        ctx.data_mut(|data| data.remove::<Ghost>(ghost_id()));
+        return;
+    }
+    ctx.data_mut(|data| data.insert_temp(ghost_id(), ghost.clone()));
+    let t = theme::ease_out(linear);
+    let screen = ctx.content_rect();
+    let (rect, radius, opacity) = match source_rect(ctx, &ghost.chat, &ghost.message) {
+        Some(target) => (lerp_rect(ghost.rect, target, t), FLIGHT_RADIUS * t, 1.0),
+        None => {
+            let scale = 1.0 - (1.0 - theme::CLOSE_SCALE) * t;
+            (
+                Rect::from_center_size(ghost.rect.center(), ghost.rect.size() * scale),
+                0.0,
+                1.0 - t,
+            )
+        }
+    };
+    let back = 1.0 - t;
+    egui::Area::new(egui::Id::new("image-preview-ghost-area"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(screen.min)
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.painter()
+                .rect_filled(screen, 0.0, palette.shadow.gamma_multiply(back));
+            ui.painter()
+                .rect_filled(screen, 0.0, palette.overlay.gamma_multiply(back));
+            crate::ui::widgets::full_size_file_image(ui, &ghost.path)
+                .fit_to_exact_size(rect.size())
+                .corner_radius(radius)
+                .tint(egui::Color32::WHITE.gamma_multiply(opacity))
+                .paint_at(ui, rect);
+        });
+    ctx.request_repaint();
+}
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
     // The album carries every thumbnail of the chat, so it is moved out for
@@ -37,6 +226,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         ctx.data_mut(|data| {
             data.remove::<(String, String, Option<usize>)>(egui::Id::new("viewer-strip-centred"))
         });
+        fly_back(ctx, &app.palette);
         return;
     };
     let album = std::mem::take(&mut app.viewer_media);
@@ -61,19 +251,38 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     // cannot reach the chat behind it. The field and every control over it come
     // from the palette, so the light theme reads as well as the dark one.
     let screen = ctx.content_rect();
+    // The picture flies out of its bubble: the field fades in over the panel
+    // time, the picture follows the spring, and the controls arrive after
+    // 60% of the flight. A screen reader gets the viewer at once.
+    let elapsed = if crate::motion::screen_reader_attached(ctx) {
+        FLIGHT_SECONDS
+    } else {
+        open_elapsed(ctx)
+    };
+    let linear = (elapsed / FLIGHT_SECONDS).clamp(0.0, 1.0);
+    let fade = theme::ease_out((elapsed / theme::MOTION_PANEL).clamp(0.0, 1.0));
+    let chrome = ((linear - 0.6) / 0.4).clamp(0.0, 1.0);
+    let flight = (linear < 1.0 && !clip)
+        .then(|| source_rect(ctx, &chat, &message))
+        .flatten()
+        .map(|from| (from, flight_progress(elapsed)));
+    if linear < 1.0 {
+        ctx.request_repaint();
+    }
     let area = egui::Area::new(egui::Id::new("image-preview"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min);
     let response = egui::Modal::new(egui::Id::new("image-preview"))
         .area(area)
-        .frame(egui::Frame::new().fill(palette.overlay))
-        .backdrop_color(palette.shadow)
+        .frame(egui::Frame::new().fill(palette.overlay.gamma_multiply(fade)))
+        .backdrop_color(palette.shadow.gamma_multiply(fade))
         .show(ctx, |ui| {
             // Sized to the window with no margin around it, so the field runs
             // edge to edge.
             ui.set_min_size(screen.size());
             let window = Rect::from_min_size(screen.min, screen.size());
-            ui.painter().rect_filled(window, 0.0, palette.overlay);
+            ui.painter()
+                .rect_filled(window, 0.0, palette.overlay.gamma_multiply(fade));
             // Claimed first, so every control drawn over it wins the click.
             // What reaches this is a click on the empty field, which closes the
             // viewer, as it does on the phone.
@@ -85,6 +294,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             let inset = header_rect.shrink2(vec2(14.0, 0.0));
             let mut head = ui.new_child(UiBuilder::new().max_rect(inset));
             head.set_clip_rect(header_rect);
+            head.set_opacity(chrome);
             header(
                 app,
                 &mut head,
@@ -129,9 +339,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     &chat,
                     &message,
                     stage,
+                    flight,
                     &mut actions,
                 )
             };
+            if clip {
+                // Only a still picture flies back; a clip leaves at once.
+                ctx.data_mut(|data| data.remove::<Ghost>(ghost_id()));
+            }
             if strip {
                 navigation_overlay(
                     ui,
@@ -144,6 +359,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 );
                 let mut bar = ui.new_child(UiBuilder::new().max_rect(strip_rect));
                 bar.set_clip_rect(strip_rect);
+                bar.set_opacity(chrome);
                 strip_bar(
                     app,
                     &mut bar,
@@ -531,6 +747,7 @@ fn still(
     chat: &str,
     message: &str,
     stage: Rect,
+    flight: Option<(Rect, f32)>,
     actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let palette = app.palette;
@@ -554,6 +771,17 @@ fn still(
             let size = display_size(texture.size, canvas, preview.is_fit(), preview.zoom());
             if preview.is_fit() && texture.size.x > 0.0 {
                 preview.set_fit_scale(size.x / texture.size.x);
+            }
+            // Flying out of the bubble: the picture is painted by itself on
+            // its way, and the scroll area takes over once it has landed.
+            if let Some((from, progress)) = flight {
+                let to = Rect::from_center_size(stage.center(), size);
+                let rect = lerp_rect(from, to, progress);
+                image
+                    .fit_to_exact_size(rect.size())
+                    .corner_radius(FLIGHT_RADIUS * (1.0 - progress).max(0.0))
+                    .paint_at(ui, rect);
+                return Some(to);
             }
             let scroll_id = ui.make_persistent_id(egui::IdSalt::new("image-preview-scroll"));
             let trackpad = app.scrolling.from_trackpad();
@@ -644,6 +872,21 @@ fn still(
                     .inner
                 });
             let (picture, double_clicked) = output.inner;
+            if preview.is_fit() {
+                let rect = Rect::from_center_size(stage.center(), size);
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(
+                        ghost_id(),
+                        Ghost {
+                            path: path.to_owned(),
+                            chat: chat.to_owned(),
+                            message: message.to_owned(),
+                            rect,
+                            closed: None,
+                        },
+                    );
+                });
+            }
             // Stored after the scroll area, which clamps its offset to this
             // frame's size; the next frame lays out the zoomed size with the
             // pointed-at pixel still under the pointer.
@@ -1419,6 +1662,21 @@ fn fit(size: Vec2, max: Vec2) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_flight_runs_from_the_bubble_to_the_stage() {
+        let from = Rect::from_min_size(pos2(10.0, 20.0), vec2(100.0, 50.0));
+        let to = Rect::from_min_size(pos2(0.0, 0.0), vec2(400.0, 300.0));
+        assert_eq!(lerp_rect(from, to, 0.0), from);
+        assert_eq!(lerp_rect(from, to, 1.0), to);
+        let half = lerp_rect(from, to, 0.5);
+        assert_eq!(half.min, pos2(5.0, 10.0));
+        assert_eq!(half.max, pos2(255.0, 185.0));
+        assert_eq!(flight_progress(0.0), 0.0);
+        assert_eq!(flight_progress(FLIGHT_SECONDS), 1.0);
+        let middle = flight_progress(FLIGHT_SECONDS / 2.0);
+        assert!(middle > 0.5 && middle < 1.2, "{middle}");
+    }
 
     #[test]
     fn stickers_show_on_a_card_that_fits_small_windows() {
