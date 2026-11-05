@@ -524,6 +524,8 @@ struct Shown {
     group: bool,
     channel: bool,
     phone: Option<String>,
+    /// Whether the chat's header would offer to call it.
+    callable: bool,
     members: usize,
     can_leave: bool,
     can_edit_info: bool,
@@ -532,8 +534,6 @@ struct Shown {
     can_manage: bool,
     muted_until: Option<i64>,
     muted: bool,
-    pinned: bool,
-    archived: bool,
     /// A group's description, when it has one.
     description: Option<String>,
     /// The disappearing-message timer line, when the timer is known.
@@ -561,6 +561,7 @@ impl Shown {
             group: chat.is_group(),
             channel: chat.is_channel(),
             phone: chat.phone().map(str::to_owned),
+            callable: super::conversation::callable(chat, app.me.as_deref()),
             members: chat.participants.len(),
             can_leave: chat.can_leave(&ours),
             can_edit_info: chat.can_edit_info(),
@@ -569,8 +570,6 @@ impl Shown {
             can_manage: chat.can_manage_group(),
             muted_until: chat.muted_until,
             muted: chat.muted(crate::util::now()),
-            pinned: chat.pinned,
-            archived: chat.archived,
             description: chat
                 .group_description
                 .clone()
@@ -776,13 +775,23 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         } else {
             widgets::selectable_rich_text(ui, name, theme::bold(19.0), palette.text);
         }
+        // The number copies whole on a double-click rather than selecting a
+        // word of it.
         if let Some(phone) = &shown.phone {
-            theme::selectable_text(
-                ui,
-                crate::util::phone(phone),
-                theme::regular(13.5),
-                palette.secondary,
-            );
+            let number = ui
+                .add(
+                    egui::Label::new(
+                        egui::RichText::new(crate::util::phone(phone))
+                            .font(theme::regular(13.5))
+                            .color(palette.secondary),
+                    )
+                    .selectable(false)
+                    .sense(Sense::click()),
+                )
+                .on_hover_text(crate::i18n::gettext(app.locale, "Double-click to copy"));
+            if number.double_clicked() {
+                app.actions.push(Action::CopyText(format!("+{phone}")));
+            }
         }
         if saving {
             theme::text(
@@ -860,7 +869,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         app.actions.push(action);
     }
     ui.add_space(18.0);
-    actions(app, ui, shown, mine, editable);
+    actions(app, ui, shown);
     if let Some(description) = shown.description.as_deref() {
         ui.add_space(SECTION_GAP);
         section_title(
@@ -958,45 +967,16 @@ fn leave_row(ui: &mut egui::Ui, palette: &Palette, label: &str) -> egui::Respons
 
 /// The actions the chat offers, as tiles of equal width under the name: an
 /// icon over a short label, as on the phone.
-fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable: bool) {
+fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown) {
     let palette = app.palette;
     let id = shown.id.as_str();
     let mut buttons: Vec<(Icon, &str, Vec<Action>)> = Vec::new();
-    if !shown.group && !mine {
+    if shown.callable {
+        buttons.push((Icon::Phone, "Call", vec![Action::StartCall(id.to_owned())]));
         buttons.push((
-            Icon::MessageCircle,
-            "Message",
-            vec![
-                Action::StartChat {
-                    id: id.to_owned(),
-                    name: shown.name.clone(),
-                    // The panel is not a dialog: whatever dialog is up stays.
-                    dismiss_dialog: false,
-                },
-                Action::CloseInfo,
-            ],
-        ));
-    }
-    if editable {
-        let known = app
-            .contacts
-            .get(id)
-            .and_then(|contact| contact.full_name.as_deref())
-            .is_some_and(|full| !full.is_empty());
-        buttons.push((
-            Icon::User,
-            if known { "Rename" } else { "Add contact" },
-            vec![Action::EditContact {
-                id: id.to_owned(),
-                name: shown.name.trim_start_matches('~').to_owned(),
-            }],
-        ));
-    }
-    if let Some(phone) = &shown.phone {
-        buttons.push((
-            Icon::Copy,
-            "Copy number",
-            vec![Action::CopyText(format!("+{phone}"))],
+            Icon::Video,
+            "Video call",
+            vec![Action::StartVideoCall(id.to_owned())],
         ));
     }
     if shown.has_chat {
@@ -1013,27 +993,11 @@ fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown, mine: bool, editable
                 vec![Action::SetMuted(id.to_owned(), Some(0))],
             )
         });
-        buttons.push((
-            if shown.pinned {
-                Icon::PinOff
-            } else {
-                Icon::Pin
-            },
-            if shown.pinned { "Unpin" } else { "Pin" },
-            vec![Action::SetPinned(id.to_owned(), !shown.pinned)],
-        ));
-        buttons.push((
-            Icon::Archive,
-            if shown.archived {
-                "Unarchive"
-            } else {
-                "Archive"
-            },
-            vec![
-                Action::SetArchived(id.to_owned(), !shown.archived),
-                Action::CloseInfo,
-            ],
-        ));
+    }
+    // The search pane takes the panel's place beside the open chat, so only
+    // the open chat's own panel offers it, not a group member's.
+    if shown.has_chat && app.open_chat.as_deref() == Some(id) {
+        buttons.push((Icon::Search, "Search", vec![Action::OpenChatSearch]));
     }
     if buttons.is_empty() {
         return;
