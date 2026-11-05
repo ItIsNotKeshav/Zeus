@@ -308,7 +308,7 @@ fn fly_back(ctx: &egui::Context, palette: &crate::theme::Palette) {
             ui.painter()
                 .rect_filled(screen, 0.0, palette.overlay.gamma_multiply(back));
             let image = match &ghost.picture {
-                GhostPicture::File(path) => crate::ui::widgets::full_size_file_image(ui, path),
+                GhostPicture::File(path) => crate::ui::widgets::file_image(ui, path),
                 GhostPicture::Frame(frame) => {
                     egui::Image::from_texture(egui::load::SizedTexture::from_handle(frame))
                 }

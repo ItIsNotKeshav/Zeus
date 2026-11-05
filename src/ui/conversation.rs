@@ -7131,7 +7131,8 @@ fn bubble_frame(
     let rect_id = bubble_id.with("rect");
     let previous = ui.ctx().data(|data| data.get_temp::<Rect>(rect_id));
     let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
-    // Painted once the contents are measured, beneath them.
+    // Painted once the contents are measured, beneath them, over a scrim.
+    let scrim = ui.painter().add(egui::Shape::Noop);
     let backdrop = ui.painter().add(egui::Shape::Noop);
     let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
         widgets::Side::Right
@@ -8952,7 +8953,6 @@ pub(crate) fn list_menu(
     let mention_names = |id: &str| app.mention_name(id);
     let avatars = HashMap::new();
     let keyboard_navigation = std::cell::Cell::new(false);
-    let scrims = std::cell::RefCell::new(Vec::new());
     let view = View {
         palette: app.palette,
         locale: app.locale,
@@ -15897,7 +15897,6 @@ mod tests {
         let mention_names = |id: &str| app.mention_name(id);
         let avatars = HashMap::new();
         let keyboard_navigation = std::cell::Cell::new(false);
-        let scrims = std::cell::RefCell::new(Vec::new());
         let view = View {
             palette: Palette::dark(),
             locale: app.locale,
