@@ -28,6 +28,7 @@ pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod reaction_list;
+pub(crate) mod scroll_springs;
 pub mod settings;
 pub(crate) mod swipe;
 pub mod update;

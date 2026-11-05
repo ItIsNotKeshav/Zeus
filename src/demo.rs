@@ -8729,6 +8729,9 @@ mod tests {
     /// and the date fades away once the transcript stops moving.
     #[test]
     fn scrolling_inside_a_day_keeps_its_date_visible() {
+        // The rows are measured where they are laid out, not where a
+        // scroll's springs would draw them.
+        let _still = crate::ui::scroll_springs::hold_still();
         fn shapes_at(
             app: &mut App,
             ctx: &egui::Context,
@@ -18384,6 +18387,9 @@ mod long_chat_tests {
     /// with the scroll: the same distance for the same scroll every frame.
     #[test]
     fn scrolling_up_moves_the_rows_by_the_scroll_alone() {
+        // The rows are measured where they are laid out, not where a
+        // scroll's springs would draw them.
+        let _still = crate::ui::scroll_springs::hold_still();
         let (mut app, ctx, _, _clock) = long_chat();
         for _ in 0..3 {
             frame(&mut app, &ctx, Vec::new());
@@ -18571,6 +18577,9 @@ mod long_chat_tests {
     /// and the next frame's not at all, a double step and a pause.
     #[test]
     fn a_steady_trackpad_scroll_moves_evenly() {
+        // The rows are measured where they are laid out, not where a
+        // scroll's springs would draw them.
+        let _still = crate::ui::scroll_springs::hold_still();
         let (mut app, ctx, _, _clock) = long_chat();
         for _ in 0..3 {
             frame(&mut app, &ctx, Vec::new());
