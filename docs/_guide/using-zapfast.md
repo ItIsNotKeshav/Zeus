@@ -33,14 +33,15 @@ the oldest unread mention. The smiley opens emoji
 (searchable), GIFs, and stickers,
 including the stickers used on the phone.
 
-Right-click a message to reply, react with any emoji, edit, forward, delete, or
-check when it was sent, delivered, and read. The reaction row has a **+** that
-opens the full emoji picker. Hover over a reaction to see who added it. When
+Right-click a message to react with any emoji, edit it, copy its text, star or
+pin it, save its attachment, or delete it. The message darkens a little while
+its menu is open, so you can see which one the menu acts on. The reaction row
+has a **+** that opens the full emoji picker. Hover over a reaction to see who added it. When
 someone reacts to one of your messages, the chat moves to the top of the list.
 Editing uses the composer. Press Escape to cancel. If WhatsApp refuses an
 edit, the message keeps its earlier text.
 
-**Development builds** also show when your message was delivered and read when
+**Development builds** show when your message was sent, delivered and read when
 you click its time or ticks, as on WhatsApp.
 
 Forwarding opens a recipient picker. Select up to five writable chats, as on
@@ -74,7 +75,9 @@ private-reply recovery, including refusals arriving after deletion.
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
-Deleting a message asks which copies to remove. **Delete for everyone**
+To delete a message, right-click it and rest on **Delete**: it offers
+**Delete for me**, and **Delete for everyone** while your own message can
+still be revoked. Either asks you to confirm. **Delete for everyone**
 revokes it through WhatsApp. In **0.19.0**, **Delete for me** removes only this
 computer's copy, and individual deletions do not sync to or from your phone.
 
@@ -103,21 +106,15 @@ computer's clock runs ahead. Until the server answers, and for a poll, the
 message keeps this computer's time.
 
 **Development builds** preserve edited replies and the phone's order for
-messages sent within the same second when loading history. If an earlier
-build missed a message or put nearby messages in the wrong order, right-click
-a message just after the affected area and choose **Reload earlier messages**.
-This asks your phone for up to 50 messages before that point and merges them
-into the archive. Edited history snapshots restore the reply even when the
-original version was never stored on this computer. Keep your phone online.
-Availability depends on what the phone sends; messages deleted for you stay
-deleted. This action does not require unlinking your account or clearing the
-archive.
+messages sent within the same second when loading history. Edited history
+snapshots restore the reply even when the original version was never stored
+on this computer. Availability depends on what the phone sends; messages
+deleted for you stay deleted.
 
 ## Selecting messages
 
-Choose **Select messages** in the chat's menu (the three dots at the top),
-**Select** in a message's menu, or Ctrl-click (Command-click on macOS) a
-message. As in WhatsApp Web, every message then gets a check box on the left.
+Choose **Select messages** in the chat's menu (the three dots at the top), or
+Ctrl-click (Command-click on macOS) a message. As in WhatsApp Web, every message then gets a check box on the left.
 Click anywhere on a message's row, its box included, to add or remove it.
 Shift-click adds every message up to the one you click, and a drag adds every
 message it passes, scrolling when you hold the pointer at the top or bottom
@@ -288,7 +285,7 @@ are grouped. **Download all** downloads every item that is not on this
 computer yet, whatever its size, as clicking each one would, and shows
 individual failures; **Save all…** copies downloaded files to a folder
 without replacing existing files. Open an item to view it individually, and
-right-click it to reply to, react to, forward or delete that item alone. A
+right-click it to react to, save or delete that item alone. A
 download that fails marks only its own item; click it to retry.
 
 Incoming attachments up to 64 MiB download when they enter view if automatic
@@ -606,8 +603,8 @@ uses WhatsApp's sharing format:
 [18:27, 8/30/2026] You: Sure, I will take a look
 ```
 
-To copy whole messages, choose **Select** from a message's menu (or
-Command-click on macOS, Ctrl-click elsewhere), then select the other messages
+To copy whole messages, Command-click one on macOS (Ctrl-click elsewhere), or
+choose **Select messages** in the chat's menu, then select the other messages
 you want. Press `Cmd+C` on macOS or `Ctrl+C` elsewhere. The clipboard includes
 only the selected messages, in chat order, using the same sharing format,
 even if some have scrolled off-screen. Attachments contribute a text label and

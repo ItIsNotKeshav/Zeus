@@ -880,6 +880,26 @@ pub fn menu_item_enabled(
     label: &str,
     enabled: bool,
 ) -> bool {
+    let inset = icon.is_some();
+    menu_row(ui, palette, icon, inset, label, enabled)
+}
+
+/// A menu entry without an icon whose text still lines up with the entries
+/// around it that have one: the icon's place before it is left blank.
+pub fn menu_item_inset(ui: &mut Ui, palette: &Palette, label: &str) -> bool {
+    menu_row(ui, palette, None, true, label, true)
+}
+
+/// Draws one menu entry and reports a click on it. `inset` keeps the
+/// icon's place before the text, whether or not `icon` fills it.
+fn menu_row(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Option<Icon>,
+    inset: bool,
+    label: &str,
+    enabled: bool,
+) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         vec2(width, 28.0),
@@ -915,6 +935,8 @@ pub fn menu_item_enabled(
                 16.0,
             )
             .paint_at(ui, icon_rect);
+        }
+        if inset {
             x += 26.0;
         }
         let mut job = egui::text::LayoutJob::simple_singleline(
@@ -1070,6 +1092,17 @@ pub trait FrostedPopup {
         ctx: &egui::Context,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>>;
+
+    /// [`FrostedPopup::show_frosted`] for a message's menu, which lifts off
+    /// the window under [`Palette::menu_shadows`]' layered shadow instead of
+    /// a frame's single one, with [`Palette::menu_inner_edge`] inside its
+    /// outline. It brings its own frame: [`menu_frame`] without its shadow.
+    fn show_lifted<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>>;
 }
 
 impl FrostedPopup for egui::Popup<'_> {
@@ -1078,49 +1111,102 @@ impl FrostedPopup for egui::Popup<'_> {
         ctx: &egui::Context,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>> {
-        let id = self.get_id();
-        let measured = ctx.read_response(id).is_some();
-        let frost = Frost::reserve(
-            ctx,
-            egui::LayerId::new(egui::Order::Foreground, id),
-            theme::RADIUS_MENU,
-        );
-        // Only an open popup runs its animation: a closed one asking for it
-        // each frame would start it anew and keep the window repainting.
-        let appear = if self.is_open() {
-            ctx.animate_bool_with_time_and_easing(
-                id.with("appear"),
-                true,
-                theme::MOTION_QUICK,
-                theme::ease_out,
-            )
-        } else {
-            0.0
-        };
-        let shown = self.show(|ui| {
-            ui.multiply_opacity(appear);
-            add(ui)
-        });
-        let Some(shown) = shown else {
-            // Closed: the next opening starts from the beginning.
-            ctx.animate_bool_with_time(id.with("appear"), false, 0.0);
-            return None;
-        };
-        if measured {
-            frost.place(shown.response.rect);
-            // Grows from the corner it opened at, glass and all, and
-            // shrinks back to it as it closes.
-            let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
-            let pivot = shown.response.rect.left_top();
-            let layer = egui::LayerId::new(egui::Order::Foreground, id);
-            ctx.transform_layer_shapes(
-                layer,
-                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
-            );
-            super::closing::keep(ctx, layer, pivot, theme::MOTION_QUICK, appear);
-        }
-        Some(shown)
+        show_over_glass(self, ctx, None, add)
     }
+
+    fn show_lifted<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let popup = self.frame(menu_frame(palette).shadow(egui::epaint::Shadow::NONE));
+        show_over_glass(popup, ctx, Some(palette), add)
+    }
+}
+
+/// Shows `popup` over frosted glass, growing as it opens; with `lift`, under
+/// that palette's layered menu shadow as well.
+fn show_over_glass<R>(
+    popup: egui::Popup<'_>,
+    ctx: &egui::Context,
+    lift: Option<&Palette>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let id = popup.get_id();
+    let layer = egui::LayerId::new(egui::Order::Foreground, id);
+    let measured = ctx.read_response(id).is_some();
+    // Reserved before the glass, so the shadow lies under it.
+    let shadow = lift.map(|_| ctx.layer_painter(layer).add(egui::Shape::Noop));
+    let frost = Frost::reserve(ctx, layer, theme::RADIUS_MENU);
+    // Only an open popup runs its animation: a closed one asking for it
+    // each frame would start it anew and keep the window repainting.
+    let appear = if popup.is_open() {
+        ctx.animate_bool_with_time_and_easing(
+            id.with("appear"),
+            true,
+            theme::MOTION_QUICK,
+            theme::ease_out,
+        )
+    } else {
+        0.0
+    };
+    let shown = popup.show(|ui| {
+        ui.multiply_opacity(appear);
+        add(ui)
+    });
+    let Some(shown) = shown else {
+        // Closed: the next opening starts from the beginning.
+        ctx.animate_bool_with_time(id.with("appear"), false, 0.0);
+        return None;
+    };
+    if measured {
+        let rect = shown.response.rect;
+        if let (Some(palette), Some(at)) = (lift, shadow) {
+            let painter = ctx.layer_painter(layer);
+            painter.set(at, menu_shadow(palette, rect, appear));
+            if let Some(edge) = palette.menu_inner_edge() {
+                // Just inside the outline, which takes the outermost point.
+                painter.rect_stroke(
+                    rect.shrink(1.0),
+                    CornerRadius::same(theme::RADIUS_MENU.saturating_sub(1)),
+                    Stroke::new(edge.width, edge.color.gamma_multiply(appear)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        frost.place(rect);
+        // Grows from the corner it opened at, glass and shadow and all, and
+        // shrinks back to it as it closes.
+        let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
+        let pivot = rect.left_top();
+        ctx.transform_layer_shapes(
+            layer,
+            egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+        );
+        super::closing::keep(ctx, layer, pivot, theme::MOTION_QUICK, appear);
+    }
+    Some(shown)
+}
+
+/// The layers of `palette`'s menu shadow under a menu at `rect`, the
+/// farthest first, faded to `appear`.
+fn menu_shadow(palette: &Palette, rect: Rect, appear: f32) -> egui::Shape {
+    let corners = CornerRadius::same(theme::RADIUS_MENU);
+    egui::Shape::Vec(
+        palette
+            .menu_shadows()
+            .iter()
+            .rev()
+            .map(|layer| {
+                let layer = egui::epaint::Shadow {
+                    color: layer.color.gamma_multiply(appear),
+                    ..*layer
+                };
+                egui::Shape::from(layer.as_shape(rect, corners))
+            })
+            .collect(),
+    )
 }
 
 /// Shared popup-menu frame, see-through over [`FrostedPopup::show_frosted`]'s glass.
@@ -2634,6 +2720,96 @@ mod tests {
             "a submenu {} points wide leaves no gap in a {window}-point window",
             rect.width()
         );
+    }
+
+    /// A row without an icon drawn by `menu_item_inset` starts its words
+    /// where the rows with an icon start theirs, not at the edge as a plain
+    /// row without one does.
+    #[test]
+    fn an_inset_menu_row_lines_up_with_the_rows_that_have_icons() {
+        let palette = Palette::dark();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(200.0);
+            menu_item(ui, &palette, Some(Icon::Copy), "With icon");
+            menu_item_inset(ui, &palette, "Inset");
+            menu_item(ui, &palette, None, "Plain");
+        });
+        output.textures_delta.clear();
+        let left = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => Some(text.pos.x),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} is drawn"))
+        };
+        assert_eq!(left("Inset"), left("With icon"));
+        assert!(left("Plain") < left("Inset"));
+    }
+
+    /// The blur widths of every blurred rectangle in `shapes`, in the order
+    /// they paint.
+    fn blurs(shapes: &[egui::epaint::ClippedShape]) -> Vec<f32> {
+        fn walk(shape: &egui::Shape, into: &mut Vec<f32>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, into)),
+                egui::Shape::Rect(rect) if rect.blur_width > 0.0 => into.push(rect.blur_width),
+                _ => {}
+            }
+        }
+        let mut into = Vec::new();
+        for clipped in shapes {
+            walk(&clipped.shape, &mut into);
+        }
+        into
+    }
+
+    /// The shapes of an open menu, lifted or only frosted, once its first
+    /// frame has measured it.
+    fn open_menu_shapes(lifted: bool) -> Vec<egui::epaint::ClippedShape> {
+        let palette = Palette::light();
+        let ctx = egui::Context::default();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let button = ui.button("Menu");
+                let popup = egui::Popup::menu(&button)
+                    .open_memory(Some(egui::SetOpenCommand::Bool(true)))
+                    .at_position(pos2(40.0, 40.0))
+                    .width(160.0);
+                let row = |ui: &mut Ui| {
+                    menu_item(ui, &palette, None, "Row");
+                };
+                if lifted {
+                    popup.show_lifted(ui.ctx(), &palette, row);
+                } else {
+                    popup
+                        .frame(menu_frame(&palette))
+                        .show_frosted(ui.ctx(), row);
+                }
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        shapes
+    }
+
+    /// A message's menu lifts off the window on five shadows painted
+    /// farthest first, each softer than the one in front of it, in place of
+    /// the single shadow other menus keep.
+    #[test]
+    fn a_lifted_menu_casts_a_layered_shadow() {
+        let lifted = blurs(&open_menu_shapes(true));
+        assert_eq!(lifted.len(), 5, "{lifted:?}");
+        assert!(
+            lifted.windows(2).all(|pair| pair[0] > pair[1]),
+            "{lifted:?}"
+        );
+        assert_eq!(blurs(&open_menu_shapes(false)).len(), 1);
     }
 
     /// The header's shadow and the chat list's are one shadow turned a

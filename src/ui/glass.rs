@@ -86,10 +86,21 @@ struct Strength {
 /// A paint callback that frosts `rect` deeply, as under a menu, within
 /// corners rounded by `radius` points.
 pub fn rounded(rect: egui::Rect, radius: f32) -> egui::Shape {
-    frost(rect, 0.0, radius, MENU)
+    frost(rect, 0.0, radius, MENU, 1.0)
 }
 
-fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::Shape {
+/// A paint callback that frosts `rect` as deeply as [`rounded`], `amount`
+/// of the way from sharp (0) to frosted (1), so the frost can fade in and
+/// out with a scrim over it, as the chat does behind a message edited in
+/// its bubble.
+pub fn veil(rect: egui::Rect, radius: f32, amount: f32) -> egui::Shape {
+    if amount <= 0.0 {
+        return egui::Shape::Noop;
+    }
+    frost(rect, 0.0, radius, MENU, amount.min(1.0))
+}
+
+fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength, amount: f32) -> egui::Shape {
     // Settings' Blur off: nothing is frosted, and what floats above is solid.
     if !crate::backdrop::blur() {
         return egui::Shape::Noop;
@@ -101,7 +112,7 @@ fn frost(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egui::
             let radius = radius * info.pixels_per_point;
             with_glass(painter.gl(), |gl, glass| {
                 // SAFETY: called on the painting thread with its context current.
-                unsafe { glass.frost(gl, &info, fade, radius, strength) };
+                unsafe { glass.frost(gl, &info, fade, radius, strength, amount) };
             });
         })),
     })
@@ -154,14 +165,14 @@ fn on_sheet(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egu
     }
     let sheet = SHEET.lock().unwrap_or_else(|p| p.into_inner()).clone();
     let Some(sheet) = sheet else {
-        return frost(rect, fade, radius, strength);
+        return frost(rect, fade, radius, strength, 1.0);
     };
     let pane = {
         let mut panes = sheet.panes.lock().unwrap_or_else(|p| p.into_inner());
         // A sheet is for the few frosts of the chat's own glass; any more
         // frost on their own.
         if panes.len() >= SHEET_PANES {
-            return frost(rect, fade, radius, strength);
+            return frost(rect, fade, radius, strength, 1.0);
         }
         panes.push(Pane { rect, strength });
         panes.len() - 1
@@ -175,7 +186,7 @@ fn on_sheet(rect: egui::Rect, fade: f32, radius: f32, strength: Strength) -> egu
                 // SAFETY: called on the painting thread with its context current.
                 unsafe {
                     if !glass.lay(gl, &info, &sheet, pane, fade, radius) {
-                        glass.frost(gl, &info, fade, radius, strength);
+                        glass.frost(gl, &info, fade, radius, strength, 1.0);
                     }
                 }
             });
@@ -370,6 +381,7 @@ uniform float u_fade;
 uniform float u_saturation;
 uniform vec2 u_size;
 uniform float u_radius;
+uniform float u_amount;
 in vec2 v_uv;
 out vec4 o_color;
 vec4 saturate(vec4 blur) {
@@ -393,6 +405,8 @@ void main() {
     vec2 q = abs(v_uv * u_size - half_size) - (half_size - vec2(u_radius));
     float outside = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - u_radius;
     frost *= clamp(0.5 - outside, 0.0, 1.0);
+    // Part of the way, while a frost fades in or out.
+    frost *= u_amount;
     o_color = mix(texture(u_sharp, v_uv), blur, frost);
 }
 ";
@@ -553,7 +567,8 @@ impl Glass {
         Some(set)
     }
 
-    /// Blurs the region of the bound framebuffer under `info`'s rectangle.
+    /// Blurs the region of the bound framebuffer under `info`'s rectangle,
+    /// `amount` of the way from sharp to blurred.
     unsafe fn frost(
         &mut self,
         gl: &glow::Context,
@@ -561,6 +576,7 @@ impl Glass {
         fade: i32,
         radius: f32,
         strength: Strength,
+        amount: f32,
     ) {
         let region = info.viewport_in_pixels();
         let clip = info.clip_rect_in_pixels();
@@ -672,6 +688,7 @@ impl Glass {
             gl.uniform_1_f32(uniform("u_saturation").as_ref(), SATURATION);
             gl.uniform_2_f32(uniform("u_size").as_ref(), w as f32, h as f32);
             gl.uniform_1_f32(uniform("u_radius").as_ref(), radius);
+            gl.uniform_1_f32(uniform("u_amount").as_ref(), amount);
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
             gl.bind_texture(glow::TEXTURE_2D, None);
             gl.active_texture(glow::TEXTURE1);

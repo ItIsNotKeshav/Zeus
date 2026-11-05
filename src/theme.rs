@@ -567,6 +567,54 @@ impl Palette {
         }
     }
 
+    /// The shadow under a message's menu, five layers cast by the same
+    /// outline, nearest first: a tight, dense one where the menu all but
+    /// touches the window, then ever lower, wider and fainter ones, each
+    /// about twice as far and as soft as the last, out to a broad ambient
+    /// shade. One shadow reads as a grey box around the menu; a stack like
+    /// this falls off the way light does around a raised object, the
+    /// layered shadows Josh Comeau ("Designing Beautiful Shadows in CSS")
+    /// and Tobias Ahlin ("Smoother and sharper shadows with layered
+    /// box-shadows") describe, and shadows.brumm.af generates. The
+    /// palette's shadow colour gives the hue, so custom themes steer it,
+    /// while the strengths are the recipe's own; a dark palette's are 1.6
+    /// times as strong, since a dark window swallows a shadow. Paint the
+    /// farthest first.
+    pub fn menu_shadows(&self) -> [egui::epaint::Shadow; 5] {
+        // Offset down, blur and spread in points, and the alpha in a light
+        // palette.
+        const LAYERS: [(i8, u8, u8, f32); 5] = [
+            (1, 2, 0, 28.0),
+            (2, 5, 0, 22.0),
+            (4, 10, 0, 16.0),
+            (8, 20, 1, 10.0),
+            (14, 32, 2, 5.0),
+        ];
+        let [r, g, b, _] = self.shadow.to_srgba_unmultiplied();
+        let strength = if self.dark { DARK_MENU_SHADOW } else { 1.0 };
+        LAYERS.map(|(offset, blur, spread, alpha)| egui::epaint::Shadow {
+            offset: [0, offset],
+            blur,
+            spread,
+            color: Color32::from_rgba_unmultiplied(
+                r,
+                g,
+                b,
+                (alpha * strength).round().min(255.0) as u8,
+            ),
+        })
+    }
+
+    /// The faint light just inside a message menu's outline in a dark
+    /// palette, where the shadow alone barely parts the menu from the
+    /// window; none in a light one, whose outline and shadow do.
+    pub fn menu_inner_edge(&self) -> Option<Stroke> {
+        self.dark.then_some(Stroke::new(
+            1.0,
+            Color32::from_white_alpha(MENU_INNER_EDGE_ALPHA),
+        ))
+    }
+
     /// The deeper shadow under a modal surface that holds the window until
     /// it closes: dialogs, the update dialog, and the image preview.
     pub fn modal_shadow(&self) -> egui::epaint::Shadow {
@@ -763,6 +811,12 @@ const RAIL_SHADE: f32 = 0.05;
 const DARK_RAIL_SHADE: f32 = 0.22;
 /// How much denser than the palette's shadow colour a bubble's shadow is.
 const SHADOW_DENSITY: f32 = 1.04;
+/// How much stronger a message menu's shadow is in a dark palette than in a
+/// light one.
+const DARK_MENU_SHADOW: f32 = 1.6;
+/// The opacity of the light just inside a message menu's outline in a dark
+/// palette: white at about 10%.
+const MENU_INNER_EDGE_ALPHA: u8 = 26;
 /// How far a dark theme's raised edge moves from the surface toward the text.
 const DARK_EDGE_TINT: f32 = 0.128;
 /// The light palette's shadow opacity, the most a raised surface casts.
@@ -2182,6 +2236,43 @@ mod tests {
                 palette.shadow
             );
         }
+    }
+
+    /// A message menu's shadow is five layers, each lower, softer and
+    /// fainter than the one before, in the palette's own shadow hue, and
+    /// half as strong again and more in a dark palette, which also lights
+    /// the menu's edge from inside.
+    #[test]
+    fn a_message_menu_casts_a_layered_shadow() {
+        let mut tinted = Palette::light();
+        tinted.shadow = Color32::from_rgba_unmultiplied(0x20, 0x10, 0x40, 90);
+        let light = tinted.menu_shadows();
+        for pair in light.windows(2) {
+            let (near, far) = (pair[0], pair[1]);
+            assert!(far.offset[1] > near.offset[1], "{near:?} then {far:?}");
+            assert!(far.blur > near.blur, "{near:?} then {far:?}");
+            assert!(far.color.a() < near.color.a(), "{near:?} then {far:?}");
+        }
+        // The densest layer keeps the palette's hue; the faintest ones are
+        // too faint to keep it exactly through premultiplied alpha.
+        let [r, g, b, _] = light[0].color.to_srgba_unmultiplied();
+        for (channel, hue) in [(r, 0x20u8), (g, 0x10), (b, 0x40)] {
+            assert!(channel.abs_diff(hue) <= 8, "{:?}", light[0]);
+        }
+        assert!(tinted.menu_inner_edge().is_none());
+        let mut dark = tinted;
+        dark.dark = true;
+        for (on_light, on_dark) in light.iter().zip(dark.menu_shadows()) {
+            assert_eq!(
+                (on_light.offset, on_light.blur, on_light.spread),
+                (on_dark.offset, on_dark.blur, on_dark.spread)
+            );
+            assert!(
+                on_dark.color.a() > on_light.color.a(),
+                "{on_light:?} and {on_dark:?}"
+            );
+        }
+        assert!(dark.menu_inner_edge().is_some());
     }
 
     /// The palette decides the theme, and the desktop's rendering its text
