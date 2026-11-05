@@ -180,6 +180,33 @@ impl Spring {
         t > 0.0 && self.envelope(t) <= SETTLED
     }
 
+    /// Where a spring pulling toward 0, `position` away from it and moving
+    /// at `velocity` (per second), is `dt` seconds later, and how fast it
+    /// moves then. Exact for any step, so a late frame lands where an early
+    /// one would have.
+    pub fn advance(self, position: f32, velocity: f32, dt: f64) -> (f32, f32) {
+        if dt <= 0.0 {
+            return (position, velocity);
+        }
+        let (x0, v0) = (f64::from(position), f64::from(velocity));
+        let omega = self.omega();
+        let zeta = self.zeta();
+        let decay_rate = zeta * omega;
+        let decay = (-decay_rate * dt).exp();
+        let (x, v) = if zeta >= 1.0 {
+            let slope = v0 + omega * x0;
+            (decay * (x0 + slope * dt), decay * (v0 - omega * slope * dt))
+        } else {
+            let damped = omega * (1.0 - zeta * zeta).sqrt();
+            let (sin, cos) = (damped * dt).sin_cos();
+            (
+                decay * (x0 * cos + (v0 + decay_rate * x0) / damped * sin),
+                decay * (v0 * cos - (decay_rate * v0 + omega * omega * x0) / damped * sin),
+            )
+        };
+        (x as f32, v as f32)
+    }
+
     /// How long the spring takes to come to rest, in seconds.
     pub fn settle_time(self) -> f64 {
         let (mut low, mut high) = (0.0, self.duration.max(1e-3));
@@ -425,5 +452,30 @@ pub(crate) mod tests {
         assert!(send > 1.005 && send < 1.03, "bounce 0.2 peaks at {send}");
         // More bounce, more overshoot.
         assert!(peak(Spring::new(0.45, 0.25)) > send);
+    }
+
+    #[test]
+    fn advancing_a_spring_follows_its_step_and_does_not_depend_on_the_frames() {
+        for spring in [Spring::new(1.0, 0.2), Spring::new(0.35, 0.0)] {
+            // Released from 1 at rest, it is where the step from 0 to 1 has
+            // yet to go.
+            for t in [0.05, 0.2, 0.5, 0.9] {
+                let (x, _) = spring.advance(1.0, 0.0, t);
+                assert!(
+                    (x - (1.0 - spring.value(t))).abs() < 1e-4,
+                    "{spring:?} at {t}"
+                );
+            }
+            // One long step lands where many short ones do.
+            let (mut x, mut v) = (12.0_f32, -30.0_f32);
+            for _ in 0..60 {
+                (x, v) = spring.advance(x, v, 1.0 / 120.0);
+            }
+            let (once, speed) = spring.advance(12.0, -30.0, 0.5);
+            assert!((x - once).abs() < 1e-3 && (v - speed).abs() < 1e-2);
+            let (rest, still) = spring.advance(12.0, -30.0, 10.0);
+            assert!(rest.abs() < 1e-3 && still.abs() < 1e-3);
+            assert_eq!(spring.advance(3.0, 4.0, 0.0), (3.0, 4.0));
+        }
     }
 }

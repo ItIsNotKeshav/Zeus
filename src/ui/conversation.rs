@@ -3300,6 +3300,40 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     if !conversation.leaving.is_empty() {
         ui.ctx().request_repaint();
     }
+    // The rows hang on springs while the reader scrolls, as in iOS
+    // Messages. They go to their places at once with a screen reader, in a
+    // resting window, for a jump, and while something is held or dragged in
+    // the list: a sweep, a text selection, a swipe or a carried message.
+    let springs_calm = super::scroll_springs::Calm {
+        screen_reader: reduce_motion,
+        resting: !view.animate || crate::motion::window_resting(ui.ctx()),
+        jumping: lay_out_all
+            || jump_glides
+            || ui
+                .ctx()
+                .data(|data| data.get_temp::<(f64, f32)>(jump_scroll_id))
+                .is_some(),
+        holding: app.sweep.is_some()
+            || super::carry::lifted()
+            || super::carry::carrying(ui.ctx())
+            || super::swipe::over(ui.ctx(), list).is_some()
+            || ui.input(|input| {
+                input.pointer.primary_down()
+                    && input.pointer.is_decidedly_dragging()
+                    && input.pointer.press_origin().is_some_and(|origin| {
+                        list.contains(origin) && origin.x < list.right() - 16.0
+                    })
+            }),
+    };
+    let mut springs = super::scroll_springs::Springs::load(ui.ctx(), &chat.id);
+    if springs_calm.allows_springs() {
+        springs.advance(time);
+    } else {
+        springs.clear();
+    }
+    let row_shifts = springs.shifts();
+    let mut laid_rows = Vec::new();
+    let mut content_top_drawn = None;
     let layer = ui.layer_id();
     let first_shape = ui.ctx().graphics(|graphics| {
         graphics
@@ -3345,6 +3379,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             // Where the transcript starts, so a row's place in it does not
             // depend on the offset.
             let content_top = ui.max_rect().top();
+            content_top_drawn = Some(content_top);
             *app.selection_view.lock().unwrap_or_else(|p| p.into_inner()) = Some(viewport);
             if carried != 0.0 {
                 ui.scroll_with_delta_animation(
@@ -3566,6 +3601,22 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 swept_to = Some(message.id.as_str());
                             }
                         }
+                        // The row is laid out where its spring has it, its
+                        // slot where it belongs, so clicks land on what is
+                        // drawn. Always in a row of its own, so its widgets
+                        // keep their ids whether it springs or not.
+                        let row_shift = row_shifts.get(&message.id).copied().unwrap_or(0.0);
+                        let outer = &mut *ui;
+                        let mut row_ui = outer.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(
+                                    outer
+                                        .available_rect_before_wrap()
+                                        .translate(vec2(0.0, row_shift)),
+                                )
+                                .layout(*outer.layout()),
+                        );
+                        let ui = &mut row_ui;
                         if new_day {
                             ui.add_space(8.0);
                             ui.vertical_centered(|ui| {
@@ -3980,7 +4031,21 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 anchored = true;
                             }
                         }
+                        let drawn_bottom = ui.min_rect().bottom() - row_shift;
+                        let row_end = ui.cursor().top() - row_shift;
+                        let ui = outer;
+                        ui.add_space((row_end - ui.cursor().top()).max(0.0));
                         let measured = ui.cursor().top() - before;
+                        if springs_calm.allows_springs()
+                            && before + measured >= viewport.top() - viewport.height()
+                            && before <= viewport.bottom() + viewport.height()
+                        {
+                            laid_rows.push(super::scroll_springs::Laid {
+                                id: message.id.clone(),
+                                top: before - content_top,
+                                bottom: drawn_bottom - content_top,
+                            });
+                        }
                         if visible_day.is_none()
                             && before + measured > viewport.top()
                             && before < viewport.bottom()
@@ -4145,6 +4210,37 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     .interact_pos()
                     .is_some_and(|pos| bar.contains(pos)))
     });
+    // The reader's own scroll this frame pushes the rows when the next frame
+    // draws them at the new offset, against the scroll and more the further
+    // they are from the pointer. A redone pass already had this frame's.
+    if springs_calm.allows_springs() {
+        let moved = super::scroll_springs::Moved {
+            by_reader: reader_scrolled || carried != 0.0,
+            by_app: pinned
+                || key_scroll.is_some()
+                || jump_moving.get()
+                || first_show
+                || divider_placed,
+        };
+        let delta = moved.push(output.state.offset.y - offset);
+        if !redo
+            && delta != 0.0
+            && let Some(content_top) = content_top_drawn
+        {
+            let viewport = output.inner_rect;
+            let pointer = ui
+                .input(|input| input.pointer.latest_pos())
+                .map_or(viewport.center().y, |pointer| {
+                    pointer.y.clamp(viewport.top(), viewport.bottom())
+                });
+            springs.scrolled(delta, pointer - content_top);
+        }
+        springs.finish(laid_rows);
+        if springs.moving() {
+            crate::motion::request_frame(ui.ctx());
+        }
+    }
+    springs.store(ui.ctx(), &chat.id);
     let complete = conversation.complete;
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
@@ -14094,6 +14190,156 @@ mod tests {
             y1.1,
             describe(&glide_arrived),
             describe(&glide_next)
+        );
+    }
+
+    /// A turn of the wheel over the open chat: the row under the pointer
+    /// follows the scroll at once, a row far up the view lags behind it on
+    /// its spring and catches up, and the bubble's click target moves with
+    /// what is drawn. Once the rows rest the springs hold nothing.
+    #[test]
+    fn rows_far_from_the_pointer_lag_a_scroll_and_catch_up() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = crate::app::App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = crate::backend::LinkStatus::Connected;
+        app.window_focused = true;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+        let mut conversation = crate::app::Conversation::default();
+        for index in 0..60 {
+            conversation.messages.push(sample_message(
+                &chat.id,
+                &format!("m{index}"),
+                &format!("row-{index:02}"),
+                1_700_000_000 + index as i64,
+            ));
+        }
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
+        // Mid-view, so the row under it is still on screen once the list has
+        // scrolled down by the turn below.
+        let pointer = pos2(400.0, 360.0);
+        let frame = |app: &mut crate::app::App, time: f64, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+            output.shapes
+        };
+        let mut time = 0.0;
+        for _ in 0..8 {
+            time += 0.05;
+            frame(&mut app, time, vec![egui::Event::PointerMoved(pointer)]);
+        }
+        app.scroll_to_bottom = false;
+        time += 0.05;
+        let rest = frame(&mut app, time, vec![egui::Event::PointerMoved(pointer)]);
+        let tops = |shapes: &[egui::epaint::ClippedShape]| -> Vec<Option<f32>> {
+            (0..60)
+                .map(|index| text_top(shapes, &format!("row-{index:02}")).map(|(y, _)| y))
+                .collect()
+        };
+        let before = tops(&rest);
+        let on_screen = |y: &f32| (80.0..640.0).contains(y);
+        // The row nearest the pointer and the one nearest the top of the view.
+        let nearest = |target: f32| {
+            (0..60)
+                .filter(|&index| before[index].is_some_and(|y| on_screen(&y)))
+                .min_by(|&a, &b| {
+                    let distance = |index: usize| (before[index].unwrap() - target).abs();
+                    distance(a).total_cmp(&distance(b))
+                })
+                .expect("rows on screen")
+        };
+        let near = nearest(pointer.y - 8.0);
+        let far = nearest(90.0);
+        assert!(near > far + 5, "near {near}, far {far}: {before:?}");
+        let rect = |index: usize| {
+            ctx.data(|data| {
+                data.get_temp::<Rect>(bubble_id(&chat.id, &format!("m{index}")).with("rect"))
+            })
+            .expect("the bubble was drawn")
+        };
+        let far_target = rect(far).top() - before[far].unwrap();
+
+        // Scroll up: the content moves down, by 120 points in all.
+        let wheel = egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, 30.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut lagged = 0.0_f32;
+        for _ in 0..4 {
+            time += 1.0 / 60.0;
+            let shapes = frame(
+                &mut app,
+                time,
+                vec![egui::Event::PointerMoved(pointer), wheel.clone()],
+            );
+            let now = tops(&shapes);
+            if let (Some(near_now), Some(far_now)) = (now[near], now[far]) {
+                let near_moved = near_now - before[near].unwrap();
+                let far_moved = far_now - before[far].unwrap();
+                lagged = lagged.max(near_moved - far_moved);
+                // The click target is where the bubble is drawn.
+                assert!(
+                    (rect(far).top() - far_now - far_target).abs() < 0.5,
+                    "target {:?} for text at {far_now}",
+                    rect(far)
+                );
+            }
+        }
+        assert!(
+            lagged > 2.0,
+            "the far row lags the scroll by {lagged} points"
+        );
+        assert!(
+            lagged <= super::super::scroll_springs::MAX_LAG + 1.0,
+            "lag {lagged}"
+        );
+        // Without more scrolling the rows come to rest on their places.
+        let mut moving = true;
+        for _ in 0..240 {
+            time += 1.0 / 60.0;
+            frame(&mut app, time, vec![egui::Event::PointerMoved(pointer)]);
+            moving = super::super::scroll_springs::Springs::load(&ctx, &chat.id).moving();
+            if !moving {
+                break;
+            }
+        }
+        assert!(!moving, "the springs settle within four seconds");
+        time += 1.0 / 60.0;
+        let settled = tops(&frame(
+            &mut app,
+            time,
+            vec![egui::Event::PointerMoved(pointer)],
+        ));
+        let on_view = |index: usize| {
+            settled[index].unwrap_or_else(|| panic!("row {index} is drawn: {settled:?}"))
+        };
+        let scrolled = on_view(near) - before[near].unwrap();
+        assert!(scrolled > 20.0, "the list scrolled by {scrolled}");
+        assert!(
+            (on_view(far) - before[far].unwrap() - scrolled).abs() < 0.5,
+            "the far row is back on its place: {} vs {scrolled}",
+            on_view(far) - before[far].unwrap()
         );
     }
 
