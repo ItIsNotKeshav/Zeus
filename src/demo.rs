@@ -9121,7 +9121,7 @@ mod tests {
     }
 
     /// A right-click on one album tile opens the menu for that member, so
-    /// Reply quotes the picture under the pointer rather than the first.
+    /// Delete deletes the picture under the pointer rather than the first.
     #[test]
     fn the_menu_of_an_album_tile_acts_on_that_member() {
         let mut app = app();
@@ -9156,19 +9156,29 @@ mod tests {
             egui::Popup::is_id_open(&ctx, popup),
             "the album's menu opened"
         );
-        let reply = accessible_nodes(&mut app, &ctx, Vec::new())
+        let delete = accessible_nodes(&mut app, &ctx, Vec::new())
             .into_iter()
-            .find(|(label, _, _)| label == "Reply")
-            .expect("the menu offers Reply")
+            .find(|(label, _, _)| label == "Delete")
+            .expect("the menu offers Delete")
+            .2;
+        // Resting the pointer on Delete opens its choices.
+        let mut nodes = Vec::new();
+        for _ in 0..4 {
+            nodes = accessible_nodes(&mut app, &ctx, vec![egui::Event::PointerMoved(delete)]);
+        }
+        let for_me = nodes
+            .into_iter()
+            .find(|(label, _, _)| label == "Delete for me")
+            .expect("Delete offers Delete for me")
             .2;
         for pressed in [true, false] {
             frame_with(
                 &mut app,
                 &ctx,
                 vec![
-                    egui::Event::PointerMoved(reply),
+                    egui::Event::PointerMoved(for_me),
                     egui::Event::PointerButton {
-                        pos: reply,
+                        pos: for_me,
                         button: egui::PointerButton::Primary,
                         pressed,
                         modifiers: egui::Modifiers::NONE,
@@ -9176,8 +9186,14 @@ mod tests {
                 ],
             );
         }
-        render(&mut app, &ctx);
-        assert_eq!(app.reply_to.as_deref(), Some("album-2"));
+        assert_eq!(
+            app.dialog,
+            Some(Dialog::ConfirmDeleteMessage {
+                chat: chat.clone(),
+                message: "album-2".into(),
+                for_everyone: false,
+            })
+        );
     }
 
     /// Our own albums lay their tiles out in reading order even though an
@@ -11208,6 +11224,16 @@ mod tests {
         render(&mut app, &ctx);
         render(&mut app, &ctx);
         assert_eq!(app.selection, Some((chat.clone(), Vec::new())));
+        // The column slides in from the left edge on a spring, and the rest
+        // of this test clicks where it settles.
+        let sliding = check("ada-reply").expect("ada-reply has a check box");
+        for _ in 0..12 {
+            render(&mut app, &ctx);
+        }
+        assert!(
+            sliding.left() < check("ada-reply").unwrap().left() - 1.0,
+            "the check box slides in from the left"
+        );
         let rect = |message: &str| {
             let id = crate::ui::conversation::bubble_id(&chat, message).with("rect");
             ctx.data(|data| data.get_temp::<egui::Rect>(id))
@@ -11263,6 +11289,35 @@ mod tests {
             app.selection,
             Some((chat.clone(), Vec::new())),
             "unticking every message keeps selecting"
+        );
+    }
+
+    /// With a screen reader attached the check column is in place as soon
+    /// as a selection starts, without sliding in.
+    #[test]
+    fn a_screen_reader_finds_the_check_column_in_place_at_once() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        app.attach(&ctx);
+        for _ in 0..3 {
+            render(&mut app, &ctx);
+        }
+        let chat = sample_ids()[0].to_owned();
+        let check = || {
+            let id = crate::ui::conversation::bubble_id(&chat, "ada-reply").with("check");
+            ctx.data(|data| data.get_temp::<egui::Rect>(id))
+                .expect("ada-reply has a check box")
+        };
+        app.actions.push(crate::model::Action::StartSelection);
+        render(&mut app, &ctx);
+        let first = check();
+        for _ in 0..12 {
+            render(&mut app, &ctx);
+        }
+        assert!(
+            (first.left() - check().left()).abs() < 0.5,
+            "no slide with a screen reader"
         );
     }
 
@@ -11383,12 +11438,13 @@ mod tests {
             app.open_message_menu = Some("ada-reply".into());
             render(&mut app, &ctx);
             let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
-            assert!(nodes.iter().any(|(label, _, _)| label == "Copy message ID"));
+            assert!(nodes.iter().any(|(label, _, _)| label == "Delete"));
+            // Selecting and forwarding start from a Ctrl-click and the
+            // selection bar, never from the menu.
             for action in ["Select", "Forward"] {
-                assert_eq!(
-                    nodes.iter().any(|(label, _, _)| label == action),
-                    selectable,
-                    "only eligible messages offer {action}"
+                assert!(
+                    nodes.iter().all(|(label, _, _)| label != action),
+                    "no message's menu offers {action}"
                 );
             }
         }
@@ -11822,8 +11878,10 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// The menu lists actions only: sent, delivery, and read times open from
-    /// "Message info", and the message id is copied by a row that says so.
+    /// The menu lists what is done to the message itself: replying,
+    /// forwarding and selecting have ways of their own, the sent, delivery
+    /// and read times open from the message's time, and deleting waits
+    /// behind one Delete row.
     #[test]
     fn message_menu_lists_actions_only() {
         use egui::accesskit::Role;
@@ -11833,12 +11891,19 @@ mod tests {
         apply_flags(&mut app, Some("react-menu"));
         app.attach(&ctx);
         render(&mut app, &ctx);
-        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
-        let find = |prefix: &str| {
+        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-link");
+        let menu = ctx
+            .data(|data| data.get_temp::<egui::Rect>(id.with("menu-rect")))
+            .expect("the menu is open");
+        let nodes: Vec<_> = accessible_nodes(&mut app, &ctx, Vec::new())
+            .into_iter()
+            .filter(|(_, _, centre)| menu.contains(*centre))
+            .collect();
+        let find = |label: &str| {
             nodes
                 .iter()
-                .find(|(label, _, _)| label.starts_with(prefix))
-                .unwrap_or_else(|| panic!("no {prefix} row"))
+                .find(|(text, _, _)| text == label)
+                .unwrap_or_else(|| panic!("no {label} row"))
                 .clone()
         };
         for status in ["Sent ", "Delivered ", "Read "] {
@@ -11847,8 +11912,23 @@ mod tests {
                 "the menu has no {status}row"
             );
         }
-        assert_eq!(find("Message info").1, Role::Button);
-        let (_, role, copy) = find("Copy message ID");
+        for gone in [
+            "Reply",
+            "Forward",
+            "Select",
+            "Message info",
+            "Reload earlier messages",
+            "Copy message ID",
+            "Delete for me",
+            "Delete for everyone",
+        ] {
+            assert!(
+                nodes.iter().all(|(label, _, _)| label != gone),
+                "the menu has no {gone} row"
+            );
+        }
+        assert_eq!(find("Delete").1, Role::Button);
+        let (_, role, copy) = find("Copy text");
         assert_eq!(role, Role::Button);
 
         let click = |app: &mut App, pos: egui::Pos2| {
@@ -11865,37 +11945,102 @@ mod tests {
         assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
     }
 
+    /// Reloading history before a message asks the phone for what came
+    /// before it. The message menu no longer offers it, so the action is
+    /// queued as the menu queued it.
     #[test]
-    fn history_fidelity_message_menu_requests_before_the_chosen_message() {
+    fn history_fidelity_reload_requests_before_the_chosen_message() {
         let ctx = egui::Context::default();
-        ctx.enable_accesskit();
         let mut app = app();
         apply_flags(&mut app, Some("react-menu"));
         app.attach(&ctx);
         app.backend.record_demo_commands();
         render(&mut app, &ctx);
-        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
-        let (_, _, pos) = nodes
-            .into_iter()
-            .find(|(label, _, _)| label == "Reload earlier messages")
-            .expect("reload action");
-        let press = |pressed| egui::Event::PointerButton {
-            pos,
-            button: egui::PointerButton::Primary,
-            pressed,
-            modifiers: egui::Modifiers::NONE,
-        };
-        accessible_nodes(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerMoved(pos), press(true)],
-        );
-        accessible_nodes(&mut app, &ctx, vec![press(false)]);
+        let chat = app.open_chat.clone().expect("a chat is open");
+        app.actions.push(crate::model::Action::ReloadHistory {
+            chat,
+            message: "ada-link".into(),
+        });
+        render(&mut app, &ctx);
         let commands = app.backend.take_demo_commands();
         assert!(commands.iter().any(|command| matches!(command,
             crate::backend::Command::ReloadHistory { chat, message }
             if Some(chat) == app.open_chat.as_ref() && message == "ada-link")));
         assert!(app.conversations[app.open_chat.as_ref().unwrap()].fetching_phone);
+    }
+
+    /// A message's menu deletes through one Delete row. Resting on it opens
+    /// Delete for me, then Delete for everyone while our own message can
+    /// still be revoked; each choice asks to confirm.
+    #[test]
+    fn the_message_menu_deletes_through_a_submenu() {
+        let chat = sample_ids()[0].to_owned();
+        for (own, for_everyone) in [(false, false), (true, false), (true, true)] {
+            let mut app = app();
+            let conversation = app.conversations.get_mut(&chat).unwrap();
+            conversation.messages.retain(|row| row.id == "ada-reply");
+            conversation.messages[0].from_me = own;
+            conversation.messages[0].timestamp = crate::util::now();
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            app.attach(&ctx);
+            app.open_message_menu = Some("ada-reply".into());
+            render(&mut app, &ctx);
+            let delete = accessible_nodes(&mut app, &ctx, Vec::new())
+                .into_iter()
+                .find(|(label, _, _)| label == "Delete")
+                .expect("the menu offers Delete")
+                .2;
+            // Resting the pointer on Delete opens its choices.
+            let mut nodes = Vec::new();
+            for _ in 0..4 {
+                nodes = accessible_nodes(&mut app, &ctx, vec![egui::Event::PointerMoved(delete)]);
+            }
+            let choice = |label: &str| {
+                nodes
+                    .iter()
+                    .find(|(text, _, _)| text == label)
+                    .map(|(_, _, pos)| *pos)
+            };
+            let for_me = choice("Delete for me").expect("Delete offers Delete for me");
+            let everyone = choice("Delete for everyone");
+            assert_eq!(
+                everyone.is_some(),
+                own,
+                "only our own fresh message offers Delete for everyone"
+            );
+            if let Some(everyone) = everyone {
+                assert!(for_me.y < everyone.y, "Delete for me comes first");
+            }
+            let pos = if for_everyone {
+                everyone.unwrap()
+            } else {
+                for_me
+            };
+            for pressed in [true, false] {
+                frame_with(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            assert_eq!(
+                app.dialog,
+                Some(Dialog::ConfirmDeleteMessage {
+                    chat: chat.clone(),
+                    message: "ada-reply".into(),
+                    for_everyone,
+                })
+            );
+        }
     }
 
     /// Opening the log hands it to the worker, which waits to see it open or
@@ -12038,36 +12183,66 @@ mod tests {
     }
 
     #[test]
-    fn an_open_context_menu_outlines_its_message_without_a_reaction_picker() {
+    fn an_open_context_menu_darkens_its_message_without_a_reaction_picker() {
         let mut app = app();
         apply_flags(&mut app, Some("react-menu"));
+        // Someone else's bubble is one flat colour in every bubble style;
+        // ours runs down a gradient in Messages'.
+        let chat = sample_ids()[0];
+        if let Some(row) = app
+            .conversations
+            .get_mut(chat)
+            .and_then(|conversation| conversation.message_mut("ada-link"))
+        {
+            row.from_me = false;
+        }
         let ctx = egui::Context::default();
+        // A screen reader sees the shade at once, without easing in.
+        ctx.enable_accesskit();
         app.attach(&ctx);
         render(&mut app, &ctx);
         let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-link");
+        let id = crate::ui::conversation::bubble_id(chat, "ada-link");
+        let fill = app.palette.bubble_in;
+        let shaded = crate::ui::conversation::menu_shaded(&app.palette, fill);
+        assert_ne!(shaded, fill);
+        let paints = |shapes: &[egui::epaint::ClippedShape], colour| {
+            shapes
+                .iter()
+                .any(|clipped| shape_paints(&clipped.shape, colour))
+        };
         let target = ctx
             .data(|data| data.get_temp::<egui::Rect>(id.with("rect")))
             .unwrap()
             .expand(2.0);
         let accent = app.palette.accent;
-        let outline_count = |shapes: &[egui::epaint::ClippedShape]| {
-            shapes
-                .iter()
-                .filter(|shape| {
-                    matches!(&shape.shape, egui::Shape::Rect(rect)
-                if rect.rect == target && rect.stroke.color == accent
-                    && rect.stroke.width == crate::theme::FOCUS_STROKE_WIDTH
-                    && rect.stroke_kind == egui::StrokeKind::Outside)
-                })
-                .count()
+        let ringed = |shapes: &[egui::epaint::ClippedShape]| {
+            shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect)
+                    if rect.rect == target && rect.stroke.color == accent)
+            })
         };
         assert!(app.reaction_target.is_none());
-        assert_eq!(outline_count(&shapes), 1);
+        assert!(
+            paints(&shapes, shaded),
+            "the message under the menu darkens"
+        );
+        assert!(!ringed(&shapes), "no ring marks it any more");
         app.open_message_menu = None;
         egui::Popup::close_id(&ctx, id.with("popup"));
         let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        assert_eq!(outline_count(&shapes), 0);
+        assert!(!paints(&shapes, shaded), "it clears once the menu closes");
+    }
+
+    /// Whether `shape`, or a shape inside it, fills anything with `colour`.
+    fn shape_paints(shape: &egui::Shape, colour: egui::Color32) -> bool {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| shape_paints(shape, colour)),
+            egui::Shape::Rect(rect) => rect.fill == colour,
+            egui::Shape::Path(path) => path.fill == colour,
+            egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|vertex| vertex.color == colour),
+            _ => false,
+        }
     }
 
     #[test]

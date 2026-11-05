@@ -72,6 +72,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     };
     wallpaper::paint(ui, &app.wallpaper(), radius);
     let card = ui.max_rect();
+    // While a message is edited in its bubble, the rest of the chat recedes
+    // under a scrim on a layer of its own. Asked before the messages, so the
+    // row they lift and the scrim agree on the frame.
+    paint_edit_focus(ui.ctx(), &app.palette, &chat.id, card, radius);
     // On a vibrant window the messages scroll on under the header, as in
     // Messages: the header goes on a layer above them.
     if app.palette.vibrant() {
@@ -1453,6 +1457,21 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
 /// Draws the composer and queues sends with the originating account and selected mentions.
 fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
     let palette = app.palette;
+    // The selection bar and the composer trade places: the one leaving
+    // fades where it was from a copy of its last pass, while the one
+    // coming fades in, the bar rising into place on a spring.
+    let calm = selection_calm(ui.ctx(), app.window_focused);
+    let motion = selection_motion(
+        ui.ctx(),
+        &chat.id,
+        app.selection
+            .as_ref()
+            .filter(|(selected_chat, _)| *selected_chat == chat.id)
+            .map(|(_, ids)| ids.as_slice()),
+        calm,
+    );
+    // Where the composer's own shapes start, once the leaving bar is painted.
+    let mut composer_from: Option<(egui::LayerId, egui::layers::ShapeIdx)> = None;
     let shown = egui::Panel::bottom("composer")
         .show_separator_line(false)
         .frame(
@@ -1466,12 +1485,34 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }),
         )
         .show(ui, |ui| {
+            let layer = ui.layer_id();
             if let Some((selected_chat, selected)) = app.selection.clone()
                 && selected_chat == chat.id
             {
+                paint_kept_bar(ui.ctx(), layer, &chat.id, false, 1.0 - motion.opacity, 0.0);
+                let start = super::swipe::mark(ui);
                 selection_bar(app, ui, &chat.id, &selected);
+                if !calm {
+                    keep_bar(ui.ctx(), layer, &chat.id, true, start);
+                }
+                settle_bar(
+                    ui.ctx(),
+                    layer,
+                    start,
+                    motion.opacity,
+                    SELECT_BAR_RISE * (1.0 - motion.slide),
+                );
                 return;
             }
+            paint_kept_bar(
+                ui.ctx(),
+                layer,
+                &chat.id,
+                true,
+                motion.opacity,
+                SELECT_BAR_RISE * (1.0 - motion.slide),
+            );
+            composer_from = Some((layer, super::swipe::mark(ui)));
             // When an admin opens or closes the group to everyone, the
             // composer and the read-only note fade in as they swap.
             let open = theme::animate(
@@ -2075,6 +2116,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 app.focus_composer = true;
             }
         });
+    // The composer as drawn, kept to fade out when a selection takes its
+    // place, then faded in itself while the selection bar leaves.
+    if let Some((layer, start)) = composer_from {
+        if !calm {
+            keep_bar(ui.ctx(), layer, &chat.id, false, start);
+        }
+        settle_bar(ui.ctx(), layer, start, 1.0 - motion.opacity, 0.0);
+    }
     // A bottom panel is placed from last frame's height. When the composer
     // grows or shrinks, lay the frame out again so it never shows the field
     // hanging below the window or a gap above it for a frame.
@@ -2941,14 +2990,16 @@ fn shape_follows_transcript(shape: &egui::Shape, viewport: Rect) -> bool {
 
 /// Lifts the list for a new last message and draws it rising into place:
 /// each row a [`wave_delay`] after the row below it, on the sent bubble's
-/// vertical spring. `rows` are the tops of the rows laid out this pass.
+/// vertical spring. `rows` are the tops of the rows laid out this pass, and
+/// `layers` the layers they were drawn on, each with its first shape of the
+/// pass: the transcript's, and the one a message edited in its bubble is
+/// lifted onto.
 fn glide_new_message<R>(
     ui: &egui::Ui,
     chat: &str,
     newest: Option<String>,
     output: &egui::scroll_area::ScrollAreaOutput<R>,
-    layer: egui::LayerId,
-    first_shape: egui::layers::ShapeIdx,
+    layers: &[(egui::LayerId, egui::layers::ShapeIdx)],
     rows: &[f32],
 ) {
     let id = Glide::id(chat);
@@ -3010,20 +3061,22 @@ fn glide_new_message<R>(
         shifts[below.min(WAVE_ROWS)]
     };
     ui.ctx().graphics_mut(|graphics| {
-        let list = graphics.entry(layer);
-        for index in first_shape.0..list.next_idx().0 {
-            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
-                let clip_slides = slides_with_transcript(clipped.clip_rect, viewport);
-                if clip_slides || shape_follows_transcript(&clipped.shape, viewport) {
-                    // The clip stays on a viewport-shaped shape. Panel-clipped
-                    // text would otherwise slide over the header, so that clip
-                    // is cut to the viewport for the slide.
-                    shift_shape(&mut clipped.shape, &shift_at);
-                    if !clip_slides {
-                        clipped.clip_rect = clipped.clip_rect.intersect(viewport);
+        for &(layer, first_shape) in layers {
+            let list = graphics.entry(layer);
+            for index in first_shape.0..list.next_idx().0 {
+                list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                    let clip_slides = slides_with_transcript(clipped.clip_rect, viewport);
+                    if clip_slides || shape_follows_transcript(&clipped.shape, viewport) {
+                        // The clip stays on a viewport-shaped shape. Panel-clipped
+                        // text would otherwise slide over the header, so that clip
+                        // is cut to the viewport for the slide.
+                        shift_shape(&mut clipped.shape, &shift_at);
+                        if !clip_slides {
+                            clipped.clip_rect = clipped.clip_rect.intersect(viewport);
+                        }
                     }
-                }
-            });
+                });
+            }
         }
     });
     ui.ctx().request_repaint();
@@ -3161,6 +3214,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .as_ref()
         .filter(|(selected_chat, _)| *selected_chat == chat.id)
         .map(|(_, ids)| ids.clone());
+    // How far the check column and the selected rows' bands have come in,
+    // or gone on their way out once the selection has ended.
+    let select_motion = selection_motion(
+        ui.ctx(),
+        &chat.id,
+        selection.as_deref(),
+        selection_calm(ui.ctx(), view.animate),
+    );
+    let selection_leaving = selection.is_none() && select_motion.leaving();
     // A sweep over messages (#246) follows the pointer while the button is
     // held, whichever row took the press, and ends on release.
     let sweep = app
@@ -3335,6 +3397,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let mut laid_rows = Vec::new();
     let mut content_top_drawn = None;
     let layer = ui.layer_id();
+    // The message edited in its bubble, whose row goes on a layer above the
+    // scrim the rest of the chat recedes under (`paint_edit_focus`).
+    let edited = edit_focus(ui.ctx(), &chat.id).map(|(id, _)| id);
+    let (_, lifted_layer) = edit_focus_layers(&chat.id);
     let first_shape = ui.ctx().graphics(|graphics| {
         graphics
             .get(layer)
@@ -3376,6 +3442,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             // Scroll while selecting near an edge. `scroll_with_delta` also
             // releases stick-to-bottom; setting the offset directly does not.
             let viewport = ui.clip_rect();
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(transcript_span_id(&chat.id), viewport.y_range());
+            });
+            // A row lifted over the edit scrim keeps to the clear stretch
+            // between the header and the composer, which sit under the scrim.
+            let between = Rect::from_x_y_ranges(viewport.x_range(), bar_rect.y_range());
+            let lifted_clip = viewport.intersect(between);
             // Where the transcript starts, so a row's place in it does not
             // depend on the offset.
             let content_top = ui.max_rect().top();
@@ -3606,6 +3679,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         // drawn. Always in a row of its own, so its widgets
                         // keep their ids whether it springs or not.
                         let row_shift = row_shifts.get(&message.id).copied().unwrap_or(0.0);
+                        // The message edited in its bubble goes on the layer
+                        // above the scrim the rest of the chat recedes under.
+                        let lifted = edited.as_ref().is_some_and(|id| *id == message.id);
                         let outer = &mut *ui;
                         let mut row_ui = outer.new_child(
                             egui::UiBuilder::new()
@@ -3614,8 +3690,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                         .available_rect_before_wrap()
                                         .translate(vec2(0.0, row_shift)),
                                 )
-                                .layout(*outer.layout()),
+                                .layout(*outer.layout())
+                                .layer_id(if lifted {
+                                    lifted_layer
+                                } else {
+                                    outer.layer_id()
+                                }),
                         );
+                        if lifted {
+                            row_ui.set_clip_rect(lifted_clip);
+                        }
                         let ui = &mut row_ui;
                         if new_day {
                             ui.add_space(8.0);
@@ -3712,10 +3796,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         // While selecting, every row gains a check box in a
                         // column on the left and a band behind it, as in
                         // WhatsApp Web, painted under the row once its height
-                        // is known.
-                        let band = selection
-                            .as_ref()
-                            .map(|_| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
+                        // is known. They stay a moment as a selection ends,
+                        // on their way out.
+                        let band = (selection.is_some() || selection_leaving)
+                            .then(|| (ui.painter().add(egui::Shape::Noop), ui.cursor().top()));
+                        let row_start = super::swipe::mark(ui);
                         let response = if selection.is_some() {
                             ui.horizontal_top(|ui| {
                                 ui.add_space(SELECT_GUTTER);
@@ -3758,6 +3843,22 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 &mut actions,
                             )
                         };
+                        // As the check column comes in or leaves, a row it
+                        // moves is laid out at once where it goes and drawn
+                        // sliding there from where it was, so no text is laid
+                        // out again at a width that changes every frame.
+                        let column_shift = select_motion.row_shift(message.from_me);
+                        if column_shift != 0.0 {
+                            let layer = ui.layer_id();
+                            ui.ctx().graphics_mut(|graphics| {
+                                let list = graphics.entry(layer);
+                                for index in row_start.0..list.next_idx().0 {
+                                    list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                                        clipped.shape.translate(vec2(column_shift, 0.0));
+                                    });
+                                }
+                            });
+                        }
                         if let Some((slot, top)) = flash {
                             if row_is_anchor && response.is_some() && !jump_glides {
                                 jump_since.set(Some(time));
@@ -3812,10 +3913,14 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                     Sense::hover()
                                 },
                             );
-                            let fill = if checked {
-                                palette.accent.gamma_multiply(0.16)
+                            // The band fades in as the row joins the
+                            // selection and out as it leaves.
+                            let tick = select_motion.tick(&message.id, checked, time);
+                            let opacity = select_motion.opacity;
+                            let fill = if tick > 0.0 {
+                                palette.accent.gamma_multiply(0.16 * tick * opacity)
                             } else if pick.hovered() {
-                                palette.text.gamma_multiply(0.05)
+                                palette.text.gamma_multiply(0.05 * opacity)
                             } else {
                                 Color32::TRANSPARENT
                             };
@@ -3831,13 +3936,19 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                     )
                                 })
                                 .unwrap_or(response.rect);
-                            let check = Rect::from_center_size(
-                                pos2(ui.max_rect().left() + SELECT_BOX / 2.0, drawn.center().y),
-                                Vec2::splat(SELECT_BOX),
-                            );
+                            // In from the left edge as the selection starts.
+                            let left = ui.max_rect().left();
+                            let check = select_motion.check_rect(left, drawn.center().y);
                             // Only forwardable messages get a box.
                             if selectable {
-                                select_box(ui, &palette, check, checked);
+                                select_box(
+                                    ui,
+                                    &palette,
+                                    check,
+                                    tick,
+                                    select_motion.pop(&message.id, time),
+                                    select_motion.opacity,
+                                );
                                 if pick.has_focus()
                                     && ui.ctx().data(|data| {
                                         data.get_temp::<bool>(theme::keyboard_focus_id())
@@ -3948,6 +4059,46 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         {
                             // Ctrl-click (Command-click on macOS) starts a selection.
                             actions.push(Action::SelectMessage(message.id.clone()));
+                        }
+                        // A selection just ended: its bands and check boxes
+                        // fade and slide out the way they came. Only paint,
+                        // so the rows take clicks as they do at rest.
+                        if selection.is_none()
+                            && let (Some(response), Some((slot, top))) = (&response, band)
+                        {
+                            let ticked = select_motion.ticked.contains(&message.id);
+                            let tick = select_motion.tick(&message.id, ticked, time);
+                            if tick > 0.0 {
+                                let row = Rect::from_x_y_ranges(
+                                    viewport.x_range(),
+                                    top..=ui.min_rect().bottom(),
+                                )
+                                .expand2(vec2(0.0, ui.spacing().item_spacing.y / 2.0));
+                                let alpha = 0.16 * tick * select_motion.opacity;
+                                let fill = palette.accent.gamma_multiply(alpha);
+                                ui.painter()
+                                    .set(slot, egui::Shape::rect_filled(row, 0.0, fill));
+                            }
+                            if crate::app::can_select(&message.content) {
+                                let drawn = ui
+                                    .ctx()
+                                    .data(|data| {
+                                        data.get_temp::<Rect>(
+                                            bubble_id(&chat.id, &message.id).with("rect"),
+                                        )
+                                    })
+                                    .unwrap_or(response.rect);
+                                let left = ui.max_rect().left();
+                                let check = select_motion.check_rect(left, drawn.center().y);
+                                select_box(
+                                    ui,
+                                    &palette,
+                                    check,
+                                    tick,
+                                    select_motion.pop(&message.id, time),
+                                    select_motion.opacity,
+                                );
+                            }
                         }
                         if let Some(response) = response
                             && row_is_anchor
@@ -4171,15 +4322,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     if let Some(slot) = scrim_slot {
         lay_scrims_under(ui.ctx(), layer, slot, &scrims.borrow());
     }
-    glide_new_message(
-        ui,
-        &chat.id,
-        newest,
-        &output,
-        layer,
-        first_shape,
-        &row_tops.borrow(),
-    );
+    // A row lifted over the edit scrim rises with the rows around it.
+    let mut glided = vec![(layer, first_shape)];
+    if edited.is_some() {
+        glided.push((lifted_layer, egui::layers::ShapeIdx(0)));
+    }
+    glide_new_message(ui, &chat.id, newest, &output, &glided, &row_tops.borrow());
     app.scroll_route
         .place(crate::app::ScrollPane::Messages, output.inner_rect);
     sticky_date(ui, &palette, app.locale, chat, &output, visible_day, under);
@@ -6384,14 +6532,17 @@ fn start_inline_edit(ctx: &egui::Context, view: &View<'_>, message: &Message) {
     let Content::Text { text, .. } = &message.content else {
         return;
     };
-    // The body's width as it was drawn, so the bubble keeps its size until
-    // the text outgrows it.
+    // The body's size as it was drawn, so the bubble keeps it until the
+    // text outgrows it.
     let body =
         ctx.data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("body")));
     let slot = inline_edit_slot(&view.chat.id);
     ctx.data_mut(|data| {
         data.insert_temp(slot, (message.id.clone(), text.clone()));
-        data.insert_temp(slot.with("width"), body.map_or(0.0, |body| body.width()));
+        data.insert_temp(
+            slot.with("size"),
+            body.map_or(Vec2::ZERO, |body| body.size()),
+        );
     });
     ctx.request_repaint();
 }
@@ -6400,6 +6551,11 @@ fn start_inline_edit(ctx: &egui::Context, view: &View<'_>, message: &Message) {
 /// text's own width once it outgrows that, with the time on its last line
 /// when it fits there as it does beside the text. Never past `width`.
 /// Returns the width and whether the time fits on the last line.
+///
+/// The rule is [`rich_body`]'s, so the first frame of an edit draws the
+/// bubble at the size it had. No room is added for the caret: the field
+/// paints it a point past its edge, inside the bubble's padding, and egui
+/// wraps a line only once it is half a point wider than the field.
 fn inline_editor_width(
     text_width: f32,
     last_row: f32,
@@ -6407,11 +6563,9 @@ fn inline_editor_width(
     width: f32,
     reserve: Option<f32>,
 ) -> (f32, bool) {
-    // Room for the caret after the last character.
-    let text_width = text_width + 2.0;
-    let inline = reserve.filter(|reserve| last_row + 2.0 + 8.0 + reserve <= width);
+    let inline = reserve.filter(|reserve| last_row + 8.0 + reserve <= width);
     let needed = match inline {
-        Some(reserve) => text_width.max(last_row + 2.0 + 8.0 + reserve),
+        Some(reserve) => text_width.max(last_row + 8.0 + reserve),
         None => text_width,
     };
     (needed.max(drawn).min(width), inline.is_some())
@@ -6467,6 +6621,97 @@ fn editing_label(ui: &egui::Ui, view: &View<'_>, message: &Message, editor: egui
         });
 }
 
+/// How long the rest of the chat takes to recede behind a message edited in
+/// its bubble, and to come back once the edit ends: a panel's time, and
+/// quicker on the way back, as a surface closes.
+const EDIT_FOCUS_IN: f32 = theme::MOTION_PANEL;
+const EDIT_FOCUS_OUT: f32 = theme::MOTION_PANEL * theme::CLOSE;
+
+/// The layers the chat recedes on while a message is edited in its bubble:
+/// the scrim over the whole conversation, and the edited row, kept directly
+/// above the scrim and below menus opened after it.
+fn edit_focus_layers(chat: &str) -> (egui::LayerId, egui::LayerId) {
+    let id = egui::Id::new(("edit-focus", chat));
+    (
+        egui::LayerId::new(egui::Order::Foreground, id),
+        egui::LayerId::new(egui::Order::Foreground, id.with("row")),
+    )
+}
+
+/// Where the open chat's transcript was laid out this frame, top to bottom.
+/// Own balloons shade down it, and a lifted one, clipped to less, still does.
+fn transcript_span_id(chat: &str) -> egui::Id {
+    egui::Id::new(("transcript-span", chat))
+}
+
+/// The message edited in its bubble, and how far the rest of the chat has
+/// receded behind it, from 0 to 1. The chat recedes while the editor has
+/// the keyboard, or is about to take it, and comes back once the edit ends,
+/// the bubble staying lifted until it has. Asked every frame the chat
+/// shows, so the first edit fades in as later ones do; at once with a
+/// screen reader.
+fn edit_focus(ctx: &egui::Context, chat: &str) -> Option<(String, f32)> {
+    let slot = inline_edit_slot(chat);
+    let editing = ctx
+        .data(|data| data.get_temp::<(String, String)>(slot))
+        .map(|(id, _)| id)
+        .filter(|id| {
+            let editor = bubble_id(chat, id).with("inline-editor");
+            ctx.memory(|memory| memory.has_focus(editor))
+                || !ctx.data(|data| data.get_temp::<bool>(editor.with("seen")).unwrap_or(false))
+        });
+    let kept = slot.with("focus");
+    let seconds = if editing.is_some() {
+        EDIT_FOCUS_IN
+    } else {
+        EDIT_FOCUS_OUT
+    };
+    let shown = theme::animate(ctx, kept.with("shown"), editing.is_some(), seconds);
+    match editing {
+        Some(id) => {
+            ctx.data_mut(|data| data.insert_temp(kept, id.clone()));
+            Some((id, shown))
+        }
+        None if shown > 0.0 => ctx
+            .data(|data| data.get_temp::<String>(kept))
+            .map(|id| (id, shown)),
+        None => {
+            ctx.data_mut(|data| data.remove::<String>(kept));
+            None
+        }
+    }
+}
+
+/// The scrim's colour: the palette's shadow at 22% in a light theme and 40%
+/// in a dark one, where the bubble needs more to stand out.
+fn edit_focus_shade(palette: &Palette) -> Color32 {
+    let [r, g, b, _] = palette.shadow.to_srgba_unmultiplied();
+    let weight: f32 = if palette.dark { 0.40 } else { 0.22 };
+    Color32::from_rgba_unmultiplied(r, g, b, (weight * 255.0).round() as u8)
+}
+
+/// Recedes the chat behind a message edited in its bubble: a scrim over the
+/// whole conversation, header and composer included, over a frost of it
+/// where the window can frost (never on macOS, whose single Metal pass
+/// cannot read back what it drew). The edited row is drawn on the layer
+/// just above it, and the "Editing message" label above that. The scrim
+/// holds no widgets, so clicks and scrolling reach what lies under it as
+/// they did.
+fn paint_edit_focus(ctx: &egui::Context, palette: &Palette, chat: &str, card: Rect, radius: f32) {
+    let Some((_, shown)) = edit_focus(ctx, chat) else {
+        return;
+    };
+    let (scrim, row) = edit_focus_layers(chat);
+    ctx.set_sublayer(scrim, row);
+    let painter = ctx.layer_painter(scrim).with_clip_rect(card);
+    painter.add(super::glass::veil(card, radius, shown));
+    painter.rect_filled(
+        card,
+        radius,
+        edit_focus_shade(palette).gamma_multiply(shown),
+    );
+}
+
 /// Draws the editor in place of the message's text when it is being edited.
 /// Enter saves, Shift+Enter breaks the line, Escape or a click elsewhere
 /// puts the old text back. The bubble keeps the size it had and grows only
@@ -6490,8 +6735,8 @@ fn inline_editor(
     }
     let drawn = ui
         .ctx()
-        .data(|data| data.get_temp::<f32>(slot.with("width")))
-        .unwrap_or(0.0);
+        .data(|data| data.get_temp::<Vec2>(slot.with("size")))
+        .unwrap_or(Vec2::ZERO);
     let palette = view.palette;
     let editor = bubble_id(&view.chat.id, &message.id).with("inline-editor");
     let focused = ui.memory(|memory| memory.has_focus(editor));
@@ -6506,12 +6751,32 @@ fn inline_editor(
         (false, false)
     };
     // Measured as it would wrap in the widest bubble, then drawn no wider
-    // than that needs, so the bubble does not jump to its widest.
-    let measured = ui.ctx().fonts_mut(|fonts| {
-        fonts.layout(text.clone(), theme::regular(BODY_SIZE), palette.text, width)
-    });
+    // than that needs, so the bubble does not jump to its widest. The field
+    // lays its text out the same way, so what was measured is what it draws.
+    let font = theme::regular(BODY_SIZE);
+    let lay_out = |ui: &egui::Ui, text: &str, wrap: f32| {
+        ui.fonts_mut(|fonts| fonts.layout(text.to_owned(), font.clone(), palette.text, wrap))
+    };
+    let measured = lay_out(ui, &text, width);
     let last_row = measured.rows.last().map_or(0.0, |row| row.row.size.x);
-    let (fitted, inline) = inline_editor_width(measured.size().x, last_row, drawn, width, reserve);
+    // The time stays beside the last line where the body put it there:
+    // right-to-left text keeps it beside a single line only, and text under
+    // a quote or a preview spans the card, as in `rich_body`.
+    let card = message.quoted.is_some()
+        || matches!(
+            &message.content,
+            Content::Text {
+                preview: Some(_),
+                ..
+            }
+        );
+    let single = measured.rows.len() == 1 && !card;
+    let reserve = reserve.filter(|_| !crate::bidi::message_rtl(&text) || single);
+    let (fitted, inline) =
+        inline_editor_width(measured.size().x, last_row, drawn.x, width, reserve);
+    let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
+        lay_out(ui, buffer.as_str(), wrap)
+    };
     let output = egui::TextEdit::multiline(&mut text)
         .id(editor)
         .frame(Frame::NONE)
@@ -6520,6 +6785,10 @@ fn inline_editor(
         .text_color(palette.text)
         .desired_rows(1)
         .desired_width(fitted)
+        // No shorter than the body was either, such as a big emoji-only
+        // line, until the text needs more.
+        .min_size(vec2(0.0, drawn.y))
+        .layouter(&mut layouter)
         .show(ui);
     editing_label(ui, view, message, editor, output.response.rect);
     let first = !ui
@@ -6543,7 +6812,7 @@ fn inline_editor(
     let finish = |ctx: &egui::Context| {
         ctx.data_mut(|data| {
             data.remove::<(String, String)>(slot);
-            data.remove::<f32>(slot.with("width"));
+            data.remove::<Vec2>(slot.with("size"));
             data.remove::<bool>(editor.with("seen"));
             data.remove::<Rect>(editor.with("rect"));
         });
@@ -6873,6 +7142,9 @@ fn bubble_frame(
     // the bubble closes under it as evenly as it opens above it.
     let over_picture = album.is_none() && time_over_picture(message);
     let mut tiles: Vec<(Rect, String)> = Vec::new();
+    // Where a photo that carries its time fills the bubble, to darken with
+    // the bubble while its menu is open.
+    let mut photo: Option<Rect> = None;
     let inner = Frame::new()
         .inner_margin(bubble_margin(&palette, message, over_picture))
         .show(ui, |ui| {
@@ -6949,6 +7221,7 @@ fn bubble_frame(
                 }
             };
             if over_picture && let Some(picture) = slot {
+                photo = Some(picture);
                 footer_over_picture(ui, view, message, picture, starred, pinned, actions);
             } else {
                 footer(ui, view, last, slot, starred, pinned, actions);
@@ -6977,34 +7250,61 @@ fn bubble_frame(
                 });
             }
         });
+    // While its menu is open the bubble darkens a little, so it is plain
+    // which message the menu acts on. Read from the popup's state as the last
+    // frame left it, since the menu shows only after the bubble is drawn.
+    let shade = menu_shade(ui.ctx(), &palette, bubble_id);
+    // Lifted over the scrim of an edit in place, a bubble goes without its
+    // wash, which would light the scrim around it, and still shades down the
+    // whole transcript, though its clip keeps to the stretch between the
+    // header and the composer.
+    let lifted = ui.layer_id() == edit_focus_layers(&view.chat.id).1;
+    let span = if lifted {
+        ui.ctx()
+            .data(|data| data.get_temp::<egui::Rangef>(transcript_span_id(&view.chat.id)))
+            .unwrap_or(ui.clip_rect().y_range())
+    } else {
+        ui.clip_rect().y_range()
+    };
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
-        if let Some(shape) = doodle_scrim(inner.response.rect, fill, view.doodles) {
+        if !lifted && let Some(shape) = doodle_scrim(inner.response.rect, fill, view.doodles) {
             ui.painter().set(scrim, shape);
             if let Some(scrims) = view.scrims {
                 scrims.borrow_mut().push((ui.layer_id(), scrim));
             }
         }
+        let mut shape = if palette.bubbles == theme::BubbleStyle::Nothing {
+            widgets::grouped_bubble_shape(inner.response.rect, fill, own, first_in_run, last_in_run)
+        } else {
+            widgets::bubble_shape(
+                &palette,
+                inner.response.rect,
+                fill,
+                tail,
+                ui.ctx().pixels_per_point(),
+                // The transcript's viewport: own balloons shade down it.
+                span,
+            )
+        };
+        // The whole shape, tail, gradient and edges included.
+        if shade > 0.0 {
+            shade_shape(&mut shape, shade);
+        }
+        ui.painter().set(backdrop, shape);
+    } else if shade > 0.0
+        && photo.is_none()
+        && tiles.is_empty()
+        && ui.is_rect_visible(inner.response.rect)
+    {
+        // A sticker, a round video or a carousel has no fill to darken: a
+        // faint patch behind it marks it instead.
         ui.painter().set(
             backdrop,
-            if palette.bubbles == theme::BubbleStyle::Nothing {
-                widgets::grouped_bubble_shape(
-                    inner.response.rect,
-                    fill,
-                    own,
-                    first_in_run,
-                    last_in_run,
-                )
-            } else {
-                widgets::bubble_shape(
-                    &palette,
-                    inner.response.rect,
-                    fill,
-                    tail,
-                    ui.ctx().pixels_per_point(),
-                    // The transcript's viewport: own balloons shade down it.
-                    ui.clip_rect().y_range(),
-                )
-            },
+            egui::Shape::rect_filled(
+                inner.response.rect,
+                CornerRadius::from(picture_radius(&palette, message)),
+                Color32::from_black_alpha(shade_alpha(shade)),
+            ),
         );
     }
     ui.ctx()
@@ -7128,8 +7428,7 @@ fn bubble_frame(
         } else {
             egui::PopupCloseBehavior::CloseOnClickOutside
         })
-        .width(width)
-        .frame(widgets::menu_frame(&palette));
+        .width(width);
     let popup = if reacting {
         // Keep the menu next to the picker, anchored to this message rather
         // than whichever pointer position happened to open the emoji grid.
@@ -7148,7 +7447,7 @@ fn bubble_frame(
     } else {
         popup.at_pointer_fixed()
     };
-    let menu = popup.show_frosted(ui.ctx(), |ui| {
+    let menu = popup.show_lifted(ui.ctx(), &palette, |ui| {
         context_menu(
             ui,
             view,
@@ -7162,23 +7461,27 @@ fn bubble_frame(
         ui.ctx()
             .data_mut(|data| data.insert_temp(bubble_id.with("menu-rect"), menu.response.rect));
     }
-    // Keep the target explicit for every menu action, not just the emoji
-    // picker. Paint in the message layer so the menu itself remains above it.
-    if egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
-        // Two points out, each corner two points rounder, so the ring runs
-        // parallel to the bubble's edge.
-        let widen = |radius: u8| if radius == 0 { 0 } else { radius + 2 };
-        ui.painter().rect_stroke(
-            inner.response.rect.expand(2.0),
-            CornerRadius {
-                nw: widen(corners.nw),
-                ne: widen(corners.ne),
-                sw: widen(corners.sw),
-                se: widen(corners.se),
-            },
-            Stroke::new(theme::FOCUS_STROKE_WIDTH, palette.accent),
-            egui::StrokeKind::Outside,
-        );
+    // A photo hides the fill under it, so it darkens under a veil as dark
+    // as the fill's shade, in the message layer so the menu stays above it.
+    if shade > 0.0 {
+        let veil = Color32::from_black_alpha(shade_alpha(shade));
+        if let Some(photo) = photo {
+            ui.painter().rect_filled(
+                photo,
+                CornerRadius::from(picture_radius(&palette, message)),
+                veil,
+            );
+        }
+        if let Some(first) = album.and_then(|members| members.first()) {
+            // Each tile takes the seams' small radius: at the album's
+            // rounder outer corners the veil reaches a hair past the
+            // picture, onto the fill that has darkened already.
+            let radius = ALBUM_SEAM_RADIUS.min(picture_radius(&palette, first));
+            for (tile, _) in &tiles {
+                ui.painter()
+                    .rect_filled(*tile, CornerRadius::from(radius), veil);
+            }
+        }
     }
     if reacting && !egui::Popup::is_id_open(ui.ctx(), bubble_id.with("popup")) {
         actions.push(Action::ClosePicker);
@@ -7818,8 +8121,93 @@ fn bare_picture(palette: &Palette, message: &Message) -> bool {
         && !message.forwarded
 }
 
-/// The corners of a message's bubble, as drawn, for the rings that mark it
-/// focused or under its menu.
+/// How far toward black a bubble goes while its menu is open, in a light
+/// palette: enough to mark the message the menu acts on, and no more.
+const MENU_SHADE_LIGHT: f32 = 0.07;
+/// The same in a dark palette, where a bubble needs more to show it.
+const MENU_SHADE_DARK: f32 = 0.12;
+
+/// How far toward black the bubble `bubble_id` is drawn now: its palette's
+/// full shade while its menu is open, nothing once it has closed, easing
+/// between the two over [`theme::MOTION_QUICK`] as the menu opens and
+/// closes, at once with a screen reader. Only a bubble whose menu is open or
+/// still fading keeps its progress, so the bubbles scrolled past leave
+/// nothing behind.
+fn menu_shade(ctx: &egui::Context, palette: &Palette, bubble_id: egui::Id) -> f32 {
+    let open = egui::Popup::is_id_open(ctx, bubble_id.with("popup"));
+    let id = bubble_id.with("menu-shade");
+    let pass = ctx.cumulative_pass_nr();
+    // The progress, and the pass it last moved in.
+    let previous = ctx.data(|data| data.get_temp::<(f32, u64)>(id));
+    if !open && previous.is_none() {
+        return 0.0;
+    }
+    let progress = if let Some((progress, moved)) = previous
+        && moved == pass
+    {
+        // Drawn again in the same pass: it has moved this frame already.
+        progress
+    } else if !crate::motion::screen_reader_attached(ctx) {
+        let step = ctx.input(|input| input.stable_dt).min(0.1) / theme::MOTION_QUICK;
+        let towards = if open { step } else { -step };
+        let from = previous.map_or(0.0, |(progress, _)| progress);
+        (from + towards).clamp(0.0, 1.0)
+    } else if open {
+        1.0
+    } else {
+        0.0
+    };
+    if progress > 0.0 {
+        ctx.data_mut(|data| data.insert_temp(id, (progress, pass)));
+    } else {
+        ctx.data_mut(|data| data.remove::<(f32, u64)>(id));
+    }
+    if progress > 0.0 && progress < 1.0 {
+        ctx.request_repaint();
+    }
+    menu_shade_depth(palette) * theme::ease_out(progress)
+}
+
+/// A bubble's full shade under its menu in `palette`.
+fn menu_shade_depth(palette: &Palette) -> f32 {
+    if palette.dark {
+        MENU_SHADE_DARK
+    } else {
+        MENU_SHADE_LIGHT
+    }
+}
+
+/// `colour` `amount` of the way to black, as opaque as it was.
+fn shaded(colour: Color32, amount: f32) -> Color32 {
+    let darker = colour.lerp_to_gamma(Color32::BLACK, amount);
+    Color32::from_rgba_premultiplied(darker.r(), darker.g(), darker.b(), colour.a())
+}
+
+/// A bubble of `fill` as it is drawn while its menu is open.
+#[cfg(test)]
+pub(crate) fn menu_shaded(palette: &Palette, fill: Color32) -> Color32 {
+    shaded(fill, menu_shade_depth(palette))
+}
+
+/// Darkens every colour in `shape` `amount` of the way to black, keeping
+/// each one's opacity, so a gradient, a tail and anti-aliased edges darken
+/// alike.
+fn shade_shape(shape: &mut egui::Shape, amount: f32) {
+    egui::epaint::shape_transform::adjust_colors(shape, move |colour| {
+        if *colour != Color32::PLACEHOLDER {
+            *colour = shaded(*colour, amount);
+        }
+    });
+}
+
+/// The opacity of black that, laid over a picture, darkens it as much as
+/// `amount` darkens a fill.
+fn shade_alpha(amount: f32) -> u8 {
+    (amount.clamp(0.0, 1.0) * 255.0).round() as u8
+}
+
+/// The corners of a message's bubble, as drawn, for the ring that marks it
+/// focused.
 fn bubble_outline_corners(
     palette: &Palette,
     message: &Message,
@@ -8504,20 +8892,17 @@ pub(crate) fn menu_width(
 /// longest.
 fn message_menu_labels(locale: crate::i18n::Locale) -> Vec<String> {
     use crate::i18n::gettext;
+    // Delete's two choices are a submenu's, which is as wide as they are.
     [
-        gettext(locale, "Reply"),
         gettext(locale, "Reply privately"),
         gettext(locale, "Star"),
         gettext(locale, "Unstar"),
         gettext(locale, "Pin message"),
         gettext(locale, "Unpin message"),
-        gettext(locale, "Forward"),
         gettext(locale, "Open in the viewer"),
-        gettext(locale, "Select"),
         gettext(locale, "Copy text"),
         gettext(locale, "Edit"),
-        gettext(locale, "Delete for everyone"),
-        gettext(locale, "Delete for me"),
+        gettext(locale, "Delete"),
         gettext(locale, "Add to favorites"),
         gettext(locale, "Open in system player"),
         gettext(locale, "Open file"),
@@ -8526,9 +8911,6 @@ fn message_menu_labels(locale: crate::i18n::Locale) -> Vec<String> {
         gettext(locale, "Show in folder"),
         gettext(locale, "Downloading…"),
         gettext(locale, "Download"),
-        gettext(locale, "Message info"),
-        gettext(locale, "Reload earlier messages"),
-        gettext(locale, "Copy message ID"),
     ]
     .into_iter()
     .map(|label| label.into_owned())
@@ -8941,9 +9323,12 @@ fn context_menu(
         },
     );
     widgets::menu_separator(ui, &palette);
-    // Answering first: Reply and Edit, then passing the message on. Then
-    // what to do with its contents, keeping it, and its media, with the
-    // details, the deletions and the troubleshooting set apart below.
+    // Answering first: a private reply and Edit. Then what to do with its
+    // contents, keeping it, and its media, with deleting it set apart below.
+    // Replying, forwarding and selecting have their own ways in (a double
+    // click or a swipe, the selection bar, a Ctrl-click), and the details
+    // open from the message's time.
+    let actions_from = ui.cursor().min.y;
     let age = view.now - message.timestamp;
     let can_edit = message.from_me
         && matches!(message.content, Content::Text { .. })
@@ -8951,22 +9336,6 @@ fn context_menu(
     let can_revoke = message.from_me
         && !matches!(message.content, Content::Revoked)
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
-    if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Reply),
-            &crate::i18n::gettext(view.locale, "Reply"),
-        )
-    {
-        if matches!(origin, MenuOrigin::List) {
-            actions.push(Action::OpenMessage {
-                chat: chat.clone(),
-                message: message.id.clone(),
-            });
-        }
-        actions.push(Action::Reply(message.id.clone()));
-    }
     // From the starred list the source chat is not on screen, and the
     // private reply starts from the group the reader is looking at.
     if !matches!(origin, MenuOrigin::List)
@@ -8999,19 +9368,6 @@ fn context_menu(
         }
         actions.push(Action::Edit(message.id.clone()));
     }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Forward),
-            &crate::i18n::gettext(view.locale, "Forward"),
-        )
-    {
-        actions.push(Action::ShowDialog(Dialog::Forward {
-            chat: chat.clone(),
-            messages: vec![message.id.clone()],
-        }));
-    }
     let text = match &message.content {
         Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
         Content::Image { caption, .. }
@@ -9030,32 +9386,17 @@ fn context_menu(
         Content::Contact { vcard, .. } => Some(vcard.clone()),
         _ => None,
     };
+    // Copy text has no icon of its own, but its words line up with the rows
+    // around it.
     if let Some(text) = text
-        && widgets::menu_item(
+        && widgets::menu_item_inset(
             ui,
             &palette,
-            Some(Icon::Copy),
             &crate::i18n::gettext(view.locale, "Copy text"),
         )
     {
         let mentions = mentions_of(view, message);
         actions.push(Action::CopyText(markup::plain(&text, &mentions)));
-    }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Check),
-            &crate::i18n::gettext(view.locale, "Select"),
-        )
-    {
-        if matches!(origin, MenuOrigin::List) {
-            actions.push(Action::OpenMessage {
-                chat: chat.clone(),
-                message: message.id.clone(),
-            });
-        }
-        actions.push(Action::SelectMessage(message.id.clone()));
     }
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let star_label = if starred {
@@ -9221,73 +9562,53 @@ fn context_menu(
     {
         actions.push(Action::SaveSticker(path.clone()));
     }
-    widgets::menu_separator(ui, &palette);
-    // The menu holds actions only. Sent, delivery, and read times, per member
-    // in a group, live in "Message info".
-    if has_message_info(message)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Info),
-            &crate::i18n::gettext(view.locale, "Message info"),
-        )
-    {
-        actions.push(Action::ShowDialog(Dialog::MessageInfo {
-            chat: chat.clone(),
-            message: message.id.clone(),
-        }));
-    }
-    if has_message_info(message) {
+    // A message with nothing above, such as a deleted one, keeps a single
+    // line between its reactions and Delete.
+    if ui.cursor().min.y > actions_from {
         widgets::menu_separator(ui, &palette);
     }
-    if can_revoke
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Trash),
-            &crate::i18n::gettext(view.locale, "Delete for everyone"),
-        )
-    {
-        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
-            chat: view.chat.id.clone(),
-            message: message.id.clone(),
-            for_everyone: true,
-        }));
+    delete_submenu(ui, view, message, can_revoke, actions);
+}
+
+/// The menu's Delete row, which opens the ways to delete `message`: for me,
+/// then for everyone while it can still be revoked. Each asks to confirm.
+fn delete_submenu(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    can_revoke: bool,
+    actions: &mut Vec<Action>,
+) {
+    let palette = view.palette;
+    let for_me = crate::i18n::gettext(view.locale, "Delete for me");
+    let for_everyone = crate::i18n::gettext(view.locale, "Delete for everyone");
+    let mut items: Vec<&str> = vec![&*for_me];
+    if can_revoke {
+        items.push(&*for_everyone);
     }
-    if widgets::menu_item(
+    widgets::submenu(
         ui,
         &palette,
-        Some(Icon::EyeOff),
-        &crate::i18n::gettext(view.locale, "Delete for me"),
-    ) {
-        actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
-            chat: view.chat.id.clone(),
-            message: message.id.clone(),
-            for_everyone: false,
-        }));
-    }
-    widgets::menu_separator(ui, &palette);
-    if widgets::menu_item_enabled(
-        ui,
-        &palette,
-        Some(Icon::Refresh),
-        &crate::i18n::gettext(view.locale, "Reload earlier messages"),
-        view.connected && !matches!(message.status, Delivery::Pending | Delivery::Failed),
-    ) {
-        actions.push(Action::ReloadHistory {
-            chat: chat.clone(),
-            message: message.id.clone(),
-        });
-    }
-    // The id helps when looking a message up for a bug report.
-    if widgets::menu_item(
-        ui,
-        &palette,
-        Some(Icon::Copy),
-        &crate::i18n::gettext(view.locale, "Copy message ID"),
-    ) {
-        actions.push(Action::CopyText(message.id.clone()));
-    }
+        Icon::Trash,
+        &crate::i18n::gettext(view.locale, "Delete"),
+        &items,
+        |ui| {
+            if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), &for_me) {
+                actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+                    chat: view.chat.id.clone(),
+                    message: message.id.clone(),
+                    for_everyone: false,
+                }));
+            }
+            if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), &for_everyone) {
+                actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+                    chat: view.chat.id.clone(),
+                    message: message.id.clone(),
+                    for_everyone: true,
+                }));
+            }
+        },
+    );
 }
 
 fn mentions_of(view: &View<'_>, message: &Message) -> Vec<markup::Mention> {
@@ -13206,18 +13527,370 @@ pub(crate) fn recording_wave_id() -> egui::Id {
     egui::Id::new("recording-wave")
 }
 
-/// A selecting row's check box: an outline, or ticked in the accent.
-fn select_box(ui: &egui::Ui, palette: &Palette, rect: Rect, checked: bool) {
-    if checked {
-        ui.painter().rect_filled(rect, 4.0, palette.accent);
-        theme::paint_icon(ui, Icon::Check, rect, 14.0, palette.on_accent);
-    } else {
+/// A selecting row's check box: an outline, ticked in the accent as `tick`
+/// goes from 0 to 1. The tick's fill is drawn at `scale` of the box, for its
+/// pop, and the whole box at `opacity`, as the selection comes and goes.
+fn select_box(ui: &egui::Ui, palette: &Palette, rect: Rect, tick: f32, scale: f32, opacity: f32) {
+    if opacity <= 0.0 {
+        return;
+    }
+    let tick = tick.clamp(0.0, 1.0);
+    // Under a fill on its way in or out; a full one covers it.
+    if tick < 1.0 {
         ui.painter().rect_stroke(
             rect,
             4.0,
-            Stroke::new(1.5, palette.secondary),
+            Stroke::new(1.5, palette.secondary.gamma_multiply(opacity)),
             egui::StrokeKind::Inside,
         );
+    }
+    if tick > 0.0 {
+        let alpha = tick * opacity;
+        let scale = scale.max(0.0);
+        let filled = Rect::from_center_size(rect.center(), rect.size() * scale);
+        ui.painter()
+            .rect_filled(filled, 4.0 * scale, palette.accent.gamma_multiply(alpha));
+        theme::paint_icon(
+            ui,
+            Icon::Check,
+            filled,
+            14.0 * scale,
+            palette.on_accent.gamma_multiply(alpha),
+        );
+    }
+}
+
+/// How the check boxes, the selected rows' bands and the selection bar slide
+/// as a selection starts and ends.
+const SELECT_SLIDE: crate::motion::Spring = crate::motion::Spring::new(0.4, 0.15);
+/// Seconds the selection's check boxes, bands and bar take to fade in or out.
+const SELECT_FADE: f32 = 0.18;
+/// A check box ticked pops from this share of its size on [`SELECT_POP`].
+const SELECT_POP_FROM: f32 = 0.6;
+/// The spring a ticked check box pops on.
+const SELECT_POP: crate::motion::Spring = crate::motion::Spring::new(0.3, 0.25);
+/// Seconds a row's band and tick take to fade as it joins or leaves the
+/// selection.
+const SELECT_TICK_FADE: f32 = 0.12;
+/// How far below its place the selection bar rises from, and sinks to as
+/// it leaves.
+const SELECT_BAR_RISE: f32 = 14.0;
+
+/// Where a chat's selection furniture (the check column, the selected rows'
+/// bands and the bar over the composer) stands as a selection starts or
+/// ends. Kept per chat in the context's memory and brought up to date once
+/// a pass by [`selection_motion`]; every change of course starts from where
+/// it is.
+#[derive(Clone, Default)]
+struct SelectionMotion {
+    /// Whether the chat is selecting.
+    on: bool,
+    /// How far in the furniture has slid: 0 out, 1 in, a little past either
+    /// on its spring. With its speed, per second.
+    slide: f32,
+    velocity: f32,
+    /// How opaque the furniture is, and how opaque it was when it last
+    /// turned, and when that was.
+    opacity: f32,
+    fade_from: f32,
+    turned: f64,
+    /// When this was last brought up to date, and the pass it was.
+    time: f64,
+    pass: Option<u64>,
+    /// The messages ticked when last seen: while selecting, those ticked;
+    /// once it ends, those to draw ticked on their way out.
+    ticked: Vec<String>,
+    /// When each message last joined (`true`) or left the selection, and
+    /// how far its tick was in then, for its pop and its band's fade.
+    marks: HashMap<String, (f64, bool, f32)>,
+}
+
+impl SelectionMotion {
+    fn id(chat: &str) -> egui::Id {
+        egui::Id::new(("selection-motion", chat))
+    }
+
+    fn target(&self) -> f32 {
+        if self.on { 1.0 } else { 0.0 }
+    }
+
+    /// How opaque the furniture is at `now`, easing from where it turned.
+    fn opacity_at(&self, now: f64) -> f32 {
+        let t = ((now - self.turned) as f32 / SELECT_FADE).clamp(0.0, 1.0);
+        if t >= 1.0 {
+            return self.target();
+        }
+        egui::lerp(self.fade_from..=self.target(), theme::ease_out(t))
+    }
+
+    /// Whether the check column, bands or bar are still to be drawn while
+    /// no selection is open: the selection is leaving.
+    fn leaving(&self) -> bool {
+        !self.on && (self.opacity > 0.0 || self.slide.abs() > 1e-3)
+    }
+
+    /// How far the row of a message the check column moves is drawn from
+    /// where it is laid out: a row of the other side's slides with the
+    /// column, an own row on the right stays where it is.
+    fn row_shift(&self, from_me: bool) -> f32 {
+        if from_me {
+            0.0
+        } else {
+            SELECT_GUTTER * (self.slide - self.target())
+        }
+    }
+
+    /// Where the check box for a row whose column starts at `left` is
+    /// centred, level with `y`: in from the left edge as it slides.
+    fn check_rect(&self, left: f32, y: f32) -> Rect {
+        let x = left + SELECT_BOX / 2.0 - SELECT_GUTTER * (1.0 - self.slide);
+        Rect::from_center_size(pos2(x, y), Vec2::splat(SELECT_BOX))
+    }
+
+    /// How far a message's tick and band are in at `now`, 0 to 1, when it
+    /// is `ticked` or not.
+    fn tick(&self, id: &str, ticked: bool, now: f64) -> f32 {
+        let target = if ticked { 1.0 } else { 0.0 };
+        match self.marks.get(id) {
+            Some(&(at, joined, from)) if joined == ticked => {
+                let t = ((now - at) as f32 / SELECT_TICK_FADE).clamp(0.0, 1.0);
+                if t >= 1.0 {
+                    target
+                } else {
+                    egui::lerp(from..=target, theme::ease_out(t))
+                }
+            }
+            _ => target,
+        }
+    }
+
+    /// The size of a message's tick at `now`, as a share of its box: a
+    /// message that just joined pops in from [`SELECT_POP_FROM`].
+    fn pop(&self, id: &str, now: f64) -> f32 {
+        match self.marks.get(id) {
+            Some(&(at, true, _)) => {
+                SELECT_POP_FROM + (1.0 - SELECT_POP_FROM) * SELECT_POP.value(now - at)
+            }
+            _ => 1.0,
+        }
+    }
+
+    /// Whether anything is still moving at `now`.
+    fn moving(&self, now: f64) -> bool {
+        (self.slide - self.target()).abs() > 1e-3
+            || self.velocity.abs() > 1e-2
+            || (self.opacity - self.target()).abs() > 1e-4
+            || self.marks.values().any(|&(at, joined, _)| {
+                (now - at) < f64::from(SELECT_TICK_FADE)
+                    || (joined && !SELECT_POP.settled(now - at))
+            })
+    }
+}
+
+/// Whether the selection's furniture goes to its place at once: with a
+/// screen reader attached, and while the window is in the background.
+fn selection_calm(ctx: &egui::Context, focused: bool) -> bool {
+    !focused || crate::motion::screen_reader_attached(ctx) || crate::motion::window_resting(ctx)
+}
+
+/// Brings `chat`'s selection motion up to `selected` (`None` when it is
+/// not selecting) and returns it. The composer and the transcript both ask
+/// in a pass; the second finds it done. A chat not drawn in the pass before
+/// (another was open, or the window was away) takes what changed meanwhile
+/// at once, as does a `calm` one.
+fn selection_motion(
+    ctx: &egui::Context,
+    chat: &str,
+    selected: Option<&[String]>,
+    calm: bool,
+) -> SelectionMotion {
+    let id = SelectionMotion::id(chat);
+    let pass = ctx.cumulative_pass_nr();
+    let now = ctx.input(|input| input.time);
+    let mut motion = ctx
+        .data(|data| data.get_temp::<SelectionMotion>(id))
+        .unwrap_or_default();
+    if motion.pass == Some(pass) {
+        return motion;
+    }
+    let stale = motion.pass.is_none_or(|last| last + 1 < pass);
+    let on = selected.is_some();
+    let instant = calm || stale;
+    if instant {
+        motion.on = on;
+        motion.slide = motion.target();
+        motion.velocity = 0.0;
+        motion.fade_from = motion.target();
+        motion.turned = f64::NEG_INFINITY;
+        motion.marks.clear();
+        if !on {
+            motion.ticked.clear();
+        }
+    } else if on != motion.on {
+        // Turned this pass: from where it is, starting now.
+        motion.fade_from = motion.opacity_at(now);
+        motion.turned = now;
+        motion.on = on;
+    } else {
+        let dt = (now - motion.time).max(0.0);
+        let (offset, velocity) =
+            SELECT_SLIDE.advance(motion.slide - motion.target(), motion.velocity, dt);
+        if offset.abs() <= 1e-3 && velocity.abs() <= 1e-2 {
+            motion.slide = motion.target();
+            motion.velocity = 0.0;
+        } else {
+            motion.slide = motion.target() + offset;
+            motion.velocity = velocity;
+        }
+    }
+    motion.opacity = motion.opacity_at(now);
+    if let Some(selected) = selected
+        && motion.ticked.as_slice() != selected
+    {
+        if !instant {
+            let now_ticked: HashSet<&str> = selected.iter().map(String::as_str).collect();
+            let was_ticked: HashSet<&str> = motion.ticked.iter().map(String::as_str).collect();
+            let mut changes = Vec::new();
+            for joined in now_ticked.difference(&was_ticked) {
+                changes.push(((*joined).to_owned(), true));
+            }
+            for left in was_ticked.difference(&now_ticked) {
+                changes.push(((*left).to_owned(), false));
+            }
+            for (message, joined) in changes {
+                let from = motion.tick(&message, !joined, now);
+                motion.marks.insert(message, (now, joined, from));
+            }
+        }
+        motion.ticked = selected.to_vec();
+    }
+    motion.marks.retain(|_, &mut (at, _, _)| now - at < 1.0);
+    // Once a selection has left, what it held is forgotten, so the next one
+    // starts from nothing ticked.
+    if !motion.on && !motion.leaving() {
+        motion.ticked.clear();
+        motion.marks.clear();
+    }
+    motion.time = now;
+    motion.pass = Some(pass);
+    if !instant && motion.moving(now) {
+        ctx.request_repaint();
+    }
+    ctx.data_mut(|data| data.insert_temp(id, motion.clone()));
+    motion
+}
+
+/// What the composer, or the selection bar when `bar`, drew in its last
+/// pass, to fade where it was once the other has taken its place.
+#[derive(Clone)]
+struct KeptBar {
+    chat: String,
+    shapes: std::sync::Arc<Vec<egui::epaint::ClippedShape>>,
+}
+
+fn kept_bar_id(bar: bool) -> egui::Id {
+    egui::Id::new(("selection-swap", bar))
+}
+
+/// Keeps what `layer` holds from `start` on, drawn by `chat`'s composer (or
+/// its selection bar when `bar`), for [`paint_kept_bar`]. Frosted glass is a
+/// paint callback that cannot fade, so the copy leaves it out.
+fn keep_bar(
+    ctx: &egui::Context,
+    layer: egui::LayerId,
+    chat: &str,
+    bar: bool,
+    start: egui::layers::ShapeIdx,
+) {
+    let shapes: Vec<egui::epaint::ClippedShape> = ctx.graphics(|graphics| {
+        graphics.get(layer).map_or_else(Vec::new, |list| {
+            list.all_entries()
+                .skip(start.0)
+                .filter(|clipped| {
+                    !matches!(clipped.shape, egui::Shape::Callback(_) | egui::Shape::Noop)
+                })
+                .cloned()
+                .collect()
+        })
+    });
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            kept_bar_id(bar),
+            KeptBar {
+                chat: chat.to_owned(),
+                shapes: std::sync::Arc::new(shapes),
+            },
+        );
+    });
+}
+
+/// Paints what `chat`'s composer (or its selection bar when `bar`) last
+/// drew, at `opacity` and `drop` points below where it was. Only paint: it
+/// takes no clicks or keys.
+fn paint_kept_bar(
+    ctx: &egui::Context,
+    layer: egui::LayerId,
+    chat: &str,
+    bar: bool,
+    opacity: f32,
+    drop: f32,
+) {
+    if opacity <= 0.0 {
+        return;
+    }
+    let Some(kept) = ctx
+        .data(|data| data.get_temp::<KeptBar>(kept_bar_id(bar)))
+        .filter(|kept| kept.chat == chat)
+    else {
+        return;
+    };
+    ctx.graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for clipped in kept.shapes.iter() {
+            let mut shape = clipped.shape.clone();
+            fade_shape(&mut shape, opacity);
+            if drop != 0.0 {
+                shape.translate(vec2(0.0, drop));
+            }
+            list.add(clipped.clip_rect, shape);
+        }
+    });
+}
+
+/// Fades what `layer` holds from `start` on to `opacity` and moves it `drop`
+/// points down: the selection bar or the composer on its way in.
+fn settle_bar(
+    ctx: &egui::Context,
+    layer: egui::LayerId,
+    start: egui::layers::ShapeIdx,
+    opacity: f32,
+    drop: f32,
+) {
+    if opacity >= 1.0 && drop == 0.0 {
+        return;
+    }
+    ctx.graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for index in start.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                fade_shape(&mut clipped.shape, opacity);
+                if drop != 0.0 {
+                    clipped.shape.translate(vec2(0.0, drop));
+                }
+            });
+        }
+    });
+}
+
+/// Multiplies every colour of `shape` by `opacity`.
+fn fade_shape(shape: &mut egui::Shape, opacity: f32) {
+    if opacity < 1.0 {
+        let opacity = opacity.max(0.0);
+        egui::epaint::shape_transform::adjust_colors(shape, move |colour| {
+            if *colour != Color32::PLACEHOLDER {
+                *colour = colour.gamma_multiply(opacity);
+            }
+        });
     }
 }
 
@@ -15356,12 +16029,150 @@ mod tests {
         assert!(inline);
         // Typing past it grows the bubble to the text and the time.
         let (width, inline) = inline_editor_width(150.0, 150.0, 110.0, 400.0, Some(50.0));
-        assert_eq!(width, 152.0 + 8.0 + 50.0);
+        assert_eq!(width, 150.0 + 8.0 + 50.0);
         assert!(inline);
         // Never past the widest bubble; the time moves under a full line.
         let (width, inline) = inline_editor_width(398.0, 398.0, 110.0, 400.0, Some(50.0));
-        assert_eq!(width, 400.0);
+        assert_eq!(width, 398.0);
         assert!(!inline);
+        let (width, _) = inline_editor_width(420.0, 420.0, 110.0, 400.0, Some(50.0));
+        assert_eq!(width, 400.0);
+    }
+
+    #[test]
+    fn an_edit_opens_at_the_size_the_bubble_was_drawn() {
+        // As `rich_body` sizes a line with the time beside it, and one with
+        // the time on a row of its own: the first frame of the edit matches.
+        let body = 40.0 + 8.0 + 50.0;
+        assert_eq!(
+            inline_editor_width(40.0, 40.0, body, 400.0, Some(50.0)),
+            (body, true)
+        );
+        assert_eq!(
+            inline_editor_width(360.0, 360.0, 360.0, 400.0, Some(50.0)),
+            (360.0, false)
+        );
+        assert_eq!(
+            inline_editor_width(380.0, 120.0, 380.0, 400.0, None),
+            (380.0, false)
+        );
+    }
+
+    /// Editing a sent message in its bubble draws the editor at the bubble's
+    /// own size, on the layer above the scrim the rest of the chat recedes
+    /// under, and Escape puts the row back once the scrim has faded.
+    #[test]
+    fn an_edit_in_place_keeps_its_bubble_and_lifts_it_over_the_chat() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = crate::app::App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = crate::backend::LinkStatus::Connected;
+        app.window_focused = true;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        app.open_chat = Some(chat.id.clone());
+        app.scroll_to_bottom = true;
+        let now = crate::util::now();
+        let text = "see you at the station";
+        let mut conversation = crate::app::Conversation::default();
+        conversation.messages.push(sample_message(
+            &chat.id,
+            "theirs",
+            "where are you",
+            now - 60,
+        ));
+        let mut own = sample_message(&chat.id, "own", text, now);
+        own.from_me = true;
+        conversation.messages.push(own);
+        conversation.complete = true;
+        app.conversations.insert(chat.id.clone(), conversation);
+
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(900.0, 700.0));
+        let mut time = 0.0;
+        let mut frame = |app: &mut crate::app::App, events: Vec<egui::Event>| {
+            time += 1.0 / 60.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    screen_rect: Some(screen),
+                    events,
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+        };
+        for _ in 0..8 {
+            frame(&mut app, Vec::new());
+        }
+        let bubble = bubble_id(&chat.id, "own");
+        let rect = || {
+            ctx.data(|data| data.get_temp::<Rect>(bubble.with("rect")))
+                .expect("the bubble was drawn")
+        };
+        let shown = rect();
+        let body = ctx
+            .data(|data| data.get_temp::<Rect>(bubble.with("body")))
+            .expect("the body was drawn");
+        // What a double-click on it does.
+        let slot = inline_edit_slot(&chat.id);
+        ctx.data_mut(|data| {
+            data.insert_temp(slot, ("own".to_owned(), text.to_owned()));
+            data.insert_temp(slot.with("size"), body.size());
+        });
+        frame(&mut app, Vec::new());
+        let editing = rect();
+        assert!(
+            (editing.min - shown.min).length() < 0.01
+                && (editing.size() - shown.size()).length() < 0.01,
+            "the bubble keeps its place and size: {shown:?} became {editing:?}"
+        );
+        let (_, lifted) = edit_focus_layers(&chat.id);
+        let editor = bubble.with("inline-editor");
+        assert_eq!(
+            ctx.read_response(editor).map(|response| response.layer_id),
+            Some(lifted),
+            "the editor is drawn above the scrim"
+        );
+        assert_eq!(
+            ctx.data(|data| data.get_temp::<String>(slot.with("focus"))),
+            Some("own".to_owned())
+        );
+        frame(&mut app, Vec::new());
+        assert!(ctx.memory(|memory| memory.has_focus(editor)));
+        frame(
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(
+            ctx.data(|data| data.get_temp::<(String, String)>(slot))
+                .is_none(),
+            "Escape ends the edit"
+        );
+        for _ in 0..30 {
+            frame(&mut app, Vec::new());
+        }
+        assert_eq!(
+            ctx.data(|data| data.get_temp::<String>(slot.with("focus"))),
+            None,
+            "the scrim has gone"
+        );
+        assert!(
+            ctx.read_response(bubble.with("body-text"))
+                .is_some_and(|response| response.layer_id != lifted),
+            "the row is back on the transcript"
+        );
     }
 
     #[test]
@@ -16009,9 +16820,8 @@ mod reaction_tests {
             labels.extend(spanish);
         }
         for spanish in [
-            "Responder",
             "Copiar texto",
-            "Eliminar para mí",
+            "Eliminar",
             "Abrir archivo",
             "Mostrar en la carpeta",
             "Descargar",
@@ -16045,6 +16855,7 @@ mod reaction_tests {
         }
         // The fixtures reach every entry a list row's menu can show. A private
         // reply starts from the group on screen, so only the chat offers it.
+        // Delete's choices are its submenu's, which sizes itself.
         let undrawn: Vec<&str> = measured
             .iter()
             .map(String::as_str)

@@ -1044,14 +1044,13 @@ fn starred_row(
             app.locale,
             &app.settings.reaction_emoji,
             message,
-        ))
-        .frame(widgets::menu_frame(palette));
+        ));
     let popup = if force_menu {
         popup.at_position(bubble.left_top() + vec2(12.0, 8.0))
     } else {
         popup.at_pointer_fixed()
     };
-    popup.show_frosted(ui.ctx(), |ui| {
+    popup.show_lifted(ui.ctx(), palette, |ui| {
         let chat = app
             .chat(&message.chat)
             .cloned()
