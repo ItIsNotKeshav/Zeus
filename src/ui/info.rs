@@ -110,6 +110,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
     if !visible {
         ctx.data_mut(|data| {
             data.remove::<bool>(docked_id());
+            data.remove::<Navigation>(navigation_id());
+            data.remove::<f32>(tab_slide_id());
             data.remove::<(String, String)>(member_filter_id());
             data.remove::<String>(members_open_id());
         });
@@ -390,24 +392,164 @@ fn contents(app: &mut App, ui: &mut egui::Ui, overlay: bool, card: bool) {
         Some(info) => (info.chat.clone(), info.view),
         None => return,
     };
+    let ctx = ui.ctx().clone();
+    if !matches!(view, InfoView::Media(_)) {
+        ctx.data_mut(|data| data.remove::<f32>(tab_slide_id()));
+    }
+    let nav = navigate(&ctx, &chat, view);
+    let full = ui.available_rect_before_wrap();
+    let clip = ui.clip_rect();
+    if let Some((from, remaining, pop)) = nav {
+        // The page being left stays where it was and cannot be pressed: what
+        // it asks for is dropped, and it does not take the keyboard focus.
+        let (outgoing, incoming) = if pop {
+            (PAGE_SHIFT, -PAGE_BACK_SHIFT)
+        } else {
+            (-PAGE_BACK_SHIFT, PAGE_SHIFT)
+        };
+        let t = 1.0 - remaining;
+        let actions = app.actions.len();
+        let focus = app.info_focus;
+        let mut old = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("info-page-out")
+                .max_rect(full.translate(vec2(outgoing * t, 0.0)))
+                .layout(*ui.layout()),
+        );
+        old.set_clip_rect(clip);
+        old.multiply_opacity(1.0 - t);
+        page(app, &mut old, &chat, from, overlay, card);
+        app.actions.truncate(actions);
+        app.info_focus = focus;
+        let shift = incoming * remaining;
+        let mut new = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt("info-page")
+                .max_rect(full.translate(vec2(shift, 0.0)))
+                .layout(*ui.layout()),
+        );
+        new.set_clip_rect(clip);
+        new.multiply_opacity(t);
+        page(app, &mut new, &chat, view, overlay, card);
+        ui.allocate_rect(new.min_rect().translate(vec2(-shift, 0.0)), Sense::hover());
+        return;
+    }
+    let mut new = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("info-page")
+            .max_rect(full)
+            .layout(*ui.layout()),
+    );
+    page(app, &mut new, &chat, view, overlay, card);
+    ui.allocate_rect(new.min_rect(), Sense::hover());
+}
+
+/// How far, in points, a page pushed in comes from the right and a page
+/// popped away leaves to it, and how far the page beneath slides back.
+const PAGE_SHIFT: f32 = 32.0;
+const PAGE_BACK_SHIFT: f32 = 16.0;
+/// The spring a page is pushed or popped on: critically damped, so it never
+/// passes its place, and a reversal mid-way carries on from where it is.
+const PAGE_SPRING: crate::motion::Spring = crate::motion::Spring::new(0.35, 0.0);
+
+/// The navigation between pages, kept while the panel shows.
+#[derive(Clone, Debug)]
+struct Navigation {
+    chat: String,
+    shown: InfoView,
+    /// The page being left, while it still shows.
+    from: Option<InfoView>,
+    /// How much of the way is left, 1 at the start and 0 at the end.
+    remaining: f32,
+    velocity: f32,
+}
+
+fn navigation_id() -> egui::Id {
+    egui::Id::new("chat-info-navigation")
+}
+
+/// The share of the media page's tabs the content has slid to, in tab order.
+fn tab_slide_id() -> egui::Id {
+    egui::Id::new("chat-info-tab-slide")
+}
+
+fn same_page(a: InfoView, b: InfoView) -> bool {
+    std::mem::discriminant(&a) == std::mem::discriminant(&b)
+}
+
+/// Advances the push or pop to `view`. Returns the page being left, how
+/// much of the way is left and whether it is a pop (back toward the
+/// overview), or `None` when one page shows alone: always so while a
+/// screen reader is attached. Going back mid-way turns the motion around
+/// from where it is.
+fn navigate(ctx: &egui::Context, chat: &str, view: InfoView) -> Option<(InfoView, f32, bool)> {
+    let id = navigation_id();
+    let mut nav = ctx
+        .data(|data| data.get_temp::<Navigation>(id))
+        .filter(|nav| nav.chat == chat)
+        .unwrap_or_else(|| Navigation {
+            chat: chat.to_owned(),
+            shown: view,
+            from: None,
+            remaining: 0.0,
+            velocity: 0.0,
+        });
+    if crate::motion::screen_reader_attached(ctx) {
+        nav.from = None;
+    } else if !same_page(nav.shown, view) {
+        match nav.from {
+            Some(from) if same_page(from, view) => {
+                nav.from = Some(nav.shown);
+                nav.remaining = 1.0 - nav.remaining;
+                nav.velocity = -nav.velocity;
+            }
+            _ => {
+                nav.from = Some(nav.shown);
+                nav.remaining = 1.0;
+                nav.velocity = 0.0;
+            }
+        }
+    }
+    nav.shown = view;
+    let mut out = None;
+    if let Some(from) = nav.from {
+        let dt = f64::from(ctx.input(|input| input.stable_dt).min(0.05));
+        (nav.remaining, nav.velocity) = PAGE_SPRING.advance(nav.remaining, nav.velocity, dt);
+        if nav.remaining.abs() < 0.002 && nav.velocity.abs() < 0.02 {
+            nav.from = None;
+        } else {
+            out = Some((
+                from,
+                nav.remaining.clamp(0.0, 1.0),
+                matches!(view, InfoView::Overview),
+            ));
+            crate::motion::request_frame(ctx);
+        }
+    }
+    ctx.data_mut(|data| data.insert_temp(id, nav));
+    out
+}
+
+/// One page of the panel.
+fn page(app: &mut App, ui: &mut egui::Ui, chat: &str, view: InfoView, overlay: bool, card: bool) {
     match view {
-        InfoView::Overview => overview(app, ui, &chat, overlay, card),
+        InfoView::Overview => overview(app, ui, chat, overlay, card),
         // A locked chat's media is never drawn: the overview shows instead.
         InfoView::Media(_) if !app.info_media_allowed() => {
             app.actions.push(Action::ShowInfo(InfoView::Overview));
-            overview(app, ui, &chat, overlay, card);
+            overview(app, ui, chat, overlay, card);
         }
-        InfoView::Media(tab) => media_view(app, ui, &chat, tab, overlay, card),
+        InfoView::Media(tab) => media_view(app, ui, chat, tab, overlay, card),
         // Only the group's admins see its permissions.
         InfoView::Permissions
             if !app
-                .chat(&chat)
+                .chat(chat)
                 .is_some_and(crate::model::Chat::can_manage_group) =>
         {
             app.actions.push(Action::ShowInfo(InfoView::Overview));
-            overview(app, ui, &chat, overlay, card);
+            overview(app, ui, chat, overlay, card);
         }
-        InfoView::Permissions => permissions_view(app, ui, &chat, card),
+        InfoView::Permissions => permissions_view(app, ui, chat, card),
     }
 }
 
@@ -1558,6 +1700,77 @@ fn media_view(
                 }
             });
         });
+    let ctx = ui.ctx().clone();
+    let order = [MediaTab::Media, MediaTab::Docs, MediaTab::Links];
+    let target = order.iter().position(|choice| *choice == tab).unwrap_or(0) as f32;
+    let id = tab_slide_id();
+    let mut slide = ctx.data(|data| data.get_temp::<f32>(id)).unwrap_or(target);
+    if crate::motion::screen_reader_attached(&ctx) {
+        slide = target;
+    } else if slide != target {
+        let step = ctx.input(|input| input.stable_dt).min(0.05) / TAB_SLIDE_SECONDS;
+        slide += (target - slide).clamp(-step, step);
+        if (target - slide).abs() < 1e-3 {
+            slide = target;
+        } else {
+            crate::motion::request_frame(&ctx);
+        }
+    }
+    ctx.data_mut(|data| data.insert_temp(id, slide));
+    // The tab's content slides a little the way the tab did while the old
+    // one fades out, each on its own layout, so none is laid out afresh.
+    let low = slide.floor();
+    let high = slide.ceil();
+    let full = ui.available_rect_before_wrap();
+    let clip = ui.clip_rect();
+    for index in [low, high] {
+        let Some(choice) = order.get(index as usize).copied() else {
+            continue;
+        };
+        let fraction = theme::ease_out(slide - low);
+        let (shift, opacity) = if low == high {
+            (0.0, 1.0)
+        } else if index == low {
+            (-TAB_SHIFT * fraction, 1.0 - fraction)
+        } else {
+            (TAB_SHIFT * (1.0 - fraction), fraction)
+        };
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .id_salt(("info-tab", index as u8))
+                .max_rect(full.translate(vec2(shift, 0.0)))
+                .layout(*ui.layout()),
+        );
+        child.set_clip_rect(clip);
+        child.multiply_opacity(opacity);
+        media_body(app, &mut child, shown, &uris, choice, overlay);
+        ui.allocate_rect(
+            child.min_rect().translate(vec2(-shift, 0.0)),
+            Sense::hover(),
+        );
+        if low == high {
+            break;
+        }
+    }
+    app.info_uris = uris;
+    app.info_media = listing;
+}
+
+/// How far, in points, a tab's content slides while it changes, and how
+/// long the slide takes at its slowest.
+const TAB_SHIFT: f32 = 12.0;
+const TAB_SLIDE_SECONDS: f32 = 0.2;
+
+/// The list under the tabs for one `tab`.
+fn media_body(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    shown: Option<&ChatMedia>,
+    uris: &[String],
+    tab: MediaTab,
+    overlay: bool,
+) {
+    let palette = app.palette;
     match shown {
         Some(media) => {
             let cut = match tab {
@@ -1569,7 +1782,7 @@ fn media_view(
                 truncated_note(app, ui);
             }
             match tab {
-                MediaTab::Media => media_grid(app, ui, media, &uris, overlay),
+                MediaTab::Media => media_grid(app, ui, media, uris, overlay),
                 MediaTab::Docs => docs_list(app, ui, media, overlay),
                 MediaTab::Links => links_list(app, ui, media),
             }
@@ -1587,8 +1800,6 @@ fn media_view(
         }
         None => {}
     }
-    app.info_uris = uris;
-    app.info_media = listing;
 }
 
 /// The chat's pictures and videos, newest first, in square cells as wide as
