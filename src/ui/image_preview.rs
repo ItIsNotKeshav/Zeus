@@ -143,6 +143,32 @@ fn lerp_rect(a: Rect, b: Rect, t: f32) -> Rect {
     Rect::from_min_max(a.min.lerp(b.min, t), a.max.lerp(b.max, t))
 }
 
+/// Paints a picture in the air at `rect`, cropped to cover it instead of
+/// stretched to it. A bubble may crop its picture (a round note to a square,
+/// an album to square tiles) while the viewer shows the whole of it, so the
+/// crop opens out on the way and the picture keeps its own shape throughout.
+fn paint_flying(
+    ui: &egui::Ui,
+    image: egui::Image<'_>,
+    rect: Rect,
+    radius: f32,
+    tint: egui::Color32,
+) {
+    let uv = image
+        .load_for_size(ui.ctx(), rect.size())
+        .ok()
+        .and_then(|poll| poll.size())
+        .map_or(Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), |size| {
+            crate::wallpaper::cover_uv(size, rect.size())
+        });
+    image
+        .fit_to_exact_size(rect.size())
+        .uv(uv)
+        .corner_radius(radius)
+        .tint(tint)
+        .paint_at(ui, rect);
+}
+
 /// How far the opening flight has come at `elapsed` seconds, on the spring.
 fn flight_progress(elapsed: f32) -> f32 {
     if elapsed <= 0.0 {
@@ -288,11 +314,13 @@ fn fly_back(ctx: &egui::Context, palette: &crate::theme::Palette) {
                 }
                 GhostPicture::Poster(uri) => egui::Image::new(uri.clone()),
             };
-            image
-                .fit_to_exact_size(rect.size())
-                .corner_radius(radius)
-                .tint(egui::Color32::WHITE.gamma_multiply(opacity))
-                .paint_at(ui, rect);
+            paint_flying(
+                ui,
+                image,
+                rect,
+                radius,
+                egui::Color32::WHITE.gamma_multiply(opacity),
+            );
         });
     ctx.request_repaint();
 }
@@ -866,10 +894,13 @@ fn still(
             if let Some((from, progress, radius)) = flight {
                 let to = Rect::from_center_size(stage.center(), size);
                 let rect = lerp_rect(from, to, progress);
-                image
-                    .fit_to_exact_size(rect.size())
-                    .corner_radius(radius * (1.0 - progress).max(0.0))
-                    .paint_at(ui, rect);
+                paint_flying(
+                    ui,
+                    image,
+                    rect,
+                    radius * (1.0 - progress).max(0.0),
+                    egui::Color32::WHITE,
+                );
                 return Some(to);
             }
             let scroll_id = ui.make_persistent_id(egui::IdSalt::new("image-preview-scroll"));
@@ -1143,18 +1174,25 @@ fn video(
     actions: &mut Vec<Action>,
 ) -> Option<Rect> {
     let palette = app.palette;
-    // A clip keeps its own shape: the decoded frame knows it, and 16:9 is only
-    // what an undecoded poster falls back to.
+    // A clip keeps its own shape: the decoded frame knows it, and before the
+    // first frame the poster does, so a poster that flies in lands at the
+    // clip's shape. 16:9 is only for a clip with neither.
     let status = app.video.status(message);
+    let poster_size = || {
+        let bytes = thumbnail?;
+        egui::Image::new(thumbnail_uri(ui.ctx(), chat, message, bytes))
+            .load_for_size(ui.ctx(), stage.size())
+            .ok()?
+            .size()
+    };
+    let positive = |size: &Vec2| size.x > 0.0 && size.y > 0.0;
     let aspect = status
         .as_ref()
         .and_then(|status| status.frame.as_ref())
-        .map(|frame| frame.size())
-        .filter(|size| size[0] > 0 && size[1] > 0)
-        .map_or_else(
-            || vec2(16.0, 9.0),
-            |size| vec2(size[0] as f32, size[1] as f32),
-        );
+        .map(|frame| vec2(frame.size()[0] as f32, frame.size()[1] as f32))
+        .filter(positive)
+        .or_else(|| poster_size().filter(positive))
+        .unwrap_or_else(|| vec2(16.0, 9.0));
     let size = fit(aspect, stage.size());
     let media = Rect::from_center_size(stage.center(), size);
     // The player pauses a clip it has not been told about for 1.5 s, so the
@@ -1199,16 +1237,22 @@ fn video(
         let radius = radius * (1.0 - progress).max(0.0);
         match ghost {
             Some(GhostPicture::Frame(frame)) => {
-                egui::Image::from_texture(egui::load::SizedTexture::from_handle(&frame))
-                    .fit_to_exact_size(rect.size())
-                    .corner_radius(radius)
-                    .paint_at(ui, rect);
+                paint_flying(
+                    ui,
+                    egui::Image::from_texture(egui::load::SizedTexture::from_handle(&frame)),
+                    rect,
+                    radius,
+                    egui::Color32::WHITE,
+                );
             }
             Some(GhostPicture::Poster(uri)) => {
-                egui::Image::new(uri)
-                    .fit_to_exact_size(rect.size())
-                    .corner_radius(radius)
-                    .paint_at(ui, rect);
+                paint_flying(
+                    ui,
+                    egui::Image::new(uri),
+                    rect,
+                    radius,
+                    egui::Color32::WHITE,
+                );
             }
             _ => {
                 ui.painter().rect_filled(rect, radius, palette.shadow);
@@ -1872,6 +1916,50 @@ mod tests {
             assert_eq!(source_rect(ctx, "chat", "other"), None);
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn a_picture_in_the_air_is_cropped_to_its_shape_not_stretched() {
+        let ctx = egui::Context::default();
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))),
+            ..Default::default()
+        };
+        let texture = ctx.load_texture(
+            "wide",
+            egui::ColorImage::filled([200, 100], egui::Color32::WHITE),
+            egui::TextureOptions::LINEAR,
+        );
+        let square = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 100.0));
+        let wide = Rect::from_min_size(pos2(10.0, 10.0), vec2(200.0, 100.0));
+        let uv_painted = |rect: Rect| {
+            let output = ctx.run_ui(input.clone(), |ui| {
+                paint_flying(
+                    ui,
+                    egui::Image::from_texture(egui::load::SizedTexture::from_handle(&texture)),
+                    rect,
+                    0.0,
+                    egui::Color32::WHITE,
+                );
+            });
+            output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(shape) => shape.brush.as_ref().map(|brush| brush.uv),
+                    _ => None,
+                })
+                .expect("the picture is painted")
+        };
+        // Leaving a round note's square, the wide frame shows its middle half.
+        let crop = uv_painted(square);
+        assert!((crop.min.x - 0.25).abs() < 1e-4 && (crop.max.x - 0.75).abs() < 1e-4);
+        assert_eq!((crop.min.y, crop.max.y), (0.0, 1.0));
+        // Landed at its own shape, the whole frame shows.
+        assert_eq!(
+            uv_painted(wide),
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))
+        );
     }
 
     #[test]
