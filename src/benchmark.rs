@@ -29,18 +29,19 @@ use std::{
 pub use machine::Hardware;
 
 /// The scenario's phases in order, as the window's marks name them.
-pub const PHASES: [&str; 6] = [
+pub const PHASES: [&str; 7] = [
     "settle",
     "scroll",
     "churn",
     "picker",
+    "search",
     "minimized",
     "settle-again",
 ];
 /// The phases whose frame times the window records.
-pub const TIMED: [&str; 3] = ["scroll", "churn", "picker"];
+pub const TIMED: [&str; 4] = ["scroll", "churn", "picker", "search"];
 /// How long the scenario takes from its first phase to its end.
-pub const LENGTH: Duration = Duration::from_secs(142);
+pub const LENGTH: Duration = Duration::from_secs(161);
 /// Seconds between readings inside a phase.
 const INTERVAL: Duration = Duration::from_secs(2);
 /// A run that has not ended by then has failed.
@@ -57,6 +58,7 @@ pub fn phase_label(phase: &str) -> &'static str {
         "scroll" => "Scrolling a chat full of photos",
         "churn" => "Switching between chats",
         "picker" => "Opening the sticker picker",
+        "search" => "Searching chats and messages",
         "minimized" => "Minimized",
         "settle-again" => "Idle",
         _ => "Starting",
@@ -580,6 +582,9 @@ pub struct Smoothness {
     /// painting without the wait for the display: high with a high frame
     /// time means the app was slow, low means the frames waited elsewhere.
     pub cpu_p99_ms: Option<f64>,
+    /// Search only: from the last key of a query to the frame showing its
+    /// results, the middle of the queries.
+    pub first_results_ms: Option<f64>,
 }
 
 impl Report {
@@ -596,6 +601,7 @@ impl Report {
             missed: frames["missed"].as_u64(),
             slowest_ms: interval["max"].as_f64(),
             cpu_p99_ms: frames["cpu_ms"]["p99"].as_f64(),
+            first_results_ms: frames["first_results_ms"].as_f64(),
         }
     }
 
@@ -608,6 +614,15 @@ impl Report {
         self.checks
             .iter()
             .all(|check| check["ok"] == Value::Bool(true))
+    }
+
+    /// The names of the checks that failed, in the order they were made.
+    pub fn failed_checks(&self) -> Vec<&str> {
+        self.checks
+            .iter()
+            .filter(|check| check["ok"] != Value::Bool(true))
+            .filter_map(|check| check["name"].as_str())
+            .collect()
     }
 
     /// The window's display scale.
@@ -654,8 +669,8 @@ impl Report {
         let value = value_of;
         let mut out = String::new();
         out.push_str(&self.machine_line());
-        out.push_str("\n\n| Smoothness | Scrolling | Switching chats | Sticker picker |\n|---|---|---|---|\n");
-        let rows: [(&str, Cell); 7] = [
+        out.push_str("\n\n| Smoothness | Scrolling | Switching chats | Sticker picker | Search |\n|---|---|---|---|---|\n");
+        let rows: [(&str, Cell); 8] = [
             ("Frames a second", |s| value_of(s.fps)),
             ("Frame time, median (ms)", |s| value_of(s.median_ms)),
             ("Frame time, 99th percentile (ms)", |s| value_of(s.p99_ms)),
@@ -667,14 +682,18 @@ impl Report {
             ("CPU per frame, 99th percentile (ms)", |s| {
                 value_of(s.cpu_p99_ms)
             }),
+            ("Time to first results (ms)", |s| {
+                value_of(s.first_results_ms)
+            }),
         ];
         let smooth: Vec<Smoothness> = TIMED.iter().map(|phase| self.smoothness(phase)).collect();
         for (label, cell) in rows {
             out.push_str(&format!(
-                "| {label} | {} | {} | {} |\n",
+                "| {label} | {} | {} | {} | {} |\n",
                 cell(&smooth[0]),
                 cell(&smooth[1]),
-                cell(&smooth[2])
+                cell(&smooth[2]),
+                cell(&smooth[3])
             ));
         }
         out.push_str(&format!(
@@ -699,9 +718,9 @@ impl Report {
                 "this window's 3D engine"
             },
             if self.checks_passed() {
-                "all passed"
+                "all passed".to_owned()
             } else {
-                "some failed"
+                format!("failed: {}", self.failed_checks().join("; "))
             },
         ));
         out

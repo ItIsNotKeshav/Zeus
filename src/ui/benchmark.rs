@@ -32,9 +32,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui,
         gettext(
             locale,
-            "A test of about two and a half minutes in a second Zeus window with built-in sample \
+            "A test of about three minutes in a second Zeus window with built-in sample \
              chats, pictures, videos and stickers. It scrolls, switches between many chats, opens \
-             the sticker picker and sits idle, and measures smoothness, memory, CPU and GPU, with \
+             the sticker picker, searches chats and messages and sits idle, and measures smoothness, memory, CPU and GPU, with \
              the power state and scale. Your chats and account are not used, and nothing leaves \
              this computer unless you share it.",
         ),
@@ -207,6 +207,13 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                 ),
                 theme::regular(12.0),
                 palette.warning,
+            );
+            theme::paragraph(
+                ui,
+                gettext(locale, "Failed: {checks}.")
+                    .replace("{checks}", &report.failed_checks().join("; ")),
+                theme::regular(12.0),
+                palette.secondary,
             );
         }
         ui.add_space(12.0);
@@ -403,6 +410,7 @@ fn smoothness_table(
         "Scrolling",
         "Switching chats",
         "Sticker picker",
+        "Search",
     ]
     .into_iter()
     .map(|cell| gettext(locale, cell).into_owned())
@@ -429,6 +437,7 @@ fn smoothness_table(
         line("CPU per frame, 99th percentile (ms)", |s| {
             number(s.cpu_p99_ms)
         }),
+        line("Time to first results (ms)", |s| number(s.first_results_ms)),
     ];
     table(ui, palette, &header, &rows);
 }

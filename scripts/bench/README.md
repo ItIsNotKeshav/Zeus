@@ -3,7 +3,7 @@
 This checks how smoothly Zeus runs (frame rate, missed frames, jitter while
 scrolling, switching chats and opening the sticker picker) and how much
 memory, CPU and GPU it uses, while it plays the same scripted session every
-time. A run takes about 2 minutes; the default two runs of a build take
+time. A run takes about 3 minutes; the default two runs of a build take
 about 5. It exists so that builds can be compared with numbers.
 
 It only ever runs the built-in demo: made-up chats in a fresh temporary
@@ -15,7 +15,7 @@ memory, system version), nothing personal.
 ## What one run does
 
 The app opens a 1280 by 800 window on a chat with 240 photos and a few
-animated stickers, then, on a fixed timetable (about 2 minutes):
+animated stickers, then, on a fixed timetable (about 3 minutes):
 
 | Phase | What happens |
 |---|---|
@@ -23,6 +23,7 @@ animated stickers, then, on a fixed timetable (about 2 minutes):
 | scroll | scrolls the photo chat to the top and back down, twice, fast |
 | churn | switches through 20 other chats, one every 0.6 seconds |
 | picker | opens the sticker picker and closes it, 5 times |
+| search | types three queries into the chat list search, scrolls each list of results down and back, and clears it (the sample data has no archive, so results are found in memory; time to first results is from the last key to the frame showing them) |
 | minimized | minimizes the window for 10 seconds, then restores it |
 | settle-again | 40 seconds idle (long enough for a build that lets go of pictures after 30 idle seconds) |
 

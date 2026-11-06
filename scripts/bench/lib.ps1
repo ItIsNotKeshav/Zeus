@@ -1,7 +1,7 @@
 # Shared pieces of the benchmark's Windows sampler. Dot-sourced by
 # sample.ps1, run.ps1 and shots.ps1; Windows PowerShell 5.1 or PowerShell 7.
 
-$BenchPhases = @("settle", "scroll", "churn", "picker", "minimized", "settle-again")
+$BenchPhases = @("settle", "scroll", "churn", "picker", "search", "minimized", "settle-again")
 # Seconds between readings, in every phase.
 $BenchInterval = 2
 # The scenario runs about 2 minutes; give up on a run well after that.
