@@ -32,10 +32,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         ui,
         gettext(
             locale,
-            "A two-minute test in a second Zeus window with built-in sample chats. It scrolls, \
-             switches chats, opens the sticker picker and sits idle, and measures smoothness, \
-             memory, CPU and GPU. Your chats and account are not used, and nothing leaves this \
-             computer unless you share it.",
+            "A test of about two and a half minutes in a second Zeus window with built-in sample \
+             chats, pictures, videos and stickers. It scrolls, switches between many chats, opens \
+             the sticker picker and sits idle, and measures smoothness, memory, CPU and GPU, with \
+             the power state and scale. Your chats and account are not used, and nothing leaves \
+             this computer unless you share it.",
         ),
         theme::regular(12.5),
         palette.secondary,
