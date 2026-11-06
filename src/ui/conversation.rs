@@ -2207,7 +2207,7 @@ fn composer_pill(palette: &Palette) -> Frame {
     // Glass over a vibrant conversation, as the header's.
     let (fill, edge) = if palette.vibrant() {
         (
-            palette.frosted(palette.chat),
+            palette.menu_glass(),
             Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
         )
     } else {

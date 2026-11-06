@@ -16919,10 +16919,7 @@ mod tests {
             .into_iter()
             .map(|(label, _, _)| label)
             .collect();
-        assert!(
-            labels.iter().any(|label| label == "Vercel"),
-            "{labels:?}"
-        );
+        assert!(labels.iter().any(|label| label == "Vercel"), "{labels:?}");
         for gone in ["How to make a theme", "Open themes folder", "Ristretto"] {
             assert!(!labels.iter().any(|label| label == gone), "{gone}");
         }
