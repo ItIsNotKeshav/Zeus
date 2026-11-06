@@ -42,7 +42,7 @@ style.interaction.tooltip_delay = 0.4;
 style.animation_time = 0.12;
 ```
 
-4. **Install the fonts.** Bundle `GoogleSansFlex.ttf` and register it per weight with the `wght` axis at the named weight minus 30, `opsz` 14 and `wdth` 100 (`add_variable` in `theme.rs`). Register Inter as a separate tabular family for timers.
+4. **Install the fonts.** Bundle `PlusJakartaSans.ttf` and register it with `add_variable` in `theme.rs`, with no axis overrides. Register Inter as a separate tabular family for timers.
 5. **Copy the widgets you need** from `widgets.rs` and `controls.rs`. They only depend on `Palette`, the radius constants and the font helpers.
 
 ## Patterns to keep

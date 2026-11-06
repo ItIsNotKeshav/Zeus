@@ -18638,7 +18638,7 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        assert_eq!(app.settings.font, FontChoice::GoogleSansFlex);
+        assert_eq!(app.settings.font, FontChoice::PlusJakartaSans);
         app.apply(Action::SetFont(FontChoice::Inter), &ctx);
         assert_eq!(app.settings.font, FontChoice::Inter);
         assert!(crate::theme::inter_chosen());
