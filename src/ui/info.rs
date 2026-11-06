@@ -650,7 +650,7 @@ fn section_title(ui: &mut egui::Ui, palette: &Palette, title: &str, count: Optio
             theme::text(ui, count, theme::regular(13.0), palette.dim);
         }
     });
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
 }
 
 /// What the overview shows of the chat, read once per frame from the chat
@@ -782,7 +782,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         } else {
             widgets::avatar(ui, &palette, name, id, photo, picture.as_deref());
         }
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::SPACE_SNUG);
         if let Some(draft) = renaming.as_mut() {
             match group_name_field(app, ui, draft) {
                 Some(true) => {
@@ -1037,7 +1037,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         media_row(app, ui, id, overlay);
     }
     if shown.can_manage {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let label = crate::i18n::gettext(app.locale, "Group permissions");
         let response = nav_row(app, ui, Icon::Shield, &label, PERMISSIONS_STOP);
         ui.ctx()
@@ -1259,7 +1259,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
         &crate::i18n::gettext(app.locale, "Members"),
         Some(members.len().to_string()),
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     if group.can_add {
         let label = crate::i18n::gettext(app.locale, "Add members");
         let response = nav_row(app, ui, Icon::UserPlus, &label, ADD_MEMBERS_STOP);
@@ -1272,7 +1272,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
     }
     if group.can_share_link {
         invite_link(app, ui, id, group.can_manage);
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
     }
     let roles = app
         .chat(id)
@@ -1292,7 +1292,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
             &crate::i18n::gettext(app.locale, "Search members"),
             width,
         );
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(member_filter_id(), (id.to_owned(), query.clone())));
@@ -1457,7 +1457,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
         }
     });
     if shown.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(
             ui,
             crate::i18n::gettext(app.locale, "No members found"),
@@ -1466,7 +1466,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
         );
     }
     if needle.is_empty() && total > MEMBERS_SHOWN {
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::SPACE_SNUG);
         let label = if capped {
             crate::i18n::gettext(app.locale, "Show all {} members")
                 .replace("{}", &total.to_string())
@@ -1587,13 +1587,13 @@ fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
             .push(Action::ShowInfo(InfoView::Media(MediaTab::Media)));
     }
     if app.info_media_failed {
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         failure_line(app, ui);
     }
     if let Some(media) = shown
         && !media.media.is_empty()
     {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         let cell = ((ui.available_width() - 2.0 * GAP) / 3.0).floor();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = GAP;
@@ -1788,14 +1788,14 @@ fn media_body(
             }
         }
         None if app.info_media_failed => {
-            ui.add_space(24.0);
+            ui.add_space(crate::theme::SPACE_XXL);
             ui.horizontal(|ui| {
                 ui.add_space(MARGIN);
                 failure_line(app, ui);
             });
         }
         None if app.info_media_pending => {
-            ui.add_space(32.0);
+            ui.add_space(crate::theme::SPACE_SECTION);
             ui.vertical_centered(|ui| theme::spinner(ui, 22.0, palette.secondary));
         }
         None => {}
@@ -1834,7 +1834,7 @@ fn media_grid(
     };
     let cell = ((width - (columns - 1) as f32 * GAP) / columns as f32).floor();
     let rows = listing.media.len().div_ceil(columns);
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::SPACE_TIGHT);
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing = vec2(GAP, GAP);
     egui::ScrollArea::vertical()
@@ -2243,7 +2243,7 @@ fn paint_row(
 /// than it carries.
 fn truncated_note(app: &App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.add_space(MARGIN);
         let line = widgets::line(
@@ -2257,7 +2257,7 @@ fn truncated_note(app: &App, ui: &mut egui::Ui) {
         let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
         line.paint(ui, rect.min, palette.dim);
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// A tab's label. The words are short, so each carries the context that
@@ -2344,7 +2344,7 @@ fn invite_link(app: &mut App, ui: &mut egui::Ui, id: &str, can_reset: bool) {
         ui.painter()
             .circle_filled(tile.center(), 16.0, palette.accent.gamma_multiply(0.16));
         theme::paint_icon(ui, Icon::Link, tile, 17.0, palette.accent);
-        ui.add_space(2.0);
+        ui.add_space(crate::theme::SPACE_HAIR);
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             theme::text(
@@ -2382,7 +2382,7 @@ fn invite_link(app: &mut App, ui: &mut egui::Ui, id: &str, can_reset: bool) {
                     );
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             ui.horizontal_wrapped(|ui| {
                 match &state {
                     LinkState::Failed(_) => {
@@ -2533,7 +2533,7 @@ fn permissions_view(app: &mut App, ui: &mut egui::Ui, chat: &str, card: bool) {
                     for (index, (permission, value)) in values.iter().enumerate() {
                         if index == 0 || *permission == Permission::ApproveMembers {
                             if index > 0 {
-                                ui.add_space(8.0);
+                                ui.add_space(crate::theme::SPACE_S);
                             }
                             let heading = if *permission == Permission::ApproveMembers {
                                 crate::i18n::gettext(locale, "Admins can:")
@@ -2621,7 +2621,7 @@ fn permission_row(
         });
     });
     let _ = row;
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     turned
 }
 

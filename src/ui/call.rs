@@ -133,7 +133,7 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                         let key = crate::voice_input::key_label(app.settings.push_to_talk_key());
                         gettext(locale, "Hold {key} to talk").replace("{key}", &key)
                     };
-                    ui.add_space(6.0);
+                    ui.add_space(crate::theme::SPACE_TIGHT);
                     theme::text(ui, "·", theme::medium(13.0), palette.on_accent);
                     theme::text(ui, text, theme::medium(13.0), palette.on_accent);
                 }
@@ -214,7 +214,7 @@ fn live(
             }
             ui.add_space(18.0);
             theme::text(ui, peer, theme::bold(26.0), palette.text);
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             theme::text(
                 ui,
                 status(locale, call),
@@ -223,7 +223,7 @@ fn live(
             );
             if call.video_requested {
                 // The camera button below answers it.
-                ui.add_space(4.0);
+                ui.add_space(crate::theme::SPACE_XS);
                 theme::text(
                     ui,
                     gettext(
@@ -235,7 +235,7 @@ fn live(
                 );
             }
             if call.video && call.phase == CallPhase::Active && !call.remote_video {
-                ui.add_space(4.0);
+                ui.add_space(crate::theme::SPACE_XS);
                 theme::text(
                     ui,
                     gettext(locale, "Their camera is off"),
@@ -436,7 +436,7 @@ fn status_color(call: &CallUpdate, palette: &Palette) -> Color32 {
 /// not arriving, said rather than swallowed.
 fn notes(ui: &mut egui::Ui, locale: Locale, call: &CallUpdate, palette: &Palette) {
     for lost in &call.lost_devices {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let template = match lost.kind {
             crate::calls::DeviceKind::Microphone => gettext(
                 locale,
@@ -456,7 +456,7 @@ fn notes(ui: &mut egui::Ui, locale: Locale, call: &CallUpdate, palette: &Palette
         );
     }
     if let Some(audio) = call.peer_audio {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         theme::text(
             ui,
             peer_audio_text(locale, audio),
@@ -714,7 +714,7 @@ fn devices(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palett
             palette,
         }
         .show(ui, &mut actions, Action::SetCallMicrophone);
-        ui.add_space(16.0);
+        ui.add_space(crate::theme::SPACE_L);
         Picker {
             salt: "call-speaker",
             icon: Icon::Volume2,
@@ -726,7 +726,7 @@ fn devices(ui: &mut egui::Ui, app: &mut App, call: &CallUpdate, palette: &Palett
         }
         .show(ui, &mut actions, Action::SetCallSpeaker);
         if call.video {
-            ui.add_space(16.0);
+            ui.add_space(crate::theme::SPACE_L);
             Picker {
                 salt: "call-camera",
                 icon: Icon::Video,
@@ -857,7 +857,7 @@ fn ringing(
         widgets::avatar(ui, palette, who.peer, &call.chat, size, who.picture);
         ui.add_space(18.0);
         theme::text(ui, who.peer, theme::bold(26.0), palette.text);
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         theme::text(
             ui,
             incoming_text(locale, call, who.caller),
@@ -867,7 +867,7 @@ fn ringing(
         // Who is on the group call already, by their pictures.
         let joined: Vec<&CallPerson> = who.people.iter().filter(|person| person.joined).collect();
         if !joined.is_empty() {
-            ui.add_space(16.0);
+            ui.add_space(crate::theme::SPACE_L);
             faces(ui, palette, &joined);
         }
     });
@@ -1040,7 +1040,7 @@ fn group_live(
     ui.scope_builder(egui::UiBuilder::new().max_rect(header), |ui| {
         ui.vertical_centered(|ui| {
             theme::text(ui, who.peer, theme::bold(19.0), palette.text);
-            ui.add_space(2.0);
+            ui.add_space(crate::theme::SPACE_HAIR);
             theme::text(
                 ui,
                 status(locale, call),

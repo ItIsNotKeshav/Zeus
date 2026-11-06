@@ -1550,7 +1550,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     return;
                 }
                 ui.vertical_centered(|ui| {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     // A group we left says so instead of blaming the admins:
                     // either we left it here, or the phone says we are no
                     // longer a member.
@@ -1580,7 +1580,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             );
                         });
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                 });
                 return;
             }
@@ -3702,7 +3702,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         }
                         let ui = &mut row_ui;
                         if new_day {
-                            ui.add_space(8.0);
+                            ui.add_space(crate::theme::SPACE_S);
                             ui.vertical_centered(|ui| {
                                 widgets::chip(
                                     ui,
@@ -3710,7 +3710,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                     &crate::util::day_label(app.locale, message.timestamp),
                                 );
                             });
-                            ui.add_space(4.0);
+                            ui.add_space(crate::theme::SPACE_XS);
                         }
                         for _ in 0..here {
                             let Some(notice) = notices.get(placed) else {
@@ -3722,7 +3722,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         if let Some((id, count, placed)) = &divider
                             && row_contains(id)
                         {
-                            ui.add_space(6.0);
+                            ui.add_space(crate::theme::SPACE_TIGHT);
                             let label = crate::i18n::ngettext(
                                 app.locale,
                                 "{} unread message",
@@ -3741,7 +3741,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 );
                                 divider_placed = true;
                             }
-                            ui.add_space(4.0);
+                            ui.add_space(crate::theme::SPACE_XS);
                         }
                         let show_sender = shows_sender_pictures(chat)
                             && !message.from_me
@@ -4668,14 +4668,14 @@ fn top_of_history(
                 );
             });
         } else if conversation.messages.is_empty() {
-            ui.add_space(24.0);
+            ui.add_space(crate::theme::SPACE_XXL);
             if conversation.fetching_phone {
                 widgets::chip(ui, palette, "Loading messages from your phone…");
             } else {
                 widgets::chip(ui, palette, "No messages here yet");
             }
         } else {
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
         }
     });
 }
@@ -4686,7 +4686,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
     // Keep the indicator comfortably separated from the last message and
     // composer. Its height stays fixed while the dots animate, so motion
     // never shifts the transcript layout.
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     ui.horizontal(|ui| {
         let show_avatars = shows_sender_pictures(view.chat);
         let count = if show_avatars { typers.len().min(3) } else { 0 };
@@ -4744,7 +4744,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
             },
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
 }
 
 const TYPING_BUBBLE_PAD_X: f32 = 14.0;
@@ -5910,7 +5910,7 @@ fn bubble_row(
                         reactions(ui, view, member, actions);
                     }
                 });
-                ui.add_space(2.0);
+                ui.add_space(crate::theme::SPACE_HAIR);
             }
             // Members without a pill record that, so the first reaction
             // that arrives live pops like any later change.
@@ -6995,7 +6995,7 @@ fn speed_menu_row(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             for option in crate::audio::SPEEDS {
                 let selected = option == speed;
                 let response = speed_pill(
@@ -9838,7 +9838,7 @@ fn content(
             }
             if let Some(image) = &card.image {
                 picture(ui, view, message, image, width, None, actions);
-                ui.add_space(4.0);
+                ui.add_space(crate::theme::SPACE_XS);
                 if card.body.is_empty() {
                     return None;
                 }
@@ -10435,7 +10435,7 @@ fn carousel(
             Some(width),
             actions,
         );
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
     }
     // Reserve a glimpse of the next card only when there is another card.
     let inset = if card.carousel.len() > 1 { 36.0 } else { 20.0 };
@@ -11321,7 +11321,7 @@ fn interactive_buttons(
         }
     }
     if card.needs_phone {
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         widgets::rich_text(
             ui,
             "More content in WhatsApp Web or on your phone",
@@ -11710,7 +11710,7 @@ fn location_card(
                     .fit_to_exact_size(Vec2::new(card, height))
                     .corner_radius(8.0),
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
         }
         ui.horizontal(|ui| {
             theme::icon(ui, Icon::MapPin, 16.0, palette.accent);
@@ -17307,7 +17307,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     if let Some(target) = open {
         app.actions.push(Action::EditPicture(target));
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// A photo's view-once choice stays beside its caption and Send, with the

@@ -217,7 +217,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 {
                     app.actions.push(Action::CloseChatSearch);
                 }
-                ui.add_space(6.0);
+                ui.add_space(crate::theme::SPACE_TIGHT);
                 theme::text(
                     ui,
                     crate::i18n::gettext(app.locale, "Search messages"),
@@ -225,7 +225,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                     palette.text,
                 );
             });
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SNUG);
             ui.horizontal(|ui| {
                 ui.set_min_height(36.0);
                 let calendar = theme::icon_button(
@@ -248,7 +248,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                         app.chat_search_month = app.chat_search_day.unwrap_or_else(util::today);
                     }
                 }
-                ui.add_space(6.0);
+                ui.add_space(crate::theme::SPACE_TIGHT);
                 let width = ui.available_width();
                 let mut text = app.chat_search.clone();
                 let response = widgets::search_field(
@@ -269,7 +269,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 }
             });
             if let Some(day) = app.chat_search_day {
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_S);
                 day_chip(app, ui, &palette, day);
             }
         });
@@ -282,7 +282,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
         Stroke::new(1.0, palette.outline),
     );
     if app.chat_search.trim().is_empty() && app.chat_search_day.is_none() {
-        ui.add_space(24.0);
+        ui.add_space(crate::theme::SPACE_XXL);
         ui.vertical_centered(|ui| {
             // The whole sentence is translated, with the chat's name filled
             // in: word order differs between languages.
@@ -307,7 +307,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
     }
     if app.chat_search_hits.is_empty() {
         if app.chat_search_pending {
-            ui.add_space(32.0);
+            ui.add_space(crate::theme::SPACE_SECTION);
             ui.vertical_centered(|ui| theme::spinner(ui, 22.0, palette.secondary));
         } else {
             widgets::empty_state(
@@ -337,7 +337,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
             if app.chat_search_truncated {
                 // The list is capped, so say so rather than dropping the rest
                 // without a word.
-                ui.add_space(10.0);
+                ui.add_space(crate::theme::SPACE_SNUG);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     let notice = crate::i18n::gettext(
@@ -357,7 +357,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                     line.paint(ui, rect.min, palette.dim);
                 });
             }
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
         });
     app.chat_search_hits = hits;
     if picked && overlay {
@@ -460,7 +460,7 @@ fn calendar_popup(app: &mut App, ui: &egui::Ui, palette: &Palette, button: Rect)
                 .show(ui, |ui| {
                     ui.set_width(CELL * 7.0);
                     month_header(app, ui, palette);
-                    ui.add_space(6.0);
+                    ui.add_space(crate::theme::SPACE_TIGHT);
                     month_grid(app, ui, palette);
                 });
         });

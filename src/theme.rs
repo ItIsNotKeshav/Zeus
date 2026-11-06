@@ -900,6 +900,22 @@ pub const RADIUS_CARD: u8 = 20;
 /// Dialogs and the larger surfaces that float over the window.
 pub const RADIUS_DIALOG: u8 = 28;
 
+/// The spacing scale from DESIGN.md. Use these for gaps and padding; the
+/// two tight steps are kept named so their use stays visible.
+pub const SPACE_HAIR: f32 = 2.0;
+pub const SPACE_XS: f32 = 4.0;
+/// Tight pair inside a row (off the DESIGN scale; kept named, see plan D4).
+pub const SPACE_TIGHT: f32 = 6.0;
+pub const SPACE_S: f32 = 8.0;
+/// Snug gap between related controls (off the DESIGN scale; kept named, see plan D4).
+pub const SPACE_SNUG: f32 = 10.0;
+pub const SPACE_M: f32 = 12.0;
+pub const SPACE_L: f32 = 16.0;
+pub const SPACE_XL: f32 = 20.0;
+pub const SPACE_XXL: f32 = 24.0;
+pub const SPACE_SECTION: f32 = 32.0;
+pub const SPACE_MAJOR: f32 = 40.0;
+
 /// The type scale, in points, from DESIGN.md. Every text size in the
 /// interface is one of these; add a step here rather than a literal size.
 pub const TYPE_DISPLAY: f32 = 24.0;

@@ -99,12 +99,12 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if app.labels.is_empty() {
         return;
     }
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     let row = widgets::chip_scroll_row(ui, "label-chips", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
             label_chips(app, ui, palette);
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
         });
     });
     let hidden = row.content_size.x - row.state.offset.x - row.inner_rect.width();
@@ -288,9 +288,9 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         });
     }
 
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.separator();
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::SPACE_TIGHT);
     let wearing: Vec<(Label, usize)> = app
         .labels
         .iter()

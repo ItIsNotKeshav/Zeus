@@ -33,7 +33,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             }
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.add_enabled_ui(!app.poll_creating, |ui| {
         theme::text(
             ui,
@@ -48,7 +48,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             .char_limit(255)
             .width(f32::INFINITY)
             .show(ui, &palette);
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Answers"),
@@ -104,7 +104,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         {
             app.poll_draft.options.push(String::new());
         }
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         ui.horizontal(|ui| {
             widgets::switch(ui, &palette, &mut app.poll_draft.multiple);
             theme::text(
@@ -115,7 +115,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             );
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let valid = app.poll_draft.validated();
     if let Err(error) = valid.as_ref() {
         theme::text(ui, *error, theme::regular(12.0), palette.dim);
@@ -195,7 +195,7 @@ pub fn ballot(
                 theme::regular(11.5),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             for (index, option) in options.iter().enumerate() {
                 let selected = state.selected.contains(&index);
                 let label = widgets::line(
@@ -472,7 +472,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
     else {
         return;
     };
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     widgets::rich_text(ui, question, theme::semibold(16.0), palette.text);
     if !state.history_complete {
         widgets::rich_text(
@@ -494,7 +494,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         .auto_shrink([false, true])
         .show(ui, |ui| {
             for (index, option) in options.iter().enumerate() {
-                ui.add_space(16.0);
+                ui.add_space(crate::theme::SPACE_L);
                 let count = state.counts.get(index).copied().unwrap_or(0);
                 let heading = ui.horizontal(|ui| {
                     let width = (ui.available_width() - 70.0).max(1.0);
@@ -530,7 +530,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     .filter(|vote| vote.choices.contains(&index))
                     .collect();
                 for voter in &voters {
-                    ui.add_space(4.0);
+                    ui.add_space(crate::theme::SPACE_XS);
                     ui.horizontal(|ui| {
                         let picture = app.avatar(&voter.id);
                         widgets::avatar(

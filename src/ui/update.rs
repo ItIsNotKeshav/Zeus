@@ -51,14 +51,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     .clicked();
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             theme::text(
                 ui,
                 format!("{} → {}", env!("CARGO_PKG_VERSION"), release.version),
                 theme::regular(14.0),
                 palette.secondary,
             );
-            ui.add_space(20.0);
+            ui.add_space(crate::theme::SPACE_XL);
             let mut action = None;
             let mut release_link = crate::i18n::gettext(locale, "Release notes");
             match &app.update_download {
@@ -74,14 +74,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         theme::medium(14.0),
                         palette.text,
                     );
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     if *total > 0 {
                         ui.add(
                             egui::ProgressBar::new(*received as f32 / *total as f32)
                                 .fill(palette.accent)
                                 .desired_height(6.0),
                         );
-                        ui.add_space(6.0);
+                        ui.add_space(crate::theme::SPACE_TIGHT);
                         let progress_text = crate::i18n::gettext(locale, "{received} of {total} MB")
                             .replace(
                                 "{received}",
@@ -105,7 +105,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         theme::semibold(14.0),
                         palette.text,
                     );
-                    ui.add_space(6.0);
+                    ui.add_space(crate::theme::SPACE_TIGHT);
                     ui.add(
                         egui::Label::new(
                             RichText::new(crate::i18n::gettext(
@@ -136,7 +136,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 DownloadState::Idle | DownloadState::Failed(_) => {
                     if let DownloadState::Failed(error) = &app.update_download {
                         message(ui, error, palette.danger);
-                        ui.add_space(8.0);
+                        ui.add_space(crate::theme::SPACE_S);
                     }
                     match &app.update_support {
                         None => {
@@ -159,7 +159,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                 }
             }
-            ui.add_space(16.0);
+            ui.add_space(crate::theme::SPACE_L);
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some((label, action)) = action
@@ -167,7 +167,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         app.actions.push(action);
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     ui.add(egui::Hyperlink::from_label_and_url(
                         RichText::new(release_link)
                             .font(theme::medium(13.0))

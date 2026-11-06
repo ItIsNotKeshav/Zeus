@@ -250,7 +250,7 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(inset);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if rows.is_empty() {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::SPACE_M);
                     ui.vertical_centered(|ui| {
                         theme::text(
                             ui,
@@ -263,7 +263,7 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 for row in &rows {
                     history_row(app, ui, row, &mut actions);
                 }
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_M);
             });
     });
     app.actions.extend(actions);
@@ -280,7 +280,7 @@ pub fn filter_chip_id(filter: CallFilter) -> egui::Id {
 /// so Missed carries no count.
 pub fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
         for filter in CallFilter::EVERY {
@@ -548,7 +548,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
                 if contacts.is_empty() {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::SPACE_M);
                     ui.vertical_centered(|ui| {
                         theme::text(
                             ui,
@@ -565,7 +565,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                         person(app, ui, &contact.id, &mut actions);
                     });
                 }
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_M);
             });
     });
     if !actions.is_empty() {
@@ -575,7 +575,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,
@@ -638,7 +638,7 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
     {
         actions.push(Action::StartVideoCall(id.to_owned()));
     }
-    child.add_space(4.0);
+    child.add_space(crate::theme::SPACE_XS);
     let voice = gettext(locale, "Voice call {name}").replace("{name}", &name);
     if theme::icon_button(
         &mut child,
@@ -682,7 +682,7 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
         if response.clicked() {
             app.actions.push(Action::ShowNewCall(true));
         }
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::SPACE_SNUG);
         theme::text(ui, label.as_ref(), theme::semibold(15.0), palette.text);
         ui.add_space(18.0);
         ui.set_max_width(360.0);

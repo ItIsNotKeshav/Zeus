@@ -987,10 +987,10 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     // Ask for a key when none is set or GIPHY rejects it.
     let bad_key = app.gif_error.as_ref().is_some_and(|error| error.bad_key);
     if app.settings.effective_giphy_key().is_none() || bad_key {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         if let Some(error) = app.gif_error.as_ref().filter(|error| error.bad_key) {
             theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
         }
         theme::paragraph(
             ui,
@@ -1002,7 +1002,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::regular(13.0),
             palette.text,
         );
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         if theme::link(
             ui,
             "developers.giphy.com",
@@ -1014,7 +1014,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             app.actions
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         let response = controls::Field::new(&mut app.settings.giphy_key)
             .hint("GIPHY API key")
             .width(f32::INFINITY)
@@ -1096,7 +1096,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 });
             }
             if results.is_empty() && !app.gif_pending && app.gif_error.is_none() {
-                ui.add_space(20.0);
+                ui.add_space(crate::theme::SPACE_XL);
                 ui.vertical_centered(|ui| {
                     theme::text(
                         ui,
@@ -1241,7 +1241,7 @@ fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
 /// A short centered note in place of an empty grid.
 fn shelf_hint(ui: &mut egui::Ui, palette: &Palette, text: &str) {
-    ui.add_space(24.0);
+    ui.add_space(crate::theme::SPACE_XXL);
     ui.vertical_centered(|ui| {
         theme::paragraph(ui, text, theme::regular(13.0), palette.secondary);
     });
@@ -1257,7 +1257,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         &gettext(locale, "Search by emoji, word, or pack"),
     );
     shelf_strip(app, ui, palette);
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     let query = app.sticker_search.trim().to_owned();
     let shelf = app.sticker_shelf.clone();
     if query.is_empty() && shelf == StickerShelf::Add {
@@ -1441,7 +1441,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .id_salt("sticker-add")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             theme::text(
                 ui,
                 gettext(locale, "Import a pack"),
@@ -1457,7 +1457,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 theme::regular(12.5),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             import_row(app, ui, palette);
             ui.add_space(14.0);
             theme::text(
@@ -1475,9 +1475,9 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 theme::regular(12.5),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             new_pack_row(app, ui, palette);
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             if theme::soft_button(
                 ui,
                 palette,
@@ -1557,7 +1557,7 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         }
     });
     if app.sticker_import_pending {
-        ui.add_space(2.0);
+        ui.add_space(crate::theme::SPACE_HAIR);
         ui.horizontal(|ui| {
             theme::spinner(ui, 14.0, palette.accent);
             theme::text(

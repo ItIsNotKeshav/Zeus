@@ -20,14 +20,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // A hairline sets the benchmark apart from the version and credits.
     let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
     ui.painter().rect_filled(line, 0.0, palette.outline);
-    ui.add_space(16.0);
+    ui.add_space(crate::theme::SPACE_L);
     theme::text(
         ui,
         gettext(locale, "Performance benchmark"),
         theme::semibold(14.0),
         palette.text,
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     theme::paragraph(
         ui,
         gettext(
@@ -40,7 +40,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(12.5),
         palette.secondary,
     );
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     let stage = app.benchmark.as_ref().map(benchmark::Benchmark::stage);
     let running = matches!(stage, Some(Stage::Running { .. }));
     // The progress fades in as the run starts, the results as it ends.
@@ -69,7 +69,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         Some(Stage::Done(report)) => results(ui, app, &palette, &report, finished),
         Some(Stage::Failed(reason)) => {
             theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
             run_button(ui, app, &palette, "Try again");
         }
         Some(Stage::Stopped) => {
@@ -79,12 +79,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 theme::regular(13.0),
                 palette.secondary,
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
             run_button(ui, app, &palette, "Run benchmark");
         }
         None => run_button(ui, app, &palette, "Run benchmark"),
     }
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::SPACE_TIGHT);
 }
 
 fn run_button(ui: &mut egui::Ui, app: &mut App, palette: &Palette, label: &'static str) {
@@ -128,7 +128,7 @@ fn progress(
         painter.rect_filled(rect, 3.0, palette.surface_active);
         let filled = Rect::from_min_size(rect.min, vec2(rect.width() * fraction, rect.height()));
         painter.rect_filled(filled, 3.0, palette.accent);
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::SPACE_SNUG);
         ui.horizontal(|ui| {
             theme::spinner(ui, 14.0, palette.accent);
             let doing = gettext(locale, benchmark::phase_label(phase.unwrap_or_default()));
@@ -149,7 +149,7 @@ fn progress(
                 }
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         theme::paragraph(
             ui,
             gettext(
@@ -176,11 +176,11 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
             theme::regular(12.0),
             palette.secondary,
         );
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::SPACE_SNUG);
         smoothness_table(ui, palette, locale, report);
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         phase_table(ui, palette, locale, report);
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         let mut notes = vec![
             gettext(locale, "Peak memory {peak} MB.").replace("{peak}", &number(report.peak_mb)),
             gettext(locale, "CPU 100% is one core busy.").to_string(),
@@ -196,7 +196,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
         }
         theme::paragraph(ui, notes.join(" "), theme::regular(12.0), palette.secondary);
         if !report.checks_passed() {
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             theme::paragraph(
                 ui,
                 gettext(
@@ -208,7 +208,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                 palette.warning,
             );
         }
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         let sharing = app.benchmark_share;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
@@ -237,7 +237,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
             run_button(ui, app, palette, "Run again");
         });
         if let Some(saved) = app.benchmark.as_ref().and_then(benchmark::Benchmark::saved) {
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             let (text, color) = match saved {
                 Ok(path) => (
                     gettext(locale, "Saved to {path}.")
@@ -291,7 +291,7 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                     theme::regular(12.5),
                     palette.text,
                 );
-                ui.add_space(10.0);
+                ui.add_space(crate::theme::SPACE_SNUG);
                 egui::ScrollArea::vertical()
                     .id_salt("benchmark-share-text")
                     .max_height(220.0 * shown)
@@ -306,7 +306,7 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                             .wrap_mode(egui::TextWrapMode::Wrap),
                         );
                     });
-                ui.add_space(10.0);
+                ui.add_space(crate::theme::SPACE_SNUG);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     if theme::soft_button(

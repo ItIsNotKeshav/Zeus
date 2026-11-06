@@ -405,7 +405,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
 
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             search_and_filters(app, ui);
         });
 }
@@ -730,7 +730,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
-            ui.add_space(6.0);
+            ui.add_space(crate::theme::SPACE_TIGHT);
             search_and_filters(app, ui);
         });
 }
@@ -759,7 +759,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let output = widgets::chip_scroll_row(ui, "chat-filters", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
@@ -818,7 +818,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     app.actions.push(Action::SetChatFilter(next));
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
         })
     });
     // Chips cut off at the edge fade into the panel, which says the row
@@ -1726,13 +1726,13 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                         ui.push_id(("contact", &contact.id), |ui| contact_row(app, ui, contact));
                     }
                 }
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_S);
             });
     });
 }
 
 fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,

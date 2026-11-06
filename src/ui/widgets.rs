@@ -1223,9 +1223,9 @@ pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body
     ui.add_space(48.0);
     ui.vertical_centered(|ui| {
         theme::icon(ui, icon, 40.0, palette.dim);
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(ui, title, theme::semibold(16.0), palette.text);
-        ui.add_space(2.0);
+        ui.add_space(crate::theme::SPACE_HAIR);
         ui.add(
             egui::Label::new(
                 egui::RichText::new(body)
@@ -1643,7 +1643,7 @@ pub fn setting_row(
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
 }
 
 pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color32) {

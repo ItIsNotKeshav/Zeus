@@ -33,7 +33,7 @@ fn splash(app: &App, ui: &mut egui::Ui, label: &str) {
             ui.vertical_centered(|ui| {
                 let (logo, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
                 theme::mark(ui, logo.center(), size);
-                ui.add_space(20.0);
+                ui.add_space(crate::theme::SPACE_XL);
                 ui.horizontal(|ui| {
                     let width = 12.0
                         + 6.0
@@ -98,10 +98,10 @@ pub(super) fn card(
                     ui.spacing_mut().item_spacing.y = 8.0;
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
                     theme::mark(ui, logo.center(), 64.0);
-                    ui.add_space(4.0);
+                    ui.add_space(crate::theme::SPACE_XS);
                     theme::text(ui, "Zeus", theme::bold(28.0), palette.text);
                     theme::text(ui, tagline, theme::regular(14.5), palette.secondary);
-                    ui.add_space(16.0);
+                    ui.add_space(crate::theme::SPACE_L);
                     body(app, ui);
                 });
             let height = shown.response.rect.height();
@@ -142,7 +142,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 theme::regular(14.0),
                 palette.text,
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
             busy(
                 ui,
                 palette.accent,
@@ -160,7 +160,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 )
                 .wrap(),
             );
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::SPACE_M);
             ui.horizontal(|ui| {
                 if theme::pill_button(
                     ui,
@@ -254,14 +254,14 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
             theme::paint_icon(ui, Icon::CircleAlert, rect, 32.0, palette.danger);
         }
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
     let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
     let step3 = crate::i18n::gettext(locale, "Tap Link a device and point the phone at this code");
     let steps = [&step1, &step2, &step3];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::SPACE_M);
             theme::text(
                 ui,
                 format!("{}.", index + 1),
@@ -271,7 +271,7 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
             theme::text(ui, step.as_ref(), theme::regular(13.0), palette.secondary);
         });
     }
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     if theme::link(
         ui,
         crate::i18n::gettext(locale, "Link with phone number instead"),
@@ -297,7 +297,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
         let for_phone = crate::i18n::gettext(locale, "for +{phone}").replace("{phone}", phone);
         theme::text(ui, for_phone, theme::regular(13.0), palette.secondary);
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let shown = if code.len() == 8 && !code.contains('-') {
         format!("{}-{}", &code[..4], &code[4..])
     } else {
@@ -310,7 +310,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
         .show(ui, |ui| {
             theme::text(ui, &shown, theme::bold(30.0), palette.text);
         });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
     let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
     let step3 = crate::i18n::gettext(
@@ -320,7 +320,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
     let steps = [&step1, &step2, &step3];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::SPACE_M);
             theme::text(
                 ui,
                 format!("{}.", index + 1),
@@ -330,7 +330,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             theme::text(ui, step.as_ref(), theme::regular(13.0), palette.secondary);
         });
     }
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     ui.horizontal(|ui| {
         ui.add_space((ui.available_width() - 200.0).max(0.0) / 2.0);
         if theme::soft_button(

@@ -55,7 +55,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 fn choosing(app: &mut App, ui: &mut egui::Ui) {
@@ -78,7 +78,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
         .unwrap_or_default();
     if !members.is_empty() {
         chips(app, ui, &members);
-        ui.add_space(2.0);
+        ui.add_space(crate::theme::SPACE_HAIR);
     }
     let width = ui.available_width();
     let hint = crate::i18n::gettext(app.locale, "Search contacts");
@@ -93,7 +93,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
     if ui.memory(|memory| memory.focused().is_none()) {
         search.request_focus();
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let needle = crate::util::search_key(app.new_chat_search.trim());
     let mut contacts = super::dialogs::contact_choices(app, &needle);
     if let Some(draft) = app.new_group.as_ref() {
@@ -112,7 +112,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     if contacts.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(
             ui,
             crate::i18n::gettext(app.locale, "No matching contacts"),
@@ -120,7 +120,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
             palette.secondary,
         );
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let ready = app.new_group.as_ref().is_some_and(|draft| {
         if adding {
             draft.can_add()
@@ -287,7 +287,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
     let Some(draft) = app.new_group.clone() else {
         return;
     };
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     // The photo, optional: the group dialog's picking and cropping.
     ui.vertical_centered(|ui| {
         super::widgets::avatar(
@@ -299,7 +299,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             draft.picture.as_deref(),
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     let add = crate::i18n::gettext(app.locale, "Add group photo");
     let change = crate::i18n::gettext(app.locale, "Change photo");
     let remove = crate::i18n::gettext(app.locale, "Remove photo");
@@ -329,7 +329,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 
     let hint = crate::i18n::gettext(app.locale, "Group name (required)");
     let format = egui::TextFormat::simple(theme::regular(16.0), palette.text);
@@ -395,7 +395,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
     if let Some(edited) = app.new_group.as_mut() {
         edited.name = name;
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 
     let names: Vec<String> = draft
         .members
@@ -424,7 +424,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
     );
     let (spot, _) = ui.allocate_exact_size(list.size(), Sense::hover());
     list.paint(ui, spot.min, palette.secondary);
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
 
     let ready = app
         .new_group

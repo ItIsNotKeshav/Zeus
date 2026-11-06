@@ -72,7 +72,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     let own = own_reaction(&message).map(str::to_owned);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -97,7 +97,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             }
         }
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let height = list_height(ui.ctx(), message.reactions.len());
     egui::ScrollArea::vertical()
         .id_salt(("reaction-list", chat, id))

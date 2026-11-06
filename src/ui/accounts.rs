@@ -262,7 +262,7 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::SPACE_TIGHT);
     ui.horizontal(|ui| {
         let back = if app.adding_account {
             gettext(app.locale, "Cancel").into_owned()
@@ -291,7 +291,7 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
             }
         }
         if let Some(remove) = remove {
-            ui.add_space(24.0);
+            ui.add_space(crate::theme::SPACE_XXL);
             if theme::link(ui, remove.as_ref(), theme::medium(13.0), palette.danger).clicked() {
                 let id = app.account().id.clone();
                 app.actions.push(Action::ShowDialog(

@@ -278,7 +278,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     ui.add_space(14.0);
                     if !beside {
                         search(app, ui);
-                        ui.add_space(6.0);
+                        ui.add_space(crate::theme::SPACE_TIGHT);
                     }
                     let filter = Filter::new(&app.settings_search);
                     let mut found = false;
@@ -289,7 +289,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         found |= section.show(ui, app, &filter, one.is_none());
                     }
                     if !found {
-                        ui.add_space(24.0);
+                        ui.add_space(crate::theme::SPACE_XXL);
                         theme::paragraph(
                             ui,
                             crate::i18n::gettext(locale, "No settings match “{query}”.")
@@ -359,10 +359,10 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         );
                     },
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_S);
                 search(app, ui);
             });
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let searching = !app.settings_search.trim().is_empty();
         let titles: Vec<Text> = sections(app)
             .into_iter()
@@ -829,7 +829,7 @@ fn sections(app: &App) -> Vec<Section> {
     if let Some(note) = note {
         privacy.block(Vec::new(), move |ui, _app| {
             widgets::rich_text(ui, &note, theme::regular(12.5), palette.secondary);
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SNUG);
         });
     }
     for kind in PrivacyKind::ALL {
@@ -1479,7 +1479,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
     let mode = form.mode;
     let busy = form.busy;
     let mut submit = false;
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     theme::text(
         ui,
         match mode {
@@ -1556,7 +1556,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
             app.actions.push(Action::AppLockForm(None));
         }
     });
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     if submit && !busy {
         app.actions.push(Action::SubmitAppLockForm);
     }
@@ -1591,7 +1591,7 @@ fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description:
             description.paint(ui, rect.min, palette.secondary);
         }
     }
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
 }
 
 /// How tall the live preview of a conversation is.
@@ -1972,7 +1972,7 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add_space(16.0);
+    ui.add_space(crate::theme::SPACE_L);
 }
 
 /// The least width of a theme card.
@@ -2015,9 +2015,9 @@ fn look_cards(ui: &mut egui::Ui, app: &mut App) {
             "Zeus's monochrome glass, WhatsApp's greens, or the bubbles of Messages.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     chat_theme_cards(ui, app, "look", &ChatTheme::LOOKS);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// The ready-made themes as cards, each in the mode on screen.
@@ -2032,13 +2032,13 @@ fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
             "Ported from Agent Orchestrator, each with its own accent.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     let themes: Vec<ChatTheme> = ChatTheme::ALL
         .into_iter()
         .filter(|choice| !choice.is_look())
         .collect();
     chat_theme_cards(ui, app, "chat-theme", &themes);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// Theme cards in as many columns as fit, widened to fill the row.
@@ -2065,7 +2065,7 @@ fn card_grid(
         ),
         Sense::hover(),
     );
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     for (index, (label, colours, selected, action)) in cards.into_iter().enumerate() {
         let rect = Rect::from_min_size(
             area.min
@@ -2277,7 +2277,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                     .with_main_align(Align::Min),
                             ),
                         |ui| {
-                            ui.add_space(24.0);
+                            ui.add_space(crate::theme::SPACE_XXL);
                             if theme::icon_button(
                                 ui,
                                 Icon::ArrowLeft,
@@ -2316,7 +2316,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             "Your own picture replaces the colour and doodles.",
                                         ),
                                     );
-                                    ui.add_space(8.0);
+                                    ui.add_space(crate::theme::SPACE_S);
                                     image_buttons(app, ui);
                                     ui.add_space(22.0);
                                     block_heading(
@@ -2328,7 +2328,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             "Pick the background. Doodles are chosen under Appearance.",
                                         ),
                                     );
-                                    ui.add_space(10.0);
+                                    ui.add_space(crate::theme::SPACE_SNUG);
                                     let selected = app.settings.wallpaper_color_for(palette.dark);
                                     let gap = 10.0;
                                     let columns = ((palette_width + gap) / (COLOR_SWATCH + gap))
@@ -2364,7 +2364,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             app.actions.push(Action::SetWallpaperColor(*color));
                                         }
                                     }
-                                    ui.add_space(20.0);
+                                    ui.add_space(crate::theme::SPACE_XL);
                                 });
                         },
                     );
@@ -2548,7 +2548,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             "The pattern drawn over the wallpaper colour in your chats.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     // Each card shows its whole tile, whatever the density: thinning every
     // style at every step of the slider would draw seven tiles for each.
     let look = wallpaper::Look {
@@ -2566,7 +2566,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         DOODLE_PREVIEW + CARD_LABEL,
     );
     let rows = tiles.div_ceil(columns);
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     let (area, _) = ui.allocate_exact_size(
         vec2(width, rows as f32 * (tile.y + gap) - gap),
         Sense::hover(),
@@ -2688,7 +2688,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
     }
     ui.add_space(PAGE_ROW_GAP + 4.0);
     doodle_ink_controls(ui, app);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// The space a doodle control's row leaves under itself, beyond the ten
@@ -2854,7 +2854,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
     // Each number has a cache of its own: say whose this is.
     let account = app.account().display_label(locale);
     let hint = widgets::line(
@@ -2876,7 +2876,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
     if !measured {
         return;
     }
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     // Other only shows when there is something in it.
     for (label, count, bytes, always) in [
         (
@@ -2988,7 +2988,7 @@ fn storage_bar_row(
             );
         }
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 }
 
 /// A titled group of settings on a rounded card, or untitled on the page.
@@ -3008,9 +3008,9 @@ fn section(
             bottom: 6,
         })
     } else {
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         theme::text(ui, title, theme::bold(18.0), palette.text);
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         Frame::new()
             .fill(theme::blend(palette.panel, palette.surface, 0.5))
             .stroke(Stroke::new(1.0, palette.outline))
@@ -3027,7 +3027,7 @@ fn section(
         ui.set_width(ui.available_width());
         add_contents(ui);
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 }
 
 /// Our WhatsApp profile, which can be edited in place, and unlinking.
@@ -3071,7 +3071,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     &crate::i18n::gettext(app.locale, "Your name"),
                     25,
                 );
-                ui.add_space(6.0);
+                ui.add_space(crate::theme::SPACE_TIGHT);
                 submitted |= profile_field(
                     ui,
                     &palette,
@@ -3149,7 +3149,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     if let Some((draft_name, draft_about)) = &draft {
-        ui.add_space(10.0);
+        ui.add_space(crate::theme::SPACE_SNUG);
         let mut done = false;
         ui.horizontal(|ui| {
             ui.add_space(56.0 + 14.0);
@@ -3178,7 +3178,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             draft = None;
         }
     }
-    ui.add_space(10.0);
+    ui.add_space(crate::theme::SPACE_SNUG);
     ui.data_mut(|data| {
         if let Some(draft) = draft {
             data.insert_temp(draft_id, draft);
@@ -3230,7 +3230,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             );
         });
     });
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         if let Some(update) = &app.update {
@@ -3291,12 +3291,12 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             crate::updates::Check::Idle | crate::updates::Check::Checking => None,
         };
         if let Some((text, color)) = status {
-            ui.add_space(10.0);
+            ui.add_space(crate::theme::SPACE_SNUG);
             theme::paragraph(ui, text, theme::regular(13.0), color);
         }
     }
     if crate::brand::UPDATES {
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         update_channel_picker(app, ui);
     }
     ui.add_space(14.0);
@@ -3321,7 +3321,7 @@ fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
             theme::medium(13.0),
             palette.secondary,
         );
-        ui.add_space(6.0);
+        ui.add_space(crate::theme::SPACE_TIGHT);
         if let Some(channel) = segmented(ui, &palette, "channel", &options, selected, 88.0) {
             app.actions.push(Action::SetUpdateChannel(channel));
         }
@@ -3330,7 +3330,7 @@ fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
         crate::updates::Channel::Stable => "Tested releases only.",
         crate::updates::Channel::Beta => "Early builds first. They may have rough edges.",
     };
-    ui.add_space(6.0);
+    ui.add_space(crate::theme::SPACE_TIGHT);
     theme::paragraph(
         ui,
         crate::i18n::gettext(locale, note),
