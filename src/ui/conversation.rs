@@ -2009,7 +2009,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
                 } else {
-                    (palette.surface, palette.surface_hover, palette.dim)
+                    // On the glass field the plain surface colour nearly
+                    // vanishes, so the idle circle takes a text-tinted fill.
+                    if palette.vibrant() {
+                        (
+                            palette.text.gamma_multiply(0.12),
+                            palette.text.gamma_multiply(0.2),
+                            palette.dim,
+                        )
+                    } else {
+                        (palette.surface, palette.surface_hover, palette.dim)
+                    }
                 };
                 last_line(ui, line, |ui| {
                     // An empty composer changes the send button to record.
