@@ -1470,16 +1470,22 @@ pub fn icon_button(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
     if ui.is_rect_visible(rect) {
-        let tint = if response.hovered() || response.has_focus() {
-            hover
-        } else {
-            color
-        };
-        let scale = if response.is_pointer_button_down_on() {
-            0.92
-        } else {
-            1.0
-        };
+        // The tint and the press shrink ease, as the circle buttons' do.
+        let ctx = ui.ctx();
+        let lit = animate(
+            ctx,
+            response.id.with("icon-hover"),
+            response.hovered() || response.has_focus(),
+            MOTION_QUICK,
+        );
+        let press = animate(
+            ctx,
+            response.id.with("icon-press"),
+            response.is_pointer_button_down_on(),
+            PRESS_SECONDS,
+        );
+        let tint = color.lerp_to_gamma(hover, lit);
+        let scale = 1.0 - 0.08 * press;
         paint_icon(ui, icon, rect, size * scale, tint);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
