@@ -3394,6 +3394,32 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         springs.clear();
     }
     let row_shifts = springs.shifts();
+    // A touchpad swipe past either end of the chat stretches the rows and
+    // lets them spring back (`overscroll`); a mouse wheel never does.
+    let mut overscroll = super::overscroll::Overscroll::load(ui.ctx(), &chat.id);
+    if reduce_motion || !view.animate || view.reaction.is_some() {
+        overscroll.clear();
+    } else {
+        let wheel = ui.input(|input| super::overscroll::Wheel {
+            precise: list_hovered(input, list)
+                && input.raw.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            ..
+                        }
+                    )
+                }),
+            delta: if list_hovered(input, list) {
+                input.smooth_scroll_delta.y
+            } else {
+                0.0
+            },
+        });
+        overscroll.advance(time, wheel);
+    }
+    let over = overscroll.position();
     let mut laid_rows = Vec::new();
     let mut content_top_drawn = None;
     let layer = ui.layer_id();
@@ -3678,7 +3704,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         // slot where it belongs, so clicks land on what is
                         // drawn. Always in a row of its own, so its widgets
                         // keep their ids whether it springs or not.
-                        let row_shift = row_shifts.get(&message.id).copied().unwrap_or(0.0);
+                        let row_shift = row_shifts.get(&message.id).copied().unwrap_or(0.0) + over;
                         // The message edited in its bubble goes on the layer
                         // above the scrim the rest of the chat recedes under.
                         let lifted = edited.as_ref().is_some_and(|id| *id == message.id);
@@ -4389,6 +4415,15 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         }
     }
     springs.store(ui.ctx(), &chat.id);
+    overscroll.set_edges(super::overscroll::Edges::of(
+        output.state.offset.y,
+        output.inner_rect.height(),
+        output.content_size.y,
+    ));
+    if overscroll.moving() {
+        crate::motion::request_frame(ui.ctx());
+    }
+    overscroll.store(ui.ctx(), &chat.id);
     let complete = conversation.complete;
     let loading = conversation.loading_older;
     let fetching = conversation.fetching_phone;
@@ -5274,6 +5309,14 @@ fn bezier_sample(t: f32, a: f32, b: f32) -> f32 {
 fn bezier_slope(t: f32, a: f32, b: f32) -> f32 {
     let u = 1.0 - t;
     3.0 * u * u * a + 6.0 * u * t * (b - a) + 3.0 * t * t * (1.0 - b)
+}
+
+/// Whether the pointer is over `list` this frame.
+fn list_hovered(input: &egui::InputState, list: Rect) -> bool {
+    input
+        .pointer
+        .hover_pos()
+        .is_some_and(|pos| list.contains(pos))
 }
 
 /// Stiffness and damping for Motion's `{ duration, bounce }` spring. `duration`
