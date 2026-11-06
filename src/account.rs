@@ -47,6 +47,8 @@ pub struct Account {
     /// back when its chat opens again.
     pub(crate) phone_history: HashMap<ChatId, PhoneHistory>,
     pub open_chat: Option<ChatId>,
+    /// The server's blocklist for this account, read and changed through the worker.
+    pub blocklist: crate::blocking::Blocklist,
     /// The background-history state last sent to this account's worker: the
     /// switch and the chat on screen.
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
@@ -174,6 +176,7 @@ impl Account {
             dirs,
             settings,
             settings_dirty: false,
+            blocklist: Default::default(),
             backend,
             link: LinkStatus::Starting,
             syncing: false,

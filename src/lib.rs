@@ -14,6 +14,7 @@ pub mod backdrop;
 pub mod backend;
 pub mod benchmark;
 pub mod bidi;
+pub mod blocking;
 pub mod brand;
 pub mod call_access;
 pub mod call_audio;
