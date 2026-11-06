@@ -175,7 +175,7 @@ fn row_name(app: &App, chat: &str) -> String {
 /// Whether `id`'s name or number matches `needle`, a `search_key`.
 fn matches(app: &App, id: &str, needle: &str) -> bool {
     needle.is_empty()
-        || crate::util::fuzzy_matches(&crate::util::search_key(&row_name(app, id)), needle)
+        || crate::util::search_key(&row_name(app, id)).contains(needle)
         || crate::model::phone_of(id).is_some_and(|phone| phone.contains(needle))
 }
 

@@ -3222,7 +3222,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_finds_a_name_with_letters_left_out_after_the_exact_matches() {
+    fn a_search_finds_only_names_that_contain_the_text() {
         let (_directory, mut app, _ids, _ctx) = rail_app(0);
         for (id, name, activity) in [
             ("1@s.whatsapp.net", "John Smith", 1),
@@ -3233,13 +3233,14 @@ mod tests {
             chat.last_activity = activity;
             app.chats.push(chat);
         }
+        // No fuzzy matching: "jhn" is not found inside "John Smith".
         app.search = "jhn".into();
         let titles: Vec<String> = app
             .visible_chats()
             .into_iter()
             .map(|chat| chat.name.clone())
             .collect();
-        assert_eq!(titles, ["Jhn Doe", "John Smith"]);
+        assert_eq!(titles, ["Jhn Doe"]);
     }
 
     #[test]
