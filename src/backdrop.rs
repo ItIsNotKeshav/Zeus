@@ -126,7 +126,7 @@ pub fn clear_color(window: egui::Color32) -> egui::Color32 {
 /// Gives the window its material while `palette` wants one, takes it away
 /// otherwise, and records which for [`active`]. Cheap to call every frame.
 pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, transparent: bool) {
-    let wanted = palette.vibrant() && transparent && blur();
+    let wanted = palette.shows_desktop() && transparent && blur();
     ACTIVE.store(platform::apply(frame, palette, wanted), Ordering::Relaxed);
 }
 
