@@ -343,10 +343,16 @@ impl Palette {
     /// which the text on the bubble is checked. `None` elsewhere.
     pub fn bubble_out_gradient(&self) -> Option<(Color32, Color32)> {
         (self.bubbles == BubbleStyle::Messages).then(|| {
-            let [_, bottom] = if self.dark {
+            let blue = if self.dark {
                 MESSAGES_BLUE_DARK
             } else {
                 MESSAGES_BLUE_LIGHT
+            };
+            // An accent of your own replaces the blue, and is the deeper end.
+            let bottom = if self.bubble_out == blue[0] {
+                blue[1]
+            } else {
+                self.accent
             };
             (self.bubble_out, bottom)
         })

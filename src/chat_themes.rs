@@ -105,15 +105,8 @@ impl ChatTheme {
         Self::LOOKS.contains(&self)
     }
 
-    /// Whether an accent chosen in Settings applies. Messages keeps the
-    /// system blue its bubbles are drawn in, and a ready-made theme its own
-    /// accent, since its colours were picked to go together.
-    pub fn takes_accent(self) -> bool {
-        matches!(self, Self::Zeus | Self::WhatsApp)
-    }
-
     /// The theme's palette in the dark or light mode, with `accent` over its
-    /// own where it takes one.
+    /// own: every theme takes one, drawn in the theme's own style.
     pub fn palette(self, dark: bool, accent: Accent) -> Palette {
         let base = match self {
             Self::Zeus if dark => Palette::nothing_dark(),
@@ -135,29 +128,19 @@ impl ChatTheme {
                 source.palette(dark)
             }
         };
-        match accent.rgb() {
-            Some(rgb) if self.takes_accent() => base.with_accent(rgb),
-            _ => base,
+        let Some(rgb) = accent.rgb() else {
+            return base;
+        };
+        let mut palette = base.with_accent(rgb);
+        if self == Self::Messages {
+            // Messages draws your own balloons saturated, lightest at the
+            // top of the view: the accent stands in for its blue, with the
+            // accent itself as the deeper end.
+            palette.bubble_out = palette
+                .accent
+                .lerp_to_gamma(Color32::WHITE, if dark { 0.22 } else { 0.3 });
         }
-    }
-}
-
-/// How the colours are chosen: a look made your own with a mode and an
-/// accent, or a ready-made theme as its makers drew it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Style {
-    Custom,
-    Themes,
-}
-
-impl Style {
-    pub const ALL: [Style; 2] = [Self::Custom, Self::Themes];
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Custom => "Custom",
-            Self::Themes => "Themes",
-        }
+        palette
     }
 }
 
@@ -477,9 +460,20 @@ mod tests {
     }
 
     #[test]
-    fn messages_keeps_its_blue() {
+    fn every_theme_takes_an_accent_in_its_own_style() {
+        let pink = Color32::from_rgb(0xff, 0x37, 0x8f);
+        for theme in ChatTheme::ALL {
+            let own = theme.palette(true, Accent::Theme);
+            let p = theme.palette(true, Accent::Pink);
+            assert_eq!(p.accent, pink, "{}", theme.label());
+            // Only the accent's colours change: the canvas and bubbles
+            // keep the theme's shape.
+            assert_eq!(p.panel, own.panel, "{}", theme.label());
+            assert_eq!(p.bubbles, own.bubbles, "{}", theme.label());
+            assert_eq!(p.bubble_in, own.bubble_in, "{}", theme.label());
+        }
         assert_eq!(
-            ChatTheme::Messages.palette(true, Accent::Pink),
+            ChatTheme::Messages.palette(true, Accent::Theme),
             Palette::messages()
         );
     }

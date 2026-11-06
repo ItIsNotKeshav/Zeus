@@ -3258,8 +3258,6 @@ pub enum Action {
     RevealThemeFrom(egui::Pos2),
     /// Shows one settings category beside the list of them.
     OpenSettingsSection(usize),
-    /// A look made your own, or a ready-made theme.
-    SetStyle(crate::chat_themes::Style),
     /// Light, dark, or as the system is.
     SetMode(crate::chat_themes::Mode),
     /// An accent over the chat theme's own.

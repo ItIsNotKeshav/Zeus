@@ -1918,8 +1918,8 @@ mod tests {
     }
 
     #[test]
-    fn custom_and_themes_choose_looks_modes_accents_and_ready_made_themes() {
-        use crate::chat_themes::{Accent, ChatTheme, Style};
+    fn one_picker_chooses_a_theme_and_an_accent_for_any_theme() {
+        use crate::chat_themes::{Accent, ChatTheme};
         let mut app = super::super::tests::app();
         app.page = Page::Settings;
         let ctx = egui::Context::default();
@@ -1957,7 +1957,6 @@ mod tests {
                 );
             }
         };
-        assert_eq!(app.settings.style(), Style::Custom);
         show(&mut app, &mut tour, "Zeus");
         click(&mut app, &mut tour, &ctx, "Zeus");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
@@ -1973,27 +1972,12 @@ mod tests {
             app.palette.accent,
             egui::Color32::from_rgb(0xff, 0x45, 0x3a)
         );
-        // Themes swaps the look, mode and accent rows for the ready-made
-        // themes, which keep their own accent.
-        show(&mut app, &mut tour, "Themes");
-        click(&mut app, &mut tour, &ctx, "Themes");
-        assert_eq!(app.settings.style(), Style::Themes);
-        assert_eq!(app.settings.chat_theme, ChatTheme::Catppuccin);
-        assert_eq!(
-            app.palette,
-            ChatTheme::Catppuccin.palette(false, Accent::Theme)
-        );
+        // A theme keeps the accent chosen, drawn in its own style.
         show(&mut app, &mut tour, "Nord");
         click(&mut app, &mut tour, &ctx, "Nord");
         assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
-        // Custom comes back to the look and accent it had.
-        show(&mut app, &mut tour, "Custom");
-        click(&mut app, &mut tour, &ctx, "Custom");
-        assert_eq!(app.settings.chat_theme, ChatTheme::Zeus);
         assert_eq!(app.settings.accent, Accent::Red);
-        show(&mut app, &mut tour, "Themes");
-        click(&mut app, &mut tour, &ctx, "Themes");
-        assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
+        assert_eq!(app.palette, ChatTheme::Nord.palette(false, Accent::Red));
     }
 
     #[test]
