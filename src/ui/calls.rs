@@ -603,8 +603,12 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         pos2(rect.right() - widgets::ROW_SIDE, rect.bottom()),
     );
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+        let hover = super::chats::row_hover_amount(ui, response.id, response.hovered());
+        if hover > 0.0 {
+            ui.scope(|ui| {
+                ui.multiply_opacity(hover);
+                widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+            });
         }
         let avatar_rect = Rect::from_center_size(
             pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),

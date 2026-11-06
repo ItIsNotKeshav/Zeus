@@ -1972,7 +1972,7 @@ fn approach_hover(amount: f32, on: bool, dt: f32) -> (f32, bool) {
 
 /// The row's hover fill, eased. A screen reader gets it at once: the
 /// animation would otherwise ask for a frame every step of the way.
-fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
+pub(crate) fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
     if crate::motion::screen_reader_attached(ui.ctx()) {
         return if on { 1.0 } else { 0.0 };
     }

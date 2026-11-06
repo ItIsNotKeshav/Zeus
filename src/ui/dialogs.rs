@@ -2261,11 +2261,8 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> eg
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
     if ui.is_rect_visible(rect) {
-        let fill = if response.hovered() {
-            palette.danger.gamma_multiply(0.85)
-        } else {
-            palette.danger
-        };
+        let hover = super::chats::row_hover_amount(ui, response.id, response.hovered());
+        let fill = palette.danger.gamma_multiply(1.0 - 0.15 * hover);
         ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
         ui.painter().galley(
             rect.center() - galley.size() / 2.0,

@@ -391,8 +391,16 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::focus_outline(ui, response.id, rect, 12.0);
                         if selected {
                             ui.painter().rect_filled(rect, 12.0, palette.surface);
-                        } else if response.hovered() {
-                            ui.painter().rect_filled(rect, 12.0, palette.surface_hover);
+                        } else {
+                            let hover =
+                                super::chats::row_hover_amount(ui, response.id, response.hovered());
+                            if hover > 0.0 {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    12.0,
+                                    palette.surface_hover.gamma_multiply(hover),
+                                );
+                            }
                         }
                         let color = if selected {
                             palette.text
