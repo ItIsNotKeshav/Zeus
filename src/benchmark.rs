@@ -40,7 +40,7 @@ pub const PHASES: [&str; 6] = [
 /// The phases whose frame times the window records.
 pub const TIMED: [&str; 3] = ["scroll", "churn", "picker"];
 /// How long the scenario takes from its first phase to its end.
-pub const LENGTH: Duration = Duration::from_secs(117);
+pub const LENGTH: Duration = Duration::from_secs(142);
 /// Seconds between readings inside a phase.
 const INTERVAL: Duration = Duration::from_secs(2);
 /// A run that has not ended by then has failed.
@@ -246,6 +246,8 @@ fn run(shared: &Mutex<Shared>, stop: &AtomicBool, wake: &dyn Fn()) -> Result<Rep
     let mut window = Window { child, folder };
     let started = Instant::now();
     let started_at = jiff::Timestamp::now();
+    // Read now, so a run on battery says so whatever happens later.
+    let power = machine::power();
     let mut probe = probe::Probe::default();
     let mut recorder = Recorder::default();
     let mut marks = MarkReader::new(marks_path);
@@ -323,7 +325,7 @@ fn run(shared: &Mutex<Shared>, stop: &AtomicBool, wake: &dyn Fn()) -> Result<Rep
     }
     drop(window);
     let (os, hardware) = machine::describe();
-    Ok(recorder.finish(os, hardware, started_at))
+    Ok(recorder.finish(os, hardware, power, started_at))
 }
 
 /// Reads the marks file's new complete lines.
@@ -408,6 +410,9 @@ pub struct Report {
     pub started: String,
     pub os: String,
     pub hardware: Hardware,
+    /// Optional for files written before it was recorded.
+    #[serde(default)]
+    pub power: machine::Power,
     pub renderer: String,
     /// The window's start mark: version, scale and window size.
     pub app: Value,
@@ -469,7 +474,13 @@ impl Recorder {
         self.readings.push((phase.to_owned(), end, at, reading));
     }
 
-    fn finish(self, os: String, mut hardware: Hardware, started: jiff::Timestamp) -> Report {
+    fn finish(
+        self,
+        os: String,
+        mut hardware: Hardware,
+        power: machine::Power,
+        started: jiff::Timestamp,
+    ) -> Report {
         hardware.gpu = self.app["gpu"].as_str().unwrap_or("unknown").to_owned();
         let mut phases: Vec<Phase> = PHASES
             .iter()
@@ -533,6 +544,7 @@ impl Recorder {
                 .to_string(),
             os,
             hardware,
+            power,
             renderer: if cfg!(target_os = "macos") {
                 "wgpu (Metal)"
             } else {
@@ -621,6 +633,9 @@ impl Report {
         }
         if let Some(scale) = self.scale() {
             parts.push(format!("scale {scale}"));
+        }
+        if let Some(power) = self.power.line() {
+            parts.push(power);
         }
         parts.join(" · ")
     }
@@ -752,7 +767,17 @@ impl Report {
             ram_gb: 16.0,
             ..Hardware::default()
         };
-        recorder.finish("TestOS 1".into(), hardware, jiff::Timestamp::UNIX_EPOCH)
+        let power = machine::Power {
+            source: "battery".into(),
+            charge_pct: Some(64),
+            saver: Some(true),
+        };
+        recorder.finish(
+            "TestOS 1".into(),
+            hardware,
+            power,
+            jiff::Timestamp::UNIX_EPOCH,
+        )
     }
 }
 
@@ -833,9 +858,9 @@ mod tests {
     fn the_issue_carries_only_the_summary() {
         let report = Report::sample();
         let markdown = report.markdown();
-        assert!(
-            markdown.contains("TestOS 1 · Test CPU · 8 cores · 16.0 GB · GPU Test GPU · scale 2")
-        );
+        assert!(markdown.contains(
+            "TestOS 1 · Test CPU · 8 cores · 16.0 GB · GPU Test GPU · scale 2 · on battery (64%), Energy saver on"
+        ));
         assert!(markdown.contains("| Frames a second | 59.9 | – | – |"));
         assert!(markdown.contains("| Scrolling a chat full of photos | 250.0 | 100.0 | 50.0 |"));
         let url = report.issue_url();

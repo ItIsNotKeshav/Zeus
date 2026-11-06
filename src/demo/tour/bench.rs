@@ -1,6 +1,7 @@
-//! The benchmark: a photo-heavy chat scrolled through, chats opened in turn,
-//! the sticker picker, a minimized window, and idle stretches, on a fixed
-//! two-minute timetable. `scripts/bench/` launches it, reads the phase marks it
+//! The benchmark: a photo-heavy chat scrolled through, dozens of chats opened
+//! in turn (each with pictures and a video thumbnail), a grid of stickers in
+//! the picker, a minimized window, and idle stretches, on a fixed timetable of
+//! about two and a half minutes. `scripts/bench/` launches it, reads the phase marks it
 //! writes (`--demo-tour-marks`), and measures the process from outside.
 //!
 //! The timetable runs on the monotonic clock from the first frame. Between
@@ -18,11 +19,14 @@ use std::time::Duration;
 /// The photo-heavy chat, pinned at the top of the list.
 pub(super) const PHOTO_CHAT: &str = "15550002000@s.whatsapp.net";
 /// Pictures in the photo chat, each its own file, so each is its own texture.
-pub(super) const PHOTOS: usize = 240;
-/// Animated stickers among them.
-pub(super) const ANIMATED: usize = 4;
-/// Chats besides the photo chat, enough for the churn to open 20 new ones.
-pub(super) const OTHER_CHATS: usize = 24;
+pub(super) const PHOTOS: usize = 360;
+/// A video message with a thumbnail every this many pictures in the photo chat.
+const VIDEO_EVERY: usize = 30;
+/// Animated stickers among them, a grid of them on the picker's shelves.
+pub(super) const ANIMATED: usize = 12;
+/// Chats besides the photo chat, enough for the churn to open 50 new ones,
+/// each with pictures and a video with its thumbnail.
+pub(super) const OTHER_CHATS: usize = 60;
 /// The oldest and the newest message of the photo chat.
 pub(super) const FIRST: &str = "bench-photo-000";
 pub(super) const LAST: &str = "bench-last";
@@ -49,7 +53,7 @@ const SWEEP: f32 = 8.0;
 /// Points a second the transcript moves. A sweep covers more than the photo
 /// chat's height once its pictures have loaded, so it reaches the end on any
 /// platform's fonts; the checks say whether it did.
-const SCROLLED: f32 = 14_400.0;
+const SCROLLED: f32 = 21_600.0;
 /// Points a second the tour's wheel events carry. They come in points, as a
 /// touchpad's do, and only Linux scales those up (to match a macOS
 /// touchpad), so elsewhere the events carry that much more: every platform
@@ -64,10 +68,10 @@ const PASSES: usize = 2;
 const PAUSE: f32 = 0.5;
 const SCROLL_START: f32 = SETTLE;
 const SCROLL_END: f32 = SCROLL_START + PASSES as f32 * 2.0 * (SWEEP + PAUSE);
-const CHURN_STEPS: usize = 20;
+pub(super) const CHURN_STEPS: usize = 50;
 const CHURN_STEP: f32 = 0.6;
 const CHURN_END: f32 = SCROLL_END + (CHURN_STEPS + 1) as f32 * CHURN_STEP;
-const PICKER_ROUNDS: usize = 5;
+pub(super) const PICKER_ROUNDS: usize = 8;
 const PICKER_ROUND: f32 = 2.2;
 const PICKER_END: f32 = CHURN_END + PICKER_ROUNDS as f32 * PICKER_ROUND;
 const MINIMIZED: f32 = 10.0;
@@ -115,14 +119,16 @@ pub fn prepare(app: &mut App) {
     photo_chat.pinned = true;
     photo_chat.pinned_at = now * 1000 + 1;
     photo_chat.last_activity = now - 30;
-    let photos = photo_messages(&dir, photo_chat.last_activity);
+    // One clip file, shared by every video message.
+    let clip = super::super::stock::save(&dir, "bench-clip.mp4", super::super::stock::VIDEO);
+    let photos = photo_messages(&dir, &clip, photo_chat.last_activity);
     add_chat(app, photo_chat, photos);
     for index in 0..OTHER_CHATS {
         let id = format!("1555010{index:04}@s.whatsapp.net");
         let mut chat = Chat::new(id.clone(), format!("Bench friend {:02}", index + 1));
         // Newer than every sample chat, so the churn stays among these.
         chat.last_activity = now - 60 - index as i64;
-        let rows = friend_messages(&dir, &id, index, chat.last_activity);
+        let rows = friend_messages(&dir, &clip, &id, index, chat.last_activity);
         add_chat(app, chat, rows);
     }
     // Animated stickers on the picker's shelves too.
@@ -147,7 +153,11 @@ pub fn prepare(app: &mut App) {
 
 /// The photo chat's messages, oldest first: a picture each minute, a line of
 /// text now and then, and a few animated stickers.
-fn photo_messages(dir: &std::path::Path, newest: i64) -> Vec<crate::model::Message> {
+fn photo_messages(
+    dir: &std::path::Path,
+    clip: &std::path::Path,
+    newest: i64,
+) -> Vec<crate::model::Message> {
     use super::super::{media, message, stock};
     let start = newest - PHOTOS as i64 * 60 - 120;
     let mut rows = Vec::new();
@@ -180,6 +190,16 @@ fn photo_messages(dir: &std::path::Path, newest: i64) -> Vec<crate::model::Messa
         );
         row.thumbnail = Some(stock::thumbnail_for(index as u32));
         rows.push(row);
+        if index % VIDEO_EVERY == VIDEO_EVERY - 1 {
+            rows.push(video_message(
+                PHOTO_CHAT,
+                &format!("bench-video-{index:03}"),
+                !from_me,
+                at + 40,
+                clip,
+                index as u32,
+            ));
+        }
         if index % 6 == 5 {
             rows.push(message(
                 PHOTO_CHAT,
@@ -226,8 +246,43 @@ fn photo_messages(dir: &std::path::Path, newest: i64) -> Vec<crate::model::Messa
 }
 
 /// A short chat with two pictures of its own.
+/// A video message with its thumbnail, the clip's file shared by all of them.
+fn video_message(
+    chat: &str,
+    id: &str,
+    from_me: bool,
+    at: i64,
+    clip: &std::path::Path,
+    seed: u32,
+) -> crate::model::Message {
+    use super::super::{media, message, stock};
+    let mut content = media(
+        "video/mp4",
+        stock::VIDEO.len() as u64,
+        Some(1280),
+        Some(720),
+    );
+    content.path = Some(clip.to_path_buf());
+    let mut row = message(
+        chat,
+        id,
+        from_me,
+        at,
+        Content::Video {
+            caption: None,
+            media: content,
+            seconds: Some(stock::CLIP_SECONDS),
+            gif: false,
+            note: false,
+        },
+    );
+    row.thumbnail = Some(stock::thumbnail_for(seed));
+    row
+}
+
 fn friend_messages(
     dir: &std::path::Path,
+    clip: &std::path::Path,
     chat: &str,
     index: usize,
     newest: i64,
@@ -275,6 +330,14 @@ fn friend_messages(
         row.thumbnail = Some(stock::thumbnail_for((index + picture) as u32));
         rows.push(row);
     }
+    rows.push(video_message(
+        chat,
+        &format!("bench-{index}-video"),
+        index % 2 == 0,
+        newest - 30,
+        clip,
+        index as u32 + 2,
+    ));
     rows
 }
 
