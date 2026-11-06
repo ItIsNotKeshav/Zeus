@@ -1012,7 +1012,7 @@ impl Default for Settings {
             glass: crate::backdrop::GLASS_DEFAULT,
             always_show_time: false,
             messages_theme: false,
-            font: FontChoice::GoogleSansFlex,
+            font: FontChoice::PlusJakartaSans,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
@@ -1694,9 +1694,9 @@ mod tests {
     }
 
     #[test]
-    fn the_font_defaults_to_google_sans_flex_and_is_saved_by_name() {
+    fn the_font_defaults_to_plus_jakarta_sans_and_is_saved_by_name() {
         let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
-        assert_eq!(older.font, FontChoice::GoogleSansFlex);
+        assert_eq!(older.font, FontChoice::PlusJakartaSans);
         let chosen: Settings = serde_json::from_str(r#"{"font":"inter"}"#).unwrap();
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();

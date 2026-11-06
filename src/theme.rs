@@ -899,6 +899,22 @@ pub const RADIUS_MENU: u8 = 20;
 pub const RADIUS_CARD: u8 = 20;
 /// Dialogs and the larger surfaces that float over the window.
 pub const RADIUS_DIALOG: u8 = 28;
+
+/// The type scale, in points, from DESIGN.md. Every text size in the
+/// interface is one of these; add a step here rather than a literal size.
+pub const TYPE_DISPLAY: f32 = 24.0;
+/// Screen and dialog titles.
+pub const TYPE_TITLE: f32 = 20.0;
+/// Section headings within a screen.
+pub const TYPE_SECTION: f32 = 16.0;
+/// Messages, names and explanations.
+pub const TYPE_BODY: f32 = 14.0;
+/// Buttons, fields and other controls.
+pub const TYPE_CONTROL: f32 = 13.0;
+/// Timestamps and other secondary metadata.
+pub const TYPE_CAPTION: f32 = 12.0;
+/// The smallest text, for badges and fine print.
+pub const TYPE_MICRO: f32 = 11.0;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
@@ -1014,11 +1030,11 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     use egui::FontFamily::{Monospace, Proportional};
     use egui::{FontId, TextStyle};
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.5, Proportional)),
-        (TextStyle::Body, FontId::new(14.0, Proportional)),
-        (TextStyle::Button, FontId::new(14.0, Proportional)),
-        (TextStyle::Heading, FontId::new(22.0, Proportional)),
-        (TextStyle::Monospace, FontId::new(13.0, Monospace)),
+        (TextStyle::Small, FontId::new(TYPE_CAPTION, Proportional)),
+        (TextStyle::Body, FontId::new(TYPE_BODY, Proportional)),
+        (TextStyle::Button, FontId::new(TYPE_CONTROL, Proportional)),
+        (TextStyle::Heading, FontId::new(TYPE_TITLE, Proportional)),
+        (TextStyle::Monospace, FontId::new(TYPE_CONTROL, Monospace)),
     ]
     .into();
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
