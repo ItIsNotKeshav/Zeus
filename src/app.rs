@@ -430,6 +430,13 @@ pub struct UnreadDivider {
     pub first: Option<String>,
 }
 
+/// How long typing pauses before a search is sent to the archive. Letters
+/// typed in quick succession then make one search rather than one each.
+#[cfg(not(test))]
+const SEARCH_DEBOUNCE: Duration = Duration::from_millis(150);
+#[cfg(test)]
+const SEARCH_DEBOUNCE: Duration = Duration::ZERO;
+
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -502,6 +509,10 @@ pub struct App {
     pub chat_search_truncated: bool,
     /// Whether an answer for the current query and day is still due.
     pub chat_search_pending: bool,
+    /// When the typed chat search is due to be sent, once typing pauses.
+    pub chat_search_send_at: Option<Instant>,
+    /// When the typed global search is due to be sent, once typing pauses.
+    search_send_at: Option<Instant>,
     /// The result the arrow keys have reached, if any.
     pub chat_search_selected: Option<usize>,
     /// Local day the in-chat search is limited to, if any.
@@ -1471,6 +1482,8 @@ impl App {
             chat_search_hits: Vec::new(),
             chat_search_truncated: false,
             chat_search_pending: false,
+            chat_search_send_at: None,
+            search_send_at: None,
             chat_search_selected: None,
             chat_search_day: None,
             chat_search_month: crate::util::today(),
@@ -3075,8 +3088,7 @@ impl App {
         let needle = crate::util::search_key(self.search.trim());
         let locked = self.locked_folder_open();
         let filtering = !locked && needle.is_empty() && !self.show_archived;
-        // Each chat comes with whether it matched only loosely.
-        let mut indices: Vec<(bool, usize)> = self
+        let mut indices: Vec<usize> = self
             .chats
             .iter()
             .enumerate()
@@ -3100,46 +3112,41 @@ impl App {
                             && self.unread_kept.contains(&chat.id))
                 }
             })
-            .filter_map(|(index, chat)| {
-                // Inside the locked folder the typed text is the secret code,
-                // not a query to match.
+            // Inside the locked folder the typed text is the secret code,
+            // not a query to match. Otherwise a search is a plain substring
+            // match on the title, number or last message.
+            .filter(|(_, chat)| {
                 if (self.locked_folder && !self.chat_lock_authenticated()) || needle.is_empty() {
-                    return Some((false, index));
+                    return true;
                 }
-                let title = crate::util::search_key(&self.chat_title(chat));
-                let exact = title.contains(&needle)
+                crate::util::search_key(&self.chat_title(chat)).contains(&needle)
                     || chat.phone().is_some_and(|phone| phone.contains(&needle))
                     || chat.last.as_ref().is_some_and(|last| {
                         crate::util::search_key(&last.summary).contains(&needle)
-                    });
-                // A name with letters left out is found too, below the
-                // chats the search matches as typed.
-                (exact || crate::util::fuzzy_matches(&title, &needle)).then_some((!exact, index))
+                    })
             })
+            .map(|(index, _)| index)
             .collect();
         // The Favorites chip keeps the phone's order below the pinned chats.
         let favorites_order = self.favorites_order();
-        indices.sort_by(|&(loose_a, a), &(loose_b, b)| {
+        indices.sort_by(|&a, &b| {
             let (a, b) = (&self.chats[a], &self.chats[b]);
-            loose_a
-                .cmp(&loose_b)
-                .then_with(|| b.pinned.cmp(&a.pinned))
-                .then_with(|| {
-                    if a.pinned && b.pinned {
-                        b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
-                    } else if favorites_order {
-                        a.favorite_position
-                            .cmp(&b.favorite_position)
-                            .then(a.id.cmp(&b.id))
-                    } else {
-                        self.draft_priority(&b.id)
-                            .cmp(&self.draft_priority(&a.id))
-                            .then_with(|| self.sort_activity(b).cmp(&self.sort_activity(a)))
-                            .then(a.id.cmp(&b.id))
-                    }
-                })
+            b.pinned.cmp(&a.pinned).then_with(|| {
+                if a.pinned && b.pinned {
+                    b.pinned_at.cmp(&a.pinned_at).then(a.id.cmp(&b.id))
+                } else if favorites_order {
+                    a.favorite_position
+                        .cmp(&b.favorite_position)
+                        .then(a.id.cmp(&b.id))
+                } else {
+                    self.draft_priority(&b.id)
+                        .cmp(&self.draft_priority(&a.id))
+                        .then_with(|| self.sort_activity(b).cmp(&self.sort_activity(a)))
+                        .then(a.id.cmp(&b.id))
+                }
+            })
         });
-        indices.into_iter().map(|(_, index)| index).collect()
+        indices
     }
 
     /// When a chat counts as last active for the list order: a chat holding a
@@ -3167,35 +3174,31 @@ impl App {
         if needle.is_empty() {
             return Vec::new();
         }
-        // Each contact comes with whether it matched only loosely.
-        let mut contacts: Vec<(bool, &Contact)> = self
+        // Built once per search: checking every chat for each contact would
+        // make the list cost chats times contacts on every frame.
+        let chat_ids: std::collections::HashSet<&str> =
+            self.chats.iter().map(|chat| chat.id.as_str()).collect();
+        let mut contacts: Vec<&Contact> = self
             .contacts
             .values()
             .filter(|contact| crate::model::phone_of(&contact.id).is_some())
             .filter(|contact| self.me.as_deref() != Some(contact.id.as_str()))
-            .filter(|contact| !self.chats.iter().any(|chat| chat.id == contact.id))
-            .filter_map(|contact| {
+            .filter(|contact| !chat_ids.contains(contact.id.as_str()))
+            .filter(|contact| {
                 let name = contact.display_name().map(crate::util::search_key);
-                let exact = name.as_ref().is_some_and(|name| name.contains(&needle))
+                name.as_ref().is_some_and(|name| name.contains(&needle))
                     || contact
                         .id
                         .split('@')
                         .next()
-                        .is_some_and(|phone| phone.contains(&needle));
-                let loose = name
-                    .as_ref()
-                    .is_some_and(|name| crate::util::fuzzy_matches(name, &needle));
-                (exact || loose).then_some((!exact, contact))
+                        .is_some_and(|phone| phone.contains(&needle))
             })
             .collect();
-        contacts.sort_by_key(|(loose, contact)| {
-            (
-                *loose,
-                contact.display_name().unwrap_or(&contact.id).to_lowercase(),
-            )
+        contacts.sort_by_cached_key(|contact| {
+            contact.display_name().unwrap_or(&contact.id).to_lowercase()
         });
         contacts.truncate(15);
-        contacts.into_iter().map(|(_, contact)| contact).collect()
+        contacts
     }
 
     /// Archived chats with unread messages, for the Archived chip.
@@ -5096,6 +5099,7 @@ impl App {
 
     fn close_chat_search(&mut self) {
         self.chat_search_open = false;
+        self.chat_search_send_at = None;
         self.chat_search.clear();
         self.chat_search_hits.clear();
         self.chat_search_truncated = false;
@@ -6328,6 +6332,30 @@ impl App {
         ctx.request_repaint_after(CACHE_PRUNE_INTERVAL);
     }
 
+    /// Sends the typed searches whose pause in typing has run out at `now`,
+    /// and asks for another frame when one is still waiting.
+    fn send_due_searches(&mut self, ctx: &egui::Context, now: Instant) {
+        if let Some(due) = self.search_send_at {
+            if now >= due {
+                self.search_send_at = None;
+                let query = self.search.trim().to_owned();
+                if !query.is_empty() && !self.locked_folder_open() && !self.secret_code_matched() {
+                    self.backend.send(Command::SearchMessages { query });
+                }
+            } else {
+                ctx.request_repaint_after(due - now);
+            }
+        }
+        if let Some(due) = self.chat_search_send_at {
+            if now >= due {
+                self.chat_search_send_at = None;
+                self.request_chat_search();
+            } else {
+                ctx.request_repaint_after(due - now);
+            }
+        }
+    }
+
     fn tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
         self.tick_call(ctx);
@@ -6361,6 +6389,7 @@ impl App {
         }
         self.maybe_download_update();
         self.maybe_prune_caches(ctx);
+        self.send_due_searches(ctx, Instant::now());
         if self.settings_dirty && self.last_settings_save.elapsed() > Duration::from_secs(2) {
             self.save_settings();
         }
@@ -8756,8 +8785,12 @@ impl App {
                 }
                 if query.is_empty() || self.locked_folder_open() || self.secret_code_matched() {
                     self.search_hits.clear();
+                    self.search_send_at = None;
                 } else {
-                    self.backend.send(Command::SearchMessages { query });
+                    // The archive is searched once typing pauses, so letters
+                    // typed in quick succession make one scan, not one each.
+                    self.search_send_at = Some(Instant::now() + SEARCH_DEBOUNCE);
+                    ctx.request_repaint_after(SEARCH_DEBOUNCE);
                 }
             }
             Action::OpenChatSearch => self.open_chat_search(),
@@ -8788,7 +8821,13 @@ impl App {
             }
             Action::ChatSearch(query) => {
                 self.chat_search = query;
-                self.request_chat_search();
+                if self.chat_search.trim().is_empty() {
+                    self.chat_search_send_at = None;
+                    self.request_chat_search();
+                } else {
+                    self.chat_search_send_at = Some(Instant::now() + SEARCH_DEBOUNCE);
+                    ctx.request_repaint_after(SEARCH_DEBOUNCE);
+                }
             }
             Action::SetChatSearchDay(day) => {
                 self.chat_search_day = day;
@@ -20920,10 +20959,13 @@ mod tests {
         assert!(searches(&mut commands).is_empty(), "nothing to ask yet");
         app.apply(Action::ChatSearch("eng".into()), &ctx);
         app.apply(Action::ChatSearch(" engine ".into()), &ctx);
-        assert_eq!(
-            searches(&mut commands),
-            [("eng".to_owned(), false), ("engine".to_owned(), false)]
+        assert!(
+            searches(&mut commands).is_empty(),
+            "the search waits for a pause in typing"
         );
+        // Letters typed in quick succession are one search, for the last text.
+        app.send_due_searches(&ctx, Instant::now());
+        assert_eq!(searches(&mut commands), [("engine".to_owned(), false)]);
         assert!(app.chat_search_pending);
         let hits =
             |query: &str, from: Option<i64>, until: Option<i64>, ids: &[&str]| Event::ChatHits {
