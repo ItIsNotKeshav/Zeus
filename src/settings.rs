@@ -630,7 +630,7 @@ impl SwipeAction {
         crate::i18n::gettext(
             locale,
             match self {
-                Self::None => "Nothing",
+                Self::None => "No shortcut",
                 Self::Reply => "Reply to the message",
                 Self::OpenChat => "Open the chat",
                 Self::CloseChat => "Back to the chat list",
@@ -1003,7 +1003,7 @@ impl Default for Settings {
         Self {
             version: SETTINGS_VERSION,
             legacy_theme: ThemeChoice::Dark,
-            chat_theme: ChatTheme::WhatsApp,
+            chat_theme: ChatTheme::Zeus,
             mode: Mode::Dark,
             accent: Accent::Theme,
             last_look: ChatTheme::WhatsApp,

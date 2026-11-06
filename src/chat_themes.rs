@@ -13,10 +13,10 @@ use crate::theme::{Palette, blend};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ChatTheme {
-    /// Nothing OS inspired monochrome glass, Zeus's own look.
+    /// Zeus's own monochrome glass look, the default for new installs.
+    #[default]
     Zeus,
     /// WhatsApp's own colours.
-    #[default]
     WhatsApp,
     /// macOS's greys with bubbles shaped as Messages draws them.
     Messages,
