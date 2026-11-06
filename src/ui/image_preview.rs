@@ -514,26 +514,90 @@ fn panes(window: Rect, strip: bool) -> (Rect, Rect, Rect) {
 }
 
 /// Title, the actions that reach the message, and the zoom controls.
-/// Radius of a toolbar group: a capsule on its 40 px row, as Preview's toolbar.
-const TOOLBAR_RADIUS: u8 = 20;
+/// Radius of a toolbar group: a full capsule. egui clamps a radius to half the
+/// height, so the largest value gives the round ends Apple's toolbars have.
+const TOOLBAR_RADIUS: u8 = u8::MAX;
 
-/// One toolbar pill: the controls of a group share one glass capsule, as the
-/// toolbar of Preview does.
+/// Whether the viewer's controls share one pill (`true`) or sit in separate
+/// pills, one per group (`false`).
+const ONE_PILL: bool = false;
+
+/// One glass capsule around `add`. A vibrant window gives each icon a round
+/// glass 36 wide, around an 18 point icon in a 30 point hit box, as the chat
+/// header does. An 18 point step between hit boxes leaves 12 points between
+/// the circles, and a 9 point margin leaves 6 points at each edge.
+fn capsule<R>(
+    ui: &mut egui::Ui,
+    palette: &crate::theme::Palette,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let (margin_x, margin_y, gap) = if palette.vibrant() {
+        (9, 9, 18.0)
+    } else {
+        (
+            crate::theme::SPACE_S as i8,
+            crate::theme::SPACE_XS as i8,
+            crate::theme::SPACE_S,
+        )
+    };
+    egui::Frame::new()
+        .fill(palette.capsule_glass())
+        .stroke(palette.glass_edge())
+        .corner_radius(egui::CornerRadius::same(TOOLBAR_RADIUS))
+        .inner_margin(egui::Margin::symmetric(margin_x, margin_y))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = gap;
+            add(ui)
+        })
+        .inner
+}
+
+/// A toolbar icon. On a vibrant window it sits on its own round glass, as the
+/// chat header's buttons do.
+fn toolbar_icon(
+    palette: &crate::theme::Palette,
+    ui: &mut egui::Ui,
+    icon: Icon,
+    size: f32,
+    color: egui::Color32,
+    hover: egui::Color32,
+    tooltip: &str,
+) -> egui::Response {
+    let glass = ui.painter().add(egui::Shape::Noop);
+    let response = theme::icon_button(ui, icon, size, color, hover, tooltip);
+    if palette.vibrant() {
+        ui.painter().set(
+            glass,
+            super::conversation::glass_button(palette, response.rect),
+        );
+    }
+    response
+}
+
+/// A toolbar group: its own capsule, unless the controls share one pill.
 fn toolbar_pill<R>(
     ui: &mut egui::Ui,
     palette: &crate::theme::Palette,
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    egui::Frame::new()
-        .fill(palette.menu_glass())
-        .stroke(palette.glass_edge())
-        .corner_radius(egui::CornerRadius::same(TOOLBAR_RADIUS))
-        .inner_margin(egui::Margin::symmetric(
-            crate::theme::SPACE_S as i8,
-            crate::theme::SPACE_XS as i8,
-        ))
-        .show(ui, add)
-        .inner
+    if ONE_PILL {
+        add(ui)
+    } else {
+        capsule(ui, palette, add)
+    }
+}
+
+/// All the right-hand controls: one capsule when they share one pill.
+fn cluster<R>(
+    ui: &mut egui::Ui,
+    palette: &crate::theme::Palette,
+    add: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    if ONE_PILL {
+        capsule(ui, palette, add)
+    } else {
+        add(ui)
+    }
 }
 
 fn header(
@@ -587,240 +651,254 @@ fn header(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                toolbar_pill(ui, &palette, |ui| {
-                    if theme::icon_button(
-                        ui,
-                        Icon::X,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        crate::i18n::gettext(app.locale, "Close preview (Esc)").as_ref(),
-                    )
-                    .clicked()
-                    {
-                        actions.push(Action::CloseImagePreview);
-                    }
-                });
-                let tools = preview.path().is_some() || motion.is_some();
-                if tools {
+                cluster(ui, &palette, |ui| {
                     toolbar_pill(ui, &palette, |ui| {
-                        if let Some(path) = preview.path() {
-                            if theme::icon_button(
+                        if toolbar_icon(
+                            &palette,
+                            ui,
+                            Icon::X,
+                            18.0,
+                            palette.secondary,
+                            palette.text,
+                            crate::i18n::gettext(app.locale, "Close preview (Esc)").as_ref(),
+                        )
+                        .clicked()
+                        {
+                            actions.push(Action::CloseImagePreview);
+                        }
+                    });
+                    let tools = preview.path().is_some() || motion.is_some();
+                    if tools {
+                        toolbar_pill(ui, &palette, |ui| {
+                            if let Some(path) = preview.path() {
+                                if toolbar_icon(
+                                    &palette,
+                                    ui,
+                                    Icon::ExternalLink,
+                                    18.0,
+                                    palette.secondary,
+                                    palette.text,
+                                    crate::i18n::gettext(app.locale, "Open in another app")
+                                        .as_ref(),
+                                )
+                                .clicked()
+                                {
+                                    actions.push(Action::OpenFile(path.to_owned()));
+                                }
+                                let copy_hint = format!(
+                                    "{} ({})",
+                                    crate::i18n::gettext(app.locale, "Copy image"),
+                                    super::keys::label("Ctrl+C"),
+                                );
+                                // A clip is played, never decoded as an image, so copying it
+                                // could only fail: the action is left out here, and the
+                                // shortcut is gated on the same rule in `keys`.
+                                if !clip
+                                    && toolbar_icon(
+                                        &palette,
+                                        ui,
+                                        Icon::Copy,
+                                        18.0,
+                                        palette.secondary,
+                                        palette.text,
+                                        &copy_hint,
+                                    )
+                                    .clicked()
+                                {
+                                    actions.push(Action::CopyImage(path.to_owned()));
+                                }
+                            }
+                            if let Some(motion) = &motion {
+                                motion_button(app, ui, preview, motion, chat, &message, actions);
+                            }
+                        });
+                    }
+                    // Zoom is for a picture: a clip fills the stage at its own shape,
+                    // so the controls are left out while one is on screen.
+                    if !clip {
+                        ui.add_space(crate::theme::SPACE_S);
+                        toolbar_pill(ui, &palette, |ui| {
+                            // Right to left: zoom in, the current scale, zoom out.
+                            if toolbar_icon(
+                                &palette,
                                 ui,
-                                Icon::ExternalLink,
+                                Icon::Plus,
                                 18.0,
                                 palette.secondary,
                                 palette.text,
-                                crate::i18n::gettext(app.locale, "Open in another app").as_ref(),
+                                crate::i18n::gettext(app.locale, "Zoom in").as_ref(),
                             )
                             .clicked()
                             {
-                                actions.push(Action::OpenFile(path.to_owned()));
+                                actions.push(Action::ZoomImageIn);
                             }
-                            let copy_hint = format!(
-                                "{} ({})",
-                                crate::i18n::gettext(app.locale, "Copy image"),
-                                super::keys::label("Ctrl+C"),
-                            );
-                            // A clip is played, never decoded as an image, so copying it
-                            // could only fail: the action is left out here, and the
-                            // shortcut is gated on the same rule in `keys`.
-                            if !clip
-                                && theme::icon_button(
-                                    ui,
-                                    Icon::Copy,
-                                    18.0,
-                                    palette.secondary,
-                                    palette.text,
-                                    &copy_hint,
+                            // One control shows the scale and switches between fitting the
+                            // window and the original size.
+                            let (label, hint, action) = if preview.is_fit() {
+                                (
+                                    crate::i18n::gettext(app.locale, "Fit").into_owned(),
+                                    crate::i18n::gettext(app.locale, "Show at original size"),
+                                    Action::ImageActualSize,
                                 )
+                            } else {
+                                (
+                                    format!("{:.0}%", preview.zoom() * 100.0),
+                                    crate::i18n::gettext(app.locale, "Fit to the window (0)"),
+                                    Action::FitImage,
+                                )
+                            };
+                            if theme::soft_button(ui, &palette, None, &label, false)
+                                .on_hover_text(hint)
                                 .clicked()
                             {
-                                actions.push(Action::CopyImage(path.to_owned()));
+                                actions.push(action);
                             }
-                        }
-                        if let Some(motion) = &motion {
-                            motion_button(app, ui, preview, motion, chat, &message, actions);
-                        }
-                    });
-                }
-                // Zoom is for a picture: a clip fills the stage at its own shape,
-                // so the controls are left out while one is on screen.
-                if !clip {
-                    ui.add_space(crate::theme::SPACE_S);
-                    toolbar_pill(ui, &palette, |ui| {
-                        // Right to left: zoom in, the current scale, zoom out.
-                        if theme::icon_button(
-                            ui,
-                            Icon::Plus,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "Zoom in").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::ZoomImageIn);
-                        }
-                        // One control shows the scale and switches between fitting the
-                        // window and the original size.
-                        let (label, hint, action) = if preview.is_fit() {
-                            (
-                                crate::i18n::gettext(app.locale, "Fit").into_owned(),
-                                crate::i18n::gettext(app.locale, "Show at original size"),
-                                Action::ImageActualSize,
+                            if toolbar_icon(
+                                &palette,
+                                ui,
+                                Icon::Minus,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "Zoom out").as_ref(),
                             )
-                        } else {
-                            (
-                                format!("{:.0}%", preview.zoom() * 100.0),
-                                crate::i18n::gettext(app.locale, "Fit to the window (0)"),
-                                Action::FitImage,
-                            )
-                        };
-                        if theme::soft_button(ui, &palette, None, &label, false)
-                            .on_hover_text(hint)
                             .clicked()
-                        {
-                            actions.push(action);
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Minus,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "Zoom out").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::ZoomImageOut);
-                        }
-                    });
-                }
-                // What the message itself can do, when the viewer knows which one
-                // it is. A picture opened on its own has nothing to act on.
-                if has_message {
-                    ui.add_space(crate::theme::SPACE_S);
-                    toolbar_pill(ui, &palette, |ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::Reply,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "Reply").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::CloseImagePreview);
-                            actions.push(Action::Reply(message.clone()));
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Smile,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "React").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            // The viewer draws after the picker, so it has to go first:
-                            // otherwise the picker opens behind it and cannot be used.
-                            actions.push(Action::CloseImagePreview);
-                            actions.push(Action::OpenReactionPicker {
-                                chat: chat.to_owned(),
-                                message: message.clone(),
-                                beside_menu: false,
-                            });
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::Forward,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "Forward").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            actions.push(Action::CloseImagePreview);
-                            actions.push(Action::ShowDialog(Dialog::Forward {
-                                chat: chat.to_owned(),
-                                messages: vec![message.clone()],
-                            }));
-                        }
-                        match saved {
-                            // Already on the computer: hand it to the save dialog, the
-                            // way the message menu does.
-                            Some(path) => {
-                                let name = path
-                                    .file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("attachment")
-                                    .to_owned();
-                                if theme::icon_button(
-                                    ui,
-                                    Icon::Download,
-                                    18.0,
-                                    palette.secondary,
-                                    palette.text,
-                                    crate::i18n::gettext(app.locale, "Save as…").as_ref(),
-                                )
-                                .clicked()
-                                {
-                                    actions.push(Action::CloseImagePreview);
-                                    actions.push(Action::SaveAttachmentAs { path, name });
+                            {
+                                actions.push(Action::ZoomImageOut);
+                            }
+                        });
+                    }
+                    // What the message itself can do, when the viewer knows which one
+                    // it is. A picture opened on its own has nothing to act on.
+                    if has_message {
+                        ui.add_space(crate::theme::SPACE_S);
+                        toolbar_pill(ui, &palette, |ui| {
+                            if toolbar_icon(
+                                &palette,
+                                ui,
+                                Icon::Reply,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "Reply").as_ref(),
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::CloseImagePreview);
+                                actions.push(Action::Reply(message.clone()));
+                            }
+                            if toolbar_icon(
+                                &palette,
+                                ui,
+                                Icon::Smile,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "React").as_ref(),
+                            )
+                            .clicked()
+                            {
+                                // The viewer draws after the picker, so it has to go first:
+                                // otherwise the picker opens behind it and cannot be used.
+                                actions.push(Action::CloseImagePreview);
+                                actions.push(Action::OpenReactionPicker {
+                                    chat: chat.to_owned(),
+                                    message: message.clone(),
+                                    beside_menu: false,
+                                });
+                            }
+                            if toolbar_icon(
+                                &palette,
+                                ui,
+                                Icon::Forward,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "Forward").as_ref(),
+                            )
+                            .clicked()
+                            {
+                                actions.push(Action::CloseImagePreview);
+                                actions.push(Action::ShowDialog(Dialog::Forward {
+                                    chat: chat.to_owned(),
+                                    messages: vec![message.clone()],
+                                }));
+                            }
+                            match saved {
+                                // Already on the computer: hand it to the save dialog, the
+                                // way the message menu does.
+                                Some(path) => {
+                                    let name = path
+                                        .file_name()
+                                        .and_then(|name| name.to_str())
+                                        .unwrap_or("attachment")
+                                        .to_owned();
+                                    if toolbar_icon(
+                                        &palette,
+                                        ui,
+                                        Icon::Download,
+                                        18.0,
+                                        palette.secondary,
+                                        palette.text,
+                                        crate::i18n::gettext(app.locale, "Save as…").as_ref(),
+                                    )
+                                    .clicked()
+                                    {
+                                        actions.push(Action::CloseImagePreview);
+                                        actions.push(Action::SaveAttachmentAs { path, name });
+                                    }
+                                }
+                                // Not here yet: fetch it, and return to the chat with it.
+                                None => {
+                                    if toolbar_icon(
+                                        &palette,
+                                        ui,
+                                        Icon::Download,
+                                        18.0,
+                                        palette.secondary,
+                                        palette.text,
+                                        crate::i18n::gettext(app.locale, "Download").as_ref(),
+                                    )
+                                    .clicked()
+                                    {
+                                        actions.push(Action::CloseImagePreview);
+                                        actions.push(Action::Download {
+                                            // Asked for in the viewer.
+                                            manual: true,
+                                            card: None,
+                                            chat: chat.to_owned(),
+                                            message: message.clone(),
+                                        });
+                                    }
                                 }
                             }
-                            // Not here yet: fetch it, and return to the chat with it.
-                            None => {
-                                if theme::icon_button(
-                                    ui,
-                                    Icon::Download,
-                                    18.0,
-                                    palette.secondary,
-                                    palette.text,
-                                    crate::i18n::gettext(app.locale, "Download").as_ref(),
-                                )
-                                .clicked()
-                                {
-                                    actions.push(Action::CloseImagePreview);
-                                    actions.push(Action::Download {
-                                        // Asked for in the viewer.
-                                        manual: true,
-                                        card: None,
-                                        chat: chat.to_owned(),
-                                        message: message.clone(),
-                                    });
-                                }
+                            if toolbar_icon(
+                                &palette,
+                                ui,
+                                Icon::MessageCircle,
+                                18.0,
+                                palette.secondary,
+                                palette.text,
+                                crate::i18n::gettext(app.locale, "Show in the chat").as_ref(),
+                            )
+                            .clicked()
+                            {
+                                // Closing leaves the chat where it was, so the message the
+                                // viewer was showing is brought into view. `ScrollTo` also
+                                // pages older archive history toward it when it is not in
+                                // the transcript yet, which is the usual case after
+                                // stepping back through the album.
+                                actions.push(Action::CloseImagePreview);
+                                actions.push(Action::ScrollTo(message.clone()));
                             }
-                        }
-                        if theme::icon_button(
-                            ui,
-                            Icon::MessageCircle,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            crate::i18n::gettext(app.locale, "Show in the chat").as_ref(),
-                        )
-                        .clicked()
-                        {
-                            // Closing leaves the chat where it was, so the message the
-                            // viewer was showing is brought into view. `ScrollTo` also
-                            // pages older archive history toward it when it is not in
-                            // the transcript yet, which is the usual case after
-                            // stepping back through the album.
-                            actions.push(Action::CloseImagePreview);
-                            actions.push(Action::ScrollTo(message.clone()));
-                        }
-                    });
-                    ui.add_space(crate::theme::SPACE_S);
-                }
+                        });
+                        ui.add_space(crate::theme::SPACE_S);
+                    }
+                });
                 // Last, so it takes what the actions left, scrolling if it needs
                 // more rather than drawn under them.
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    toolbar_pill(ui, &palette, |ui| {
+                    capsule(ui, &palette, |ui| {
                         crate::ui::widgets::scrolling_text(
                             ui,
                             &title,
@@ -868,7 +946,17 @@ fn motion_button(
             crate::i18n::gettext(app.locale, "Play motion photo"),
         ),
     };
-    if !theme::icon_button(ui, icon, 18.0, palette.secondary, palette.text, &hint).clicked() {
+    if !toolbar_icon(
+        &palette,
+        ui,
+        icon,
+        18.0,
+        palette.secondary,
+        palette.text,
+        &hint,
+    )
+    .clicked()
+    {
         return;
     }
     actions.push(match (playing, &motion.path) {

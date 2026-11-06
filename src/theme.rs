@@ -485,6 +485,16 @@ impl Palette {
         Stroke::new(1.0, self.text.gamma_multiply(0.08))
     }
 
+    /// Apple's glass for a capsule over a vibrant surface: a light, translucent
+    /// fill, white over a dark wall and a brighter frost over a light one.
+    pub fn capsule_glass(&self) -> Color32 {
+        if self.dark {
+            Color32::from_white_alpha(26)
+        } else {
+            Color32::from_white_alpha(150)
+        }
+    }
+
     /// The palette for a message bubble's contents. Secondary and dim text,
     /// and the read ticks, move toward the text colour just far enough to
     /// stay readable on the bubble: a grey that reads on the panel can vanish
