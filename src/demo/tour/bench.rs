@@ -1,7 +1,7 @@
 //! The benchmark: a photo-heavy chat scrolled through, dozens of chats opened
 //! in turn (each with pictures and a video thumbnail), a grid of stickers in
-//! the picker, a minimized window, and idle stretches, on a fixed timetable of
-//! about two and a half minutes. `scripts/bench/` launches it, reads the phase marks it
+//! the picker, search queries typed and their results scrolled, a minimized window, and idle stretches, on a fixed timetable of
+//! about three minutes. `scripts/bench/` launches it, reads the phase marks it
 //! writes (`--demo-tour-marks`), and measures the process from outside.
 //!
 //! The timetable runs on the monotonic clock from the first frame. Between
@@ -32,16 +32,17 @@ pub(super) const FIRST: &str = "bench-photo-000";
 pub(super) const LAST: &str = "bench-last";
 
 /// Phases in order, each ended by the next. `scripts/bench` names them the same.
-pub const PHASES: [&str; 6] = [
+pub const PHASES: [&str; 7] = [
     "settle",
     "scroll",
     "churn",
     "picker",
+    "search",
     "minimized",
     "settle-again",
 ];
 /// The phases whose frame times are recorded.
-pub(super) const TIMED: [&str; 3] = ["scroll", "churn", "picker"];
+pub(super) const TIMED: [&str; 4] = ["scroll", "churn", "picker", "search"];
 /// The phase that finds nothing by its label, so its frames are the app's own.
 pub(super) const SCROLL: &str = "scroll";
 
@@ -74,10 +75,29 @@ const CHURN_END: f32 = SCROLL_END + (CHURN_STEPS + 1) as f32 * CHURN_STEP;
 pub(super) const PICKER_ROUNDS: usize = 8;
 const PICKER_ROUND: f32 = 2.2;
 const PICKER_END: f32 = CHURN_END + PICKER_ROUNDS as f32 * PICKER_ROUND;
+/// Search queries, each typed into the chat list's search, its results
+/// scrolled down and back, then cleared. All match many sample messages.
+pub(super) const QUERIES: [&str; 3] = ["the", "you", "are"];
+const SEARCH_ROUND: f32 = 6.5;
+const SEARCH_END: f32 = PICKER_END + QUERIES.len() as f32 * SEARCH_ROUND;
+/// Seconds between the keys of a query.
+const KEY_GAP: f32 = 0.12;
+/// Seconds the results are scrolled down, and again back up.
+const RESULTS_SCROLL: f32 = 2.0;
+/// Seconds between the wheel's events, a frame at 60 a second.
+const WHEEL_STEP: f32 = 0.016;
+/// Points a second the results move, in the same unit as `SPEED`.
+const RESULTS_SPEED: f32 = if cfg!(target_os = "linux") {
+    1_500.0 / fastframe_scroll::TOUCHPAD_SCALE
+} else {
+    1_500.0
+};
+/// Inside the chat list's results, clear of the rail and the chat pane.
+const RESULTS_POINT: (f32, f32) = (220.0, 420.0);
 const MINIMIZED: f32 = 10.0;
 /// The minimized phase is measured this long before the window comes back.
 const BEFORE_RESTORE: f32 = 1.0;
-const RESTORE: f32 = PICKER_END + MINIMIZED;
+const RESTORE: f32 = SEARCH_END + MINIMIZED;
 /// Past the 30 seconds after which a window left alone may let go of what it
 /// does not show.
 const SETTLE_AGAIN: f32 = 40.0;
@@ -406,12 +426,48 @@ pub(super) fn script() -> Vec<Cue> {
         );
     }
     add(PICKER_END, Phase(PHASES[4]));
-    add(PICKER_END + 0.1, Minimize(true));
+    for (round, query) in QUERIES.iter().enumerate() {
+        let at = PICKER_END + round as f32 * SEARCH_ROUND;
+        add(
+            at + 0.1,
+            Key(K::K, super::command(), "Ctrl + K · Search chats"),
+        );
+        let typed = at + 0.4;
+        for (index, character) in query.chars().enumerate() {
+            add(typed + index as f32 * KEY_GAP, Text(character));
+        }
+        add(at + 1.6, Expect(Hits, "search: results listed"));
+        add(at + 1.7, Move(Point(RESULTS_POINT.0, RESULTS_POINT.1)));
+        let steps = (RESULTS_SCROLL / WHEEL_STEP) as usize;
+        for direction in [-1.0, 1.0] {
+            let from = at
+                + if direction < 0.0 {
+                    2.1
+                } else {
+                    2.1 + RESULTS_SCROLL + 0.1
+                };
+            for step in 0..steps {
+                add(
+                    from + step as f32 * WHEEL_STEP,
+                    Wheel(direction * RESULTS_SPEED * WHEEL_STEP),
+                );
+            }
+        }
+        // Clear the field with its own keys, then leave the search.
+        add(at + 6.0, Press(K::A, super::command()));
+        add(at + 6.05, Press(K::Backspace, Modifiers::NONE));
+        add(
+            at + 6.2,
+            Key(K::Escape, Modifiers::NONE, "Esc · Return to the chat"),
+        );
+    }
+    add(SEARCH_END, Phase(PHASES[5]));
+    add(SEARCH_END + 0.1, Minimize(true));
     add(
-        PICKER_END + 1.5,
+        SEARCH_END + 1.5,
         ExpectMinimized("minimized: window reports minimized"),
     );
-    add(RESTORE - BEFORE_RESTORE, Phase(PHASES[5]));
+    add(RESTORE - BEFORE_RESTORE, Phase(PHASES[6]));
     add(RESTORE, Minimize(false));
     add(DURATION.as_secs_f32(), End);
     cues.sort_by(|a, b| a.at.total_cmp(&b.at));

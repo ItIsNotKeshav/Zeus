@@ -7,8 +7,34 @@ use crate::{
 };
 
 pub fn respond(app: &mut App) {
+    respond_to(app, false);
+}
+
+/// Answers the interface's commands from the sample data. With `search`, a
+/// message search is answered too, the way the archive would (the newest 50
+/// messages that hold the query), and the queries answered are returned.
+pub fn respond_to(app: &mut App, search: bool) -> Vec<String> {
+    let mut answered = Vec::new();
     for command in app.backend.take_demo_commands() {
         match command {
+            Command::SearchMessages { query } if search => {
+                // The samples are plain text, so a lowercase match does as
+                // well as the archive's, without a pause in the frame.
+                let needle = query.to_lowercase();
+                let mut hits: Vec<Message> = app
+                    .conversations
+                    .values()
+                    .flat_map(|conversation| &conversation.messages)
+                    .filter(|message| message.summary().to_lowercase().contains(&needle))
+                    .cloned()
+                    .collect();
+                hits.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                hits.truncate(50);
+                if query == app.search.trim() {
+                    app.search_hits = hits;
+                }
+                answered.push(query);
+            }
             Command::CreatePoll { chat, draft } => {
                 let state = crate::model::PollState {
                     selectable: draft.selectable(),
@@ -255,6 +281,7 @@ pub fn respond(app: &mut App) {
             _ => {}
         }
     }
+    answered
 }
 
 /// Resolves an explicit quote source rather than assuming it belongs to the destination chat.

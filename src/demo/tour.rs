@@ -213,6 +213,10 @@ enum Target {
     OldestHit,
     /// A sticker shelf tab: 0 recent, 1 favorites, then the packs.
     Shelf(usize),
+    /// A fixed place in the window, for the pointer.
+    Point(f32, f32),
+    /// Present while the chat list's search lists message results.
+    Hits,
 }
 
 enum Gesture {
@@ -483,6 +487,11 @@ pub struct Tour {
     /// Whether the last frame asked for the next one at once, so the
     /// interval between them is a frame time and not a pause.
     continuous: bool,
+    /// When the last key of a benchmark search query was typed, until its
+    /// results have been on screen.
+    typed_at: Option<Instant>,
+    /// The results of a query were handed to the app; the next frame shows them.
+    results_pending: bool,
 }
 
 impl Tour {
@@ -534,6 +543,8 @@ impl Tour {
             sent_pointer: None,
             settling_until: 0.0,
             continuous: false,
+            typed_at: None,
+            results_pending: false,
         }
     }
 
@@ -643,6 +654,8 @@ impl Tour {
                     .map(|(_, pos)| *pos)
                     .max_by(|a, b| a.y.total_cmp(&b.y))
             }
+            Target::Point(x, y) => Some(pos2(x, y)),
+            Target::Hits => (!app.search_hits.is_empty()).then_some(Pos2::ZERO),
             Target::Shelf(index) => {
                 let shelf = match index {
                     0 => StickerShelf::Recent,
@@ -720,7 +733,10 @@ impl Tour {
                     press(input, key, modifiers);
                     self.caption(at, label);
                 }
-                Gesture::Text(character) => input.events.push(Event::Text(character.to_string())),
+                Gesture::Text(character) => {
+                    input.events.push(Event::Text(character.to_string()));
+                    self.typed_at = Some(Instant::now());
+                }
                 Gesture::Wheel(points) => input.events.push(Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, points),
@@ -916,7 +932,22 @@ impl Tour {
     /// Finds click targets in the actual painted UI; no view-specific hooks or
     /// hard-coded menu coordinates are needed. Called after frame_ui.
     pub fn observe(&mut self, app: &mut App, ctx: &egui::Context) {
-        session::respond(app);
+        // The frame after a query's results were handed over is the first to
+        // show them.
+        if std::mem::take(&mut self.results_pending)
+            && let Some(typed) = self.typed_at.take()
+        {
+            self.marks
+                .results_shown(typed.elapsed().as_secs_f32() * 1000.0);
+        }
+        let answered = session::respond_to(app, self.script == Script::Bench);
+        if answered
+            .iter()
+            .any(|query| bench::QUERIES.contains(&query.as_str()) && *query == app.search.trim())
+            && !app.search_hits.is_empty()
+        {
+            self.results_pending = true;
+        }
         // The scroll finds nothing by its label, and its frame times should
         // be the app's own.
         if self.marks.timing() {
@@ -2389,7 +2420,18 @@ mod tests {
             .collect();
         assert_eq!(failed, ["minimized: window reports minimized"]);
         let checks = lines.iter().filter(|line| line["event"] == "check").count();
-        assert_eq!(checks, 6, "settle, four scroll ends, minimized");
+        assert_eq!(
+            checks, 9,
+            "settle, four scroll ends, three searches, minimized"
+        );
+        let search = lines
+            .iter()
+            .find(|line| line["event"] == "frames" && line["phase"] == "search")
+            .expect("the search phase is timed");
+        assert!(
+            search["first_results_ms"].is_number(),
+            "the queries' results were timed: {search}"
+        );
         let timed: Vec<_> = lines
             .iter()
             .filter(|line| line["event"] == "frames")
