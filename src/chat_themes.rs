@@ -45,31 +45,19 @@ pub enum ChatTheme {
 }
 
 impl ChatTheme {
-    /// Every theme, in the order Settings shows them.
-    pub const ALL: [ChatTheme; 23] = [
+    /// The themes Settings offers, in the order it shows them: the three
+    /// looks first, then six presets that differ clearly from one another.
+    /// Other variants stay so saved settings still load and render.
+    pub const ALL: [ChatTheme; 9] = [
         Self::Zeus,
         Self::WhatsApp,
         Self::Messages,
-        Self::Orchestrate,
         Self::Vercel,
-        Self::GitHub,
-        Self::One,
         Self::Catppuccin,
-        Self::TokyoNight,
         Self::Dracula,
         Self::Nord,
         Self::Gruvbox,
-        Self::RosePine,
         Self::Solarized,
-        Self::Kanagawa,
-        Self::VsCode,
-        Self::Monokai,
-        Self::Material,
-        Self::Ayu,
-        Self::NightOwl,
-        Self::Everforest,
-        Self::Vitesse,
-        Self::Flexoki,
     ];
 
     pub fn label(self) -> &'static str {

@@ -1002,7 +1002,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
-            legacy_theme: ThemeChoice::Dark,
+            legacy_theme: ThemeChoice::NothingDark,
             chat_theme: ChatTheme::Zeus,
             mode: Mode::Dark,
             accent: Accent::Theme,
