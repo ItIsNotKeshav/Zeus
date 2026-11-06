@@ -249,7 +249,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         theme::regular(12.5),
         palette.dim,
     );
-    ui.add_space(14.0);
+    ui.add_space(crate::theme::SPACE_L);
 
     let full = app.labels.len() >= crate::archive::LABEL_LIMIT;
     if full {
@@ -290,7 +290,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
     ui.add_space(crate::theme::SPACE_S);
     ui.separator();
-    ui.add_space(crate::theme::SPACE_TIGHT);
+    ui.add_space(crate::theme::SPACE_S);
     let wearing: Vec<(Label, usize)> = app
         .labels
         .iter()

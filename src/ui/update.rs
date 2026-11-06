@@ -81,7 +81,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                                 .fill(palette.accent)
                                 .desired_height(6.0),
                         );
-                        ui.add_space(crate::theme::SPACE_TIGHT);
+                        ui.add_space(crate::theme::SPACE_S);
                         let progress_text = crate::i18n::gettext(locale, "{received} of {total} MB")
                             .replace(
                                 "{received}",
@@ -105,7 +105,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         theme::semibold(14.0),
                         palette.text,
                     );
-                    ui.add_space(crate::theme::SPACE_TIGHT);
+                    ui.add_space(crate::theme::SPACE_S);
                     ui.add(
                         egui::Label::new(
                             RichText::new(crate::i18n::gettext(

@@ -3722,7 +3722,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         if let Some((id, count, placed)) = &divider
                             && row_contains(id)
                         {
-                            ui.add_space(crate::theme::SPACE_TIGHT);
+                            ui.add_space(crate::theme::SPACE_S);
                             let label = crate::i18n::ngettext(
                                 app.locale,
                                 "{} unread message",
@@ -4653,7 +4653,7 @@ fn top_of_history(
             if conversation.loading_older {
                 theme::spinner(ui, 18.0, palette.accent);
             } else {
-                ui.add_space(18.0);
+                ui.add_space(crate::theme::SPACE_XL);
             }
         } else if conversation.fetching_phone {
             ui.horizontal(|ui| {
@@ -4675,7 +4675,7 @@ fn top_of_history(
                 widgets::chip(ui, palette, "No messages here yet");
             }
         } else {
-            ui.add_space(crate::theme::SPACE_TIGHT);
+            ui.add_space(crate::theme::SPACE_S);
         }
     });
 }
@@ -6995,7 +6995,7 @@ fn speed_menu_row(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(crate::theme::SPACE_TIGHT);
+            ui.add_space(crate::theme::SPACE_S);
             for option in crate::audio::SPEEDS {
                 let selected = option == speed;
                 let response = speed_pill(
@@ -11321,7 +11321,7 @@ fn interactive_buttons(
         }
     }
     if card.needs_phone {
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
         widgets::rich_text(
             ui,
             "More content in WhatsApp Web or on your phone",

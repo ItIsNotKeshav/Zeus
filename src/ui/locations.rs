@@ -35,7 +35,7 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         .char_limit(2048)
         .width(f32::INFINITY)
         .show(ui, &palette);
-    ui.add_space(crate::theme::SPACE_TIGHT);
+    ui.add_space(crate::theme::SPACE_S);
     // The spot is read again here and shown before it is sent: a pair read the
     // wrong way round is visible in this dialog, not in someone else's chat.
     let here = geo::spot(&app.location_draft);

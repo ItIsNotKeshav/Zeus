@@ -575,7 +575,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,
@@ -682,9 +682,9 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
         if response.clicked() {
             app.actions.push(Action::ShowNewCall(true));
         }
-        ui.add_space(crate::theme::SPACE_SNUG);
+        ui.add_space(crate::theme::SPACE_M);
         theme::text(ui, label.as_ref(), theme::semibold(15.0), palette.text);
-        ui.add_space(18.0);
+        ui.add_space(crate::theme::SPACE_XL);
         ui.set_max_width(360.0);
         ui.add(
             egui::Label::new(

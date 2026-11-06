@@ -650,7 +650,7 @@ fn section_title(ui: &mut egui::Ui, palette: &Palette, title: &str, count: Optio
             theme::text(ui, count, theme::regular(13.0), palette.dim);
         }
     });
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
 }
 
 /// What the overview shows of the chat, read once per frame from the chat
@@ -782,7 +782,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         } else {
             widgets::avatar(ui, &palette, name, id, photo, picture.as_deref());
         }
-        ui.add_space(crate::theme::SPACE_SNUG);
+        ui.add_space(crate::theme::SPACE_M);
         if let Some(draft) = renaming.as_mut() {
             match group_name_field(app, ui, draft) {
                 Some(true) => {
@@ -1010,7 +1010,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     if let Some(action) = group_action {
         app.actions.push(action);
     }
-    ui.add_space(18.0);
+    ui.add_space(crate::theme::SPACE_XL);
     actions(app, ui, shown);
     if let Some(description) = shown.description.as_deref() {
         ui.add_space(SECTION_GAP);
@@ -1292,7 +1292,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
             &crate::i18n::gettext(app.locale, "Search members"),
             width,
         );
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(member_filter_id(), (id.to_owned(), query.clone())));
@@ -1466,7 +1466,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
         );
     }
     if needle.is_empty() && total > MEMBERS_SHOWN {
-        ui.add_space(crate::theme::SPACE_SNUG);
+        ui.add_space(crate::theme::SPACE_M);
         let label = if capped {
             crate::i18n::gettext(app.locale, "Show all {} members")
                 .replace("{}", &total.to_string())
@@ -1587,7 +1587,7 @@ fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
             .push(Action::ShowInfo(InfoView::Media(MediaTab::Media)));
     }
     if app.info_media_failed {
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
         failure_line(app, ui);
     }
     if let Some(media) = shown
@@ -1834,7 +1834,7 @@ fn media_grid(
     };
     let cell = ((width - (columns - 1) as f32 * GAP) / columns as f32).floor();
     let rows = listing.media.len().div_ceil(columns);
-    ui.add_space(crate::theme::SPACE_TIGHT);
+    ui.add_space(crate::theme::SPACE_S);
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing = vec2(GAP, GAP);
     egui::ScrollArea::vertical()

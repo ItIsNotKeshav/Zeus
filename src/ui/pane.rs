@@ -217,7 +217,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 {
                     app.actions.push(Action::CloseChatSearch);
                 }
-                ui.add_space(crate::theme::SPACE_TIGHT);
+                ui.add_space(crate::theme::SPACE_S);
                 theme::text(
                     ui,
                     crate::i18n::gettext(app.locale, "Search messages"),
@@ -225,7 +225,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                     palette.text,
                 );
             });
-            ui.add_space(crate::theme::SPACE_SNUG);
+            ui.add_space(crate::theme::SPACE_M);
             ui.horizontal(|ui| {
                 ui.set_min_height(36.0);
                 let calendar = theme::icon_button(
@@ -248,7 +248,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                         app.chat_search_month = app.chat_search_day.unwrap_or_else(util::today);
                     }
                 }
-                ui.add_space(crate::theme::SPACE_TIGHT);
+                ui.add_space(crate::theme::SPACE_S);
                 let width = ui.available_width();
                 let mut text = app.chat_search.clone();
                 let response = widgets::search_field(
@@ -337,7 +337,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
             if app.chat_search_truncated {
                 // The list is capped, so say so rather than dropping the rest
                 // without a word.
-                ui.add_space(crate::theme::SPACE_SNUG);
+                ui.add_space(crate::theme::SPACE_M);
                 ui.horizontal(|ui| {
                     ui.add_space(14.0);
                     let notice = crate::i18n::gettext(
@@ -460,7 +460,7 @@ fn calendar_popup(app: &mut App, ui: &egui::Ui, palette: &Palette, button: Rect)
                 .show(ui, |ui| {
                     ui.set_width(CELL * 7.0);
                     month_header(app, ui, palette);
-                    ui.add_space(crate::theme::SPACE_TIGHT);
+                    ui.add_space(crate::theme::SPACE_S);
                     month_grid(app, ui, palette);
                 });
         });

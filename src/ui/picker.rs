@@ -990,7 +990,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         ui.add_space(crate::theme::SPACE_S);
         if let Some(error) = app.gif_error.as_ref().filter(|error| error.bad_key) {
             theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
-            ui.add_space(crate::theme::SPACE_TIGHT);
+            ui.add_space(crate::theme::SPACE_S);
         }
         theme::paragraph(
             ui,
@@ -1002,7 +1002,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::regular(13.0),
             palette.text,
         );
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
         if theme::link(
             ui,
             "developers.giphy.com",
@@ -1014,7 +1014,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             app.actions
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
         let response = controls::Field::new(&mut app.settings.giphy_key)
             .hint("GIPHY API key")
             .width(f32::INFINITY)
@@ -1459,7 +1459,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             );
             ui.add_space(crate::theme::SPACE_XS);
             import_row(app, ui, palette);
-            ui.add_space(14.0);
+            ui.add_space(crate::theme::SPACE_L);
             theme::text(
                 ui,
                 gettext(locale, "Make your own"),
@@ -1477,7 +1477,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             );
             ui.add_space(crate::theme::SPACE_XS);
             new_pack_row(app, ui, palette);
-            ui.add_space(crate::theme::SPACE_TIGHT);
+            ui.add_space(crate::theme::SPACE_S);
             if theme::soft_button(
                 ui,
                 palette,

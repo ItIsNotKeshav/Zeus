@@ -1220,7 +1220,7 @@ pub fn menu_frame(palette: &Palette) -> egui::Frame {
 }
 
 pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body: &str) {
-    ui.add_space(48.0);
+    ui.add_space(crate::theme::SPACE_MAJOR);
     ui.vertical_centered(|ui| {
         theme::icon(ui, icon, 40.0, palette.dim);
         ui.add_space(crate::theme::SPACE_S);
@@ -1643,7 +1643,7 @@ pub fn setting_row(
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
 }
 
 pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color32) {

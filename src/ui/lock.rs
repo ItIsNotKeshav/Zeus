@@ -106,7 +106,7 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
     if submit && ready {
         app.actions.push(Action::UnlockApp);
     }
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     if theme::link(
         ui,
         gettext(locale, "Forgot password? Unlink this computer"),
@@ -137,7 +137,7 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(13.5),
         palette.text,
     );
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if super::dialogs::danger_button(ui, app, &gettext(locale, "Unlink")).clicked() {

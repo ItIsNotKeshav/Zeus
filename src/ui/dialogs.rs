@@ -707,7 +707,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             crate::i18n::gettext(app.locale, "Chats")
         };
         theme::text(ui, heading.as_ref(), theme::semibold(12.0), palette.dim);
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
     }
 
     let row_height = FORWARD_ROW + FORWARD_ROW_GAP;
@@ -1146,7 +1146,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             theme::text(ui, version_label, theme::regular(13.0), palette.secondary);
         });
     });
-    ui.add_space(crate::theme::SPACE_TIGHT);
+    ui.add_space(crate::theme::SPACE_S);
     theme::paragraph(
         ui,
         crate::i18n::gettext(
@@ -1165,7 +1165,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(12.5),
         palette.secondary,
     );
-    ui.add_space(crate::theme::SPACE_TIGHT);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         if theme::link(
             ui,
@@ -1298,7 +1298,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
             palette.secondary,
         );
     }
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let label = match (member, info.approval) {
@@ -1333,7 +1333,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
 
 fn cancel_row(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::pill_button(
@@ -1378,7 +1378,7 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             super::picker::sticker_preview_grid(ui, &palette, &pack.stickers, app.window_focused);
         });
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::pill_button(
@@ -1511,7 +1511,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
         .width(f32::INFINITY)
         .show(ui, &palette);
     app.sticker_draft = Some(draft);
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     let can_send = app.open_chat.is_some();
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1733,7 +1733,7 @@ fn confirm_destructive(
         };
         theme::paragraph(ui, *paragraph, font, colour);
     }
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     let cancel = crate::i18n::gettext(app.locale, "Cancel");
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1767,7 +1767,7 @@ fn confirm_reset_invite_link(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         theme::regular(13.5),
         palette.text,
     );
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     confirm_buttons(
         app,
         ui,
@@ -1801,7 +1801,7 @@ fn confirm_remove_member(app: &mut App, ui: &mut egui::Ui, chat: &str, member: &
         theme::regular(13.5),
         palette.text,
     );
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     confirm_buttons(
         app,
         ui,
@@ -1851,7 +1851,7 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
         theme::regular(13.5),
         palette.text,
     );
-    ui.add_space(crate::theme::SPACE_SNUG);
+    ui.add_space(crate::theme::SPACE_M);
     let leave_label = if channel {
         crate::i18n::gettext(locale, "Leave channel")
     } else {

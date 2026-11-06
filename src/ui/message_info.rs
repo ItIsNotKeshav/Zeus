@@ -326,7 +326,7 @@ fn section(
         return;
     }
     for recipient in recipients {
-        ui.add_space(crate::theme::SPACE_TIGHT);
+        ui.add_space(crate::theme::SPACE_S);
         let name = app.display_name(&recipient.id);
         let picture = app.avatar(&recipient.id);
         ui.horizontal(|ui| {
