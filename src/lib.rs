@@ -33,6 +33,7 @@ pub mod haptics;
 pub mod i18n;
 pub mod image_cache;
 pub mod image_preview;
+pub mod lottie;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod markup;
