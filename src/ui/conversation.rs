@@ -8005,7 +8005,6 @@ const FOOTER_MARK: f32 = 13.0;
 const FOOTER_MARK_GAP: f32 = 8.0;
 /// Room one visible mark keeps next to the clock.
 const FOOTER_MARK_SLOT: f32 = FOOTER_MARK + FOOTER_MARK_GAP;
-const FOOTER_STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
 
 /// The clock's own width at the footer's size: the floor a footer starts from,
 /// and the one part of it that depends on the reader's clock format.
@@ -8434,7 +8433,7 @@ fn footer_over_picture(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
     ui.ctx().data_mut(|data| {
@@ -8617,7 +8616,7 @@ fn footer(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
 }
@@ -8683,7 +8682,7 @@ fn reference_footer_marks(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
 }
@@ -16017,7 +16016,7 @@ mod tests {
     #[test]
     fn the_star_mark_tint_is_not_the_secondary() {
         let palette = Palette::dark();
-        assert_ne!(FOOTER_STAR, palette.secondary);
+        assert_ne!(theme::STAR, palette.secondary);
     }
 
     #[test]

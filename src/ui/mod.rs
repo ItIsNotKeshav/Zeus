@@ -397,12 +397,7 @@ fn central_background(app: &App) -> egui::Color32 {
 
 fn central_frame(app: &App) -> Frame {
     let stroke = if app.page == Page::Wallpaper {
-        let color = if app.palette.dark {
-            egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(10, 10, 10, 32)
-        };
-        Stroke::new(1.0, color)
+        Stroke::new(1.0, theme::wallpaper_rule(app.palette.dark))
     } else {
         Stroke::NONE
     };

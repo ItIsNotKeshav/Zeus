@@ -912,6 +912,19 @@ pub const SPACE_XXL: f32 = 24.0;
 pub const SPACE_SECTION: f32 = 32.0;
 pub const SPACE_MAJOR: f32 = 40.0;
 
+/// The gold of a starred message's mark in the footer.
+pub const STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
+
+/// The hairline around the wallpaper page: a light rule over a dark wallpaper,
+/// a dark rule over a light one.
+pub fn wallpaper_rule(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+    } else {
+        Color32::from_rgba_unmultiplied(10, 10, 10, 32)
+    }
+}
+
 /// The type scale, in points, from DESIGN.md. Every text size in the
 /// interface is one of these; add a step here rather than a literal size.
 pub const TYPE_DISPLAY: f32 = 24.0;
