@@ -16920,7 +16920,7 @@ mod tests {
             .map(|(label, _, _)| label)
             .collect();
         assert!(
-            labels.iter().any(|label| label == "Orchestrate"),
+            labels.iter().any(|label| label == "Vercel"),
             "{labels:?}"
         );
         for gone in ["How to make a theme", "Open themes folder", "Ristretto"] {
