@@ -37,6 +37,10 @@ fn download_notice(error: String) -> String {
 pub const PAGE: usize = 60;
 /// Minimum delay between phone history requests.
 const PHONE_COOLDOWN: Duration = Duration::from_secs(6);
+/// How long the search box waits after the last keystroke before it asks the
+/// archive. Each search reads every message, so a word typed letter by letter
+/// asks once rather than once a letter.
+const SEARCH_PAUSE: Duration = Duration::from_millis(250);
 /// WhatsApp message-edit window.
 pub const EDIT_WINDOW: Duration = Duration::from_secs(15 * 60);
 /// WhatsApp revoke-for-everyone window.
@@ -495,6 +499,8 @@ pub struct App {
     /// The search pane beside the open chat: its query, day filter and the
     /// matches it lists.
     pub chat_search_open: bool,
+    /// When the search box's query goes to the archive, once typing pauses.
+    search_due: Option<Instant>,
     pub chat_search: String,
     /// Matches in the open chat, newest first.
     pub chat_search_hits: Vec<Message>,
@@ -1467,6 +1473,7 @@ impl App {
             info_members: None,
             info_invite: None,
             info_focus: None,
+            search_due: None,
             chat_search: String::new(),
             chat_search_hits: Vec::new(),
             chat_search_truncated: false,
@@ -5114,6 +5121,22 @@ impl App {
         }
     }
 
+    /// Sends the search box's query to the archive once typing has paused.
+    fn send_due_search(&mut self, now: Instant, ctx: &egui::Context) {
+        let Some(due) = self.search_due else {
+            return;
+        };
+        if now < due {
+            ctx.request_repaint_after(due - now);
+            return;
+        }
+        self.search_due = None;
+        let query = self.search.trim().to_owned();
+        if !query.is_empty() {
+            self.backend.send(Command::SearchMessages { query });
+        }
+    }
+
     /// Asks for the open chat's matches, for the query and day in force.
     fn request_chat_search(&mut self) {
         self.chat_search_selected = None;
@@ -6530,6 +6553,7 @@ impl App {
     /// from `eframe::App::logic`, after [`Self::background_frame`].
     pub fn window_logic(&mut self, ctx: &egui::Context) {
         self.sync_window_state(ctx);
+        self.send_due_search(Instant::now(), ctx);
         // A minimized window shows no pictures or stickers, so it keeps none.
         if ctx.input(|input| input.viewport().minimized) == Some(true) {
             crate::image_cache::release(ctx);
@@ -8756,8 +8780,10 @@ impl App {
                 }
                 if query.is_empty() || self.locked_folder_open() || self.secret_code_matched() {
                     self.search_hits.clear();
+                    self.search_due = None;
                 } else {
-                    self.backend.send(Command::SearchMessages { query });
+                    self.search_due = Some(Instant::now() + SEARCH_PAUSE);
+                    ctx.request_repaint_after(SEARCH_PAUSE);
                 }
             }
             Action::OpenChatSearch => self.open_chat_search(),
@@ -20896,6 +20922,32 @@ mod tests {
         assert!(!app.chat_search_open);
         assert!(app.chat_search.is_empty());
         assert!(app.focus_composer, "closing hands the keyboard back");
+    }
+
+    #[test]
+    fn the_search_box_asks_the_archive_once_typing_pauses() {
+        let mut app = app();
+        let (backend, mut commands, _events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        for typed in ["e", "en", "eng", "engine"] {
+            app.apply(Action::Search(typed.into()), &ctx);
+        }
+        let searches = |commands: &mut tokio::sync::mpsc::UnboundedReceiver<Command>| {
+            std::iter::from_fn(|| commands.try_recv().ok())
+                .filter_map(|command| match command {
+                    Command::SearchMessages { query } => Some(query),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let now = Instant::now();
+        app.send_due_search(now, &ctx);
+        assert!(searches(&mut commands).is_empty(), "still typing");
+        app.send_due_search(now + SEARCH_PAUSE, &ctx);
+        assert_eq!(searches(&mut commands), ["engine"], "one search, the last");
+        app.send_due_search(now + SEARCH_PAUSE * 2, &ctx);
+        assert!(searches(&mut commands).is_empty(), "and only once");
     }
 
     #[test]
