@@ -2156,7 +2156,7 @@ const COMPOSER_PADDING: f32 = 14.0;
 /// would stretch it and pull the text off its centre.
 const COMPOSER_CONTROL: f32 = 36.0;
 /// Space between the composer's rounded field and the buttons at its ends.
-const COMPOSER_INSET: i8 = 2;
+const COMPOSER_INSET: i8 = 6;
 /// Space between the plus and emoji buttons' hit areas. Each area pads its
 /// 22-point icon by six points a side, so this leaves eight between the
 /// icons, a pair.
@@ -8895,15 +8895,21 @@ fn message_menu_labels(locale: crate::i18n::Locale) -> Vec<String> {
     use crate::i18n::gettext;
     // Delete's two choices are a submenu's, which is as wide as they are.
     [
+        gettext(locale, "Reply"),
         gettext(locale, "Reply privately"),
         gettext(locale, "Star"),
         gettext(locale, "Unstar"),
         gettext(locale, "Pin message"),
         gettext(locale, "Unpin message"),
+        gettext(locale, "Forward"),
         gettext(locale, "Open in the viewer"),
+        gettext(locale, "Select"),
         gettext(locale, "Copy text"),
         gettext(locale, "Edit"),
         gettext(locale, "Delete"),
+        gettext(locale, "Message info"),
+        gettext(locale, "Reload earlier messages"),
+        gettext(locale, "Copy message ID"),
         gettext(locale, "Add to favorites"),
         gettext(locale, "Open in system player"),
         gettext(locale, "Open file"),
@@ -9336,6 +9342,22 @@ fn context_menu(
     let can_revoke = message.from_me
         && !matches!(message.content, Content::Revoked)
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
+    if !matches!(message.content, Content::Revoked)
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Reply),
+            &crate::i18n::gettext(view.locale, "Reply"),
+        )
+    {
+        if matches!(origin, MenuOrigin::List) {
+            actions.push(Action::OpenMessage {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            });
+        }
+        actions.push(Action::Reply(message.id.clone()));
+    }
     // From the starred list the source chat is not on screen, and the
     // private reply starts from the group the reader is looking at.
     if !matches!(origin, MenuOrigin::List)
@@ -9368,6 +9390,19 @@ fn context_menu(
         }
         actions.push(Action::Edit(message.id.clone()));
     }
+    if crate::app::can_select(&message.content)
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Forward),
+            &crate::i18n::gettext(view.locale, "Forward"),
+        )
+    {
+        actions.push(Action::ShowDialog(Dialog::Forward {
+            chat: chat.clone(),
+            messages: vec![message.id.clone()],
+        }));
+    }
     let text = match &message.content {
         Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
         Content::Image { caption, .. }
@@ -9386,17 +9421,32 @@ fn context_menu(
         Content::Contact { vcard, .. } => Some(vcard.clone()),
         _ => None,
     };
-    // Copy text has no icon of its own, but its words line up with the rows
-    // around it.
     if let Some(text) = text
-        && widgets::menu_item_inset(
+        && widgets::menu_item(
             ui,
             &palette,
+            Some(Icon::Copy),
             &crate::i18n::gettext(view.locale, "Copy text"),
         )
     {
         let mentions = mentions_of(view, message);
         actions.push(Action::CopyText(markup::plain(&text, &mentions)));
+    }
+    if crate::app::can_select(&message.content)
+        && widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Check),
+            &crate::i18n::gettext(view.locale, "Select"),
+        )
+    {
+        if matches!(origin, MenuOrigin::List) {
+            actions.push(Action::OpenMessage {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            });
+        }
+        actions.push(Action::SelectMessage(message.id.clone()));
     }
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let star_label = if starred {
@@ -9567,7 +9617,43 @@ fn context_menu(
     if ui.cursor().min.y > actions_from {
         widgets::menu_separator(ui, &palette);
     }
+    if has_message_info(message) {
+        if widgets::menu_item(
+            ui,
+            &palette,
+            Some(Icon::Info),
+            &crate::i18n::gettext(view.locale, "Message info"),
+        ) {
+            actions.push(Action::ShowDialog(Dialog::MessageInfo {
+                chat: chat.clone(),
+                message: message.id.clone(),
+            }));
+        }
+        widgets::menu_separator(ui, &palette);
+    }
     delete_submenu(ui, view, message, can_revoke, actions);
+    widgets::menu_separator(ui, &palette);
+    if widgets::menu_item_enabled(
+        ui,
+        &palette,
+        Some(Icon::Refresh),
+        &crate::i18n::gettext(view.locale, "Reload earlier messages"),
+        view.connected && !matches!(message.status, Delivery::Pending | Delivery::Failed),
+    ) {
+        actions.push(Action::ReloadHistory {
+            chat: chat.clone(),
+            message: message.id.clone(),
+        });
+    }
+    // The id helps when looking a message up for a bug report.
+    if widgets::menu_item(
+        ui,
+        &palette,
+        Some(Icon::Copy),
+        &crate::i18n::gettext(view.locale, "Copy message ID"),
+    ) {
+        actions.push(Action::CopyText(message.id.clone()));
+    }
 }
 
 /// The menu's Delete row, which opens the ways to delete `message`: for me,
