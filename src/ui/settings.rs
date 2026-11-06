@@ -8,7 +8,7 @@ use egui::{
 
 use super::controls;
 use crate::app::App;
-use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
@@ -497,49 +497,22 @@ fn sections(app: &App) -> Vec<Section> {
         chat_preview,
     );
     appearance.row(
-        translated(locale, "Colours"),
-        translated(
-            locale,
-            "Make your own from a look, a mode and an accent, or pick a ready-made theme.",
-        ),
-        style_picker,
+        translated(locale, "Mode"),
+        if app.custom_themes.follows_omarchy() {
+            translated(locale, "Follow system uses your Omarchy colours.")
+        } else {
+            translated(locale, "Light, dark, or as the system is.")
+        },
+        mode_picker,
     );
-    match app.settings.style() {
-        Style::Custom => {
-            appearance.block(
-                vec![translated(locale, "Look"), translated(locale, "Theme")],
-                look_cards,
-            );
-            appearance.row(
-                translated(locale, "Mode"),
-                if app.custom_themes.follows_omarchy() {
-                    translated(locale, "Follow system uses your Omarchy colours.")
-                } else {
-                    translated(locale, "Light, dark, or as the system is.")
-                },
-                mode_picker,
-            );
-            appearance.block(
-                vec![translated(locale, "Accent"), translated(locale, "Colour")],
-                accent_picker,
-            );
-        }
-        Style::Themes => {
-            appearance.row(
-                translated(locale, "Mode"),
-                translated(locale, "Each theme comes in light and dark."),
-                mode_picker,
-            );
-            appearance.block(
-                vec![
-                    translated(locale, "Themes"),
-                    translated(locale, "Theme"),
-                    "Agent Orchestrator".into(),
-                ],
-                theme_cards,
-            );
-        }
-    }
+    appearance.block(
+        vec![translated(locale, "Themes"), translated(locale, "Theme")],
+        theme_cards,
+    );
+    appearance.block(
+        vec![translated(locale, "Accent"), translated(locale, "Colour")],
+        accent_picker,
+    );
     appearance.row(
         translated(locale, "Glass"),
         translated(
@@ -1844,21 +1817,6 @@ fn segmented<T: Copy + PartialEq>(
     clicked
 }
 
-/// Custom or Themes: a look made your own, or a ready-made theme.
-fn style_picker(ui: &mut egui::Ui, app: &mut App) {
-    let options: Vec<_> = Style::ALL
-        .into_iter()
-        .map(|style| (style, crate::i18n::gettext(app.locale, style.label())))
-        .collect();
-    let selected = Some(app.settings.style());
-    if let Some(style) = segmented(ui, &app.palette, "style", &options, selected, 88.0) {
-        if let Some(origin) = ui.ctx().pointer_interact_pos() {
-            app.actions.push(Action::RevealThemeFrom(origin));
-        }
-        app.actions.push(Action::SetStyle(style));
-    }
-}
-
 /// Light, dark or system, as three segments of one control.
 fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
     let custom = app.settings.custom_theme.is_some();
@@ -1892,21 +1850,17 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
     let locale = app.locale;
     let chat_theme = app.settings.chat_theme;
     let custom = app.settings.custom_theme.is_some();
-    let description = if !chat_theme.takes_accent() {
-        crate::i18n::gettext(locale, "Messages keeps the system blue.")
-    } else {
-        crate::i18n::gettext(
-            locale,
-            "Buttons, links, ticks and your own messages take this colour.",
-        )
-    };
+    let description = crate::i18n::gettext(
+        locale,
+        "Buttons, links, ticks and your own messages take this colour in any theme.",
+    );
     block_heading(
         ui,
         &palette,
         &crate::i18n::gettext(locale, "Accent"),
         &description,
     );
-    let enabled = !custom && chat_theme.takes_accent();
+    let enabled = !custom;
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -1927,11 +1881,18 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                     color.gamma_multiply(0.4)
                 };
                 let center = rect.center();
-                if on {
+                let t = ui.ctx().animate_bool_with_time_and_easing(
+                    response.id,
+                    on,
+                    theme::MOTION_QUICK,
+                    theme::ease_out,
+                );
+                if t > 0.0 {
+                    // The ring eases in from the swatch's edge.
                     ui.painter().circle_stroke(
                         center,
-                        SWATCH / 2.0 + 2.5,
-                        Stroke::new(2.0, palette.text),
+                        SWATCH / 2.0 + 2.5 * t,
+                        Stroke::new(2.0, palette.text.gamma_multiply(t)),
                     );
                 } else if response.hovered() {
                     ui.painter().circle_stroke(
@@ -1951,8 +1912,9 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                         Stroke::new(1.0, palette.outline),
                     );
                 }
-                if on && accent != Accent::Theme {
-                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0);
+                if t > 0.0 && accent != Accent::Theme {
+                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0)
+                        .gamma_multiply(t);
                     theme::paint_icon(
                         ui,
                         Icon::Check,
@@ -2011,24 +1973,7 @@ fn chat_theme_cards(ui: &mut egui::Ui, app: &mut App, salt: &str, choices: &[Cha
     card_grid(ui, app, salt, cards);
 }
 
-/// The looks the Custom style starts from.
-fn look_cards(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(app.locale, "Look"),
-        &crate::i18n::gettext(
-            app.locale,
-            "Zeus's monochrome glass, WhatsApp's greens, or the bubbles of Messages.",
-        ),
-    );
-    ui.add_space(crate::theme::SPACE_HAIR);
-    chat_theme_cards(ui, app, "look", &ChatTheme::LOOKS);
-    ui.add_space(crate::theme::SPACE_XS);
-}
-
-/// The ready-made themes as cards, each in the mode on screen.
+/// Every theme as a card, each in the mode on screen with the accent chosen.
 fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     block_heading(
@@ -2037,15 +1982,11 @@ fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
         &crate::i18n::gettext(app.locale, "Themes"),
         &crate::i18n::gettext(
             app.locale,
-            "Ported from Agent Orchestrator, each with its own accent.",
+            "Pick a theme, then an accent below: every theme wears it in its own style.",
         ),
     );
     ui.add_space(crate::theme::SPACE_HAIR);
-    let themes: Vec<ChatTheme> = ChatTheme::ALL
-        .into_iter()
-        .filter(|choice| !choice.is_look())
-        .collect();
-    chat_theme_cards(ui, app, "chat-theme", &themes);
+    chat_theme_cards(ui, app, "chat-theme", &ChatTheme::ALL);
     ui.add_space(crate::theme::SPACE_XS);
 }
 

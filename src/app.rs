@@ -8862,12 +8862,6 @@ impl App {
                 self.settings_search.clear();
             }
             Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),
-            Action::SetStyle(style) => {
-                if self.settings.choose_style(style) {
-                    self.mark_settings_dirty();
-                    self.apply_theme(ctx);
-                }
-            }
             Action::SetMode(mode) => {
                 self.settings.mode = mode;
                 self.mark_settings_dirty();

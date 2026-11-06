@@ -16910,7 +16910,8 @@ mod tests {
         app.page = crate::model::Page::Settings;
         app.custom_themes =
             crate::theme::Catalog::preview(crate::theme::presets().collect(), false);
-        app.settings.choose_style(crate::chat_themes::Style::Themes);
+        app.settings
+            .choose_chat_theme(crate::chat_themes::ChatTheme::Catppuccin);
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         app.attach(&ctx);
