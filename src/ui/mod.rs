@@ -381,6 +381,10 @@ fn central_background(app: &App) -> egui::Color32 {
     if conversation && app.palette.vibrant() {
         // The conversation paints its own translucent background.
         egui::Color32::TRANSPARENT
+    } else if conversation && app.current_chat().is_none() {
+        // With no chat open the pane is the window's own panel, in every
+        // look, rather than the wallpaper colour of the chat it would hold.
+        app.palette.panel
     } else if conversation {
         app.settings.wallpaper_background(&app.palette)
     } else if app.page == Page::Settings && app.palette.vibrant() {
