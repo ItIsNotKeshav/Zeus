@@ -59,11 +59,11 @@ pub fn dropdown(
         .gap(6.0)
         .frame(widgets::menu_frame(palette));
     let open = popup.is_open();
-    let lift = ui.ctx().animate_bool_with_time_and_easing(
+    let lift = theme::animate(
+        ui.ctx(),
         id.with("lift"),
         open || (enabled && response.hovered()),
         theme::MOTION_QUICK,
-        theme::ease_out,
     );
     if ui.is_rect_visible(rect) {
         paint_field(ui, palette, rect, lift);
@@ -125,11 +125,11 @@ pub fn option(ui: &mut Ui, palette: &Palette, text: &str, selected: bool) -> boo
         egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, text.to_owned())
     });
     if ui.is_rect_visible(rect) {
-        let lift = ui.ctx().animate_bool_with_time_and_easing(
+        let lift = theme::animate(
+            ui.ctx(),
             response.id.with("lift"),
             response.hovered(),
             theme::MOTION_QUICK,
-            theme::ease_out,
         );
         let strength = if selected {
             theme::TINT_SELECTED
@@ -225,11 +225,11 @@ impl<'a> Field<'a> {
         let id = self.id.unwrap_or_else(|| ui.next_auto_id());
         let focused = ui.memory(|memory| memory.has_focus(id));
         let enabled = ui.is_enabled();
-        let lift = ui.ctx().animate_bool_with_time_and_easing(
+        let lift = theme::animate(
+            ui.ctx(),
             id.with("lift"),
             focused || (enabled && ui.rect_contains_pointer(rect)),
             theme::MOTION_QUICK,
-            theme::ease_out,
         );
         paint_field(ui, palette, rect, lift);
         let inner = Rect::from_min_max(

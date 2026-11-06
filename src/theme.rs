@@ -747,20 +747,53 @@ pub const CLOSE: f32 = 0.7;
 /// How far a closing surface shrinks, about its anchor.
 pub const CLOSE_SCALE: f32 = 0.96;
 
-/// The one easing curve: quick to start, settling softly, no overshoot.
+/// The easing curve of things that arrive, [`crate::motion::Curve::ENTER`]:
+/// quick to start, gliding in, no overshoot.
 pub fn ease_out(t: f32) -> f32 {
-    egui::emath::easing::cubic_out(t.clamp(0.0, 1.0))
+    crate::motion::Curve::ENTER.at(t)
 }
 
-/// `ctx.animate_bool_with_time_and_easing` on [`ease_out`], at once while a
-/// screen reader is attached (see [`crate::motion`]).
+/// The curve of things that leave, [`crate::motion::Curve::EXIT`].
+pub fn ease_in(t: f32) -> f32 {
+    crate::motion::Curve::EXIT.at(t)
+}
+
+/// A toggle's progress, 0 to 1, on a critically damped spring that rests
+/// after about `seconds` (see [`crate::motion::Spring::settling_in`]). A
+/// change of `on` mid-move turns it round with the speed it has, so hovers
+/// and presses let go of halfway never jump. At once while a screen reader
+/// is attached.
 pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32 {
-    let seconds = if crate::motion::screen_reader_attached(ctx) {
-        0.0
-    } else {
-        seconds
-    };
-    ctx.animate_bool_with_time_and_easing(id, on, seconds, ease_out)
+    if seconds <= 0.0 {
+        return if on { 1.0 } else { 0.0 };
+    }
+    crate::motion::spring_to(
+        ctx,
+        id,
+        if on { 1.0 } else { 0.0 },
+        crate::motion::Spring::settling_in(f64::from(seconds)),
+    )
+}
+
+/// Progress of something appearing, 0 to 1, from the first frame it is seen:
+/// [`animate`] toward `true` that starts at 0. Call [`forget_motion`] once it
+/// has gone, so its next appearance starts anew.
+pub fn appear(ctx: &egui::Context, id: egui::Id, seconds: f32) -> f32 {
+    if seconds <= 0.0 {
+        return 1.0;
+    }
+    crate::motion::spring_from(
+        ctx,
+        id,
+        1.0,
+        0.0,
+        crate::motion::Spring::settling_in(f64::from(seconds)),
+    )
+}
+
+/// Makes the next [`appear`] or [`animate`] of `id` start from the beginning.
+pub fn forget_motion(ctx: &egui::Context, id: egui::Id) {
+    crate::motion::forget(ctx, id);
 }
 
 /// How strong the tint of a field over a vibrant window is, and of a row

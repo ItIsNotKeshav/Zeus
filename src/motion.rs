@@ -225,6 +225,170 @@ impl Spring {
     }
 }
 
+impl Spring {
+    /// Controls that answer a touch: hovers, presses, toggles, menus. A hair
+    /// of bounce, like iOS's `.snappy`.
+    pub const SNAPPY: Spring = Spring::new(0.3, 0.12);
+    /// What most things move on: panels, cards, list changes. No bounce,
+    /// like iOS's `.smooth`.
+    pub const DEFAULT: Spring = Spring::new(0.45, 0.0);
+    /// Large, slow changes: whole-window moves, sheets.
+    pub const CALM: Spring = Spring::new(0.7, 0.0);
+
+    /// A critically damped spring that has come to rest after about
+    /// `seconds`, for moves that keep a fixed time but follow their
+    /// target's changes smoothly, with the velocity they have.
+    pub const fn settling_in(seconds: f64) -> Spring {
+        // A critically damped spring is within SETTLED of its target after
+        // about 1.46 of its durations.
+        Spring::new(seconds / 1.46, 0.0)
+    }
+}
+
+/// Where a [`spring_to`] value is, and how fast it moves.
+#[derive(Clone, Copy)]
+struct Follow {
+    value: f32,
+    velocity: f32,
+    time: f64,
+}
+
+/// Moves a value toward `target` on `spring` and returns where it is this
+/// frame. `id` names the value between frames. A new `target` mid-move turns
+/// the value around with the velocity it has, so a hover let go of halfway
+/// reverses smoothly instead of restarting. The first frame an id is seen it
+/// is already at `target`. While a screen reader is attached it is always
+/// there. Asks for frames until it has settled.
+pub fn spring_to(ctx: &egui::Context, id: egui::Id, target: f32, spring: Spring) -> f32 {
+    spring_from(ctx, id, target, target, spring)
+}
+
+/// [`spring_to`] for a value that starts at `start` the first frame its id is
+/// seen, so something that appears moves in from there. [`forget`] makes the
+/// next frame a first one again.
+pub fn spring_from(
+    ctx: &egui::Context,
+    id: egui::Id,
+    target: f32,
+    start: f32,
+    spring: Spring,
+) -> f32 {
+    if screen_reader_attached(ctx) {
+        ctx.data_mut(|data| data.remove::<Follow>(id));
+        return target;
+    }
+    let now = ctx.input(|input| input.time);
+    let mut follow = ctx
+        .data_mut(|data| data.get_temp::<Follow>(id))
+        .unwrap_or(Follow {
+            value: start,
+            velocity: 0.0,
+            time: now,
+        });
+    let (offset, velocity) = spring.advance(
+        follow.value - target,
+        follow.velocity,
+        (now - follow.time).max(0.0),
+    );
+    // Close and slow enough counts as there, so the last frame lands exactly.
+    let rest = offset.abs() < 5e-4 && velocity.abs() < 5e-3;
+    follow = if rest {
+        Follow {
+            value: target,
+            velocity: 0.0,
+            time: now,
+        }
+    } else {
+        Follow {
+            value: target + offset,
+            velocity,
+            time: now,
+        }
+    };
+    if rest {
+        ctx.data_mut(|data| data.remove::<Follow>(id));
+    } else {
+        ctx.data_mut(|data| data.insert_temp(id, follow));
+        ctx.request_repaint();
+    }
+    follow.value
+}
+
+/// Drops what [`spring_to`] holds for `id`, so its next frame starts anew.
+pub fn forget(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|data| data.remove::<Follow>(id));
+}
+
+/// A cubic Bézier easing curve, as CSS and Core Animation write them: the
+/// control points `(x1, y1)` and `(x2, y2)` between `(0, 0)` and `(1, 1)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Curve {
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+}
+
+impl Curve {
+    pub const fn new(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+        Self { x1, y1, x2, y2 }
+    }
+
+    /// Entering: leaves fast and glides in, as iOS sheets and menus do.
+    pub const ENTER: Curve = Curve::new(0.32, 0.72, 0.0, 1.0);
+    /// Leaving: starts gently and picks up speed, so a surface that goes
+    /// away is out of the way quickly.
+    pub const EXIT: Curve = Curve::new(0.4, 0.0, 0.8, 0.4);
+    /// Pressing: nearly immediate, with a short settle.
+    pub const PRESS: Curve = Curve::new(0.2, 0.0, 0.0, 1.0);
+    /// Moving between two resting places: eases at both ends.
+    pub const STANDARD: Curve = Curve::new(0.4, 0.0, 0.2, 1.0);
+
+    fn axis(a: f32, b: f32, s: f32) -> f32 {
+        let u = 1.0 - s;
+        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
+    }
+
+    /// The eased progress at linear progress `t` (clamped to 0 to 1).
+    pub fn at(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        if t == 0.0 || t == 1.0 {
+            return t;
+        }
+        // Find the curve parameter whose x is `t`: Newton, then bisection.
+        let mut s = t;
+        for _ in 0..8 {
+            let error = Self::axis(self.x1, self.x2, s) - t;
+            if error.abs() < 1e-5 {
+                return Self::axis(self.y1, self.y2, s);
+            }
+            let u = 1.0 - s;
+            let slope = 3.0 * u * u * self.x1
+                + 6.0 * u * s * (self.x2 - self.x1)
+                + 3.0 * s * s * (1.0 - self.x2);
+            if slope.abs() < 1e-6 {
+                break;
+            }
+            s -= error / slope;
+        }
+        let (mut low, mut high) = (0.0_f32, 1.0_f32);
+        s = t;
+        for _ in 0..24 {
+            let x = Self::axis(self.x1, self.x2, s);
+            if (x - t).abs() < 1e-5 {
+                break;
+            }
+            if x < t {
+                low = s;
+            } else {
+                high = s;
+            }
+            s = (low + high) / 2.0;
+        }
+        Self::axis(self.y1, self.y2, s)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -477,5 +641,48 @@ pub(crate) mod tests {
             assert!(rest.abs() < 1e-3 && still.abs() < 1e-3);
             assert_eq!(spring.advance(3.0, 4.0, 0.0), (3.0, 4.0));
         }
+    }
+
+    #[test]
+    fn curves_run_from_zero_to_one_and_enter_leads_exit() {
+        for curve in [Curve::ENTER, Curve::EXIT, Curve::PRESS, Curve::STANDARD] {
+            assert_eq!(curve.at(0.0), 0.0);
+            assert_eq!(curve.at(1.0), 1.0);
+            let mut last = 0.0;
+            for step in 1..=20 {
+                let y = curve.at(step as f32 / 20.0);
+                assert!(y >= last - 1e-4, "{curve:?} fell at {step}");
+                last = y;
+            }
+        }
+        assert!(Curve::ENTER.at(0.3) > 0.3);
+        assert!(Curve::EXIT.at(0.3) < 0.3);
+    }
+
+    #[test]
+    fn a_followed_value_keeps_its_velocity_when_turned_around() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("follow");
+        let at = |time: f64, target: f32| {
+            let mut value = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| value = spring_from(ui.ctx(), id, target, 0.0, Spring::SNAPPY),
+            );
+            output.textures_delta.clear();
+            value
+        };
+        assert_eq!(at(0.0, 1.0), 0.0);
+        let early = at(0.05, 1.0);
+        let mid = at(0.1, 1.0);
+        assert!(early > 0.0 && mid > early && mid < 1.0);
+        // Turned back, it carries on a little before it reverses.
+        let carried = at(0.12, 0.0);
+        assert!(carried > mid);
+        assert_eq!(at(3.0, 0.0), 0.0);
+        assert_eq!(at(6.0, 0.0), 0.0);
     }
 }
