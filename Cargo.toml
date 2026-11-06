@@ -35,8 +35,11 @@ aes = "0.9"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 hkdf = "0.13"
 hmac = "0.13"
-# Reads .wastickers zip archives.
+# Reads .wastickers and WhatsApp Lottie (.was) archives.
 zip = { version = "9", default-features = false, features = ["deflate"] }
+tempfile = "3"
+# In-process Lottie rasterizer; no GIF encoder or native rendering dependency.
+rasterlottie = { version = "0.2.4", default-features = false, features = ["images", "text"] }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -90,7 +93,7 @@ async-channel = "2.5"
 tokio-websockets = { version = "0.13.3", default-features = false, features = ["client"] }
 http = "1"
 # Encodes HTTP proxy credentials. Already included through several crates.
-base64 = "0.22"
+base64 = "0.23"
 # SQLCipher encrypts the archive; the device store shares the same library.
 # Bundle OpenSSL so all release platforms use the same encryption provider.
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
@@ -134,7 +137,11 @@ openh264 = "0.9"
 # The encoder option a call's camera uses to change its bitrate mid-stream,
 # which openh264 does not wrap. Already included through openh264.
 openh264-sys2 = { version = "0.9", default-features = false }
-mp4 = "0.14"
+# crmne/mp4-rust is upstream's master, which reads a sample entry whose
+# avcC follows another box (pasp first, as some encoders write it); 0.14.0,
+# the last release, refuses such a video. Back to crates.io once a release
+# has it.
+mp4 = { git = "https://github.com/crmne/mp4-rust", rev = "35560e94f5e871a2b2d88bfe964013b39af131e8" }
 # rodio decodes and mixes; fastframe-audio plays and records, so neither of
 # rodio's own device features is on. The crmne/rodio fork (branch `zapfast`)
 # is upstream's master, which carries what no release has yet:
@@ -230,19 +237,21 @@ fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1"
 # (emilk/egui#8621, the group rename crash in #313), glow falls back to a
 # compatibility-profile context on old Windows drivers (#349,
 # emilk/egui#8655), and a saved window size keeps its zoom factor so a window
-# no longer shrinks each time it reopens (#293, emilk/egui#8656).
+# no longer shrinks each time it reopens (#293, emilk/egui#8656). Right-to-left
+# runs wrap in reading order with the caret, arrows and selection beside them
+# (crmne/egui#2), and winit's `Ime::DeleteSurrounding` reaches egui (crmne/egui#4).
 # Every egui crate comes from the same revision so they share one emath and
 # epaint. Drop this once egui releases all three.
-ecolor = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-eframe = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui-wgpu = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui-winit = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui_extras = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui_glow = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-emath = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-epaint = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+ecolor = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+eframe = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui-wgpu = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+emath = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+epaint = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
@@ -256,7 +265,9 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6ce633ba5
 # windows close when its loop exits, preserving the macOS tray across hide
 # and recreation (rust-windowing/winit#4754, crmne/winit#2), and a first
 # window opens after the headless AppKit loop has already launched (#4770).
-winit = { git = "https://github.com/crmne/winit", rev = "0bed9dc0a7db02590a279fb8bac795fa39ee6948" }
+# Wayland clipboard MIME bytes are read on that one data device (crmne/winit#7),
+# and macOS's accent picker replaces the typed character (crmne/winit#5).
+winit = { git = "https://github.com/crmne/winit", rev = "59ebfb727b8c83fcd28f8ca59c3733e32b4b4e9b" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
@@ -330,7 +341,6 @@ default-features = false
 winresource = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
 # Checks the default log filter the way fastframe-log's logger reads it.
 # Already in the tree through fastframe-log, at this version.
 env_logger = { version = "0.11", default-features = false }
@@ -359,6 +369,14 @@ strip = true
 # file as unsupported. Every other panic still ends the process at once; see
 # `contain_panics` in src/main.rs.
 panic = "unwind"
+
+# Full debuginfo tripled link time and test-build time; CARGO_PROFILE_DEV_DEBUG=true restores it.
+[profile.dev]
+debug = "line-tables-only"
+
+# Matches dev so tempfile, a build and dev dependency, doesn't rebuild the protocol stack for tests.
+[profile.dev.build-override]
+debug = "line-tables-only"
 
 # Optimize dependencies in development for usable decryption and UI layout.
 # Keep the application crate incremental.
