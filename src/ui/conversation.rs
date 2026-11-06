@@ -8708,7 +8708,15 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     );
     let change = reaction_change(previous.as_deref(), &counts);
     ui.ctx().data_mut(|data| {
-        data.insert_temp(tally_id, (frame, counts.clone()));
+        // Stamp the frame in place; clone the tally only when it changed.
+        match data.get_temp_mut_or_insert_with(tally_id, || (frame, counts.clone())) {
+            (at, stored) => {
+                *at = frame;
+                if *stored != counts {
+                    stored.clone_from(&counts);
+                }
+            }
+        }
         if change != ReactionChange::None && !calm {
             data.insert_temp(motion_id, (now, change == ReactionChange::Arrived));
         }
@@ -8770,18 +8778,6 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
         );
         line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
     }
-    let names: Vec<String> = message
-        .reactions
-        .iter()
-        .map(|reaction| {
-            let who = if reaction.from_me {
-                "You".to_owned()
-            } else {
-                (view.names_or)(&reaction.sender, None)
-            };
-            format!("{} {who}", reaction.emoji)
-        })
-        .collect();
     if let Some((spring, arrived, _)) = progress {
         let from = if arrived { 0.8 } else { 0.92 };
         let scale = from + (1.0 - from) * spring;
@@ -8808,10 +8804,42 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     ui.set_opacity(old_opacity);
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(names.join("\n"));
+        .on_hover_ui(|ui| {
+            ui.label(reaction_tooltip(view, message));
+        });
     if response.clicked() {
         actions.push(super::reaction_list::open(&view.chat.id, &message.id));
     }
+}
+
+/// How many reactors the pill's tooltip names before summarizing the rest.
+const REACTION_TOOLTIP_ROWS: usize = 12;
+
+/// Who reacted with what, built only while the tooltip is showing: a message
+/// with hundreds of reactions would otherwise format a name per reaction on
+/// every frame it scrolls past.
+fn reaction_tooltip(view: &View<'_>, message: &Message) -> String {
+    let mut lines: Vec<String> = message
+        .reactions
+        .iter()
+        .take(REACTION_TOOLTIP_ROWS)
+        .map(|reaction| {
+            let who = if reaction.from_me {
+                "You".to_owned()
+            } else {
+                (view.names_or)(&reaction.sender, None)
+            };
+            format!("{} {who}", reaction.emoji)
+        })
+        .collect();
+    let more = message
+        .reactions
+        .len()
+        .saturating_sub(REACTION_TOOLTIP_ROWS);
+    if more > 0 {
+        lines.push(format!("+{more}"));
+    }
+    lines.join("\n")
 }
 
 /// Records that a message was drawn with no reactions.
