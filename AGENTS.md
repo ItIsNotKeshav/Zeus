@@ -53,6 +53,25 @@ protocol. These notes are for coding agents and new contributors.
   level that ships (see the definition of done); treat existing
   captures of them the same way.
 
+## Code navigation with Graphify
+
+The Graphify MCP connector indexes this repository as a code graph. When it
+is connected, use it before editing to learn what does what, instead of
+reading files blindly:
+
+- Workspace `keshav-s-workspace`, repository `ItIsNotKeshav/Zeus`. Call
+  `set_workspace` with that handle if the session is not already on it.
+- `query_graph` for how something works or where a behavior lives, and
+  `graphify_find` for where a symbol is defined.
+- `graphify_callers` and `graphify_callees` for call relationships, and
+  `graphify_impact` or `impact_and_risk` for what a change can break.
+- `graphify_tests_for` to pick the tests that cover a symbol or file, so you
+  run only those.
+- The index is a snapshot of a commit, and results say which one. If a result
+  looks stale or empty, the file changed since indexing, or the connector is
+  unavailable, fall back to grep and read the current file. Use grep for
+  literal strings, config values, and unindexed files either way.
+
 ## Architecture
 
 - mimalloc is the global allocator (`#[global_allocator]` in `src/main.rs`)
