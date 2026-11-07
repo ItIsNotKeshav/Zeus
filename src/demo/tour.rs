@@ -132,9 +132,6 @@ fn common_setup(app: &mut App) {
     assert!(app.backend.is_offline(), "a tour requires an offline app");
     app.settings.set_theme(ThemeChoice::Dark);
     app.settings.keep_running_in_background = false;
-    // The tour right-clicks a message and picks Reply, which the menu hides
-    // until Settings turns it on.
-    app.settings.message_menu.reply = true;
     app.page = Page::Chats;
     app.dialog = None;
     app.picker = None;
@@ -310,9 +307,11 @@ fn script() -> Vec<Cue> {
         Key(egui::Key::End, command(), "Ctrl + End · Latest messages"),
     );
     add(5.4, Move(Bubble("ada-voice")));
-    add(5.8, Click(PointerButton::Secondary));
-    add(6.25, Move(Label("Reply")));
-    add(6.7, Click(left));
+    // The message's menu has no Reply: a double-click on the bubble's margin
+    // starts one.
+    add(5.8, Move(BubbleCorner("ada-voice")));
+    add(6.25, Click(left));
+    add(6.35, Click(left));
     add(
         8.1,
         Key(egui::Key::Enter, Modifiers::NONE, "Enter · Complete emoji"),
@@ -321,6 +320,9 @@ fn script() -> Vec<Cue> {
         8.7,
         Key(egui::Key::Enter, Modifiers::NONE, "Enter · Send reply"),
     );
+    // The pointer rests on the voice message still: its menu opens, and goes.
+    add(9.0, Click(PointerButton::Secondary));
+    add(9.2, Press(egui::Key::Escape, Modifiers::NONE));
     add(9.4, Move(Picker));
     add(9.8, Click(left));
     add(10.5, Move(Label("GIF")));

@@ -75,12 +75,6 @@ private-reply recovery, including refusals arriving after deletion.
 Double-click beside a message, or on its edge, to reply to it. A double-click
 on its text still selects the word.
 
-**Settings > Message menu** chooses which actions a message's right-click menu
-offers. Reply and Forward start off, since a double-click or swipe replies and
-the selection bar forwards; every other action can be switched off the same
-way, and Delete is always there. **Layout** can show the menu as a horizontal
-row of icon-only buttons (experimental): rest on one to see its name.
-
 To delete a message, right-click it and rest on **Delete**: it offers
 **Delete for me**, and **Delete for everyone** while your own message can
 still be revoked. Either asks you to confirm. **Delete for everyone**

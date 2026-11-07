@@ -741,72 +741,6 @@ impl Swipes {
     }
 }
 
-/// How a message's right-click menu lays out its actions.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MenuLayout {
-    /// One row per action, an icon and its name.
-    #[default]
-    List,
-    /// A horizontal run of icon-only buttons; the name shows on hover.
-    Icons,
-}
-
-impl MenuLayout {
-    pub const ALL: [MenuLayout; 2] = [Self::List, Self::Icons];
-
-    pub fn label(self, locale: crate::i18n::Locale) -> std::borrow::Cow<'static, str> {
-        crate::i18n::gettext(
-            locale,
-            match self {
-                Self::List => "List",
-                Self::Icons => "Icons only (experimental)",
-            },
-        )
-    }
-}
-
-/// Which actions a message's right-click menu offers, and how it lays them
-/// out. Delete is always there. Reply and Forward start hidden: both have
-/// quicker ways in (a double click or swipe, the selection bar).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct MessageMenu {
-    pub layout: MenuLayout,
-    pub reply: bool,
-    pub reply_privately: bool,
-    pub edit: bool,
-    pub forward: bool,
-    pub copy_text: bool,
-    pub select: bool,
-    pub star: bool,
-    pub pin: bool,
-    pub message_info: bool,
-    pub copy_image: bool,
-    pub save: bool,
-    pub show_in_folder: bool,
-}
-
-impl Default for MessageMenu {
-    fn default() -> Self {
-        Self {
-            layout: MenuLayout::List,
-            reply: false,
-            reply_privately: true,
-            edit: true,
-            forward: false,
-            copy_text: true,
-            select: true,
-            star: true,
-            pin: true,
-            message_info: true,
-            copy_image: true,
-            save: true,
-            show_in_folder: true,
-        }
-    }
-}
-
 /// Which chats show one notification, then stay quiet for ten minutes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -938,8 +872,6 @@ pub struct Settings {
     pub legacy_halloween: bool,
     /// What two-finger touchpad swipes do in the chat list and the open chat.
     pub swipes: Swipes,
-    /// Which actions the message right-click menu shows, and its layout.
-    pub message_menu: MessageMenu,
     /// Show the default doodle wallpaper behind conversations.
     pub show_wallpaper: bool,
     /// Which doodles `show_wallpaper` draws.
@@ -1095,7 +1027,6 @@ impl Default for Settings {
             auto_download: true,
             legacy_halloween: false,
             swipes: Swipes::default(),
-            message_menu: MessageMenu::default(),
             show_wallpaper: true,
             doodle_style: DoodleStyle::Classic,
             doodle_color: DoodleColor::Gray,
@@ -1692,17 +1623,6 @@ mod tests {
         // Four bytes, but "é" would be cut in half by the second pair.
         assert_eq!(unhex("aéa"), None);
         assert_eq!(unhex("éé"), None);
-    }
-
-    #[test]
-    fn message_menu_hides_reply_and_forward_until_chosen() {
-        let menu: MessageMenu = serde_json::from_str("{}").unwrap();
-        assert!(!menu.reply && !menu.forward);
-        assert!(menu.copy_text && menu.star && menu.pin && menu.select);
-        assert_eq!(menu.layout, MenuLayout::List);
-        let menu: MessageMenu = serde_json::from_str(r#"{"reply":true,"layout":"icons"}"#).unwrap();
-        assert!(menu.reply && !menu.forward);
-        assert_eq!(menu.layout, MenuLayout::Icons);
     }
 
     #[test]
