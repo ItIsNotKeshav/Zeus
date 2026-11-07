@@ -2796,6 +2796,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
         });
     }
+    super::blocking::menu(app, ui, &chat.id);
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
         && widgets::menu_item(

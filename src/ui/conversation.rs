@@ -1522,6 +1522,37 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 theme::MOTION_PANEL,
             );
             ui.multiply_opacity(if chat.can_send() { open } else { 1.0 - open });
+            if chat.can_send() && app.blocklist.contains(&chat.id) {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(6.0);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "You blocked this contact").as_ref(),
+                        theme::regular(13.5),
+                        palette.secondary,
+                    );
+                    ui.add_space(4.0);
+                    if ui
+                        .add_enabled_ui(app.is_connected() && app.blocklist.editable(), |ui| {
+                            theme::pill_button(
+                                ui,
+                                &palette,
+                                &crate::i18n::gettext(app.locale, "Unblock"),
+                                false,
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        app.actions.push(Action::ShowDialog(Dialog::ConfirmBlock {
+                            chat: chat.id.clone(),
+                            blocked: false,
+                            from_list: false,
+                        }));
+                    }
+                });
+                return;
+            }
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     // A channel we left says so; the rest are only read-only.

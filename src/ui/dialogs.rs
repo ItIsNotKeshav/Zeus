@@ -50,6 +50,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::NewContact => 380.0,
                 Dialog::NewChat => 420.0,
                 Dialog::UnlockLockedChats | Dialog::ConfirmLockChat(_) => 380.0,
+                Dialog::ConfirmBlock { .. } => 380.0,
+                Dialog::BlockedContacts => 420.0,
                 Dialog::ConfirmDeleteChat(_) | Dialog::JoinGroup | Dialog::ConfirmStartOver => {
                     380.0
                 }
@@ -102,6 +104,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 Dialog::NewChat => new_chat(app, ui),
                 Dialog::UnlockLockedChats => unlock_locked_chats(app, ui),
                 Dialog::ConfirmLockChat(id) => confirm_lock_chat(app, ui, &id),
+                Dialog::BlockedContacts => super::blocking::list(app, ui),
+                Dialog::ConfirmBlock { chat, blocked, .. } => {
+                    super::blocking::confirmation(app, ui, &chat, blocked)
+                }
                 Dialog::ConfirmDeleteChat(id) => confirm_delete_chat(app, ui, &id),
                 Dialog::ConfirmClearChat(id) => confirm_clear_chat(app, ui, &id),
                 Dialog::ConfirmDeleteMessage {
@@ -1715,7 +1721,7 @@ fn confirm_remove(app: &mut App, ui: &mut egui::Ui, id: crate::model::AccountId)
 /// note), then Cancel and a red button that queues `action` and closes the
 /// dialog. Callers pass translated text. Enter is deliberately not bound: a
 /// stray keypress must not destroy anything.
-fn confirm_destructive(
+pub(super) fn confirm_destructive(
     app: &mut App,
     ui: &mut egui::Ui,
     heading: &str,

@@ -2463,6 +2463,12 @@ pub enum Dialog {
     NewContact,
     UnlockLockedChats,
     ConfirmLockChat(ChatId),
+    BlockedContacts,
+    ConfirmBlock {
+        chat: ChatId,
+        blocked: bool,
+        from_list: bool,
+    },
     /// Manages the local labels.
     Labels,
     /// Confirms deleting a chat, which cannot be undone.

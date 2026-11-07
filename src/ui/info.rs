@@ -58,6 +58,7 @@ const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
 const MEMBERS_STOP: u8 = 32;
+const BLOCK_STOP: u8 = 33;
 
 /// The media view's title, and the overview row that opens it.
 fn media_title(app: &App) -> String {
@@ -1063,6 +1064,10 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         {
             leave = true;
         }
+    }
+    if !shown.group && !shown.channel {
+        ui.add_space(SECTION_GAP);
+        super::blocking::button(app, ui, id, Stop::InfoControl(BLOCK_STOP));
     }
     if leave {
         app.actions

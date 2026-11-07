@@ -8443,6 +8443,9 @@ impl App {
                 self.backend.send(Command::SetFavorite(chat, favorite));
             }
             Action::ShowDialog(dialog) => {
+                if dialog == Dialog::BlockedContacts {
+                    self.backend.send(Command::FetchBlocklist);
+                }
                 self.cancel_contact_dialog_request();
                 self.clear_chat_lock_entry();
                 if dialog == Dialog::NewChat {

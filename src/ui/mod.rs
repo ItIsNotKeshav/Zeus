@@ -2,6 +2,7 @@
 
 pub mod accounts;
 pub mod benchmark;
+mod blocking;
 pub mod call;
 pub mod calls;
 pub(crate) mod carry;
