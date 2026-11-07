@@ -3405,10 +3405,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                 && input.raw.events.iter().any(|event| {
                     matches!(
                         event,
-                        egui::Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            ..
-                        }
+                        egui::Event::MouseWheel { unit, delta, .. }
+                            if super::overscroll::is_precise(*unit, delta.y)
                     )
                 }),
             delta: if list_hovered(input, list) {

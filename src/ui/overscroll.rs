@@ -30,6 +30,21 @@ const LIVE: f64 = 0.35;
 const REST_POSITION: f32 = 0.25;
 const REST_SPEED: f32 = 4.0;
 
+/// Whether a wheel event comes from a touchpad (or a free-spinning wheel)
+/// rather than a notched wheel. Linux and macOS report a touchpad in points.
+/// Windows reports everything in lines, a touchpad as fractions of a notch
+/// (a notch is a whole number of lines), so a fractional step counts too.
+pub(crate) fn is_precise(unit: egui::MouseWheelUnit, delta: f32) -> bool {
+    match unit {
+        egui::MouseWheelUnit::Point => true,
+        egui::MouseWheelUnit::Line => {
+            let part = delta.abs().fract();
+            delta != 0.0 && part > 0.01 && part < 0.99
+        }
+        egui::MouseWheelUnit::Page => false,
+    }
+}
+
 /// Which ends of the list the view is at.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Edges {
@@ -221,6 +236,17 @@ mod tests {
             mid.advance(frame as f64 / 60.0, swipe(-20.0));
         }
         assert_eq!(mid.position(), 0.0);
+    }
+
+    #[test]
+    fn windows_touchpad_lines_are_told_from_wheel_notches() {
+        use egui::MouseWheelUnit::{Line, Page, Point};
+        assert!(is_precise(Point, 3.0));
+        assert!(is_precise(Line, 0.2));
+        assert!(is_precise(Line, -1.4));
+        assert!(!is_precise(Line, 1.0));
+        assert!(!is_precise(Line, -3.0));
+        assert!(!is_precise(Page, 0.5));
     }
 
     #[test]
