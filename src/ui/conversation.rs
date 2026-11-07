@@ -5517,6 +5517,22 @@ fn bubble_arriving(
             let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
             let elapsed = now - landed;
             if send_settled(elapsed) {
+                // Home: the soft wash behind the bubble eases in now, so it
+                // does not pop in the moment the bubble lands.
+                if elapsed < SEND_WASH_DELAY + SEND_WASH_SECONDS {
+                    let wash =
+                        theme::ease_out(((elapsed - SEND_WASH_DELAY) / SEND_WASH_SECONDS) as f32);
+                    ui.ctx().graphics_mut(|graphics| {
+                        let list = graphics.entry(layer);
+                        let end = list.next_idx();
+                        for index in start.0..end.0 {
+                            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                                fade_wash(&mut clipped.shape, wash);
+                            });
+                        }
+                    });
+                    ui.ctx().request_repaint();
+                }
                 return response;
             }
             let Some(rect) = ui.ctx().data(|data| {
@@ -5550,9 +5566,9 @@ fn bubble_arriving(
             // the first moments: the field's version lies over it, fading.
             let veil = 1.0 - theme::ease_out((elapsed / SEND_TINT_SECONDS) as f32);
             // The soft wash behind a bubble is no part of the flight: it
-            // would trail the bubble over the composer like a shadow. It
-            // eases in once the bubble is nearly home.
-            let wash = theme::ease_out(((elapsed - SEND_WASH_DELAY) / SEND_WASH_SECONDS) as f32);
+            // would trail the bubble over the composer like a shadow. It is
+            // left out until the bubble is home, then eases in (above).
+            let wash = 0.0;
             let own_text = view.palette.on_bubble(true).text;
             // Lifted onto a layer above the chat, so it can cross the composer
             // and the list's edge on its way, and the list's own glide leaves it be.
@@ -5727,9 +5743,10 @@ fn field_veil(
     veil
 }
 
-/// How long into a send the soft wash behind the bubble stays away, and how
-/// long it then takes to ease in.
-const SEND_WASH_DELAY: f64 = 0.3;
+/// How long into a send the soft wash behind the bubble stays away, which is
+/// until the bubble has landed (both springs are at rest by about 0.75 s),
+/// and how long it then takes to ease in.
+const SEND_WASH_DELAY: f64 = 0.8;
 const SEND_WASH_SECONDS: f64 = 0.3;
 
 /// Fades `shape` to `opacity` if it is a soft wash (the doodle scrim), and
