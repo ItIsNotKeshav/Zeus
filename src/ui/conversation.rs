@@ -5549,6 +5549,10 @@ fn bubble_arriving(
             // It leaves in the field's colours and turns into its own over
             // the first moments: the field's version lies over it, fading.
             let veil = 1.0 - theme::ease_out((elapsed / SEND_TINT_SECONDS) as f32);
+            // The soft wash behind a bubble is no part of the flight: it
+            // would trail the bubble over the composer like a shadow. It
+            // eases in once the bubble is nearly home.
+            let wash = theme::ease_out(((elapsed - SEND_WASH_DELAY) / SEND_WASH_SECONDS) as f32);
             let own_text = view.palette.on_bubble(true).text;
             // Lifted onto a layer above the chat, so it can cross the composer
             // and the list's edge on its way, and the list's own glide leaves it be.
@@ -5561,7 +5565,11 @@ fn bubble_arriving(
                     .all_entries()
                     .skip(start.0)
                     .take(end.0 - start.0)
-                    .map(|clipped| clipped.shape.clone())
+                    .map(|clipped| {
+                        let mut shape = clipped.shape.clone();
+                        fade_wash(&mut shape, wash);
+                        shape
+                    })
                     .collect();
                 for index in start.0..end.0 {
                     list.reset_shape(egui::layers::ShapeIdx(index));
@@ -5717,6 +5725,23 @@ fn field_veil(
         veil.push(shape);
     }
     veil
+}
+
+/// How long into a send the soft wash behind the bubble stays away, and how
+/// long it then takes to ease in.
+const SEND_WASH_DELAY: f64 = 0.3;
+const SEND_WASH_SECONDS: f64 = 0.3;
+
+/// Fades `shape` to `opacity` if it is a soft wash (the doodle scrim), and
+/// leaves any solid shape as it is.
+fn fade_wash(shape: &mut egui::Shape, opacity: f32) {
+    if matches!(shape, egui::Shape::Rect(rect) if rect.blur_width > 0.0) {
+        egui::epaint::shape_transform::adjust_colors(shape, move |colour| {
+            if *colour != Color32::PLACEHOLDER {
+                *colour = colour.gamma_multiply(opacity.clamp(0.0, 1.0));
+            }
+        });
+    }
 }
 
 /// Whether a shape is a soft one, a shadow or scrim, rather than a solid.
@@ -6035,7 +6060,12 @@ fn reference_timestamp(
     // narrower than the time and ticks (a two-letter reply) lets the row reach
     // past its left edge instead of cutting the time short.
     let time = crate::util::clock(message.timestamp);
-    let needed = reference_timestamp_width(ui, &time, own);
+    let shown = shown_delivery(view, message);
+    let status = message_status_text(view, message);
+    let needed = match &status {
+        Some(text) => reference_timestamp_width(ui, text, false),
+        None => reference_timestamp_width(ui, &time, own),
+    };
     let x = bubble.map_or(available.x_range(), |bubble| bubble.x_range());
     let x = widen_to(x, needed, available.x_range());
     let row_rect = Rect::from_x_y_ranges(x, slot_top + SPACING..=slot_top + SPACING + ROW_HEIGHT);
@@ -6051,7 +6081,31 @@ fn reference_timestamp(
     row_ui.multiply_opacity(progress);
     row_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        if own {
+        if let Some(text) = &status {
+            // A word in place of the time and ticks: the time only when the
+            // state came well after the message.
+            let font = theme::regular(10.0);
+            let colour = status_colour(view, shown, view.palette.secondary.gamma_multiply(0.82));
+            let width = ui
+                .painter()
+                .layout_no_wrap(text.clone(), font.clone(), colour)
+                .size()
+                .x;
+            let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
+            paint_status_word(
+                ui,
+                view,
+                message,
+                shown,
+                text,
+                (rect.right(), rect.center().y),
+                &font,
+                colour,
+            );
+        } else if own {
+            // Noted while it is still sending, so the word that follows
+            // eases in.
+            let _ = status_motion(ui, view, message, shown);
             match message.status {
                 Delivery::Pending => {
                     widgets::rich_text(ui, "•••", theme::semibold(12.0), view.palette.secondary);
@@ -6059,16 +6113,7 @@ fn reference_timestamp(
                 Delivery::Failed => {
                     widgets::rich_text(ui, "✗", theme::semibold(12.0), view.palette.danger);
                 }
-                status => {
-                    let ticks = shown_delivery(view, message);
-                    if matches!(
-                        status,
-                        Delivery::Sent | Delivery::Delivered | Delivery::Read | Delivery::Played
-                    ) {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(14.0), Sense::hover());
-                        tick_motion(ui, view, message, ticks, rect, view.palette.secondary);
-                    }
-                }
+                _ => {}
             }
             widgets::rich_text(
                 ui,
@@ -6119,23 +6164,23 @@ fn status_advanced(previous: Option<Delivery>, now: Delivery) -> bool {
     matches!(previous, Some(before) if before != now) && now != Delivery::Failed
 }
 
-/// Draws the delivery ticks, in `plain` for the states that are not read or
-/// failed. A live advance scales the new glyph in about its centre with a
-/// fade, and a change to read blends the colour.
-fn tick_motion(
-    ui: &mut egui::Ui,
+/// How far a status change has got, from 0 to 1, and the status it moved
+/// on from; `None` once it has run its course, with a screen reader (which
+/// sees the change at once), or when this frame is not one that follows a
+/// change. Every draw of a message's status calls it, so it also keeps the
+/// status the last frame saw.
+fn status_motion(
+    ui: &egui::Ui,
     view: &View<'_>,
     message: &Message,
     shown: Delivery,
-    rect: Rect,
-    plain: Color32,
-) {
+) -> Option<(f32, Delivery)> {
     let now = ui.input(|input| input.time);
     let status_id = egui::Id::new(("tick-status", &view.chat.id, &message.id));
     let motion_id = egui::Id::new(("tick-motion", &view.chat.id, &message.id));
     let calm = crate::motion::screen_reader_attached(ui.ctx());
     // Only a status seen on the frame before counts as earlier: a bubble
-    // scrolled back into view after a change shows its ticks as they are.
+    // scrolled back into view after a change shows its status as it is.
     let frame = ui.ctx().cumulative_frame_nr();
     let previous = seen_last_frame(
         ui.ctx()
@@ -6150,12 +6195,144 @@ fn tick_motion(
         }
     });
     let motion: Option<(f64, Delivery)> = ui.ctx().data(|data| data.get_temp(motion_id));
-    let live = motion.filter(|(start, _)| now - start < TICK_SECONDS && !calm);
-    let Some((start, before)) = live else {
+    motion
+        .filter(|(start, _)| now - start < TICK_SECONDS && !calm)
+        .map(|(start, before)| (((now - start) / TICK_SECONDS) as f32, before))
+}
+
+/// How far the old and new status word slide as one gives way to the other.
+const STATUS_SLIDE: f32 = 4.0;
+
+/// Our message's time and delivery state show the time only for a state that
+/// came this long (seconds) after the message was sent: a reply that is read
+/// at once says just "Read".
+const STATUS_STAMP_AFTER: i64 = 5 * 60;
+
+/// The word for a delivery state that is drawn as a word rather than a glyph.
+/// A voice or video note that was played says so; everything else read says
+/// "Read".
+fn status_word(locale: crate::i18n::Locale, status: Delivery) -> Option<String> {
+    let word = match status {
+        Delivery::Sent => "Sent",
+        Delivery::Delivered => "Delivered",
+        Delivery::Read => "Read",
+        Delivery::Played => "Played",
+        Delivery::None | Delivery::Pending | Delivery::Failed => return None,
+    };
+    Some(crate::i18n::gettext(locale, word).into_owned())
+}
+
+/// When a state was reached, if that was late enough to say: more than
+/// [`STATUS_STAMP_AFTER`] seconds after the message was sent. A message
+/// still only sent that long after it left has no later state to name, so it
+/// gives the time it was sent.
+fn status_stamp(message: &Message, shown: Delivery, now: i64) -> Option<i64> {
+    let sent = message.timestamp;
+    let at = match shown {
+        Delivery::Sent => return (now - sent > STATUS_STAMP_AFTER).then_some(sent),
+        Delivery::Delivered => message.delivered_at?,
+        Delivery::Read | Delivery::Played => message.read_at?,
+        Delivery::None | Delivery::Pending | Delivery::Failed => return None,
+    };
+    (at - sent > STATUS_STAMP_AFTER).then_some(at)
+}
+
+/// What our message's status says in place of ticks, such as "Read" or
+/// "Delivered • 11:01 AM"; `None` for a message that is not ours and for the
+/// states that keep their glyph (sending, failed).
+fn status_text(
+    locale: crate::i18n::Locale,
+    message: &Message,
+    shown: Delivery,
+    now: i64,
+) -> Option<String> {
+    if !message.from_me {
+        return None;
+    }
+    let word = status_word(locale, shown)?;
+    Some(match status_stamp(message, shown, now) {
+        Some(at) => format!("{word} • {}", crate::util::clock(at)),
+        None => word,
+    })
+}
+
+/// [`status_text`] as a view draws it.
+fn message_status_text(view: &View<'_>, message: &Message) -> Option<String> {
+    status_text(
+        view.locale,
+        message,
+        shown_delivery(view, message),
+        crate::util::now(),
+    )
+}
+
+/// The colour of a status word: the read colour once it is read, `plain`
+/// otherwise.
+fn status_colour(view: &View<'_>, shown: Delivery, plain: Color32) -> Color32 {
+    match shown {
+        Delivery::Read | Delivery::Played => view.palette.read,
+        _ => plain,
+    }
+}
+
+/// Draws our message's status `text` with its right edge at `right`, centred
+/// on `y`. When the state has just moved on the new word eases in, sliding up
+/// into place, as the old one eases out and away.
+fn paint_status_word(
+    ui: &egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    shown: Delivery,
+    text: &str,
+    (right, y): (f32, f32),
+    font: &egui::FontId,
+    colour: Color32,
+) {
+    let laid = |text: &str, colour: Color32| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), colour)
+    };
+    let Some((progress, before)) = status_motion(ui, view, message, shown) else {
+        let galley = laid(text, colour);
+        let at = pos2(right - galley.size().x, y - galley.size().y / 2.0);
+        ui.painter().galley(at, galley, colour);
+        return;
+    };
+    let t = theme::ease_out(progress);
+    let galley = laid(text, colour.gamma_multiply(t));
+    let at = pos2(
+        right - galley.size().x,
+        y - galley.size().y / 2.0 + STATUS_SLIDE * (1.0 - t),
+    );
+    ui.painter().galley(at, galley, colour);
+    if let Some(old) = status_word(view.locale, before) {
+        let old_colour = status_colour(view, before, colour);
+        let galley = laid(&old, old_colour.gamma_multiply(1.0 - t));
+        let at = pos2(
+            right - galley.size().x,
+            y - galley.size().y / 2.0 - STATUS_SLIDE * t,
+        );
+        ui.painter().galley(at, galley, old_colour);
+    }
+    ui.ctx().request_repaint();
+}
+
+/// Draws the delivery ticks, in `plain` for the states that are not read or
+/// failed. A live advance scales the new glyph in about its centre with a
+/// fade, and a change to read blends the colour.
+fn tick_motion(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    shown: Delivery,
+    rect: Rect,
+    plain: Color32,
+) {
+    let Some((progress, before)) = status_motion(ui, view, message, shown) else {
         widgets::ticks_in(ui, &view.palette, rect, shown, plain);
         return;
     };
-    let t = theme::ease_out(((now - start) / TICK_SECONDS) as f32);
+    let t = theme::ease_out(progress);
     let layer = ui.layer_id();
     let first_shape = ui.ctx().graphics(|graphics| {
         graphics
@@ -7197,8 +7374,16 @@ fn bubble_frame(
             // An album's footer is its last member's, marks included.
             let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
             let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
-            let reserve =
-                message_footer_width(ui, last, starred, pinned, &palette, view.time_inside);
+            let status = message_status_text(view, last);
+            let reserve = message_footer_width(
+                ui,
+                last,
+                starred,
+                pinned,
+                &palette,
+                view.time_inside,
+                status.as_deref(),
+            );
             let settled = album
                 .map(|_| CARD_WIDTH.min(cap))
                 .or_else(|| settled_width(ui, view, message, cap));
@@ -7579,7 +7764,16 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
-    let reserve = message_footer_width(ui, message, starred, pinned, &palette, view.time_inside);
+    let status = message_status_text(view, message);
+    let reserve = message_footer_width(
+        ui,
+        message,
+        starred,
+        pinned,
+        &palette,
+        view.time_inside,
+        status.as_deref(),
+    );
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
     } else {
@@ -8021,9 +8215,30 @@ fn clock_width(ui: &egui::Ui, message: &Message) -> f32 {
 }
 
 /// Width of the message footer, including the room its marks take.
+#[cfg(test)]
 fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -> f32 {
+    footer_width_with(ui, message, starred, pinned, None)
+}
+
+/// [`footer_width`] for a message whose status reads `status` in place of its
+/// clock and ticks (see [`status_text`]).
+fn footer_width_with(
+    ui: &egui::Ui,
+    message: &Message,
+    starred: bool,
+    pinned: bool,
+    status: Option<&str>,
+) -> f32 {
     let font = theme::regular(11.0);
-    let time = clock_width(ui, message);
+    let time = match status {
+        Some(text) => {
+            ui.painter()
+                .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+                .size()
+                .x
+        }
+        None => clock_width(ui, message),
+    };
     let edited = if message.edited {
         ui.painter()
             .layout_no_wrap("edited".to_owned(), font, Color32::WHITE)
@@ -8047,7 +8262,13 @@ fn footer_width(ui: &egui::Ui, message: &Message, starred: bool, pinned: bool) -
     // grows that bubble's footer by one slot each.
     let marks =
         if starred { FOOTER_MARK_SLOT } else { 0.0 } + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
-    time + edited + not_sent + if message.from_me { 19.0 } else { 0.0 } + marks
+    // A word takes the place of the ticks, and of the clock beside them.
+    let ticks = if message.from_me && status.is_none() {
+        19.0
+    } else {
+        0.0
+    };
+    time + edited + not_sent + ticks + marks
 }
 
 /// The reference style leaves the clock and delivery state outside the bubble;
@@ -8059,9 +8280,10 @@ fn message_footer_width(
     pinned: bool,
     palette: &Palette,
     time_inside: bool,
+    status: Option<&str>,
 ) -> f32 {
     if time_inside {
-        return footer_width(ui, message, starred, pinned);
+        return footer_width_with(ui, message, starred, pinned, status);
     }
     let edited = if message.edited {
         ui.painter()
@@ -8331,14 +8553,24 @@ fn footer_over_picture(
     actions: &mut Vec<Action>,
 ) {
     let font = theme::regular(11.0);
-    let time =
-        ui.painter()
-            .layout_no_wrap(crate::util::clock(message.timestamp), font, Color32::WHITE);
+    let shown = shown_delivery(view, message);
+    let status = message_status_text(view, message);
+    let time = ui.painter().layout_no_wrap(
+        status
+            .clone()
+            .unwrap_or_else(|| crate::util::clock(message.timestamp)),
+        font.clone(),
+        Color32::WHITE,
+    );
     let failed = not_sent(message).then(|| {
         ui.painter()
             .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
     });
-    let tick_width = if message.from_me { 19.0 } else { 0.0 };
+    let tick_width = if message.from_me && status.is_none() {
+        19.0
+    } else {
+        0.0
+    };
     let marks =
         if starred { FOOTER_MARK_SLOT } else { 0.0 } + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
     let width = time.size().x
@@ -8371,25 +8603,32 @@ fn footer_over_picture(
             .rect_filled(scrim, scrim.height() / 2.0, Color32::from_black_alpha(110));
     }
     let mut x = row.right();
-    if message.from_me {
+    if message.from_me && status.is_none() {
         let ticks = Rect::from_center_size(pos2(x - 7.5, row.center().y), Vec2::splat(15.0));
         // Pops as the status advances, like the ticks under a bubble's text.
-        tick_motion(
-            ui,
-            view,
-            message,
-            shown_delivery(view, message),
-            ticks,
-            Color32::WHITE,
-        );
+        tick_motion(ui, view, message, shown, ticks, Color32::WHITE);
         x -= tick_width;
     }
     x -= time.size().x;
-    ui.painter().galley(
-        pos2(x, row.center().y - time.size().y / 2.0),
-        time,
-        Color32::WHITE,
-    );
+    if let Some(text) = &status {
+        // Our own word, easing in as the state moves on.
+        paint_status_word(
+            ui,
+            view,
+            message,
+            shown,
+            text,
+            (row.right(), row.center().y),
+            &font,
+            Color32::WHITE,
+        );
+    } else {
+        ui.painter().galley(
+            pos2(x, row.center().y - time.size().y / 2.0),
+            time,
+            Color32::WHITE,
+        );
+    }
     let status =
         Rect::from_x_y_ranges(x..=row.right(), row.center().y - 7.5..=row.center().y + 7.5);
     status_opens_info(ui, view, message, status, actions);
@@ -8506,14 +8745,19 @@ fn footer(
         return;
     }
     let font = theme::regular(11.0);
+    let shown = shown_delivery(view, message);
+    let status = message_status_text(view, message);
+    let time_colour = status_colour(view, shown, palette.secondary);
     let time = ui.painter().layout_no_wrap(
-        crate::util::clock(message.timestamp),
+        status
+            .clone()
+            .unwrap_or_else(|| crate::util::clock(message.timestamp)),
         font.clone(),
-        palette.secondary,
+        time_colour,
     );
     let edited = message.edited.then(|| {
         ui.painter()
-            .layout_no_wrap("edited".to_owned(), font, palette.dim)
+            .layout_no_wrap("edited".to_owned(), font.clone(), palette.dim)
     });
     // A red dot alone does not say what went wrong or what to do. The word
     // uses the text colour: the danger red on an outgoing bubble is too faint
@@ -8522,7 +8766,11 @@ fn footer(
         ui.painter()
             .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), palette.text)
     });
-    let tick_width = if message.from_me { 19.0 } else { 0.0 };
+    let tick_width = if message.from_me && status.is_none() {
+        19.0
+    } else {
+        0.0
+    };
     let width = time.size().x
         + edited.as_ref().map_or(0.0, |galley| galley.size().x + 4.0)
         + failed.as_ref().map_or(0.0, |galley| galley.size().x + 6.0)
@@ -8542,24 +8790,31 @@ fn footer(
         );
     });
     let mut x = rect.right();
-    if message.from_me {
+    if message.from_me && status.is_none() {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
-        tick_motion(
-            ui,
-            view,
-            message,
-            shown_delivery(view, message),
-            ticks,
-            view.palette.secondary,
-        );
+        tick_motion(ui, view, message, shown, ticks, view.palette.secondary);
         x -= tick_width;
     }
     x -= time.size().x;
-    ui.painter().galley(
-        pos2(x, rect.center().y - time.size().y / 2.0),
-        time,
-        palette.secondary,
-    );
+    if let Some(text) = &status {
+        // Our own word, easing in as the state moves on.
+        paint_status_word(
+            ui,
+            view,
+            message,
+            shown,
+            text,
+            (rect.right(), rect.center().y),
+            &font,
+            time_colour,
+        );
+    } else {
+        ui.painter().galley(
+            pos2(x, rect.center().y - time.size().y / 2.0),
+            time,
+            palette.secondary,
+        );
+    }
     let status = Rect::from_x_y_ranges(
         x..=rect.right(),
         rect.center().y - 7.5..=rect.center().y + 7.5,
@@ -8630,7 +8885,7 @@ fn reference_footer_marks(
     pinned: bool,
     palette: &Palette,
 ) {
-    let width = message_footer_width(ui, message, starred, pinned, palette, false);
+    let width = message_footer_width(ui, message, starred, pinned, palette, false, None);
     if width <= 0.0 {
         return;
     }
@@ -16446,6 +16701,83 @@ mod reaction_tests {
         assert!(status_advanced(Some(Delivery::Delivered), Delivery::Read));
         assert!(!status_advanced(Some(Delivery::Sent), Delivery::Sent));
         assert!(!status_advanced(Some(Delivery::Pending), Delivery::Failed));
+    }
+
+    #[test]
+    fn status_words_name_the_time_only_when_a_state_came_late() {
+        use crate::i18n::Locale::English;
+        let mut message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 1_000, true);
+        let text = |message: &Message, shown, now| status_text(English, message, shown, now);
+        // Back to back: the word alone, whatever the clock says.
+        message.delivered_at = Some(1_000 + 60);
+        message.read_at = Some(1_000 + STATUS_STAMP_AFTER);
+        assert_eq!(
+            text(&message, Delivery::Sent, 1_010).as_deref(),
+            Some("Sent")
+        );
+        assert_eq!(
+            text(&message, Delivery::Delivered, 2_000).as_deref(),
+            Some("Delivered")
+        );
+        assert_eq!(
+            text(&message, Delivery::Read, 2_000).as_deref(),
+            Some("Read")
+        );
+        // Later than five minutes: the word, a bullet and the time.
+        message.delivered_at = Some(1_000 + STATUS_STAMP_AFTER + 1);
+        message.read_at = Some(1_000 + 3_600);
+        let late = |status, at: i64| {
+            format!(
+                "{} • {}",
+                status_word(English, status).unwrap(),
+                crate::util::clock(at)
+            )
+        };
+        assert_eq!(
+            text(&message, Delivery::Delivered, 9_999).as_deref(),
+            Some(late(Delivery::Delivered, 1_000 + STATUS_STAMP_AFTER + 1).as_str())
+        );
+        assert_eq!(
+            text(&message, Delivery::Read, 9_999).as_deref(),
+            Some(late(Delivery::Read, 1_000 + 3_600).as_str())
+        );
+        // A message still only sent after five minutes gives its own time.
+        assert_eq!(
+            text(&message, Delivery::Sent, 1_000 + STATUS_STAMP_AFTER + 1).as_deref(),
+            Some(late(Delivery::Sent, 1_000).as_str())
+        );
+        // Sending, failed, and other people's messages keep no word.
+        assert_eq!(text(&message, Delivery::Pending, 1_010), None);
+        assert_eq!(text(&message, Delivery::Failed, 1_010), None);
+        message.from_me = false;
+        assert_eq!(text(&message, Delivery::Read, 1_010), None);
+    }
+
+    #[test]
+    fn a_wash_fades_but_a_solid_shape_does_not() {
+        let solid = || {
+            egui::Shape::rect_filled(
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(10.0, 10.0)),
+                0.0,
+                Color32::WHITE,
+            )
+        };
+        let mut wash = egui::Shape::Rect(
+            egui::epaint::RectShape::filled(
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(10.0, 10.0)),
+                0.0,
+                Color32::from_rgba_unmultiplied(200, 200, 200, 200),
+            )
+            .with_blur_width(8.0),
+        );
+        let mut plain = solid();
+        fade_wash(&mut wash, 0.0);
+        fade_wash(&mut plain, 0.0);
+        let egui::Shape::Rect(wash) = wash else {
+            unreachable!()
+        };
+        assert_eq!(wash.fill.a(), 0);
+        assert_eq!(plain, solid());
     }
 
     use crate::model::{Delivery, Reaction};
