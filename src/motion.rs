@@ -305,10 +305,11 @@ pub fn spring_from(
             time: now,
         }
     };
-    if rest {
-        ctx.data_mut(|data| data.remove::<Follow>(id));
-    } else {
-        ctx.data_mut(|data| data.insert_temp(id, follow));
+    // A value at rest stays remembered, at its target: forgetting it would
+    // make the next frame a first one, and something that appears would
+    // start over from `start`, again and again.
+    ctx.data_mut(|data| data.insert_temp(id, follow));
+    if !rest {
         ctx.request_repaint();
     }
     follow.value
@@ -684,5 +685,36 @@ pub(crate) mod tests {
         assert!(carried > mid);
         assert_eq!(at(3.0, 0.0), 0.0);
         assert_eq!(at(6.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn something_that_appeared_stays_shown_and_stops_asking_for_frames() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("appear");
+        let mut shown = 0.0;
+        for step in 0..40 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(f64::from(step) * 0.05),
+                    ..Default::default()
+                },
+                |ui| shown = spring_from(ui.ctx(), id, 1.0, 0.0, Spring::SNAPPY),
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(shown, 1.0);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(5.0),
+                ..Default::default()
+            },
+            |ui| shown = spring_from(ui.ctx(), id, 1.0, 0.0, Spring::SNAPPY),
+        );
+        output.textures_delta.clear();
+        assert_eq!(shown, 1.0);
+        assert_eq!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            Duration::MAX
+        );
     }
 }
