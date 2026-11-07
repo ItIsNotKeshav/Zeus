@@ -1,5 +1,5 @@
 //! The navigation rail on the left of the chat list, as WhatsApp's desktop
-//! clients have it: Chats, Calls and Starred at the top; Archived and Locked
+//! clients have it: Chats and Calls at the top; Starred, Archived and Locked
 //! chats (while there are any), Settings and our own avatar (the account
 //! switcher) at the bottom. While the chat list is hidden, the chats'
 //! avatars fill the rail between the two, so every chat is still one click
@@ -20,7 +20,7 @@ pub const WIDTH: f32 = 52.0;
 /// Total panel width including the rail's outer gutters.
 pub const PANE_WIDTH: f32 = WIDTH + 12.0;
 /// Height of one destination at the top: the list header's title, search
-/// field and chips sit level with Chats, Calls and Starred.
+/// field and chips sit level with Chats and Calls.
 const CELL: f32 = 48.0;
 /// The destination hit area stays comfortable while its selected surface is
 /// a little smaller, so the icons have more breathing room.
@@ -51,6 +51,11 @@ pub(crate) fn rect_id() -> egui::Id {
 /// Stable id of a destination's button, for tests and the demo.
 pub fn destination_id(destination: Destination) -> egui::Id {
     egui::Id::new(("nav-rail-destination", destination as u8))
+}
+
+/// Stable id of the update ellipse, for tests.
+pub fn update_id() -> egui::Id {
+    egui::Id::new("nav-rail-update")
 }
 
 /// How far the macOS traffic lights reach past the rail: what a header
@@ -189,7 +194,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             } else {
                 ui.add_space(GAP);
             }
+            // Starred sits with the bottom group, above Archived.
             let bottom: Vec<Destination> = [
+                Destination::Starred,
                 Destination::Archived,
                 Destination::Locked,
                 Destination::Settings,
@@ -197,8 +204,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             .into_iter()
             .filter(|destination| destination.offered(app))
             .collect();
-            let foot = bottom.len() as f32 * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
-            let minimum = 3.0 * CELL
+            let update = if app.update.is_some() { 1.0 } else { 0.0 };
+            let foot = (bottom.len() as f32 + update) * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
+            let minimum = 2.0 * CELL
                 + foot
                 + if hidden {
                     CELL + GAP + MIN_AVATARS
@@ -215,13 +223,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                     // the content keeps its minimum height and scrolls instead
                     // of leaving the bottom buttons beyond the window.
                     ui.set_height(height);
-                    for destination in
-                        [Destination::Chats, Destination::Calls, Destination::Starred]
-                    {
+                    for destination in [Destination::Chats, Destination::Calls] {
                         destination_button(app, ui, &palette, destination, CELL);
                     }
                     if hidden {
-                        // A cell of its own under Starred: nothing above it moves
+                        // A cell of its own under Calls: nothing above it moves
                         // when the list comes and goes.
                         show_list_button(app, ui, &palette);
                         ui.add_space(GAP / 2.0);
@@ -243,7 +249,22 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                     }
                     let rest = (ui.available_height() - foot).max(0.0);
                     ui.add_space(rest);
+                    let archive_shown = bottom.contains(&Destination::Archived);
+                    let mut update_drawn = false;
                     for destination in bottom {
+                        // Above Archived, or in Archived's place when that
+                        // icon is hidden.
+                        let update_here = app.update.is_some()
+                            && !update_drawn
+                            && if archive_shown {
+                                destination == Destination::Archived
+                            } else {
+                                matches!(destination, Destination::Locked | Destination::Settings)
+                            };
+                        if update_here {
+                            update_button(app, ui, &palette);
+                            update_drawn = true;
+                        }
                         ui.add_space(GAP);
                         destination_button(app, ui, &palette, destination, HIT_AREA);
                     }
@@ -254,8 +275,57 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                 });
         });
     });
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(rect_id(), response.response.rect));
+    let rect = response.response.rect;
+    ui.ctx().data_mut(|data| data.insert_temp(rect_id(), rect));
+    // No line between the rail and the list, whose shades tell them apart;
+    // beside the conversation the rail ends as the list does.
+    if hidden {
+        widgets::paint_edge_beside(ui, &palette, rect);
+    }
+}
+
+/// Filled ellipse above Archived while a release is waiting. Opens that
+/// release's page, where the update is downloaded.
+fn update_button(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
+    let Some(release) = app.update.clone() else {
+        return;
+    };
+    ui.add_space(GAP);
+    let (cell, _) = ui.allocate_exact_size(vec2(ui.available_width(), HIT_AREA), Sense::hover());
+    let hit = Rect::from_center_size(cell.center(), Vec2::splat(HIT_AREA));
+    let response = ui
+        .interact(hit, update_id(), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    theme::reveal_focus(&response);
+    let label = gettext(app.locale, "Update available, version {current} to {next}")
+        .replace("{current}", env!("CARGO_PKG_VERSION"))
+        .replace("{next}", &release.version);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+    });
+    if ui.is_rect_visible(hit) {
+        let hovered = response.hovered() || response.has_focus();
+        let fill = if hovered {
+            palette.accent_hover
+        } else {
+            palette.accent
+        };
+        let scale = if response.is_pointer_button_down_on() {
+            0.92
+        } else {
+            1.0
+        };
+        let ellipse = Rect::from_center_size(cell.center(), vec2(32.0, 24.0) * scale);
+        ui.painter().add(egui::Shape::ellipse_filled(
+            ellipse.center(),
+            ellipse.size() * 0.5,
+            fill,
+        ));
+        theme::paint_icon(ui, Icon::ArrowUp, ellipse, 14.0 * scale, palette.on_accent);
+    }
+    if response.on_hover_text(label).clicked() {
+        app.actions.push(Action::OpenUrl(release.url));
+    }
 }
 
 /// The button that brings the hidden chat list back.
@@ -295,7 +365,7 @@ fn destination_button(
     let mut badge = 0;
     let (icon, stop, label) = match destination {
         Destination::Chats => (
-            theme::chats_icon(),
+            Icon::MessageCircle,
             Stop::Chats,
             format!(
                 "{} ({})",
@@ -304,7 +374,7 @@ fn destination_button(
             ),
         ),
         Destination::Calls => (
-            theme::phone_icon(),
+            Icon::Phone,
             Stop::Calls,
             format!(
                 "{} ({})",
@@ -483,6 +553,7 @@ mod tests {
         assert!(!Destination::Locked.offered(&app));
         let mut chat = crate::model::Chat::new("1@s.whatsapp.net".into(), "Ada".into());
         chat.archived = true;
+        chat.last_activity = 1;
         app.chats.push(chat);
         assert!(Destination::Archived.offered(&app));
         app.sidebar_visible = false;

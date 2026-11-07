@@ -1,0 +1,23 @@
+name: Benchmark results
+description: Results from Settings > About > Performance benchmark.
+title: "Benchmark: "
+labels: [benchmark]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Zeus fills in the results below when you choose **Share on GitHub** after a benchmark.
+        They hold the app version, the system and hardware summary, and the numbers; never
+        chats, names or account details. Check them before you submit: this issue is public.
+  - type: textarea
+    id: results
+    attributes:
+      label: Results
+      description: Filled in by Zeus. Attach the saved JSON file too if you have it.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Optional. Other apps running, power mode, an external display, what felt slow.

@@ -8,10 +8,10 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
 
-use crate::app::{AttachmentDraft, ComposerMention, Conversation};
+use crate::app::{AttachmentDraft, ComposerMention, Conversation, PhoneHistory};
 use crate::backend::{Backend, LinkStatus, Waker};
 use crate::model::{
-    AccountId, Chat, ChatFilter, ChatId, Contact, Label, Message, PollDraft, StickerPack,
+    AccountId, Chat, ChatFilter, ChatId, Contacts, Label, Message, PollDraft, StickerPack,
 };
 use crate::paths::{AccountDirs, AppDirs};
 use crate::settings::AccountSettings;
@@ -31,8 +31,21 @@ pub struct Account {
     pub me_name: Option<String>,
     pub me_about: Option<String>,
     pub chats: Vec<Chat>,
-    pub contacts: HashMap<String, Contact>,
+    pub contacts: Contacts,
     pub conversations: HashMap<ChatId, Conversation>,
+    /// Chats the reader left, most recently left first, whose conversations
+    /// may still be in memory: the first two stay, trimmed to their newest
+    /// page, so flipping back is instant; the rest are dropped and read from
+    /// the archive again when they open.
+    pub(crate) left_chats: Vec<ChatId>,
+    /// The open chat when the conversations were last settled, so a chat
+    /// left by any route is noticed.
+    pub(crate) settled_open: Option<ChatId>,
+    /// Whether a chat was left since the conversations were last settled.
+    pub(crate) left_pending: bool,
+    /// What each dropped conversation knew of the phone's history, taken
+    /// back when its chat opens again.
+    pub(crate) phone_history: HashMap<ChatId, PhoneHistory>,
     pub open_chat: Option<ChatId>,
     /// A second chat beside the open one in the chat panel.
     pub split: Option<crate::app::Split>,
@@ -44,6 +57,9 @@ pub struct Account {
     /// When each chat's draft was last parked, so a chat with unsent text
     /// sorts in the chat list as if a message had just been sent.
     pub draft_times: HashMap<ChatId, i64>,
+    /// Whether the open chat had a draft when opened. Keep its list priority
+    /// stable while the reader types, clears, or sends that draft.
+    pub(crate) open_draft_priority: bool,
     /// This account's media cache as last measured, for Settings. `None`
     /// until a measurement succeeds, so a failed one shows no numbers
     /// rather than zeroes.
@@ -88,6 +104,12 @@ pub struct Account {
     pub(crate) new_contact_sequence: u64,
     pub(crate) new_contact_request: Option<u64>,
     pub(crate) new_contact_dialog_request: Option<u64>,
+    /// The group being put together in the New chat dialog, if any.
+    pub new_group: Option<crate::new_group::Draft>,
+    pub(crate) new_group_sequence: u64,
+    /// The `CreateGroup` the window waits for; an earlier one's answer files
+    /// its group and opens nothing.
+    pub(crate) new_group_request: Option<u64>,
     pub pair_phone: String,
     pub show_archived: bool,
     pub chat_filter: ChatFilter,
@@ -137,6 +159,8 @@ impl Account {
         settings: AccountSettings,
         backend: Backend,
     ) -> Self {
+        // `App::new` clears it unless Settings asks to reopen the last chat:
+        // Zeus starts on its welcome page by default.
         let open_chat = settings.last_chat.clone();
         let chat_filter = match settings
             .list_filter
@@ -161,14 +185,19 @@ impl Account {
             me_name: None,
             me_about: None,
             chats: Vec::new(),
-            contacts: HashMap::new(),
+            contacts: Contacts::default(),
             conversations: HashMap::new(),
+            left_chats: Vec::new(),
+            settled_open: None,
+            left_pending: false,
+            phone_history: HashMap::new(),
             open_chat,
             split: None,
             prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
             draft_times: HashMap::new(),
+            open_draft_priority: false,
             storage_stats: None,
             storage_token: 0,
             storage_clearing: false,
@@ -206,6 +235,9 @@ impl Account {
             new_contact_sequence: 0,
             new_contact_request: None,
             new_contact_dialog_request: None,
+            new_group: None,
+            new_group_sequence: 0,
+            new_group_request: None,
             pair_phone: String::new(),
             show_archived: false,
             chat_filter,
@@ -325,6 +357,14 @@ impl Account {
     pub fn phone(&self) -> Option<String> {
         let me = self.me.as_deref()?;
         crate::model::phone_of(me).map(crate::util::phone)
+    }
+
+    /// Puts a chat the reader has just left first among the conversations
+    /// kept for a quick return.
+    pub(crate) fn note_left(&mut self, chat: &str) {
+        self.left_chats.retain(|left| left != chat);
+        self.left_chats.insert(0, chat.to_owned());
+        self.left_pending = true;
     }
 
     pub fn mark_settings_dirty(&mut self) {

@@ -23,6 +23,19 @@ use crate::calls::{CallPhase, CallUpdate};
 use crate::model::{AccountId, Action, CallDirection, Chat, ChatId};
 use crate::settings::NotificationSound;
 
+/// A placed or linked call waiting for macOS to answer a permission prompt.
+pub(super) struct PendingCallAccess {
+    account: AccountId,
+    video: bool,
+    kind: PendingCallAccessKind,
+    rx: std::sync::mpsc::Receiver<bool>,
+}
+
+pub(super) enum PendingCallAccessKind {
+    Place(ChatId),
+    Link(String),
+}
+
 /// One person on a group call, as the call screen draws them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CallPerson {
@@ -368,17 +381,28 @@ impl App {
 
     /// Places a call from the chat header or the Calls page: the screen shows
     /// it as placing in this same frame, with the peer's name and picture,
-    /// and the worker's updates move it on once its offer is out.
+    /// and the worker's updates move it on once its offer is out. A group's
+    /// chat starts a call in the group, drawn as a group call from the start.
     fn place_call(&mut self, chat: ChatId, video: bool) {
+        let account = self.account().id.clone();
+        self.try_begin_outgoing_call(account, video, PendingCallAccessKind::Place(chat));
+    }
+
+    fn place_call_now(&mut self, chat: ChatId, video: bool) {
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
+        let group = crate::model::ChatKind::from_id(&chat) == crate::model::ChatKind::Group;
         self.backend.send(Command::StartCall {
             chat: chat.clone(),
             video,
             generation,
             cancel: Arc::clone(&cancel),
         });
-        self.handle_call_update(CallUpdate::placing(generation, chat.to_string(), video));
+        let mut placing = CallUpdate::placing(generation, chat.to_string(), video);
+        if group {
+            placing.group = Some(crate::calls::GroupCall::default());
+        }
+        self.handle_call_update(placing);
         self.call_cancel = Some(cancel);
         self.call_placed = Some(Instant::now());
     }
@@ -393,6 +417,11 @@ impl App {
             ));
             return;
         }
+        let account = self.account().id.clone();
+        self.try_begin_outgoing_call(account, video, PendingCallAccessKind::Link(token));
+    }
+
+    fn join_call_link_now(&mut self, token: String, video: bool) {
         let generation = crate::calls::next_generation();
         let cancel = Arc::new(AtomicBool::new(false));
         self.backend.send(Command::JoinCallLink {
@@ -409,6 +438,73 @@ impl App {
         self.handle_call_update(placing);
         self.call_cancel = Some(cancel);
         self.call_placed = Some(Instant::now());
+    }
+
+    /// On macOS, asks for microphone and camera access before the command and
+    /// the placing screen. Elsewhere, or when everything is already granted,
+    /// places in the same turn as always.
+    fn try_begin_outgoing_call(
+        &mut self,
+        account: AccountId,
+        video: bool,
+        kind: PendingCallAccessKind,
+    ) {
+        if self.call_access.is_some() {
+            return;
+        }
+        match crate::call_access::begin(video, &self.waker) {
+            crate::call_access::Begin::Ready => self.place_after_access(account, video, kind),
+            #[cfg(any(test, target_os = "macos"))]
+            crate::call_access::Begin::Stop => {}
+            #[cfg(any(test, target_os = "macos"))]
+            crate::call_access::Begin::Wait(rx) => {
+                self.call_access = Some(PendingCallAccess {
+                    account,
+                    video,
+                    kind,
+                    rx,
+                });
+            }
+        }
+    }
+
+    fn place_after_access(&mut self, account: AccountId, video: bool, kind: PendingCallAccessKind) {
+        if self.call_live() {
+            self.toast_error(crate::i18n::gettext(
+                self.locale,
+                "Hang up the current call first",
+            ));
+            return;
+        }
+        let Some(index) = self.accounts.iter().position(|entry| entry.id == account) else {
+            return;
+        };
+        let saved = self.active;
+        self.active = index;
+        match kind {
+            PendingCallAccessKind::Place(chat) => self.place_call_now(chat, video),
+            PendingCallAccessKind::Link(token) => self.join_call_link_now(token, video),
+        }
+        self.active = saved;
+    }
+
+    /// Finishes a permission wait started when the reader placed or joined a call.
+    pub(super) fn poll_call_access(&mut self) {
+        let Some(pending) = &self.call_access else {
+            return;
+        };
+        match pending.rx.try_recv() {
+            Ok(granted) => {
+                let pending = self.call_access.take().expect("still waiting");
+                if granted {
+                    self.place_after_access(pending.account, pending.video, pending.kind);
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.call_access = None;
+            }
+        }
     }
 
     /// Takes down the call the reader hung up or declined here at once: they
@@ -532,6 +628,90 @@ impl App {
             // A ringing call always notifies; the limit is for repeated messages.
             false,
         );
+    }
+
+    /// A group call ZapFast cannot join yet (`calls::GROUP_CALLS_ENABLED` is
+    /// off), from the backend of the account being handled. It never takes
+    /// the call screen and never rings here: while it rings on the phone the
+    /// window says who is calling and to answer there, in a notification and
+    /// in the window, and once it is over the notification is taken back.
+    pub(crate) fn handle_phone_only_call(&mut self, update: CallUpdate) {
+        let account = self.account().id.clone();
+        if update.phase != CallPhase::Incoming {
+            self.notifications.clear_call(&account, &update.chat);
+            return;
+        }
+        let now = crate::util::now();
+        let chat = self.chat(&update.chat);
+        // A locked chat's call says nothing, as a ringing one does.
+        if chat.is_some_and(|chat| chat.locked) {
+            return;
+        }
+        let eligible = chat.is_none_or(|chat| call_notification_eligible(chat, now));
+        let chat_sound = chat.and_then(|chat| chat.notification_sound.clone());
+        let text = self.phone_only_call_text(&update);
+        if !self.app_lock.is_locked() {
+            self.toast(text.clone());
+        }
+        if !self.account().settings.notifications || !eligible {
+            return;
+        }
+        let (title, body, picture) = if self.app_lock.is_locked() {
+            (
+                "ZapFast".to_owned(),
+                crate::i18n::gettext(self.locale, "Incoming call").into_owned(),
+                None,
+            )
+        } else {
+            (
+                self.chat_title_of(&update.chat),
+                text,
+                self.avatar(&update.chat),
+            )
+        };
+        // Nothing rings here, so the notification makes the chat's own sound.
+        let group = crate::model::ChatKind::from_id(&update.chat) == crate::model::ChatKind::Group;
+        let sound = notification_sound(&self.settings, chat_sound, group, false);
+        let waker = self.waker.clone();
+        self.notifications.show(
+            title,
+            body,
+            picture,
+            sound,
+            crate::notify::NotificationTarget {
+                account,
+                chat: update.chat.clone(),
+                message: None,
+            },
+            std::sync::Arc::clone(&self.notification_opens),
+            move || waker.wake(),
+            false,
+        );
+    }
+
+    /// Who is calling which group, and to answer on the phone.
+    fn phone_only_call_text(&self, update: &CallUpdate) -> String {
+        let caller = update
+            .group
+            .as_ref()
+            .and_then(|group| group.caller.clone())
+            .unwrap_or_else(|| update.chat.clone());
+        let caller = self.display_name(&caller);
+        if crate::model::ChatKind::from_id(&update.chat) == crate::model::ChatKind::Group {
+            crate::i18n::gettext(
+                self.locale,
+                "{caller} is calling {group}. ZapFast can't join group calls yet: answer on your phone.",
+            )
+            .replace("{caller}", &caller)
+            .replace("{group}", &self.chat_title_of(&update.chat))
+        } else {
+            // A call among several people with no group behind it.
+            crate::i18n::gettext(
+                self.locale,
+                "{caller} is calling you and others. ZapFast can't join group calls yet: answer on your phone.",
+            )
+            .replace("{caller}", &caller)
+        }
     }
 
     /// Per-frame upkeep: the farewell's end, a placing call that never heard
@@ -901,8 +1081,78 @@ mod tests {
 
     /// A call link from a message is joined here rather than opened in the browser, and is
     /// drawn at once under the link's name, with no chat behind it.
+    /// A group call ZapFast cannot join yet never takes the screen or rings:
+    /// the desktop and the window say who is calling which group, and to
+    /// answer on the phone, and the notification goes once the call is over.
+    #[test]
+    fn a_group_call_on_the_phone_only_is_told_not_rung() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let group = "120363000000000009@g.us";
+        app.chats.push(Chat::new(group.into(), "Book club".into()));
+        let mut ringing = update(4, CallPhase::Incoming);
+        ringing.chat = group.to_owned();
+        ringing.group = Some(crate::calls::GroupCall {
+            caller: Some(ADA.to_owned()),
+            ..crate::calls::GroupCall::default()
+        });
+        app.apply_backend_event(
+            crate::backend::Event::PhoneOnlyCall(Box::new(ringing.clone())),
+            true,
+        );
+        assert!(app.call.is_none(), "no call screen");
+        assert_eq!(app.call_tone(), None, "nothing rings here");
+        let sent = sent(&mut commands);
+        assert!(
+            !sent
+                .iter()
+                .any(|command| matches!(command, Command::DeclineCall)),
+            "nothing is declined: {sent:?}"
+        );
+        let said =
+            "Ada is calling Book club. ZapFast can't join group calls yet: answer on your phone.";
+        assert_eq!(app.notifications.shown.len(), 1);
+        assert_eq!(app.notifications.shown[0].title, "Book club");
+        assert_eq!(app.notifications.shown[0].body, said);
+        assert!(app.toasts.iter().any(|toast| toast.message == said));
+
+        // In German, in German.
+        app.locale = crate::i18n::Locale::German;
+        app.handle_phone_only_call(ringing.clone());
+        assert_ne!(app.notifications.shown[1].body, said, "translated");
+
+        // Over: nothing more is said.
+        let mut over = ringing;
+        over.phase = CallPhase::Ended;
+        over.outcome = Some(CallOutcome::AnsweredElsewhere);
+        app.handle_phone_only_call(over);
+        assert_eq!(app.notifications.shown.len(), 2);
+        assert!(app.call.is_none());
+    }
+
+    /// With group calls off a call link is not joined: the window says why.
+    #[test]
+    fn with_group_calls_off_a_call_link_is_not_joined() {
+        let _off = crate::calls::override_group_calls(false);
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(
+            Action::OpenUrl("https://call.whatsapp.com/video/AbCdEf1234567890".to_owned()),
+            &ctx,
+        );
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message == crate::calls::CALL_LINKS_OFF)
+        );
+    }
+
     #[test]
     fn a_call_link_is_joined_here() {
+        let _on = crate::calls::override_group_calls(true);
         let directory = tempfile::tempdir().unwrap();
         let (mut app, mut commands) = app(directory.path());
         let ctx = egui::Context::default();
@@ -1048,6 +1298,92 @@ mod tests {
         assert_eq!(chat.as_str(), ADA);
         assert_eq!(*offered, video);
         (*generation, Arc::clone(cancel))
+    }
+
+    /// A group's call button starts a call in the group, drawn as the group's
+    /// call from the first frame; WhatsApp refusing it for the account says
+    /// so in plain words, in the reader's language.
+    #[test]
+    fn a_groups_call_button_starts_a_group_call() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        let group = "120363000000000009@g.us";
+        app.apply(Action::StartVideoCall(group.into()), &ctx);
+        let sent = sent(&mut commands);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [Command::StartCall { chat, video: true, .. }] if chat.as_str() == group
+            ),
+            "{sent:?}"
+        );
+        let call = app.call.clone().expect("the call is on screen at once");
+        assert_eq!(call.phase, CallPhase::Placing);
+        assert!(call.group.is_some_and(|group| !group.link));
+        assert!(app.call_live_here(group), "the header offers to hang up");
+
+        app.locale = crate::i18n::Locale::German;
+        app.apply_backend_event(
+            crate::backend::Event::Error(crate::calls::GROUP_CALLS_NOT_ENABLED.to_owned()),
+            true,
+        );
+        let toast = app.toasts.last().expect("the refusal is told");
+        assert_ne!(
+            toast.message,
+            crate::calls::GROUP_CALLS_NOT_ENABLED,
+            "translated"
+        );
+    }
+
+    #[test]
+    fn a_refused_call_permission_does_nothing() {
+        let _gate = crate::call_access::GateGuard::denied();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(Action::StartCall(ADA.into()), &ctx);
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        app.apply(Action::StartVideoCall(ADA.into()), &ctx);
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        assert!(app.toasts.is_empty());
+    }
+
+    #[test]
+    fn a_call_waits_for_permission_then_starts() {
+        let _gate = crate::call_access::GateGuard::hold();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(Action::StartVideoCall(ADA.into()), &ctx);
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        crate::call_access::answer(true);
+        app.poll_call_access();
+        let sent = sent(&mut commands);
+        assert!(
+            matches!(sent.as_slice(), [Command::StartCall { video: true, .. }]),
+            "{sent:?}"
+        );
+        let call = app.call.clone().expect("the call is on screen");
+        assert_eq!(call.phase, CallPhase::Placing);
+        assert!(call.video);
+    }
+
+    #[test]
+    fn a_denied_permission_answer_does_nothing() {
+        let _gate = crate::call_access::GateGuard::hold();
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, mut commands) = app(directory.path());
+        let ctx = egui::Context::default();
+        app.apply(Action::StartCall(ADA.into()), &ctx);
+        crate::call_access::answer(false);
+        app.poll_call_access();
+        assert!(sent(&mut commands).is_empty());
+        assert!(app.call.is_none());
+        assert!(app.toasts.is_empty());
     }
 
     #[test]

@@ -21,6 +21,7 @@ On Linux:
 | Wallpaper image | `~/.local/state/zapfast/accounts/<id>/wallpaper.jpg` | Copy of the chosen picture (or `.png`, `.webp`, `.gif`) |
 | Attachments, avatars | `~/.cache/zapfast/accounts/<id>/` | Safe to delete; available files download again when viewed |
 | Last run's log | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
+| The run before's log | `~/.local/state/zapfast/zapfast.previous.log` | Kept for one more start |
 | Crash log | `~/.local/state/zapfast/panic.log` | Safe to delete |
 
 Back up the archive if you need its history. WhatsApp sends only recent
@@ -44,6 +45,11 @@ On macOS, settings, state, and the logs are in
 `%APPDATA%\paolino\zapfast\config`, state and the logs in
 `%LOCALAPPDATA%\paolino\zapfast\data`, and the caches in
 `%LOCALAPPDATA%\paolino\zapfast\cache`.
+
+`--profile <folder>` keeps everything in that folder instead (`config`,
+`state`, `cache` and `run` under it), with its own keyring key and its own
+running copy, so a second build can run beside the installed one. It links as
+a separate device: scan its code from the phone as for a new computer.
 
 On first start, ZapFast moves the corresponding `fastsapp` directories (or
 `fastwhatsapp` from earlier versions), including the session, archive, saved
@@ -126,7 +132,10 @@ name or description, in the interface language or in English.
   on Linux. Elsewhere, including other Linux desktops, the window is opaque
   in the theme's colours. Turning Blur off makes every one of those surfaces
   solid at once; turning it on again shows the desktop through a window
-  opened after the change.
+  opened after the change. On macOS, which Zeus draws with Metal to hold
+  less memory, the header and message field are always solid, and Blur
+  decides only whether the desktop shows through the Messages theme's
+  window.
 - **Always show time**: the time and ticks inside every message, as
   WhatsApp shows them. Off, the Zeus look shows them below a message you
   click, and below your last message.
@@ -140,6 +149,10 @@ name or description, in the interface language or in English.
 
 **Chats**
 
+- **Open the last chat**: off by default. When on, quitting and opening Zeus
+  again reopens the chat that was open, for each number on its own. When off,
+  Zeus starts on the chat list with no chat open. Hiding the window still
+  shows the chat that was already open.
 - **Enter sends**: when off, Enter adds a line and `Ctrl+Enter` (Command+Enter
   on macOS) sends.
 - **Download files automatically**: attachments up to 64 MiB download as they
@@ -154,9 +167,11 @@ name or description, in the interface language or in English.
   does not answer goes to the back of the queue. Pages fetched this way go into
   the archive without moving the view. A chat the phone says has nothing older
   is not asked again.
-- **Keep chats archived** (development builds): on by default. When off, a new
-  message, received or sent, brings an archived chat back to the list. Applies
-  to all accounts here; it does not read or change the phone's own setting.
+- **Keep chats archived**: on by default. When off, a new message, received or
+  sent, brings an archived chat back to the list. Applies to all accounts here
+  whose phone has not sent its own **Keep chats archived**; once a phone has,
+  ZapFast follows the phone for that account. It does not change the phone's
+  setting.
 - **Pause other media while recording or playing**: pause music and videos in
   other apps while you record, or while a voice message, audio, or video plays
   with sound, and resume them afterwards. Linux and Windows only.
@@ -312,11 +327,37 @@ Applications. AUR, DEB, RPM, Flatpak, Nix, Cargo, and Homebrew installations
 update through their package manager; an AppImage is replaced by downloading
 the new one.
 
+## Performance benchmark
+
+**Settings > About > Run benchmark** opens a second Zeus window with the
+built-in sample chats, in a temporary folder, and plays a two-minute test in
+it: it settles, scrolls a chat full of photos, switches through chats, opens
+the sticker picker, minimizes and idles, then closes itself. Your archive,
+keys and WhatsApp connection are never opened, and nothing goes over the
+network. Leave the computer alone while it runs.
+
+Zeus measures that window from outside every 2 seconds: memory (PSS on Linux,
+the physical footprint on macOS, private bytes on Windows), CPU time, and GPU
+use where the system reports it (the window's 3D engine on Linux and Windows,
+the whole GPU on macOS). The window records its own frame times. The results
+show frames a second, median and 99th-percentile frame time, jitter, missed
+frames and the slowest frame for scrolling, switching chats and the sticker
+picker, and memory, CPU and GPU for every phase.
+
+**Save results…** writes them as JSON that `scripts/bench/compare.py` reads.
+**Share on GitHub…** first shows the exact text it would share: the app
+version, system, processor, core count, memory, graphics chip and the
+numbers, never chats, names or account details. **Open GitHub issue** opens a
+new issue with that text in your browser; nothing is sent unless you submit
+it there, and the issue is public under your GitHub account.
+
 ## The log
 
-Each run replaces `zapfast.log` and records warnings and errors, never
+Each run starts `zapfast.log` afresh and records warnings and errors, never
 message contents, phone numbers, or keys. Include the end of this file when
-reporting an issue. **Settings > Files > Log > Open** shows it.
+reporting an issue. **Settings > Files > Log > Open** shows it. The run before
+is kept beside it as `zapfast.previous.log`: if ZapFast froze and you had to
+restart it, that file holds what happened.
 
 During a call the log also records the call's numbers every few seconds: the
 video rate, loss and keyframes in each direction, and the audio devices'
@@ -331,3 +372,18 @@ video it sends and the video it receives there, as raw H.264
 players read. Nothing is written without the variable. The files are the
 picture of both people on the call, so only set it for a call whose other side
 agreed, and delete the files when you are done.
+
+### Saving a call's audio for diagnosis
+
+To work on echo cancellation, start ZapFast with `ZAPFAST_CALL_AUDIO_DUMP` set
+to a folder. Each call's microphone stream then writes four files there,
+`<time>-<stream>-reference.wav` (the other side's voice as your speaker played
+it), `-microphone.wav` (your microphone before any processing), `-output.wav`
+(what was sent after echo cancellation, noise suppression and level control),
+all mono 16 kHz, and `-order.csv`, which lets a developer replay the recording
+through the echo canceller exactly as the call ran it
+(`cargo run --release --example aec_replay -- <folder>/<time>-<stream>-reference.wav`,
+with the options listed at the top of `examples/aec_replay.rs`).
+Nothing is written without the variable. The files are both people's voices,
+so only set it for a call whose other side agreed, and delete the files when
+you are done.

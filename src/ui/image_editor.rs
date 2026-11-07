@@ -224,21 +224,27 @@ fn pasted_texture(
 /// A pasted buffer as an image to upload, capped the way the strip caps its own
 /// copy so a large paste does not meet the GPU's texture limit here.
 fn pasted_image(rgba: &[u8], width: u32, height: u32) -> Option<egui::ColorImage> {
-    let full = image::RgbaImage::from_raw(width.max(1), height.max(1), rgba.to_vec())?;
-    let small = if width > 1024 || height > 1024 {
+    // Borrowed: a copy of a 4K bitmap is 33 MB.
+    let full =
+        image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(width.max(1), height.max(1), rgba)?;
+    if width > 1024 || height > 1024 {
         let scale = 1024.0 / width.max(height) as f32;
         let (wide, tall) = (
             ((width as f32 * scale) as u32).max(1),
             ((height as f32 * scale) as u32).max(1),
         );
-        image::imageops::resize(&full, wide, tall, image::imageops::FilterType::Triangle)
+        let small =
+            image::imageops::resize(&full, wide, tall, image::imageops::FilterType::Triangle);
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [small.width() as usize, small.height() as usize],
+            &small,
+        ))
     } else {
-        full
-    };
-    Some(egui::ColorImage::from_rgba_unmultiplied(
-        [small.width() as usize, small.height() as usize],
-        &small,
-    ))
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [full.width() as usize, full.height() as usize],
+            &full,
+        ))
+    }
 }
 
 /// The picture's texture, once it is ready to draw.

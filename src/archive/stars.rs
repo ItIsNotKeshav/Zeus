@@ -116,7 +116,8 @@ impl Archive {
         };
         let mut list = Vec::new();
         for (starred_at, chat, id) in rows {
-            if let Some(message) = self.message(&chat, &id)? {
+            // The list draws words and a menu that act by id, never the preview.
+            if let Some(message) = self.message_bare(&chat, &id)? {
                 // A message revoked for everyone keeps its row, with the
                 // revoked content in it. It has no words and no Unstar left, so
                 // it is not a row the list can offer.

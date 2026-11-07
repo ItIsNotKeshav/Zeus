@@ -224,7 +224,7 @@ impl App {
             });
         } else {
             let caption = Some(text).filter(|text| !text.is_empty());
-            self.send_staged(&chat, staged, caption, Vec::new(), None);
+            self.send_staged(&chat, staged, caption, Vec::new(), None, false);
         }
     }
 

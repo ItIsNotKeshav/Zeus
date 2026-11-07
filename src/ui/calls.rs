@@ -364,12 +364,17 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             message: message.id.clone(),
         });
     }
-    // One-to-one calls only: a group call has no way back from here.
+    // A person's call is called back, and a group's call in its group while
+    // group calls are on; a call among several people with no group behind
+    // it has no way back from here.
     let button_rect = Rect::from_center_size(
-        pos2(rect.right() - 30.0, rect.center().y),
+        pos2(rect.right() - widgets::ROW_SIDE - 17.0, rect.center().y),
         Vec2::splat(34.0),
     );
-    if !entry.group && !link {
+    let group_chat = crate::model::ChatKind::from_id(&message.chat)
+        == crate::model::ChatKind::Group
+        && crate::calls::group_calls_enabled();
+    if !link && (!entry.group || group_chat) {
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(button_rect)
@@ -405,8 +410,10 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     } else if response.hovered() {
         widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
     }
-    let avatar_rect =
-        Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+    let avatar_rect = Rect::from_center_size(
+        pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+        Vec2::splat(48.0),
+    );
     if link {
         crate::ui::call::paint_link_avatar(ui, &palette, avatar_rect);
     } else {
@@ -419,7 +426,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
             picture.as_deref(),
         );
     }
-    let left = rect.left() + 76.0;
+    let left = rect.left() + widgets::ROW_SIDE + 62.0;
     let right = button_rect.left() - 6.0;
     let stamp_galley = ui
         .painter()
@@ -571,8 +578,8 @@ fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
     ui.add_space(10.0);
     Frame::new()
         .inner_margin(Margin {
-            left: 16,
-            right: 14,
+            left: widgets::ROW_SIDE as i8,
+            right: widgets::ROW_SIDE as i8,
             top: 4,
             bottom: 6,
         })
@@ -592,17 +599,19 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         Sense::hover(),
     );
     let buttons = Rect::from_min_max(
-        pos2(rect.right() - 92.0, rect.top()),
-        pos2(rect.right() - 12.0, rect.bottom()),
+        pos2(rect.right() - 80.0 - widgets::ROW_SIDE, rect.top()),
+        pos2(rect.right() - widgets::ROW_SIDE, rect.bottom()),
     );
     if ui.is_rect_visible(rect) {
         if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
-        let avatar_rect =
-            Rect::from_center_size(pos2(rect.left() + 38.0, rect.center().y), Vec2::splat(48.0));
+        let avatar_rect = Rect::from_center_size(
+            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
-        let left = rect.left() + 76.0;
+        let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let width = (buttons.left() - 8.0 - left).max(0.0);
         let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
@@ -826,6 +835,50 @@ mod tests {
             "{:?}",
             app.actions
         );
+    }
+
+    /// A group's call is called back in its group, as its chat's header
+    /// starts one, while group calls are on.
+    #[test]
+    fn a_groups_call_is_called_back_in_the_group() {
+        let _on = crate::calls::override_group_calls(true);
+        let group = "120363000000000009@g.us";
+        let actions = press_a_groups_call_back(group);
+        assert!(
+            matches!(actions.as_slice(), [Action::StartCall(chat)] if chat == group),
+            "{actions:?}"
+        );
+    }
+
+    /// With group calls off, a group's row has no button to call it back.
+    #[test]
+    fn with_group_calls_off_a_groups_call_is_not_called_back() {
+        let _off = crate::calls::override_group_calls(false);
+        let actions = press_a_groups_call_back("120363000000000009@g.us");
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::StartCall(_) | Action::StartVideoCall(_))),
+            "{actions:?}"
+        );
+    }
+
+    /// Presses where a group call's row has its call-back button, and returns what that did.
+    fn press_a_groups_call_back(group: &str) -> Vec<Action> {
+        let (_directory, mut app, ctx) = calls_app();
+        let mut entry = call(group, "8", true, 60, CallStatus::Answered);
+        if let Content::Call { group, .. } = &mut entry.content {
+            *group = true;
+        }
+        app.call_log.insert(0, entry);
+        frame(&mut app, &ctx, vec![]);
+        let row = ctx
+            .read_response(row_id(group, "8"))
+            .expect("the group's call is listed")
+            .rect;
+        frame(&mut app, &ctx, click(row.right_center() - vec2(30.0, 0.0)));
+        frame(&mut app, &ctx, vec![]);
+        std::mem::take(&mut app.actions)
     }
 
     /// A call joined through a link is listed as "Call link", with nothing

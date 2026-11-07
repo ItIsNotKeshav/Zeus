@@ -27,7 +27,7 @@ Pill-shaped text buttons: a filled primary, an outlined secondary, a soft surfac
 
 ### Accessibility
 
-Each button reports `WidgetInfo::labeled(Button, enabled, label)`; soft buttons report `selected` too. Focus is visible only after keyboard movement (`keyboard_focus_id`), like `:focus-visible`. In Messages and Halloween, white on the accent is 2.6 to 3.5:1, below 4.5:1: keep labels semibold and short there.
+Each button reports `WidgetInfo::labeled(Button, enabled, label)`; soft buttons report `selected` too. Focus is visible only after keyboard movement (`keyboard_focus_id`), like `:focus-visible`. In Messages, white on the accent is 2.6 to 3.5:1, below 4.5:1: keep labels semibold and short there.
 
 ## IconButton
 Frameless icon buttons and filled circle buttons for toolbars, headers and calls.

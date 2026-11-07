@@ -400,11 +400,6 @@ impl Notifications {
 /// Pidgin's message and alert sounds (GPL-2.0, see `assets/sounds/README.md`).
 const RECEIVE: &[u8] = include_bytes!("../assets/sounds/receive.wav");
 const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
-/// Zeus's own Halloween sounds, synthesised for it (see `assets/sounds/README.md`).
-const SPOOKY: &[u8] = include_bytes!("../assets/sounds/spooky.wav");
-const WITCHING: &[u8] = include_bytes!("../assets/sounds/witching.wav");
-/// The ghost surprise's soft "woooo", synthesised for Zeus.
-const BOO: &[u8] = include_bytes!("../assets/sounds/boo.wav");
 
 /// Whether the notification itself plays the sound, instead of ZapFast. On
 /// macOS a sound the notification plays is silenced along with the banner by
@@ -441,8 +436,6 @@ pub fn play_sound(sound: NotificationSound) {
     let source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send> = match sound {
         NotificationSound::Receive => Box::new(|| Ok(Box::new(std::io::Cursor::new(RECEIVE)))),
         NotificationSound::Alert => Box::new(|| Ok(Box::new(std::io::Cursor::new(ALERT)))),
-        NotificationSound::Spooky => Box::new(|| Ok(Box::new(std::io::Cursor::new(SPOOKY)))),
-        NotificationSound::Witching => Box::new(|| Ok(Box::new(std::io::Cursor::new(WITCHING)))),
         NotificationSound::Custom(path) => Box::new(move || {
             Ok(Box::new(std::io::BufReader::new(std::fs::File::open(
                 &path,
@@ -451,11 +444,6 @@ pub fn play_sound(sound: NotificationSound) {
         NotificationSound::System | NotificationSound::None => return,
     };
     play_source(source);
-}
-
-/// Plays the ghost surprise's sound.
-pub fn play_boo() {
-    play_source(Box::new(|| Ok(Box::new(std::io::Cursor::new(BOO)))));
 }
 
 fn play_source(source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send>) {
@@ -514,6 +502,22 @@ pub fn lines(chat_name: &str, is_group: bool, sender: &str, summary: &str) -> (S
     (chat_name.to_owned(), body)
 }
 
+/// The bundle identifier packaging/macos gives the app.
+const MACOS_BUNDLE_ID: &str = "app.zeus.Zeus";
+
+/// The identity notifications are sent under. macOS refuses a client whose
+/// identity is not the running bundle's before it asks for permission, so a
+/// mismatch leaves the app out of Notification Center: no banners, no sound,
+/// and no Dock badge. Elsewhere it is the app id the desktop entry and the
+/// Windows shortcuts use.
+fn notification_app_id() -> &'static str {
+    if cfg!(target_os = "macos") {
+        MACOS_BUNDLE_ID
+    } else {
+        crate::brand::APP_USER_MODEL_ID
+    }
+}
+
 /// Fastframe owns the platform adapters and one bounded native worker. This
 /// thread only keeps ZapFast's account-scoped cancellation and click routing.
 #[expect(clippy::too_many_arguments)]
@@ -536,7 +540,7 @@ fn deliver(
     };
     let client = match CLIENT.get_or_init(|| {
         Client::new(
-            App::new(crate::brand::APP_USER_MODEL_ID, crate::brand::NAME)
+            App::new(notification_app_id(), crate::brand::NAME)
                 .desktop_entry(crate::brand::ID)
                 .icon(crate::brand::ID)
                 // The logo's violet behind it on Windows toasts, so Windows
@@ -653,6 +657,23 @@ mod tests {
             let now = t + Duration::from_secs(10 * i);
             assert_eq!(guard.judge("a", now), Burst::Show { sound: true });
         }
+    }
+
+    /// Notifications on macOS need the bundle's own identifier, or the
+    /// system never asks for permission.
+    #[test]
+    fn the_macos_notification_identity_is_the_bundle_identifier() {
+        let plist = include_str!("../packaging/macos/Info-zeus.plist");
+        let key = "<key>CFBundleIdentifier</key>";
+        let after = &plist[plist.find(key).expect("Info.plist names the bundle") + key.len()..];
+        let value = after
+            .trim_start()
+            .strip_prefix("<string>")
+            .and_then(|rest| rest.split_once("</string>"))
+            .map(|(value, _)| value);
+        assert_eq!(value, Some(super::MACOS_BUNDLE_ID));
+        #[cfg(target_os = "macos")]
+        assert_eq!(super::notification_app_id(), super::MACOS_BUNDLE_ID);
     }
 
     #[test]

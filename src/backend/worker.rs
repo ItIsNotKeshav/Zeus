@@ -45,8 +45,10 @@ mod device_store;
 mod early_events;
 use early_events::WaitingReaction;
 mod favorite_chats;
+mod group_admin;
 mod interactive;
 mod link_watch;
+mod new_group;
 mod poll_history;
 mod polls;
 mod prefetch;
@@ -60,16 +62,28 @@ use super::{
 use crate::app::PAGE;
 use crate::archive::Archive;
 use crate::model::{
-    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Content, Delivery, Gif, GifError,
-    LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
+    ATTACHMENT_DOWNLOAD_LIMIT, Chat, ChatId, ChatKind, Contact, Contacts, Content, Delivery, Gif,
+    GifError, LIVE_LOCATION_LIMIT, LinkPreview, Media, MentionRef, Message, Quoted, Reaction,
 };
 use crate::paths::AccountDirs;
 use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
 /// Delay after the last history chunk before sync is complete.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
+/// History chunks inflating past this many bytes are filed a chat at a time
+/// as they are parsed, rather than parsed whole first.
+const HISTORY_STREAM_ABOVE: usize = 2 * 1024 * 1024;
+/// Quiet time after which the archive hands its page cache back.
+const ARCHIVE_IDLE_RELEASE: Duration = Duration::from_secs(60);
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
+/// Profile pictures downloading at once.
+const AVATAR_DOWNLOADS: usize = 4;
+/// How long a profile picture waits for its turn before it downloads
+/// anyway, so stuck downloads slow the rest instead of stopping them.
+const AVATAR_PATIENCE: Duration = Duration::from_secs(30);
+/// Automatic attachment downloads running at once.
+const AUTOMATIC_DOWNLOADS: usize = 6;
 /// Phone history-request timeout.
 const PHONE_PATIENCE: Duration = Duration::from_secs(30);
 /// Phone history-request batch size.
@@ -192,6 +206,7 @@ async fn fetch_attachment(
         .await
         .map_err(|error| error.to_string())?;
     let (temporary, file) = temporary_attachment_file(path)?;
+    let _staged = Staged(temporary.clone());
     let result = client
         .download_to_writer(
             downloadable,
@@ -203,7 +218,9 @@ async fn fetch_attachment(
         Ok(writer) => {
             // Close the verified file before publishing it, including on Windows.
             drop(writer);
-            let published = if keep_others {
+            // The staging file is removed on the way out if it was not
+            // published.
+            if keep_others {
                 publish_beside(&temporary, path)
                     .await
                     .map_err(|error| error.to_string())
@@ -211,17 +228,9 @@ async fn fetch_attachment(
                 publish_attachment(&temporary, path)
                     .await
                     .map(|()| path.to_path_buf())
-            };
-            match published {
-                Ok(path) => Ok(path),
-                Err(error) => {
-                    let _ = tokio::fs::remove_file(&temporary).await;
-                    Err(error)
-                }
             }
         }
         Err(error) => {
-            let _ = tokio::fs::remove_file(&temporary).await;
             let error = error.to_string();
             if error.contains(ATTACHMENT_LIMIT_ERROR) {
                 Err(ATTACHMENT_LIMIT_ERROR.to_owned())
@@ -335,6 +344,19 @@ fn temporary_attachment_file(path: &Path) -> Result<(PathBuf, std::fs::File), St
         }
     }
     Err("Could not create a unique attachment staging file".to_owned())
+}
+
+/// Removes a download's staging file when it ends, whichever way that is:
+/// published away (the removal then finds nothing), failed, or cancelled by
+/// its deadline, which drops the download without running its error path.
+/// The download's writer is dropped first, closing the file, so the removal
+/// also works on Windows.
+struct Staged(PathBuf);
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// Adds up the files under `dir`, the account's media cache. Downloads still
@@ -706,18 +728,36 @@ pub async fn run(
     // state rebuilt from a snapshot; a new link receives it with the first sync.
     let privacy_snapshot =
         !privacy_confirmed && archive.chats().is_ok_and(|chats| !chats.is_empty());
-    // A new link receives the phone's favorites with its first sync; only an
-    // archive filled before favorites were followed needs them replayed.
-    let favorites_recovered = archive
-        .meta(stickers::FAVORITES_RECOVERED)
-        .ok()
-        .flatten()
-        .as_deref()
-        == Some("complete")
-        || (archive.chats().is_ok_and(|chats| chats.is_empty())
-            && archive
-                .set_meta(stickers::FAVORITES_RECOVERED, "complete")
-                .is_ok());
+    // A new link receives the phone's favorites and its "Keep chats archived"
+    // with its first sync; only an archive filled before ZapFast followed
+    // them needs them replayed.
+    let replayed = [
+        stickers::FAVORITES_RECOVERED,
+        stickers::UNARCHIVE_SETTING_RECOVERED,
+    ];
+    let favorites_recovered = replayed
+        .iter()
+        .all(|key| archive.meta(key).ok().flatten().as_deref() == Some("complete"))
+        || (archive.chats().is_ok_and(|chats| chats.is_empty()) && {
+            // Every key is written, so one failure does not leave the other
+            // unrecorded.
+            let mut recorded = true;
+            for key in replayed {
+                if let Err(error) = archive.set_meta(key, "complete") {
+                    log::warn!("could not record the chat settings replay: {error}");
+                    recorded = false;
+                }
+            }
+            recorded
+        });
+    // The phone's own setting, read before the archive moves into the worker.
+    let (phone_unarchive_chats, phone_unarchive_unread) = match archive.unarchive_chats() {
+        Ok(setting) => (setting, false),
+        Err(error) => {
+            log::warn!("could not read the phone's Keep chats archived: {error}");
+            (None, true)
+        }
+    };
     // Likewise only contacts synced before first names were kept lack them.
     let first_names_recovered = archive
         .meta(contact_names::FIRST_NAMES_RECOVERED)
@@ -736,6 +776,7 @@ pub async fn run(
         privacy_reveal_at: (!privacy_confirmed).then(|| Instant::now() + PRIVACY_GRACE),
         privacy_attempts: 0,
         privacy_warned: false,
+        chats_dirty: false,
         privacy_recovering: false,
         privacy_generation: 0,
         message_removals_in_flight: HashSet::new(),
@@ -753,6 +794,7 @@ pub async fn run(
         client: None,
         handle: None,
         call: None,
+        phone_only_calls: Vec::new(),
         call_devices: crate::calls::DeviceList::default(),
         call_input: crate::calls::InputPreferences::default(),
         wa_sender,
@@ -761,16 +803,19 @@ pub async fn run(
         me_name: None,
         me_about: None,
         lid_to_pn: HashMap::new(),
-        contacts: HashMap::new(),
+        contacts: Contacts::default(),
         status: LinkStatus::Starting,
         pairing_phone: None,
         pair_code: None,
         qr: None,
         syncing: false,
         sync_deadline: None,
+        last_busy: Instant::now(),
+        archive_released: false,
         group_info_requested: HashSet::new(),
         leave_generation: HashMap::new(),
         subject_generation: HashMap::new(),
+        settings_generation: HashMap::new(),
         group_pictures_sent: HashMap::new(),
         description_generation: HashMap::new(),
         group_info_generation: HashMap::new(),
@@ -782,6 +827,8 @@ pub async fn run(
         presence_subscribed: HashSet::new(),
         download_folder: None,
         keep_chats_archived: true,
+        phone_unarchive_chats,
+        phone_unarchive_unread,
         online_wanted: false,
         online_changed: Instant::now(),
         online_sent: None,
@@ -812,6 +859,9 @@ pub async fn run(
         first_names_recovered,
         first_names_recovering: false,
         downloads: HashSet::new(),
+        download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
+        download_turns: HashMap::new(),
+        avatar_gate: Arc::new(tokio::sync::Semaphore::new(AVATAR_DOWNLOADS)),
         read_sync: ReadSync::default(),
         favorite_chats: Default::default(),
         poll_decrypting: 0,
@@ -822,6 +872,7 @@ pub async fn run(
         late_older: VecDeque::new(),
         older_ids_match: false,
         interactive_sending: HashMap::new(),
+        awaiting_ack: HashMap::new(),
         receipts_watch: None,
         receipts_pruned: Instant::now(),
         early: Default::default(),
@@ -834,10 +885,18 @@ pub async fn run(
     worker.backfill_video_notes();
     worker.backfill_view_once();
     worker.backfill_motion_photos();
+    worker.backfill_hd_copies();
+    worker.backfill_group_status_mentions();
     worker.backfill_interactive();
     worker.relocate_media();
     discard_attachment_staging(&worker.dirs.media_cache_dir());
     discard_attachment_staging(&worker.dirs.sticker_cache_dir());
+    // Saved stickers are user data, but an interrupted download's staging
+    // file never is: a favourite fetched when the process died would
+    // otherwise stay there forever, this folder having no other sweep.
+    discard_attachment_staging(&worker.dirs.saved_sticker_dir());
+    // The backfills and the media walk above read the archive end to end.
+    worker.archive.release_memory();
     worker.start_bot().await;
     let mut wa_events = wa_events;
     let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -850,6 +909,7 @@ pub async fn run(
             .call
             .as_ref()
             .and_then(|runtime| runtime.frames.clone());
+        let mut ticked = false;
         tokio::select! {
             command = inbox.recv() => {
                 match command {
@@ -901,6 +961,7 @@ pub async fn run(
                 worker.emit_chats();
             }
             _ = tick.tick() => {
+                ticked = true;
                 worker.watch_link();
                 worker.reveal_unconfirmed_after_grace();
                 worker.settle_presence();
@@ -917,7 +978,13 @@ pub async fn run(
                 worker.pump_prefetch();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
+                worker.release_idle_archive();
             }
+        }
+        worker.flush_chats();
+        if !ticked {
+            worker.last_busy = Instant::now();
+            worker.archive_released = false;
         }
     }
     worker.shutdown_call().await;
@@ -1019,6 +1086,23 @@ pub fn host_owned_presence<B, T, H, R>(
     builder.with_presence_policy(PresencePolicy::Manual)
 }
 
+/// App-state blobs fetched at once: two rather than the library's four. A
+/// link fetches the collections' snapshots together, and every fetch in
+/// flight holds its response and its buffer, so this lowers that peak for a
+/// sync a little slower. The byte budget stays the library's: past it a blob
+/// fails rather than waits.
+const APP_STATE_DOWNLOADS: std::num::NonZeroUsize = std::num::NonZeroUsize::new(2).unwrap();
+
+/// The library's caches as it sets them, but for [`APP_STATE_DOWNLOADS`].
+fn cache_config() -> whatsapp_rust::CacheConfig {
+    let mut config = whatsapp_rust::CacheConfig::default();
+    config.app_state_downloads = whatsapp_rust::AppStateDownloadConfig::new(
+        whatsapp_rust::AppStateDownloadConfig::default().max_bytes(),
+        APP_STATE_DOWNLOADS,
+    );
+    config
+}
+
 /// Waits longer after each failed lock-state recovery, so a collection the
 /// server keeps refusing is not rebuilt every few seconds.
 fn privacy_backoff(attempts: u32) -> Duration {
@@ -1078,6 +1162,12 @@ struct EditGenerations {
     applied: u64,
 }
 
+#[derive(Clone, Copy)]
+struct FileSendOptions {
+    documents: bool,
+    view_once: bool,
+}
+
 struct Worker {
     /// Private content may reach the UI.
     privacy_ready: bool,
@@ -1089,6 +1179,9 @@ struct Worker {
     privacy_reveal_at: Option<Instant>,
     privacy_attempts: u32,
     privacy_warned: bool,
+    /// A learned privacy-id mapping changed the chat list, which goes out once at
+    /// the end of the turn: a history chunk teaches dozens of them.
+    chats_dirty: bool,
     privacy_recovering: bool,
     privacy_generation: u64,
     /// Serializes requests for one message, including across privacy-id mapping.
@@ -1117,6 +1210,9 @@ struct Worker {
     poll_history: poll_history::Requests,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
+    /// Messages we sent that WhatsApp has not acknowledged yet, by id, with
+    /// their chat: the first ack's server time replaces their local stamp.
+    awaiting_ack: HashMap<String, ChatId>,
     /// The group message whose "Message info" is open.
     receipts_watch: Option<(ChatId, String)>,
     /// When receipts that never found their message were last dropped.
@@ -1152,13 +1248,18 @@ struct Worker {
     me_about: Option<String>,
     /// Privacy-id user part to phone-number user part.
     lid_to_pn: HashMap<String, String>,
-    contacts: HashMap<String, Contact>,
+    /// Shared with the window: see `Contacts`.
+    contacts: Contacts,
     status: LinkStatus,
     pairing_phone: Option<String>,
     pair_code: Option<String>,
     qr: Option<String>,
     syncing: bool,
     sync_deadline: Option<Instant>,
+    /// The last turn that was not the periodic tick.
+    last_busy: Instant,
+    /// The archive's page cache was released since `last_busy`.
+    archive_released: bool,
     /// Groups queued or already requested. Queries are rate-limited.
     group_info_requested: HashSet<String>,
     /// Pending group metadata queue.
@@ -1172,6 +1273,10 @@ struct Worker {
     /// Bumped whenever a rename made here is confirmed, for the same reason:
     /// metadata asked for before it must not bring the old subject back.
     subject_generation: HashMap<String, u64>,
+    /// Bumped whenever a permission or member change made here is accepted:
+    /// metadata asked for before it (the library joins a query already in
+    /// flight) must not bring the old permissions or members back.
+    settings_generation: HashMap<String, u64>,
     /// The photo each group was last sent, kept until WhatsApp answers so an
     /// accepted one shows at once rather than after a lookup the server may
     /// still answer with the old picture.
@@ -1190,9 +1295,16 @@ struct Worker {
     presence_subscribed: HashSet<String>,
     /// Chosen folder for new downloads, when not the cache.
     download_folder: Option<PathBuf>,
-    /// Settings' "Keep chats archived". Off, a new message unarchives its
-    /// chat here, as the phone does; WhatsApp sends no mutation for it.
+    /// Settings' "Keep chats archived", for an account whose phone has not
+    /// sent its own. Off, a new message unarchives its chat here, as the
+    /// phone does; WhatsApp sends no mutation for it.
     keep_chats_archived: bool,
+    /// The phone's own "Keep chats archived", inverted as WhatsApp sends it
+    /// (`Some(true)`: a new message unarchives). It wins over Settings'.
+    phone_unarchive_chats: Option<bool>,
+    /// The stored phone setting could not be read at startup; it is read
+    /// again when needed, and chats stay archived until it is.
+    phone_unarchive_unread: bool,
     /// Whether the window is focused and visible.
     online_wanted: bool,
     /// When `online_wanted` last changed.
@@ -1259,9 +1371,20 @@ struct Worker {
     first_names_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
+    /// Lets only a few automatic attachment downloads run at once.
+    download_gate: Arc<tokio::sync::Semaphore>,
+    /// Automatic downloads that may still wait for their turn, so a click on
+    /// one starts it at once.
+    download_turns: HashMap<(ChatId, String, Option<usize>), Arc<tokio::sync::Notify>>,
+    /// Lets only a few profile pictures download at once.
+    avatar_gate: Arc<tokio::sync::Semaphore>,
     /// Serial forward in flight. The next send waits for the running one.
     forward_queue: Option<ForwardQueue<ForwardJob>>,
     call: Option<calls::CallRuntime>,
+    /// Group calls ringing on the phone that this device does not join while group calls are off
+    /// (`calls::GROUP_CALLS_ENABLED`): kept only so each is filed in its group as it ends, as a
+    /// call that rang here and was answered elsewhere or missed is. Oldest first, a few at most.
+    phone_only_calls: Vec<crate::calls::Call>,
     /// The devices the call screen was last handed, kept so a device that goes away can be named
     /// by the description the user saw in the picker rather than by its node name.
     call_devices: crate::calls::DeviceList,
@@ -1491,6 +1614,50 @@ struct ParsedMessage {
     receipts: Vec<wa::UserReceipt>,
 }
 
+/// How many of a chat's newest messages are searched for one the phone has.
+const PHONE_RANGE_LOOKBACK: usize = 20;
+
+/// The range WhatsApp checks before it archives or unarchives a chat on the
+/// phone: the chat's newest message. A phone left the chat in place when
+/// the change came without one. Local call entries were never sent, so they
+/// give their time but name no message, and a message without a time is
+/// treated as none.
+fn archive_range(jid: &Jid, last: Option<&Message>) -> whatsapp_rust::SyncActionMessageRange {
+    let Some(last) = last.filter(|last| last.timestamp > 0) else {
+        return whatsapp_rust::message_range(crate::util::now(), None, Vec::new());
+    };
+    let participant = (jid.is_group() && !last.from_me)
+        .then(|| Worker::jid_of(&last.sender))
+        .flatten();
+    let key = (!last.id.starts_with(crate::model::CALL_ENTRY_PREFIX))
+        .then(|| whatsapp_rust::MessageId::new(&last.id).ok())
+        .flatten()
+        .and_then(|id| {
+            whatsapp_rust::MessageRef::new(jid, id, participant.as_ref(), last.from_me).ok()
+        });
+    whatsapp_rust::message_range(last.timestamp, None, key.map(|key| (key, last.timestamp)))
+}
+
+/// Last `rowid` stored for an unfinished startup backfill.
+///
+/// A missing or unreadable value starts at zero. Rows inserted here receive
+/// positive rowids, and `messages` is scanned by that implicit key.
+fn backfill_cursor(archive: &Archive, key: &str) -> i64 {
+    archive
+        .meta(key)
+        .ok()
+        .flatten()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Records `rowid` as the resume point. False when the write did not land:
+/// the caller must not mark the backfill finished, or the rest of the table
+/// would be skipped.
+fn store_backfill_cursor(archive: &Archive, key: &str, rowid: i64) -> bool {
+    archive.set_meta(key, &rowid.to_string()).is_ok()
+}
+
 impl Worker {
     fn ephemeral_expiration(&self, chat: &str) -> Option<u32> {
         self.archive
@@ -1538,6 +1705,7 @@ impl Worker {
                     | Event::Labels(_)
                     | Event::Typing { .. }
                     | Event::Call(_)
+                    | Event::PhoneOnlyCall(_)
                     | Event::CallDevices(_)
                     | Event::StarredList(_)
                     | Event::Pins { .. }
@@ -1565,6 +1733,41 @@ impl Worker {
             if call(client, jid).await.is_err() {
                 log::warn!("could not synchronize a chat preference");
             }
+        });
+    }
+
+    /// The chat's newest message the phone has: a send still pending or
+    /// failed here may never have reached it.
+    fn newest_on_phone(&self, chat: &str) -> Result<Option<Message>, rusqlite::Error> {
+        Ok(self
+            .archive
+            .messages(chat, None, PHONE_RANGE_LOOKBACK)?
+            .into_iter()
+            .rev()
+            .find(|message| {
+                !(message.from_me && matches!(message.status, Delivery::Pending | Delivery::Failed))
+            }))
+    }
+
+    /// Archives or unarchives a chat on the phone, naming its newest message.
+    /// A chat whose messages cannot be read is left alone there: a range made
+    /// up without them could move it past messages the phone has.
+    fn archive_on_phone(&self, chat: &str, archived: bool) {
+        let last = match self.newest_on_phone(chat) {
+            Ok(last) => last,
+            Err(error) => {
+                log::warn!("could not read a chat to archive it on the phone: {error}");
+                return;
+            }
+        };
+        self.tell_phone(chat, move |client, jid| async move {
+            let range = Some(archive_range(&jid, last.as_ref()));
+            if archived {
+                client.chat_actions().archive_chat(&jid, range).await
+            } else {
+                client.chat_actions().unarchive_chat(&jid, range).await
+            }
+            .map_err(|error| error.to_string())
         });
     }
 
@@ -1777,7 +1980,25 @@ impl Worker {
         }
     }
 
+    /// Lets the archive drop its page cache once the worker has done nothing
+    /// but tick for a while. Rides the existing tick, so it wakes nothing.
+    fn release_idle_archive(&mut self) {
+        if self.archive_released || self.last_busy.elapsed() < ARCHIVE_IDLE_RELEASE {
+            return;
+        }
+        self.archive_released = true;
+        self.archive.release_memory();
+    }
+
+    /// Sends the chat list when a mapping learned this turn changed it.
+    fn flush_chats(&mut self) {
+        if self.chats_dirty {
+            self.emit_chats();
+        }
+    }
+
     fn emit_chats(&mut self) {
+        self.chats_dirty = false;
         match self.archive.chats() {
             Ok(mut chats) => {
                 // Early preference sync can create an empty privacy-id row.
@@ -1876,6 +2097,33 @@ impl Worker {
         if let Ok(Some(mut message)) = self.archive.message(chat, id) {
             self.polish(&mut message);
             self.emit(Event::MessageUpdated(Box::new(message)));
+        }
+    }
+
+    /// Moves a message we sent to the time WhatsApp's server acknowledged it.
+    /// Only the first ack with a time counts: a resend after a retry receipt
+    /// is acked again, later, and must not move the message down the chat.
+    /// An ack without a usable time leaves the message waiting for one.
+    fn server_ack(&mut self, ack: &wa_events::ServerAck) {
+        if ack.class.as_deref() != Some("message") {
+            return;
+        }
+        let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
+            return;
+        };
+        let Some(chat) = self.awaiting_ack.get(&ack.id).cloned() else {
+            return;
+        };
+        match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
+            Ok(changed) => {
+                self.awaiting_ack.remove(&ack.id);
+                if changed {
+                    self.emit_message(&chat, &ack.id);
+                    self.emit_chat(&chat);
+                }
+            }
+            // Still awaited, so a later ack can place it.
+            Err(error) => log::warn!("could not move a sent message to the server's time: {error}"),
         }
     }
 
@@ -2003,16 +2251,13 @@ impl Worker {
             self.lid_to_pn = lids.into_iter().collect();
         }
         if let Ok(contacts) = self.archive.contacts() {
-            self.contacts = contacts
-                .into_iter()
-                .map(|contact| (contact.id.clone(), contact))
-                .collect();
+            self.contacts = contacts.into_iter().collect();
         }
         self.retry_confirmed_message_removals();
         if self.me_pn.is_some() || self.me_lid.is_some() {
             self.emit(self.me_event());
         }
-        self.emit(Event::Contacts(self.contacts.values().cloned().collect()));
+        self.emit(Event::Contacts(self.contacts.shared()));
         self.emit_chats();
     }
 
@@ -2123,54 +2368,72 @@ impl Worker {
 
     fn backfill(&mut self) {
         const VERSION: &str = "4";
+        // The cursor names the derived version. A later bump starts over,
+        // instead of resuming a walk that already reached the end.
+        let cursor_key = format!("derived_{VERSION}_cursor");
         if self.archive.meta("derived").ok().flatten().as_deref() == Some(VERSION) {
             return;
         }
-        let rows = match self.archive.rows_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read the archive for re-deriving: {error}");
-                return;
-            }
-        };
         let started = Instant::now();
         let mut updated = 0;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
+        let mut after = backfill_cursor(&self.archive, &cursor_key);
+        loop {
+            let rows = match self.archive.rows_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read the archive for re-deriving: {error}");
+                    return;
+                }
             };
-            let base = message.get_base_message();
-            let Some(mut content) = classify(&message) else {
-                continue;
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
             };
-            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
-                continue;
-            };
-            if matches!(existing.content, Content::Revoked) {
-                continue;
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                let Some(mut content) = classify(&message) else {
+                    continue;
+                };
+                let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                    continue;
+                };
+                if matches!(existing.content, Content::Revoked) {
+                    continue;
+                }
+                // Live edits do not replace the original raw protobuf. Its body and
+                // mention context are stale, regardless of the content kind.
+                if existing.edited {
+                    continue;
+                }
+                content.keep_local_paths(&existing.content);
+                let mentions = self.mentions_of(&recorded_mention_ids(base));
+                let thumbnail = thumbnail_of(base);
+                if self
+                    .archive
+                    .set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &mentions,
+                        thumbnail.as_deref(),
+                        forwarded_of(base),
+                    )
+                    .is_ok()
+                {
+                    updated += 1;
+                }
             }
-            // Live edits do not replace the original raw protobuf. Its body and
-            // mention context are stale, regardless of the content kind.
-            if existing.edited {
-                continue;
+            if !store_backfill_cursor(&self.archive, &cursor_key, last) {
+                log::warn!("could not store re-deriving progress");
+                return;
             }
-            content.keep_local_paths(&existing.content);
-            let mentions = self.mentions_of(&recorded_mention_ids(base));
-            let thumbnail = thumbnail_of(base);
-            if self
-                .archive
-                .set_derived(
-                    &chat,
-                    &id,
-                    &content,
-                    &mentions,
-                    thumbnail.as_deref(),
-                    forwarded_of(base),
-                )
-                .is_ok()
-            {
-                updated += 1;
+            if end {
+                break;
             }
+            after = last;
         }
         let _ = self.archive.set_meta("derived", VERSION);
         if updated > 0 {
@@ -2187,41 +2450,57 @@ impl Worker {
     /// file change, and only their content: an edit flag stays as it was.
     fn backfill_view_once(&mut self) {
         const KEY: &str = "view_once_media";
+        const CURSOR: &str = "view_once_media_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.media_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived media: {error}");
+        let mut updated = 0;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.media_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived media: {error}");
+                    return;
+                }
+            };
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let Some(content @ Content::PhoneOnly { .. }) = classify(&message) else {
+                    continue;
+                };
+                let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                    continue;
+                };
+                if existing
+                    .content
+                    .media()
+                    .is_none_or(|media| media.path.is_some())
+                {
+                    continue;
+                }
+                if self
+                    .archive
+                    .set_content(&chat, &id, &content, existing.edited)
+                    .is_ok()
+                {
+                    updated += 1;
+                }
+            }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store view-once backfill progress");
                 return;
             }
-        };
-        let mut updated = 0;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            let Some(content @ Content::PhoneOnly { .. }) = classify(&message) else {
-                continue;
-            };
-            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
-                continue;
-            };
-            if existing
-                .content
-                .media()
-                .is_none_or(|media| media.path.is_some())
-            {
-                continue;
+            if end {
+                break;
             }
-            if self
-                .archive
-                .set_content(&chat, &id, &content, existing.edited)
-                .is_ok()
-            {
-                updated += 1;
-            }
+            after = last;
         }
         let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
@@ -2234,67 +2513,94 @@ impl Worker {
     /// re-deriving edited text or any other locally preserved state.
     fn backfill_media_albums(&mut self) {
         const KEY: &str = "media_albums";
+        const CURSOR: &str = "media_albums_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.rows_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived media albums: {error}");
-                return;
-            }
-        };
         let mut updated = 0;
-        let mut failed = false;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            let album =
-                album_media(message.get_base_message(), media(None, None, None, None)).album;
-            let Some(album) = album else { continue };
-            let existing = match self.archive.message(&chat, &id) {
-                Ok(Some(existing)) => existing,
-                Ok(None) => continue,
-                Err(_) => {
-                    failed = true;
-                    continue;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.rows_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived media albums: {error}");
+                    if updated > 0 {
+                        self.emit_chats();
+                    }
+                    return;
                 }
             };
-            let mut content = existing.content;
-            let media = match &mut content {
-                Content::Image { media, .. }
-                | Content::Video {
-                    media, note: false, ..
-                } => media,
-                _ => continue,
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
             };
-            if media.album.as_deref() == Some(&album) {
-                continue;
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            let mut failed = false;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let album =
+                    album_media(message.get_base_message(), media(None, None, None, None)).album;
+                let Some(album) = album else { continue };
+                let existing = match self.archive.message(&chat, &id) {
+                    Ok(Some(existing)) => existing,
+                    Ok(None) => continue,
+                    Err(_) => {
+                        failed = true;
+                        continue;
+                    }
+                };
+                let mut content = existing.content;
+                let media = match &mut content {
+                    Content::Image { media, .. }
+                    | Content::Video {
+                        media, note: false, ..
+                    } => media,
+                    _ => continue,
+                };
+                if media.album.as_deref() == Some(&album) {
+                    continue;
+                }
+                media.album = Some(album);
+                if self
+                    .archive
+                    .set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &existing.mentions,
+                        existing.thumbnail.as_deref(),
+                        existing.forwarded,
+                    )
+                    .is_ok()
+                {
+                    updated += 1;
+                } else {
+                    failed = true;
+                }
             }
-            media.album = Some(album);
-            if self
-                .archive
-                .set_derived(
-                    &chat,
-                    &id,
-                    &content,
-                    &existing.mentions,
-                    existing.thumbnail.as_deref(),
-                    existing.forwarded,
-                )
-                .is_ok()
-            {
-                updated += 1;
-            } else {
-                failed = true;
+            if failed {
+                // Retry this batch on the next launch. The cursor stays put,
+                // so the finished batches are not read again.
+                log::warn!(
+                    "could not update some archived media-album items; will retry on startup"
+                );
+                if updated > 0 {
+                    log::info!("grouped {updated} archived media-album items");
+                    self.emit_chats();
+                }
+                return;
             }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store media-album backfill progress");
+                return;
+            }
+            if end {
+                break;
+            }
+            after = last;
         }
-        if !failed {
-            let _ = self.archive.set_meta(KEY, "1");
-        } else {
-            log::warn!("could not update some archived media-album items; will retry on startup");
-        }
+        let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
             log::info!("grouped {updated} archived media-album items");
             self.emit_chats();
@@ -2306,43 +2612,61 @@ impl Worker {
     /// whole row again would drop edits and local paths.
     fn backfill_video_notes(&mut self) {
         const KEY: &str = "video_notes";
+        const CURSOR: &str = "video_notes_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.videos_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived videos: {error}");
+        let mut updated = 0;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.videos_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived videos: {error}");
+                    return;
+                }
+            };
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                if base.video_message.as_option().is_some()
+                    || base.ptv_message.as_option().is_none()
+                {
+                    continue;
+                }
+                let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
+                    continue;
+                };
+                let mut content = existing.content;
+                let Content::Video { note, .. } = &mut content else {
+                    continue;
+                };
+                if *note {
+                    continue;
+                }
+                *note = true;
+                if self
+                    .archive
+                    .set_content(&chat, &id, &content, existing.edited)
+                    .is_ok()
+                {
+                    updated += 1;
+                }
+            }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store video-note backfill progress");
                 return;
             }
-        };
-        let mut updated = 0;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
-            };
-            let base = message.get_base_message();
-            if base.video_message.as_option().is_some() || base.ptv_message.as_option().is_none() {
-                continue;
+            if end {
+                break;
             }
-            let Ok(Some(existing)) = self.archive.message(&chat, &id) else {
-                continue;
-            };
-            let mut content = existing.content;
-            let Content::Video { note, .. } = &mut content else {
-                continue;
-            };
-            if *note {
-                continue;
-            }
-            *note = true;
-            if self
-                .archive
-                .set_content(&chat, &id, &content, existing.edited)
-                .is_ok()
-            {
-                updated += 1;
-            }
+            after = last;
         }
         let _ = self.archive.set_meta(KEY, "1");
         if updated > 0 {
@@ -2355,53 +2679,167 @@ impl Worker {
     /// they were recognised, to their photos.
     fn backfill_motion_photos(&mut self) {
         const KEY: &str = "motion_photo_children";
+        const CURSOR: &str = "motion_photo_children_cursor";
         if self.archive.meta(KEY).ok().flatten().as_deref() == Some("1") {
             return;
         }
-        let rows = match self.archive.unsupported_with_raw() {
-            Ok(rows) => rows,
-            Err(error) => {
-                log::warn!("could not read archived unsupported messages: {error}");
-                return;
-            }
-        };
         let mut removed = 0;
-        let mut failed = false;
-        for (chat, id, raw) in rows {
-            let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                continue;
+        let mut after = backfill_cursor(&self.archive, CURSOR);
+        loop {
+            let rows = match self.archive.unsupported_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived unsupported messages: {error}");
+                    if removed > 0 {
+                        log::info!("removed {removed} archived motion photo clips");
+                        self.emit_chats();
+                    }
+                    return;
+                }
             };
-            let base = message.get_base_message();
-            if !motion_photo_child(base) {
-                continue;
-            }
-            if let Some((parent, clip)) = motion_clip(base) {
-                let filed = self.archive.message(&chat, &id).and_then(|row| match row {
-                    Some(row) => self
-                        .archive
-                        .put_motion_clip(&chat, &parent, &row.sender, &clip)
-                        .map(drop),
-                    None => Ok(()),
-                });
-                if let Err(error) = filed {
-                    log::warn!("could not move an archived motion clip: {error}");
-                    failed = true;
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            let mut failed = false;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                let base = message.get_base_message();
+                if !motion_photo_child(base) {
                     continue;
                 }
-            }
-            match self.archive.delete_message(&chat, &id) {
-                Ok(_) => removed += 1,
-                Err(error) => {
-                    log::warn!("could not remove an archived motion clip: {error}");
-                    failed = true;
+                if let Some((parent, clip)) = motion_clip(base) {
+                    let filed = self.archive.message(&chat, &id).and_then(|row| match row {
+                        Some(row) => self
+                            .archive
+                            .put_motion_clip(&chat, &parent, &row.sender, &clip)
+                            .map(drop),
+                        None => Ok(()),
+                    });
+                    if let Err(error) = filed {
+                        log::warn!("could not move an archived motion clip: {error}");
+                        failed = true;
+                        continue;
+                    }
+                }
+                match self.archive.delete_message(&chat, &id) {
+                    Ok(_) => removed += 1,
+                    Err(error) => {
+                        log::warn!("could not remove an archived motion clip: {error}");
+                        failed = true;
+                    }
                 }
             }
+            if failed {
+                // Leave the cursor on the previous batch so the next launch
+                // retries this one instead of reading the whole table again.
+                if removed > 0 {
+                    log::info!("removed {removed} archived motion photo clips");
+                    self.emit_chats();
+                }
+                return;
+            }
+            if !store_backfill_cursor(&self.archive, CURSOR, last) {
+                log::warn!("could not store motion-photo backfill progress");
+                return;
+            }
+            if end {
+                break;
+            }
+            after = last;
         }
-        if !failed {
-            let _ = self.archive.set_meta(KEY, "1");
-        }
+        let _ = self.archive.set_meta(KEY, "1");
         if removed > 0 {
             log::info!("removed {removed} archived motion photo clips");
+            self.emit_chats();
+        }
+    }
+
+    /// Removes the HD copies of photos and videos, filed as unsupported
+    /// messages before they were recognised. Their standard copies stay.
+    fn backfill_hd_copies(&mut self) {
+        self.remove_archived_unsupported("hd_copies", hd_copy, "HD copies");
+    }
+
+    /// Removes the notices that someone mentioned a group in their status,
+    /// filed as unsupported messages before they were recognised (#595).
+    fn backfill_group_status_mentions(&mut self) {
+        self.remove_archived_unsupported(
+            "group_status_mentions",
+            group_status_mention,
+            "group status mentions",
+        );
+    }
+
+    /// Removes, once (`key` records it), the archived unsupported messages
+    /// `hidden` recognises as nothing to show.
+    fn remove_archived_unsupported(
+        &mut self,
+        key: &str,
+        hidden: fn(&wa::Message) -> bool,
+        what: &str,
+    ) {
+        if self.archive.meta(key).ok().flatten().as_deref() == Some("1") {
+            return;
+        }
+        let cursor_key = format!("{key}_cursor");
+        let mut removed = 0;
+        let mut after = backfill_cursor(&self.archive, &cursor_key);
+        loop {
+            let rows = match self.archive.unsupported_with_raw(after) {
+                Ok(rows) => rows,
+                Err(error) => {
+                    log::warn!("could not read archived unsupported messages: {error}");
+                    if removed > 0 {
+                        log::info!("removed {removed} archived {what}");
+                        self.emit_chats();
+                    }
+                    return;
+                }
+            };
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
+            };
+            let end = rows.len() < crate::archive::BACKFILL_BATCH;
+            let mut failed = false;
+            for (_rowid, chat, id, raw) in rows {
+                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                    continue;
+                };
+                if !hidden(message.get_base_message()) {
+                    continue;
+                }
+                match self.archive.delete_message(&chat, &id) {
+                    Ok(_) => removed += 1,
+                    Err(error) => {
+                        log::warn!("could not remove an archived message ({what}): {error}");
+                        failed = true;
+                    }
+                }
+            }
+            if failed {
+                // Retry this batch next launch. The cursor stays put, so the
+                // rows already finished are not read again.
+                if removed > 0 {
+                    log::info!("removed {removed} archived {what}");
+                    self.emit_chats();
+                }
+                return;
+            }
+            if !store_backfill_cursor(&self.archive, &cursor_key, last) {
+                log::warn!("could not store backfill progress for {cursor_key}");
+                return;
+            }
+            if end {
+                break;
+            }
+            after = last;
+        }
+        let _ = self.archive.set_meta(key, "1");
+        if removed > 0 {
+            log::info!("removed {removed} archived {what}");
             self.emit_chats();
         }
     }
@@ -2422,6 +2860,7 @@ impl Worker {
         };
         let sender = self.wa_sender.clone();
         let builder = host_owned_presence(Bot::builder().with_backend(store))
+            .with_cache_config(cache_config())
             .with_watched_ab_props([
                 abprops::web::AURA_PINNED_CHATS_BENEFIT_ACTIVE,
                 abprops::web::ENABLE_WEB_CALLING,
@@ -2728,6 +3167,8 @@ impl Worker {
         // session that comes next. Message ids are fresh per send, so an ack
         // can never match a job queued after the stop.
         self.abandon_forwards();
+        // Acks belong to the session that sent; the next one never answers.
+        self.awaiting_ack.clear();
         if let Some(handle) = self.handle.take()
             && tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
                 .await
@@ -2755,7 +3196,7 @@ impl Worker {
         };
         self.lid_to_pn.insert(lid.to_owned(), pn.to_owned());
         if changed {
-            self.emit_chats();
+            self.chats_dirty = true;
         }
         let chat = format!("{pn}@s.whatsapp.net");
         let lid_chat = format!("{lid}@lid");
@@ -2821,7 +3262,8 @@ impl Worker {
         if let Err(error) = self.archive.upsert_contact(&merged) {
             log::warn!("could not save a contact: {error}");
         }
-        self.contacts.insert(chat.to_owned(), merged.clone());
+        let merged = Arc::new(merged);
+        self.contacts.insert(Arc::clone(&merged));
         self.emit(Event::Contacts(vec![merged]));
     }
 
@@ -2959,20 +3401,15 @@ impl Worker {
         if push_name.is_empty() || id == self.me() {
             return;
         }
-        let contact = self
-            .contacts
-            .entry(id.to_owned())
-            .or_insert_with(|| Contact {
-                id: id.to_owned(),
-                full_name: None,
-                first_name: None,
-                push_name: None,
-            });
-        if contact.push_name.as_deref() == Some(push_name) {
+        let Some(contact) = self.contacts.edit(id, |contact| {
+            if contact.push_name.as_deref() == Some(push_name) {
+                return None;
+            }
+            Arc::make_mut(contact).push_name = Some(push_name.to_owned());
+            Some(Arc::clone(contact))
+        }) else {
             return;
-        }
-        contact.push_name = Some(push_name.to_owned());
-        let contact = contact.clone();
+        };
         if let Err(error) = self.archive.upsert_contact(&contact) {
             log::warn!("could not save a contact: {error}");
         }
@@ -3068,6 +3505,8 @@ impl Worker {
                     // edit a group's info; a group we left has nothing to ask.
                     && (chat.info_locked.is_some() || chat.left)
                     && (chat.group_description.is_some() || chat.left)
+                    // Nor its permissions and admins, before group management.
+                    && (chat.group_settings.is_some() || chat.left)
             });
             if known {
                 return;
@@ -3162,6 +3601,7 @@ impl Worker {
         // Likewise after a rename made here, which the answer may predate.
         let subject_generation = self.subject_generation.get(id).copied().unwrap_or(0);
         let description_generation = self.description_generation.get(id).copied().unwrap_or(0);
+        let settings_generation = self.settings_generation.get(id).copied().unwrap_or(0);
         let me: Vec<String> = [self.me_pn.clone(), self.me_lid.clone()]
             .into_iter()
             .flatten()
@@ -3170,33 +3610,9 @@ impl Worker {
         tokio::spawn(async move {
             match client.groups().fetch_metadata(&jid).await {
                 Ok(metadata) => {
-                    let canonical = |jid: &Jid| -> String {
-                        if jid.is_lid()
-                            && let Some(pn) = lids.get(jid.user_base())
-                        {
-                            return format!("{pn}@s.whatsapp.net");
-                        }
-                        jid.to_non_ad_string()
-                    };
-                    let mut participants = Vec::new();
-                    let mut admin = false;
-                    for participant in &metadata.participants {
-                        let id = participant
-                            .phone_number
-                            .as_ref()
-                            .map(canonical)
-                            .unwrap_or_else(|| canonical(&participant.jid));
-                        let mine = me.contains(&id)
-                            || participant
-                                .lid
-                                .as_ref()
-                                .is_some_and(|lid| me.contains(&lid.to_non_ad_string()))
-                            || me.contains(&participant.jid.to_non_ad_string());
-                        if mine && participant.is_admin() {
-                            admin = true;
-                        }
-                        participants.push(id);
-                    }
+                    let (participants, admin) =
+                        new_group::group_members(&metadata.participants, &me, &lids);
+                    let settings = group_admin::settings_of(&metadata, &lids);
                     let _ = commands.send(Command::GroupInfo {
                         leave_generation,
                         chat,
@@ -3222,6 +3638,8 @@ impl Worker {
                         info_locked: metadata.is_locked,
                         admin,
                         subject_generation,
+                        settings,
+                        settings_generation,
                     });
                 }
                 Err(error) => {
@@ -3342,6 +3760,7 @@ impl Worker {
                 self.refresh_legacy_preferences();
                 self.retry_avatars();
                 self.pump_read_sync();
+                self.favorite_chats.connected();
                 self.pump_favorite_chats();
                 self.poll_history.reconnect(Instant::now());
                 self.push_favorites();
@@ -3551,6 +3970,23 @@ impl Worker {
                 {
                     self.emit_chat(&chat);
                 }
+                // So does who may post: members get the composer back the
+                // moment an admin opens the group, not a refresh tick and a
+                // round trip later. Admins post either way.
+                let announcement = match &*update.action {
+                    GroupNotificationAction::Announce => Some(true),
+                    GroupNotificationAction::NotAnnounce => Some(false),
+                    _ => None,
+                };
+                if let Some(announcement) = announcement
+                    && let Ok(Some(known)) = self.archive.chat(&chat)
+                    && self
+                        .archive
+                        .set_read_only(&chat, announcement && !known.admin)
+                        .is_ok()
+                {
+                    self.emit_chat(&chat);
+                }
                 self.request_group_info(&chat, true);
             }
             E::ArchiveUpdate(update) => {
@@ -3694,6 +4130,20 @@ impl Worker {
                 self.me_about = Some(update.status.clone()).filter(|about| !about.is_empty());
                 self.emit(self.me_event());
             }
+            E::UnarchiveChatsSettingUpdate(update) => {
+                match self.archive.set_unarchive_chats_at(
+                    update.unarchive_chats,
+                    update.timestamp.timestamp_millis(),
+                ) {
+                    Ok(unarchive) => {
+                        self.phone_unarchive_chats = Some(unarchive);
+                        self.phone_unarchive_unread = false;
+                    }
+                    Err(error) => {
+                        log::warn!("could not store the phone's archive setting: {error}")
+                    }
+                }
+            }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
@@ -3701,6 +4151,7 @@ impl Worker {
                 self.push_name_synced();
             }
             E::OfflineSyncCompleted(_) => self.emit_chats(),
+            E::ServerAck(ack) => self.server_ack(ack),
             _ => {}
         }
     }
@@ -3842,6 +4293,8 @@ impl Worker {
         self.privacy_ready = false;
         self.privacy_confirmed = false;
         self.privacy_snapshot = false;
+        self.phone_unarchive_chats = None;
+        self.phone_unarchive_unread = false;
         // Reads for the unlinked account must not be answered for the next.
         self.withheld_pages.clear();
         self.early.clear();
@@ -3873,16 +4326,17 @@ impl Worker {
             .first_name
             .clone()
             .filter(|first| name.is_some() && !first.is_empty());
-        let contact = self.contacts.entry(id.clone()).or_insert_with(|| Contact {
-            id: id.clone(),
-            ..Contact::default()
-        });
-        if contact.full_name == name && contact.first_name == first_name {
+        let Some(contact) = self.contacts.edit(&id, |contact| {
+            if contact.full_name == name && contact.first_name == first_name {
+                return None;
+            }
+            let edited = Arc::make_mut(contact);
+            edited.full_name = name;
+            edited.first_name = first_name;
+            Some(Arc::clone(contact))
+        }) else {
             return;
-        }
-        contact.full_name = name;
-        contact.first_name = first_name;
-        let contact = contact.clone();
+        };
         if let Err(error) = self.archive.upsert_contact(&contact) {
             log::warn!("could not save a contact: {error}");
         }
@@ -4864,6 +5318,23 @@ impl Worker {
         self.archive_message(message, raw, push_name, false);
     }
 
+    /// The phone's "Keep chats archived" once it has said, else Settings'.
+    /// A stored setting that could not be read is read again here, and
+    /// keeps chats archived while it stays unreadable.
+    fn keeps_chats_archived(&mut self) -> bool {
+        if self.phone_unarchive_unread {
+            match self.archive.unarchive_chats() {
+                Ok(setting) => {
+                    self.phone_unarchive_chats = setting;
+                    self.phone_unarchive_unread = false;
+                }
+                Err(_) => return true,
+            }
+        }
+        self.phone_unarchive_chats
+            .map_or(self.keep_chats_archived, |unarchive| !unarchive)
+    }
+
     /// Stores `message`; `poll_baseline` records a live poll creation's
     /// zero-vote baseline once the row is archived, before the interface
     /// hears of it. A skipped or failed insert leaves no baseline behind.
@@ -4902,6 +5373,11 @@ impl Worker {
             log::warn!("could not store a message: {error}");
             return;
         }
+        // Only a stored message can be moved to the server's time.
+        if message.from_me && message.status == Delivery::Pending {
+            self.awaiting_ack
+                .insert(message.id.clone(), message.chat.clone());
+        }
         self.retire_local_call_twins(&message);
         if existing
             .as_ref()
@@ -4920,7 +5396,7 @@ impl Worker {
         // theirs. A duplicate delivery or one older than the archiving does
         // not bring the chat back.
         if is_new
-            && !self.keep_chats_archived
+            && !self.keeps_chats_archived()
             && let Err(error) = self
                 .archive
                 .unarchive_for_message(&chat, message.timestamp.saturating_mul(1000))
@@ -5110,52 +5586,120 @@ impl Worker {
             }
         }
         let compressed = lazy.compressed_bytes().clone();
-        let parsed = tokio::task::spawn_blocking(move || parse_history(&compressed)).await;
-        match parsed {
-            Ok(Ok(parsed)) => {
-                if on_demand {
-                    log::info!(
-                        "poll recovery: on-demand history received; chats={}, messages={}, standalone_votes={}",
-                        parsed.chats.len(),
-                        parsed
-                            .chats
-                            .iter()
-                            .map(|chat| chat.messages.len())
-                            .sum::<usize>(),
-                        parsed
-                            .chats
-                            .iter()
-                            .map(|chat| chat.poll_updates.len())
-                            .sum::<usize>()
-                    );
-                    for chat in &parsed.chats {
+        if lazy.decompressed_size() > HISTORY_STREAM_ABOVE {
+            // An initial chunk inflates to tens of megabytes: parsed whole,
+            // all its chats would sit in memory at once before filing.
+            if let Some(filed) = self.stream_history(compressed, on_demand).await
+                && on_demand
+            {
+                self.answer_older(filed, session.as_deref());
+            }
+        } else {
+            let parsed = tokio::task::spawn_blocking(move || parse_history(&compressed)).await;
+            match parsed {
+                Ok(Ok(parsed)) => {
+                    if on_demand {
                         log::info!(
-                            "history reload: parsed entries={}, visible={}, reactions={}, votes={}, counts={:?}",
-                            chat.diagnostics.entries,
-                            chat.messages.len(),
-                            chat.reactions.len(),
-                            chat.poll_updates.len(),
-                            chat.diagnostics,
+                            "poll recovery: on-demand history received; chats={}, messages={}, standalone_votes={}",
+                            parsed.chats.len(),
+                            parsed
+                                .chats
+                                .iter()
+                                .map(|chat| chat.messages.len())
+                                .sum::<usize>(),
+                            parsed
+                                .chats
+                                .iter()
+                                .map(|chat| chat.poll_updates.len())
+                                .sum::<usize>()
                         );
+                        for chat in &parsed.chats {
+                            log_history_chat(chat);
+                        }
+                    }
+                    let filed = self.apply_history(parsed, !on_demand);
+                    if on_demand {
+                        self.answer_older(filed, session.as_deref());
                     }
                 }
-                let filed = self.apply_history(parsed, !on_demand);
-                if on_demand {
-                    self.answer_older(filed, session.as_deref());
-                }
+                Ok(Err(error)) => self.history_unreadable(&error),
+                Err(_error) => log::warn!("history parsing worker failed"),
             }
-            Ok(Err(error)) => {
-                log::warn!("a history chunk could not be read");
-                self.emit(Event::Error(format!(
-                    "Could not read part of the chat history: {error}"
-                )));
-            }
-            Err(_error) => log::warn!("history parsing worker failed"),
         }
         if !on_demand && lazy.progress().is_some_and(|progress| progress >= 100) {
             self.sync_deadline = Some(Instant::now() + Duration::from_secs(3));
         }
         self.emit_chats();
+    }
+
+    /// Tells the reader a history chunk could not be read.
+    fn history_unreadable(&mut self, error: &str) {
+        log::warn!("a history chunk could not be read");
+        self.emit(Event::Error(format!(
+            "Could not read part of the chat history: {error}"
+        )));
+    }
+
+    /// Files a large history chunk one chat at a time, so only a chat or
+    /// two of it are decoded at once. A first pass reads the chunk's id
+    /// mappings, names and stickers, filed before any chat as
+    /// `apply_history` files them; a second parses each chat and hands it
+    /// over as it is ready. Returns what `apply_history` returns, or `None`
+    /// when the chunk could not be read, and then none of it was filed.
+    async fn stream_history<C>(
+        &mut self,
+        compressed: C,
+        on_demand: bool,
+    ) -> Option<Vec<(ChatId, usize, Option<bool>)>>
+    where
+        C: AsRef<[u8]> + Clone + Send + 'static,
+    {
+        let first = compressed.clone();
+        let prelude =
+            tokio::task::spawn_blocking(move || parse_history_prelude(first.as_ref())).await;
+        let (prelude, pairs) = match prelude {
+            Ok(Ok(prelude)) => prelude,
+            Ok(Err(error)) => {
+                self.history_unreadable(&error);
+                return None;
+            }
+            Err(_error) => {
+                log::warn!("history parsing worker failed");
+                return None;
+            }
+        };
+        self.apply_history_prelude(&prelude, &pairs);
+        // One parsed chat waits while the worker files the one before it.
+        let (sender, mut chats) = mpsc::channel(1);
+        let reader =
+            tokio::task::spawn_blocking(move || stream_history_chats(compressed.as_ref(), &sender));
+        let mut media_changed_in: HashSet<ChatId> = HashSet::new();
+        let mut filed = Vec::new();
+        let (mut received, mut messages, mut votes) = (0, 0, 0);
+        while let Some(chat) = chats.recv().await {
+            if on_demand {
+                received += 1;
+                messages += chat.messages.len();
+                votes += chat.poll_updates.len();
+                log_history_chat(&chat);
+            }
+            filed.extend(self.apply_history_chat(chat, !on_demand, &mut media_changed_in));
+        }
+        // The first pass read the same bytes through, so the second does not
+        // fail in practice. If it does, the chats filed stay filed: history
+        // is filed idempotently, as when the phone repeats a chunk.
+        match reader.await {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => self.history_unreadable(&error),
+            Err(_error) => log::warn!("history parsing worker failed"),
+        }
+        if on_demand {
+            log::info!(
+                "poll recovery: on-demand history received; chats={received}, messages={messages}, standalone_votes={votes}"
+            );
+        }
+        self.finish_history(&filed, media_changed_in);
+        Some(filed)
     }
 
     /// Archives a history chunk. `metadata` controls chat-state updates.
@@ -5165,9 +5709,24 @@ impl Worker {
         parsed: ParsedHistory,
         metadata: bool,
     ) -> Vec<(ChatId, usize, Option<bool>)> {
+        self.apply_history_prelude(&parsed, &[]);
         // Chats whose listed pictures, documents or links changed, told
         // once each rather than once per imported message.
         let mut media_changed_in: HashSet<ChatId> = HashSet::new();
+        let mut filed = Vec::new();
+        for chat in parsed.chats {
+            filed.extend(self.apply_history_chat(chat, metadata, &mut media_changed_in));
+        }
+        self.finish_history(&filed, media_changed_in);
+        filed
+    }
+
+    /// Files what a history chunk holds besides its chats' messages: id
+    /// mappings, the phone's recent stickers and names. All of it lands
+    /// before any chat, so each message is filed under the ids the whole
+    /// chunk maps. `pairs` are the privacy ids and phone numbers of chats
+    /// read ahead of a chunk filed one chat at a time.
+    fn apply_history_prelude(&mut self, parsed: &ParsedHistory, pairs: &[(String, String)]) {
         for (lid, pn) in &parsed.lids {
             if let (Some(lid), Some(pn)) = (Self::jid_of(lid), Self::jid_of(pn)) {
                 self.learn_pair(&lid, &pn);
@@ -5202,393 +5761,405 @@ impl Worker {
                 self.learn_pair(&lid, &pn);
             }
         }
-        let mut filed = Vec::new();
+        for (lid, pn) in pairs {
+            if let (Some(lid), Some(pn)) = (Self::jid_of(lid), Self::jid_of(pn)) {
+                self.learn_pair(&lid, &pn);
+            }
+        }
         for (id, name) in &parsed.push_names {
             let id = self.canonical_str(id);
             self.remember_push_name(&id, name);
         }
-        for mut chat in parsed.chats {
-            let id = self.canonical_str(&chat.id);
-            if id.ends_with("@broadcast") {
-                continue;
+    }
+
+    /// Archives one chat of a history chunk, after `apply_history_prelude`.
+    /// Returns its message count and whether the phone has more, or `None`
+    /// when the chat is left out.
+    fn apply_history_chat(
+        &mut self,
+        mut chat: ParsedChat,
+        metadata: bool,
+        media_changed_in: &mut HashSet<ChatId>,
+    ) -> Option<(ChatId, usize, Option<bool>)> {
+        let id = self.canonical_str(&chat.id);
+        if id.ends_with("@broadcast") {
+            return None;
+        }
+        let existing = self.archive.chat(&id).ok().flatten();
+        if let Some(through) = self.archive.removal_point(&id).ok().flatten() {
+            chat.messages.retain(|message| message.timestamp > through);
+            // Nothing newer than the deletion: leave the chat deleted.
+            if existing.is_none() && chat.messages.is_empty() {
+                return None;
             }
-            let existing = self.archive.chat(&id).ok().flatten();
-            if let Some(through) = self.archive.removal_point(&id).ok().flatten() {
-                chat.messages.retain(|message| message.timestamp > through);
-                // Nothing newer than the deletion: leave the chat deleted.
-                if existing.is_none() && chat.messages.is_empty() {
-                    continue;
-                }
-            }
-            if metadata || existing.is_none() {
-                let subject_known = chat.name.is_some()
-                    || existing
-                        .as_ref()
-                        .is_some_and(|chat| chat.group_subject_known);
-                let named_channel = existing
+        }
+        if metadata || existing.is_none() {
+            let subject_known = chat.name.is_some()
+                || existing
                     .as_ref()
-                    .filter(|known| known.is_channel() && keeps_its_name(known));
-                let name = match chat.name {
-                    // The server's list names a channel; history may not.
-                    _ if named_channel.is_some() => named_channel
-                        .map(|known| known.name.clone())
-                        .unwrap_or_default(),
-                    Some(name) if ChatKind::from_id(&id) == ChatKind::Group => name,
-                    Some(name) if !name.is_empty() => {
-                        // Prefer the phone's address-book name for direct chats.
-                        let contact = self.contacts.entry(id.clone()).or_insert_with(|| Contact {
-                            id: id.clone(),
-                            full_name: None,
-                            first_name: None,
-                            push_name: None,
-                        });
+                    .is_some_and(|chat| chat.group_subject_known);
+            let named_channel = existing
+                .as_ref()
+                .filter(|known| known.is_channel() && keeps_its_name(known));
+            let name = match chat.name {
+                // The server's list names a channel; history may not.
+                _ if named_channel.is_some() => named_channel
+                    .map(|known| known.name.clone())
+                    .unwrap_or_default(),
+                Some(name) if ChatKind::from_id(&id) == ChatKind::Group => name,
+                Some(name) if !name.is_empty() => {
+                    // Prefer the phone's address-book name for direct chats.
+                    let named = self.contacts.edit(&id, |contact| {
                         if contact.full_name.is_none()
                             && !name
                                 .chars()
                                 .all(|c| c.is_ascii_digit() || c == '+' || c == ' ')
                         {
-                            contact.full_name = Some(name.clone());
-                            let contact = contact.clone();
-                            let _ = self.archive.upsert_contact(&contact);
-                            self.emit(Event::Contacts(vec![contact]));
-                        }
-                        self.chat_name(&id, None)
-                    }
-                    _ => existing
-                        .as_ref()
-                        .map_or_else(|| self.chat_name(&id, None), |chat| chat.name.clone()),
-                };
-                let mut row = Chat::new(id.clone(), name);
-                row.group_subject_known = subject_known;
-                row.last_activity = chat.last_activity;
-                row.unread = existing.as_ref().map_or(0, |existing| existing.unread);
-                row.archived = chat
-                    .archived
-                    .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.archived));
-                row.pinned_at = chat
-                    .pinned_at
-                    .unwrap_or_else(|| existing.as_ref().map_or(0, |row| row.pinned_at));
-                row.pinned = chat.pinned_at.map_or_else(
-                    || existing.as_ref().is_some_and(|row| row.pinned),
-                    |when| when > 0,
-                );
-                row.muted_until = chat
-                    .muted_until
-                    .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
-                row.locked = chat
-                    .locked
-                    .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.locked));
-                if self.archive.upsert_chat(&row).is_err() {
-                    log::warn!("could not store a chat");
-                    continue;
-                }
-                // History has no lock timestamp, so it must not supersede
-                // an app-state update already received from the phone.
-                if let Some(locked) = chat.locked {
-                    let _ = self.archive.set_locked_snapshot(&id, locked);
-                }
-            }
-            if let Some(expiration) = chat.ephemeral_expiration {
-                let _ = self.archive.set_ephemeral(
-                    &id,
-                    expiration,
-                    chat.ephemeral_setting_timestamp.unwrap_or_default(),
-                );
-            }
-            if ChatKind::from_id(&id) == ChatKind::Group {
-                self.request_group_info(&id, false);
-            }
-            let count = chat.messages.len();
-            let mut added = 0;
-            let mut repeated = 0;
-            let mut removed = 0;
-            let mut failed = 0;
-            let mut secrets = HashMap::new();
-            for message in chat.messages {
-                if self.message_was_removed(&id, &message.id) {
-                    removed += 1;
-                    continue;
-                }
-                if let Some(secret) = message
-                    .poll_secret
-                    .as_deref()
-                    .filter(|secret| secret.len() == 32)
-                {
-                    secrets.insert(message.id.clone(), secret.to_vec());
-                }
-                let poll_creator = if message.from_me {
-                    self.me()
-                } else {
-                    message.sender.clone().unwrap_or_else(|| chat.id.clone())
-                };
-                let sender = if message.from_me {
-                    self.me()
-                } else {
-                    message
-                        .sender
-                        .as_deref()
-                        .map(|sender| self.canonical_str(sender))
-                        .unwrap_or_else(|| id.clone())
-                };
-                if let Some(push_name) = message.push_name.as_deref()
-                    && !message.from_me
-                {
-                    self.remember_push_name(&sender, push_name);
-                }
-                let reactions = message
-                    .reactions
-                    .into_iter()
-                    .map(|(who, from_me, emoji)| Reaction {
-                        sender: if from_me {
-                            self.me()
+                            Arc::make_mut(contact).full_name = Some(name.clone());
+                            Some(Arc::clone(contact))
                         } else {
-                            who.as_deref()
-                                .map(|who| self.canonical_str(who))
-                                .unwrap_or_else(|| id.clone())
-                        },
-                        from_me,
-                        emoji,
-                    })
-                    .collect();
-                let quoted = message.quoted.map(|quoted| {
-                    let sender = self.canonical_str(&quoted.sender);
-                    Quoted {
-                        chat: quoted.chat.as_deref().map(|chat| self.canonical_str(chat)),
-                        sender_name: self.name_for(&sender),
-                        sender,
-                        ..quoted
+                            None
+                        }
+                    });
+                    if let Some(contact) = named {
+                        let _ = self.archive.upsert_contact(&contact);
+                        self.emit(Event::Contacts(vec![contact]));
                     }
-                });
-                let mentions = self.mentions_of(&message.mentions);
-                // A direct chat's receipt times date its ticks. A group's may
-                // be partial, so they only fill in "Message info".
-                let group = ChatKind::from_id(&id) == ChatKind::Group;
-                // A zero timestamp means the time is unknown: kept, it would
-                // win `min()` and date the tick to the Unix epoch.
-                let first = |at: fn(&wa::UserReceipt) -> Option<i64>| {
-                    message
-                        .receipts
-                        .iter()
-                        .filter_map(at)
-                        .filter(|&at| at > 0)
-                        .min()
-                };
-                let read = matches!(message.status, Delivery::Read | Delivery::Played);
-                let delivered_at = first(|receipt| receipt.receipt_timestamp)
-                    .filter(|_| !group && (read || message.status == Delivery::Delivered));
-                let read_at = first(|receipt| receipt.read_timestamp).filter(|_| !group && read);
-                let mut row = Message {
-                    id: message.id,
-                    chat: id.clone(),
-                    sender,
-                    sender_name: if message.from_me {
-                        None
+                    self.chat_name(&id, None)
+                }
+                _ => existing
+                    .as_ref()
+                    .map_or_else(|| self.chat_name(&id, None), |chat| chat.name.clone()),
+            };
+            let mut row = Chat::new(id.clone(), name);
+            row.group_subject_known = subject_known;
+            row.last_activity = chat.last_activity;
+            row.unread = existing.as_ref().map_or(0, |existing| existing.unread);
+            row.archived = chat
+                .archived
+                .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.archived));
+            row.pinned_at = chat
+                .pinned_at
+                .unwrap_or_else(|| existing.as_ref().map_or(0, |row| row.pinned_at));
+            row.pinned = chat.pinned_at.map_or_else(
+                || existing.as_ref().is_some_and(|row| row.pinned),
+                |when| when > 0,
+            );
+            row.muted_until = chat
+                .muted_until
+                .unwrap_or_else(|| existing.as_ref().and_then(|row| row.muted_until));
+            row.locked = chat
+                .locked
+                .unwrap_or_else(|| existing.as_ref().is_some_and(|row| row.locked));
+            if self.archive.upsert_chat(&row).is_err() {
+                log::warn!("could not store a chat");
+                return None;
+            }
+            // History has no lock timestamp, so it must not supersede
+            // an app-state update already received from the phone.
+            if let Some(locked) = chat.locked {
+                let _ = self.archive.set_locked_snapshot(&id, locked);
+            }
+        }
+        if let Some(expiration) = chat.ephemeral_expiration {
+            let _ = self.archive.set_ephemeral(
+                &id,
+                expiration,
+                chat.ephemeral_setting_timestamp.unwrap_or_default(),
+            );
+        }
+        if ChatKind::from_id(&id) == ChatKind::Group {
+            self.request_group_info(&id, false);
+        }
+        let count = chat.messages.len();
+        let mut added = 0;
+        let mut repeated = 0;
+        let mut removed = 0;
+        let mut failed = 0;
+        let mut secrets = HashMap::new();
+        for message in chat.messages {
+            if self.message_was_removed(&id, &message.id) {
+                removed += 1;
+                continue;
+            }
+            if let Some(secret) = message
+                .poll_secret
+                .as_deref()
+                .filter(|secret| secret.len() == 32)
+            {
+                secrets.insert(message.id.clone(), secret.to_vec());
+            }
+            let poll_creator = if message.from_me {
+                self.me()
+            } else {
+                message.sender.clone().unwrap_or_else(|| chat.id.clone())
+            };
+            let sender = if message.from_me {
+                self.me()
+            } else {
+                message
+                    .sender
+                    .as_deref()
+                    .map(|sender| self.canonical_str(sender))
+                    .unwrap_or_else(|| id.clone())
+            };
+            if let Some(push_name) = message.push_name.as_deref()
+                && !message.from_me
+            {
+                self.remember_push_name(&sender, push_name);
+            }
+            let reactions = message
+                .reactions
+                .into_iter()
+                .map(|(who, from_me, emoji)| Reaction {
+                    sender: if from_me {
+                        self.me()
                     } else {
-                        message.push_name
+                        who.as_deref()
+                            .map(|who| self.canonical_str(who))
+                            .unwrap_or_else(|| id.clone())
                     },
-                    from_me: message.from_me,
-                    timestamp: message.timestamp,
-                    content: message.content,
-                    status: message.status,
-                    delivered_at,
-                    read_at,
-                    quoted,
-                    reactions,
-                    history_order: message.history_order,
-                    edited: message.edited,
-                    mentions,
-                    forwarded: message.forwarded,
-                    thumbnail: message.thumbnail,
-                };
-                let mut poll_history_received = false;
-                let raw =
-                    ensure_message_secret(message.raw, secrets.get(&row.id).map(Vec::as_slice));
-                if matches!(row.content, Content::Poll { .. }) {
-                    if let Ok(raw) = wa::Message::decode_from_slice(&raw) {
-                        self.remember_poll(
-                            &row,
-                            &raw,
-                            &poll_creator,
-                            message.poll_secret.as_deref(),
-                        );
-                    }
-                    poll_history_received = self.history_poll_votes(&row, &message.poll_votes);
+                    from_me,
+                    emoji,
+                })
+                .collect();
+            let quoted = message.quoted.map(|quoted| {
+                let sender = self.canonical_str(&quoted.sender);
+                Quoted {
+                    chat: quoted.chat.as_deref().map(|chat| self.canonical_str(chat)),
+                    sender_name: self.name_for(&sender),
+                    sender,
+                    ..quoted
                 }
-                // History replays and on-demand chunks can repeat a message the
-                // archive already holds; keep the files it already downloaded.
-                let mut keep_raw = false;
-                let mut existed = false;
-                let mut live_location_changed = false;
-                let existing = self.archive.message(&id, &row.id).ok().flatten();
-                // What the info panel listed for this row before it lands,
-                // so a change to its pictures, documents or links is told.
-                let before = existing.as_ref().map(|existing| existing.content.clone());
-                if let Some(existing) = existing {
-                    existed = true;
-                    row.content.keep_local_paths(&existing.content);
-                    keep_live_location_notice(&mut row.content, &existing);
-                    // A repeated original must not undo a later edit or revoke.
-                    if (existing.edited && !row.edited)
-                        || matches!(existing.content, Content::Revoked)
-                    {
-                        row.content = existing.content.clone();
-                        row.edited = existing.edited;
-                        row.quoted = existing.quoted;
-                        row.mentions = existing.mentions;
-                        row.thumbnail = existing.thumbnail.clone();
-                        keep_raw = true;
-                    }
-                    live_location_changed = matches!(
-                        (&existing.content, &row.content),
-                        (Content::LiveLocation { .. }, Content::LiveLocation { .. })
-                    ) && existing.content != row.content;
-                }
-                if let Err(error) = self
-                    .archive
-                    .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
-                {
-                    failed += 1;
-                    log::warn!("could not store a history message: {error}");
+            });
+            let mentions = self.mentions_of(&message.mentions);
+            // A direct chat's receipt times date its ticks. A group's may
+            // be partial, so they only fill in "Message info".
+            let group = ChatKind::from_id(&id) == ChatKind::Group;
+            // A zero timestamp means the time is unknown: kept, it would
+            // win `min()` and date the tick to the Unix epoch.
+            let first = |at: fn(&wa::UserReceipt) -> Option<i64>| {
+                message
+                    .receipts
+                    .iter()
+                    .filter_map(at)
+                    .filter(|&at| at > 0)
+                    .min()
+            };
+            let read = matches!(message.status, Delivery::Read | Delivery::Played);
+            let delivered_at = first(|receipt| receipt.receipt_timestamp)
+                .filter(|_| !group && (read || message.status == Delivery::Delivered));
+            let read_at = first(|receipt| receipt.read_timestamp).filter(|_| !group && read);
+            let mut row = Message {
+                id: message.id,
+                chat: id.clone(),
+                sender,
+                sender_name: if message.from_me {
+                    None
                 } else {
-                    if live_location_changed {
-                        self.emit_message(&id, &row.id);
-                    }
-                    self.retire_local_call_twins(&row);
-                    if existed {
-                        repeated += 1;
-                    } else {
-                        added += 1;
-                    }
-                    if before.as_ref() != Some(&row.content)
-                        && (before.as_ref().is_some_and(Content::listable)
-                            || row.content.listable())
-                    {
-                        media_changed_in.insert(id.clone());
-                    }
+                    message.push_name
+                },
+                from_me: message.from_me,
+                timestamp: message.timestamp,
+                content: message.content,
+                status: message.status,
+                delivered_at,
+                read_at,
+                quoted,
+                reactions,
+                history_order: message.history_order,
+                edited: message.edited,
+                mentions,
+                forwarded: message.forwarded,
+                thumbnail: message.thumbnail,
+            };
+            let mut poll_history_received = false;
+            let raw = ensure_message_secret(message.raw, secrets.get(&row.id).map(Vec::as_slice));
+            if matches!(row.content, Content::Poll { .. }) {
+                if let Ok(raw) = wa::Message::decode_from_slice(&raw) {
+                    self.remember_poll(&row, &raw, &poll_creator, message.poll_secret.as_deref());
                 }
-                self.settle_early_events(&id, &row.id);
-                if group {
-                    self.file_history_receipts(&id, &row.id, &message.receipts);
+                poll_history_received = self.history_poll_votes(&row, &message.poll_votes);
+            }
+            // History replays and on-demand chunks can repeat a message the
+            // archive already holds; keep the files it already downloaded.
+            let mut keep_raw = false;
+            let mut existed = false;
+            let mut live_location_changed = false;
+            let existing = self.archive.message(&id, &row.id).ok().flatten();
+            // What the info panel listed for this row before it lands,
+            // so a change to its pictures, documents or links is told.
+            let before = existing.as_ref().map(|existing| existing.content.clone());
+            if let Some(existing) = existing {
+                existed = true;
+                row.content.keep_local_paths(&existing.content);
+                keep_live_location_notice(&mut row.content, &existing);
+                // A repeated original must not undo a later edit or revoke.
+                if (existing.edited && !row.edited) || matches!(existing.content, Content::Revoked)
+                {
+                    row.content = existing.content.clone();
+                    row.edited = existing.edited;
+                    row.quoted = existing.quoted;
+                    row.mentions = existing.mentions;
+                    row.thumbnail = existing.thumbnail.clone();
+                    keep_raw = true;
                 }
-                if matches!(row.content, Content::Poll { .. }) {
-                    if poll_history_received {
-                        let _ = self.archive.mark_poll_history(&id, &row.id);
-                        self.poll_history.finish(&id, &row.id);
-                    }
+                live_location_changed = matches!(
+                    (&existing.content, &row.content),
+                    (Content::LiveLocation { .. }, Content::LiveLocation { .. })
+                ) && existing.content != row.content;
+            }
+            if let Err(error) = self
+                .archive
+                .insert_message(&row, (!keep_raw).then_some(raw.as_slice()))
+            {
+                failed += 1;
+                log::warn!("could not store a history message: {error}");
+            } else {
+                if live_location_changed {
                     self.emit_message(&id, &row.id);
                 }
-            }
-            if !metadata && self.pending_older.contains_key(&id) {
-                log::info!(
-                    "history reload: archived added={added}, repeated={repeated}, removed={removed}, failed={failed}"
-                );
-            }
-            for reaction in chat.reactions {
-                self.apply_history_reaction(&id, reaction, &secrets);
-            }
-            let had_pins = !chat.pins.is_empty();
-            for pin in chat.pins {
-                let written = if pin.pinned {
-                    let secs = if pin.duration_secs == 0 {
-                        PIN_SECS
-                    } else {
-                        i64::from(pin.duration_secs)
-                    };
-                    self.archive.pin_from(
-                        &id,
-                        &pin.target,
-                        pin.at,
-                        pin.at.saturating_add(secs),
-                        &pin.pinner,
-                    )
+                self.retire_local_call_twins(&row);
+                if existed {
+                    repeated += 1;
                 } else {
-                    self.archive
-                        .set_pin(&id, &pin.target, false, pin.at, 0, &pin.pinner)
-                };
-                if let Err(error) = written {
-                    log::warn!("could not store a history pin: {error}");
+                    added += 1;
                 }
-            }
-            if had_pins {
-                self.emit_pins(&id);
-            }
-            for update in chat.poll_updates {
-                let sender = if update.from_me {
-                    self.me()
-                } else {
-                    update.sender.unwrap_or_else(|| chat.id.clone())
-                };
-                self.ingest_poll_vote(
-                    &id,
-                    &update.id,
-                    &sender,
-                    update.from_me,
-                    update.timestamp,
-                    &update.update,
-                );
-            }
-            for revoked in chat.revoked {
-                if self
-                    .archive
-                    .message(&id, &revoked)
-                    .ok()
-                    .flatten()
-                    .is_some_and(|old| old.content.listable())
+                if before.as_ref() != Some(&row.content)
+                    && (before.as_ref().is_some_and(Content::listable) || row.content.listable())
                 {
                     media_changed_in.insert(id.clone());
                 }
-                let _ = self
-                    .archive
-                    .set_content(&id, &revoked, &Content::Revoked, false);
             }
-            for clip in chat.clips {
-                let sender = if clip.from_me {
-                    self.me()
-                } else {
-                    clip.sender
-                        .as_deref()
-                        .map(|sender| self.canonical_str(sender))
-                        .unwrap_or_else(|| id.clone())
-                };
-                self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw);
+            self.settle_early_events(&id, &row.id);
+            if group {
+                self.file_history_receipts(&id, &row.id, &message.receipts);
             }
-            if (metadata || existing.is_none())
-                && let Some(snapshot_unread) = chat.unread
-            {
-                if snapshot_unread == 0 {
-                    let _ = self.archive.mark_read_through(&id, chat.last_activity);
-                } else {
-                    let unread = self
-                        .archive
-                        .history_unread(&id, snapshot_unread)
-                        .unwrap_or(0);
-                    let unread = existing
-                        .as_ref()
-                        .map_or(unread, |existing| existing.unread.max(unread));
-                    let _ = self.archive.set_unread(&id, unread);
+            if matches!(row.content, Content::Poll { .. }) {
+                if poll_history_received {
+                    let _ = self.archive.mark_poll_history(&id, &row.id);
+                    self.poll_history.finish(&id, &row.id);
                 }
+                self.emit_message(&id, &row.id);
             }
-            if (metadata || existing.is_none())
-                && let Some(marked) = chat.marked_unread
-            {
-                let _ = self.archive.history_marked_unread(&id, marked);
-            }
-            if chat.more_on_phone == Some(false) {
-                // The phone holds nothing older (or will not share it): later
-                // sessions skip asking instead of waiting out a silent phone.
-                let _ = self.archive.set_history_start(&id);
-            }
-            filed.push((id, count, chat.more_on_phone));
         }
+        if !metadata && self.pending_older.contains_key(&id) {
+            log::info!(
+                "history reload: archived added={added}, repeated={repeated}, removed={removed}, failed={failed}"
+            );
+        }
+        for reaction in chat.reactions {
+            self.apply_history_reaction(&id, reaction, &secrets);
+        }
+        let had_pins = !chat.pins.is_empty();
+        for pin in chat.pins {
+            let written = if pin.pinned {
+                let secs = if pin.duration_secs == 0 {
+                    PIN_SECS
+                } else {
+                    i64::from(pin.duration_secs)
+                };
+                self.archive.pin_from(
+                    &id,
+                    &pin.target,
+                    pin.at,
+                    pin.at.saturating_add(secs),
+                    &pin.pinner,
+                )
+            } else {
+                self.archive
+                    .set_pin(&id, &pin.target, false, pin.at, 0, &pin.pinner)
+            };
+            if let Err(error) = written {
+                log::warn!("could not store a history pin: {error}");
+            }
+        }
+        if had_pins {
+            self.emit_pins(&id);
+        }
+        for update in chat.poll_updates {
+            let sender = if update.from_me {
+                self.me()
+            } else {
+                update.sender.unwrap_or_else(|| chat.id.clone())
+            };
+            self.ingest_poll_vote(
+                &id,
+                &update.id,
+                &sender,
+                update.from_me,
+                update.timestamp,
+                &update.update,
+            );
+        }
+        for revoked in chat.revoked {
+            if self
+                .archive
+                .message(&id, &revoked)
+                .ok()
+                .flatten()
+                .is_some_and(|old| old.content.listable())
+            {
+                media_changed_in.insert(id.clone());
+            }
+            let _ = self
+                .archive
+                .set_content(&id, &revoked, &Content::Revoked, false);
+        }
+        for clip in chat.clips {
+            let sender = if clip.from_me {
+                self.me()
+            } else {
+                clip.sender
+                    .as_deref()
+                    .map(|sender| self.canonical_str(sender))
+                    .unwrap_or_else(|| id.clone())
+            };
+            self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw);
+        }
+        if (metadata || existing.is_none())
+            && let Some(snapshot_unread) = chat.unread
+        {
+            if snapshot_unread == 0 {
+                let _ = self.archive.mark_read_through(&id, chat.last_activity);
+            } else {
+                let unread = self
+                    .archive
+                    .history_unread(&id, snapshot_unread)
+                    .unwrap_or(0);
+                let unread = existing
+                    .as_ref()
+                    .map_or(unread, |existing| existing.unread.max(unread));
+                let _ = self.archive.set_unread(&id, unread);
+            }
+        }
+        if (metadata || existing.is_none())
+            && let Some(marked) = chat.marked_unread
+        {
+            let _ = self.archive.history_marked_unread(&id, marked);
+        }
+        if chat.more_on_phone == Some(false) {
+            // The phone holds nothing older (or will not share it): later
+            // sessions skip asking instead of waiting out a silent phone.
+            let _ = self.archive.set_history_start(&id);
+        }
+        Some((id, count, chat.more_on_phone))
+    }
+
+    /// Tells the app about a filed history chunk's chats, once per chunk.
+    fn finish_history(
+        &mut self,
+        filed: &[(ChatId, usize, Option<bool>)],
+        media_changed_in: HashSet<ChatId>,
+    ) {
         self.pump_poll_votes();
         self.pump_poll_history();
-        for (id, _, _) in &filed {
+        for (id, _, _) in filed {
             self.emit_chat(id);
         }
         for chat in media_changed_in {
             self.emit(Event::ChatSharedChanged(chat));
         }
-        filed
     }
 
     /// Completes the requests an on-demand history chunk answers. `session`
@@ -6396,24 +6967,37 @@ impl Worker {
                 chat,
                 paths,
                 documents,
+                view_once,
                 caption,
                 mentions,
                 quoting,
                 uploads,
             } => {
-                self.send_files(chat, paths, documents, caption, mentions, quoting, uploads);
+                self.send_files(
+                    chat,
+                    paths,
+                    FileSendOptions {
+                        documents,
+                        view_once,
+                    },
+                    caption,
+                    mentions,
+                    quoting,
+                    uploads,
+                );
             }
             Command::SendImage {
                 chat,
                 width,
                 height,
                 rgba,
+                view_once,
                 caption,
                 mentions,
                 quoting,
                 upload,
             } => self.send_pasted_image(
-                chat, width, height, rgba, caption, mentions, quoting, upload,
+                chat, width, height, rgba, view_once, caption, mentions, quoting, upload,
             ),
             Command::Outbound {
                 chat,
@@ -6592,6 +7176,19 @@ impl Worker {
                 });
             }
             Command::SetGroupName { chat, name } => self.set_group_name(chat, name),
+            Command::GroupInviteLink { chat, reset } => self.group_invite_link(chat, reset),
+            Command::AddGroupMembers { chat, members } => self.add_group_members(chat, members),
+            Command::SetGroupPermission {
+                chat,
+                permission,
+                members,
+            } => self.set_group_permission(chat, permission, members),
+            Command::ChangeGroupMember {
+                chat,
+                member,
+                change,
+            } => self.change_group_member(chat, member, change),
+            Command::GroupManaged { chat, answer } => self.group_managed(chat, answer),
             Command::PickGroupPicture(chat) => {
                 if !self.may_edit_group(&chat) {
                     return;
@@ -6623,6 +7220,18 @@ impl Worker {
                 });
             }
             Command::SetGroupPicture { chat, jpeg } => self.set_group_picture(chat, jpeg),
+            Command::PickNewGroupPicture => self.pick_new_group_picture(),
+            Command::CreateGroup {
+                request,
+                subject,
+                members,
+                picture,
+            } => self.create_group(request, subject, members, picture),
+            Command::GroupCreated {
+                request,
+                result,
+                picture,
+            } => self.group_created(request, result, picture),
             Command::GroupEdited { chat, edit, result } => self.group_edited(chat, edit, result),
             Command::ProfileSaved {
                 name,
@@ -6906,7 +7515,10 @@ impl Worker {
                     log::warn!("could not store the contact: {error}");
                 }
                 // Preserve the stored push name during contact updates.
-                let stored = self.archive.contact(&id).ok().flatten().unwrap_or(contact);
+                let stored = Arc::new(self.archive.contact(&id).ok().flatten().unwrap_or(contact));
+                // The worker's copy too, or the next push name heard from them
+                // hands the window the contact without the saved name.
+                self.contacts.insert(Arc::clone(&stored));
                 self.emit(Event::Contacts(vec![stored]));
                 self.emit(Event::Info(format!("Added {name} to contacts")));
                 self.emit_chat(&id);
@@ -7261,14 +7873,7 @@ impl Worker {
             Command::SetArchived(chat, archived) => {
                 let _ = self.archive.set_archived(&chat, archived);
                 self.emit_chat(&chat);
-                self.tell_phone(&chat, move |client, jid| async move {
-                    if archived {
-                        client.chat_actions().archive_chat(&jid, None).await
-                    } else {
-                        client.chat_actions().unarchive_chat(&jid, None).await
-                    }
-                    .map_err(|error| error.to_string())
-                });
+                self.archive_on_phone(&chat, archived);
             }
             Command::DeleteChat(chat) => {
                 // The phone deletes first. Deleting here while offline would
@@ -7646,6 +8251,10 @@ impl Worker {
                     Some(_) => Delivery::Failed,
                     None => Delivery::Sent,
                 };
+                if error.is_some() {
+                    // A failed send is never acked; a retry stores the row again.
+                    self.awaiting_ack.remove(&id);
+                }
                 let _ = self
                     .archive
                     .set_status(&chat, &id, status, crate::util::now());
@@ -7708,6 +8317,8 @@ impl Worker {
                 info_locked,
                 admin,
                 subject_generation,
+                settings,
+                settings_generation,
             } => {
                 if request_generation != self.group_info_generation.get(&chat).copied().unwrap_or(0)
                 {
@@ -7724,10 +8335,27 @@ impl Worker {
                     self.group_info_tries.remove(&chat);
                     self.group_info_retry.retain(|(_, id)| id != &chat);
                 }
+                // A snapshot asked for before a permission or member change
+                // made here was accepted may predate it: keep what we filed.
+                let current = settings_generation
+                    >= self.settings_generation.get(&chat).copied().unwrap_or(0);
+                let participants = if current {
+                    participants
+                } else {
+                    self.archive
+                        .chat(&chat)
+                        .ok()
+                        .flatten()
+                        .map(|row| row.participants)
+                        .unwrap_or(participants)
+                };
                 let _ =
                     self.archive
                         .set_group_info(&chat, name.as_deref(), &participants, read_only);
-                let _ = self.archive.set_group_rights(&chat, info_locked, admin);
+                if current {
+                    let _ = self.archive.set_group_rights(&chat, info_locked, admin);
+                    let _ = self.archive.set_group_settings(&chat, &settings);
+                }
                 if description_generation
                     >= self.description_generation.get(&chat).copied().unwrap_or(0)
                 {
@@ -7983,13 +8611,7 @@ impl Worker {
         let _ = self.archive.set_left(chat, true);
         if archive {
             let _ = self.archive.set_archived(chat, true);
-            self.tell_phone(chat, move |client, jid| async move {
-                client
-                    .chat_actions()
-                    .archive_chat(&jid, None)
-                    .await
-                    .map_err(|error| error.to_string())
-            });
+            self.archive_on_phone(chat, true);
         }
         self.emit_chat(chat);
     }
@@ -8376,6 +8998,8 @@ impl Worker {
             if self.destination_writable(&job.0) {
                 return Some((id, job));
             }
+            // Never sent, so never acked.
+            self.awaiting_ack.remove(&id);
             let _ = self
                 .archive
                 .set_status(&job.0, &id, Delivery::Failed, crate::util::now());
@@ -8680,6 +9304,12 @@ impl Worker {
     /// no size limit; every download's deadline grows with its size.
     fn download_media(&mut self, chat: ChatId, id: String, card: Option<usize>, manual: bool) {
         if !self.downloads.insert((chat.clone(), id.clone(), card)) {
+            // A click on an automatic download still waiting for its turn
+            // starts it now.
+            if manual && let Some(turn) = self.download_turns.get(&(chat.clone(), id.clone(), card))
+            {
+                turn.notify_one();
+            }
             // A click while only the picker is fetching it: the picker's
             // download skips the re-upload, so remember to ask if it fails.
             let key = (chat, id);
@@ -8850,7 +9480,28 @@ impl Worker {
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
         let commands = self.commands.clone();
+        // Automatic downloads take turns, so a screenful of pictures does not
+        // start dozens of transfers at once. The reader's clicks, and the
+        // picker's stickers, which it paces itself, do not wait.
+        let key = (chat.clone(), id.clone());
+        let turn = (!manual
+            && !self.sticker_downloads.contains(&key)
+            && !self.sticker_retried.contains(&key))
+        .then(|| {
+            let skip = Arc::new(tokio::sync::Notify::new());
+            self.download_turns
+                .insert((chat.clone(), id.clone(), card), skip.clone());
+            (self.download_gate.clone(), skip)
+        });
         tokio::spawn(async move {
+            // The wait for a turn is not counted against the deadline.
+            let _turn = match turn {
+                Some((gate, skip)) => tokio::select! {
+                    permit = gate.acquire_owned() => permit.ok(),
+                    () = skip.notified() => None,
+                },
+                None => None,
+            };
             let cache_id = card.map_or_else(|| id.clone(), |index| format!("{id}-card-{index}"));
             let named = file_name
                 .as_deref()
@@ -8984,6 +9635,8 @@ impl Worker {
             let _ = self.archive.put_media_path_at(&chat, &id, card, Some(path));
         }
         self.downloads.remove(&(chat.clone(), id.clone(), card));
+        self.download_turns
+            .remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
         let for_picker = self.sticker_downloads.remove(&key);
         let clicked = self.sticker_clicked.remove(&key);
@@ -9242,6 +9895,7 @@ impl Worker {
             return;
         };
         let commands = self.commands.clone();
+        let gate = self.avatar_gate.clone();
         tokio::spawn(async move {
             let fetched = async {
                 let mut picture = None;
@@ -9284,7 +9938,7 @@ impl Worker {
                         Ok(None)
                     };
                 };
-                download_avatar(picture.url, path).await.map(Some)
+                download_avatar(&gate, picture.url, path).await.map(Some)
             }
             .await;
             match fetched {
@@ -9362,13 +10016,16 @@ impl Worker {
         from: Option<i64>,
         until: Option<i64>,
     ) {
-        match self.archive.search_chat_messages(
+        let found = self.archive.search_chat_messages(
             &chat,
             &query,
             from,
             until,
             Self::CHAT_SEARCH_LIMIT + 1,
-        ) {
+        );
+        // Same as the global search: the scan leaves cold pages behind.
+        self.archive.release_memory();
+        match found {
             Ok(mut messages) => {
                 // The extra row is not shown: it is how the pane learns the
                 // archive held more, so it can say the list was cut.
@@ -9392,7 +10049,11 @@ impl Worker {
 
     /// Loads archived messages needed to scroll to a quote.
     fn search_messages(&mut self, query: String) {
-        match self.archive.search_messages(&query, 50) {
+        let found = self.archive.search_messages(&query, 50);
+        // A search reads the whole table through the page cache, which then
+        // holds pages nothing will ask for again.
+        self.archive.release_memory();
+        match found {
             Ok(mut messages) => {
                 for message in &mut messages {
                     self.polish(message);
@@ -9832,17 +10493,37 @@ impl Worker {
         &mut self,
         chat: ChatId,
         paths: Vec<PathBuf>,
-        documents: bool,
+        options: FileSendOptions,
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
         uploads: Vec<crate::model::UploadId>,
     ) {
+        let FileSendOptions {
+            documents,
+            view_once,
+        } = options;
         let unsent = |paths, caption| Unsent::Files {
             paths,
             documents,
+            view_once,
             caption,
         };
+        if view_once
+            && (documents
+                || paths.len() != 1
+                || !paths
+                    .first()
+                    .is_some_and(|path| crate::app::Pending::is_view_once_photo_file(path)))
+        {
+            self.refuse(
+                chat,
+                quoting,
+                unsent(paths, caption),
+                Refusal::UnsupportedViewOnce,
+            );
+            return;
+        }
         let mut quote = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(quote) => quote,
             Err(reason) => {
@@ -9868,6 +10549,7 @@ impl Worker {
         let album = (!documents)
             .then(|| self.begin_album(&chat, &client, &paths))
             .flatten();
+        let gate = Arc::new(tokio::sync::Semaphore::new(2));
         for (index, path) in paths.into_iter().enumerate() {
             let client = client.clone();
             let album = album.clone();
@@ -9890,8 +10572,15 @@ impl Worker {
             } else {
                 Vec::new()
             };
+            let gate = gate.clone();
             tokio::spawn(async move {
                 let outcome = follow_upload(reporter, async {
+                    // At most two files of a batch are in memory at once;
+                    // permits go in order, so the files start in order.
+                    let _permit = gate
+                        .acquire_owned()
+                        .await
+                        .map_err(|error| error.to_string())?;
                     let bytes = tokio::fs::read(&path)
                         .await
                         .map_err(|error| format!("{}: {error}", path.display()))?;
@@ -9908,6 +10597,9 @@ impl Worker {
                     };
                     if let Some(parent) = &album {
                         join_album(&mut prepared, &chat, parent);
+                    }
+                    if view_once {
+                        mark_view_once_photo(&mut prepared)?;
                     }
                     quoted_outbound(
                         &client, &chat, &me, &dir, prepared, caption, mentions, quote,
@@ -9971,7 +10663,6 @@ impl Worker {
         message.album_message = MessageField::some(album);
         let expiration = self.apply_ephemeral(chat, &mut message);
         let client = client.clone();
-        let chat = chat.to_owned();
         let parent = id.clone();
         tokio::spawn(async move {
             let result = async {
@@ -9988,7 +10679,7 @@ impl Worker {
             }
             .await;
             if let Err(error) = result {
-                log::warn!("could not send an album parent in {chat}: {error}");
+                log::warn!("could not send an album parent: {error}");
             }
         });
         Some(id)
@@ -10002,6 +10693,7 @@ impl Worker {
         width: u32,
         height: u32,
         rgba: Vec<u8>,
+        view_once: bool,
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
@@ -10012,6 +10704,7 @@ impl Worker {
             width,
             height,
             rgba,
+            view_once,
             caption,
         };
         let quote = match self.quote_target(&chat, quoting.as_ref()) {
@@ -10051,7 +10744,11 @@ impl Worker {
                 })
                 .await
                 .map_err(|error| error.to_string())??;
-                let prepared = prepare_media(&client, encoded, "image/jpeg", None, false).await?;
+                let mut prepared =
+                    prepare_media(&client, encoded, "image/jpeg", None, false).await?;
+                if view_once {
+                    mark_view_once_photo(&mut prepared)?;
+                }
                 quoted_outbound(
                     &client, &chat, &me, &dir, prepared, caption, mentions, quote,
                 )
@@ -10314,7 +11011,7 @@ impl Worker {
             return;
         };
         let expiration = self.apply_ephemeral(&chat, &mut message);
-        let raw = message.encode_to_vec();
+        let raw = attachment_archive_raw(&message);
         let id = row.id.clone();
         self.store_message(row, Some(raw), None);
         tokio::spawn(send_outgoing(
@@ -11312,7 +12009,11 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             what: what.to_owned(),
         })
     };
-    if base.album_message.is_set() || motion_photo_child(base) {
+    if base.album_message.is_set()
+        || motion_photo_child(base)
+        || hd_copy(base)
+        || group_status_mention(base)
+    {
         return None;
     }
     if base.group_invite_message.is_set() {
@@ -11414,6 +12115,63 @@ fn motion_photo_child(base: &wa::Message) -> bool {
             == Some(PairedMediaType::MOTION_PHOTO_CHILD)
 }
 
+/// Whether `base` is the notice that someone mentioned this group in their
+/// status. The phone and WhatsApp for Mac show no message for it in the
+/// group, and its status is not something a linked device can open (#595).
+fn group_status_mention(base: &wa::Message) -> bool {
+    base.group_status_mention_message.is_set()
+}
+
+/// Whether `base` carries the HD copy of a photo or video that was also sent
+/// in standard quality. The standard copy is the message, so the HD copy
+/// beside it is not a second one.
+fn hd_copy(base: &wa::Message) -> bool {
+    use wa::context_info::PairedMediaType;
+    use wa::message_association::AssociationType;
+    let Some(child) = base
+        .associated_child_message
+        .as_option()
+        .and_then(|wrapper| wrapper.message.as_option())
+    else {
+        return false;
+    };
+    let dual_upload = |message: &wa::Message| {
+        matches!(
+            message
+                .message_context_info
+                .as_option()
+                .and_then(|context| context.message_association.as_option())
+                .and_then(|association| association.association_type),
+            Some(
+                AssociationType::HD_IMAGE_DUAL_UPLOAD
+                    | AssociationType::HD_VIDEO_DUAL_UPLOAD
+                    | AssociationType::HEVC_VIDEO_DUAL_UPLOAD
+            )
+        )
+    };
+    let paired = child
+        .image_message
+        .as_option()
+        .and_then(|image| image.context_info.as_option())
+        .or_else(|| {
+            child
+                .video_message
+                .as_option()
+                .and_then(|video| video.context_info.as_option())
+        })
+        .and_then(|context| context.paired_media_type);
+    dual_upload(base)
+        || dual_upload(child)
+        || matches!(
+            paired,
+            Some(
+                PairedMediaType::HD_IMAGE_CHILD
+                    | PairedMediaType::HD_VIDEO_CHILD
+                    | PairedMediaType::HEVC_VIDEO_CHILD
+            )
+        )
+}
+
 /// The id of the photo a motion photo's clip belongs to, and the clip as a
 /// bare video message: what a later download needs and nothing else.
 fn motion_clip(base: &wa::Message) -> Option<(String, Vec<u8>)> {
@@ -11502,8 +12260,14 @@ fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, Stri
     Ok(bytes)
 }
 
-/// Downloads a picture through the proxy settings into the avatar cache.
-async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> {
+/// Downloads a picture through the proxy settings into the avatar cache,
+/// once `gate` gives it a turn or it has waited `AVATAR_PATIENCE`.
+async fn download_avatar(
+    gate: &tokio::sync::Semaphore,
+    url: String,
+    path: PathBuf,
+) -> Result<PathBuf, String> {
+    let turn = tokio::time::timeout(AVATAR_PATIENCE, gate.acquire()).await;
     let bytes = tokio::task::spawn_blocking(move || {
         crate::proxy::agent()
             .get(&url)
@@ -11513,6 +12277,7 @@ async fn download_avatar(url: String, path: PathBuf) -> Result<PathBuf, String> 
     })
     .await
     .map_err(|error| error.to_string())??;
+    drop(turn);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -11604,18 +12369,18 @@ const UPLOAD_REPORT_INTERVAL: Duration = Duration::from_millis(80);
 /// The encrypted file as the library streams it to WhatsApp, counting what
 /// it has read.
 struct CountedUpload {
-    bytes: Arc<[u8]>,
+    bytes: SharedBytes,
     reporter: UploadReporter,
 }
 
 impl whatsapp_rust::wacore::upload::UploadSource for CountedUpload {
     fn len(&self) -> u64 {
-        (*self.bytes).len() as u64
+        self.bytes.0.len() as u64
     }
 
     fn reader_from(&self, offset: u64) -> std::io::Result<Box<dyn std::io::Read + Send>> {
         let total = self.len();
-        let mut cursor = std::io::Cursor::new(Arc::clone(&self.bytes));
+        let mut cursor = std::io::Cursor::new(self.bytes.clone());
         cursor.set_position(offset.min(total));
         self.reporter.report(offset.min(total), total);
         Ok(Box::new(CountingReader {
@@ -11628,8 +12393,19 @@ impl whatsapp_rust::wacore::upload::UploadSource for CountedUpload {
     }
 }
 
+/// The encrypted upload shared by its readers without copying the buffer
+/// into an `Arc<[u8]>`, which would briefly hold it twice.
+#[derive(Clone)]
+struct SharedBytes(Arc<Vec<u8>>);
+
+impl AsRef<[u8]> for SharedBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 struct CountingReader {
-    inner: std::io::Cursor<Arc<[u8]>>,
+    inner: std::io::Cursor<SharedBytes>,
     sent: u64,
     total: u64,
     reported: Instant,
@@ -11653,21 +12429,27 @@ impl std::io::Read for CountingReader {
 /// anything else goes in one piece.
 async fn upload_media(
     client: &Client,
-    data: Vec<u8>,
+    data: &mut Vec<u8>,
     media_type: MediaType,
 ) -> anyhow::Result<whatsapp_rust::upload::UploadResponse> {
     let Ok(reporter) = UPLOAD.try_with(UploadReporter::clone) else {
         return client
-            .upload(data, media_type, UploadOptions::default())
+            .upload(data.clone(), media_type, UploadOptions::default())
             .await;
     };
     let file_length = data.len() as u64;
-    let encrypted = tokio::task::spawn_blocking(move || {
-        whatsapp_rust::wacore::upload::encrypt_media_with_key_and_sidecar(
-            &data, media_type, None, None,
-        )
+    // Lend the buffer to the blocking task and take it back, so the caller's
+    // copy (kept for the local cache) is the only plaintext one.
+    let owned = std::mem::take(data);
+    let (owned, encrypted) = tokio::task::spawn_blocking(move || {
+        let encrypted = whatsapp_rust::wacore::upload::encrypt_media_with_key_and_sidecar(
+            &owned, media_type, None, None,
+        );
+        (owned, encrypted)
     })
-    .await??;
+    .await?;
+    *data = owned;
+    let encrypted = encrypted?;
     let info = whatsapp_rust::wacore::upload::EncryptedMediaInfo {
         media_key: encrypted.media_key,
         file_sha256: encrypted.file_sha256,
@@ -11676,7 +12458,7 @@ async fn upload_media(
         streaming_sidecar: encrypted.streaming_sidecar,
     };
     let source = CountedUpload {
-        bytes: Arc::from(encrypted.data_to_upload),
+        bytes: SharedBytes(Arc::new(encrypted.data_to_upload)),
         reporter,
     };
     client.upload_stream(source, info, media_type).await
@@ -11685,14 +12467,14 @@ async fn upload_media(
 /// Uploads a recording and builds a push-to-talk message with waveform.
 async fn prepare_voice(
     client: &Client,
-    bytes: Vec<u8>,
+    mut bytes: Vec<u8>,
     seconds: u32,
     waveform: Vec<u8>,
     context: Option<Box<wa::ContextInfo>>,
 ) -> Result<Prepared, String> {
     let mime = "audio/ogg; codecs=opus".to_owned();
     let size = bytes.len() as u64;
-    let upload = upload_media(client, bytes.clone(), MediaType::Audio)
+    let upload = upload_media(client, &mut bytes, MediaType::Audio)
         .await
         .map_err(|error| error.to_string())?;
     let message = audio_message(upload, {
@@ -11737,7 +12519,7 @@ fn whatsapp_audio_mime(mime: &str) -> Option<&'static str> {
 /// Uploads a file and builds its message. Images are encoded as JPEG.
 async fn prepare_media(
     client: &Client,
-    bytes: Vec<u8>,
+    mut bytes: Vec<u8>,
     mime: &str,
     file_name: Option<&str>,
     gif: bool,
@@ -11748,20 +12530,25 @@ async fn prepare_media(
         "image/jpeg" | "image/png" | "image/webp" | "image/bmp" | "image/tiff"
     );
     if is_picture {
-        let decoded = tokio::task::spawn_blocking({
-            let bytes = bytes.clone();
-            move || image::load_from_memory(&bytes).map_err(|error| error.to_string())
+        let (decoded, returned) = tokio::task::spawn_blocking(move || {
+            let decoded = image::load_from_memory(&bytes).map_err(|error| error.to_string());
+            (decoded, bytes)
         })
         .await
-        .map_err(|error| error.to_string())??;
+        .map_err(|error| error.to_string())?;
+        let bytes = returned;
+        let decoded = decoded?;
         let (width, height) = (decoded.width(), decoded.height());
-        let jpeg = if mime == "image/jpeg" {
+        let mut jpeg = if mime == "image/jpeg" {
             bytes
         } else {
             encode_jpeg(&decoded, 88)?
         };
         let thumbnail = thumbnail_jpeg(&decoded);
-        let upload = upload_media(client, jpeg.clone(), MediaType::Image)
+        // The decoded pixels are far larger than the file: free them before
+        // the upload's awaits.
+        drop(decoded);
+        let upload = upload_media(client, &mut jpeg, MediaType::Image)
             .await
             .map_err(|error| error.to_string())?;
         let mut message = image_message(upload, {
@@ -11796,20 +12583,23 @@ async fn prepare_media(
     if kind == "video" {
         // The picture, size, and length phones show before downloading it.
         // Reading a second of frames takes a moment, so off the runtime.
-        let poster = {
-            let bytes = bytes.clone();
-            tokio::task::spawn_blocking(move || crate::animation::poster(&bytes))
+        let (poster, returned) = {
+            let moved = std::mem::take(&mut bytes);
+            match tokio::task::spawn_blocking(move || (crate::animation::poster(&moved), moved))
                 .await
-                .ok()
-                .flatten()
+            {
+                Ok((poster, moved)) => (poster, moved),
+                Err(error) => return Err(error.to_string()),
+            }
         };
+        bytes = returned;
         let thumbnail = poster
             .as_ref()
             .and_then(|poster| poster.picture.clone())
             .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
         let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
         let seconds = poster.as_ref().map(|poster| poster.seconds);
-        let upload = upload_media(client, bytes.clone(), MediaType::Video)
+        let upload = upload_media(client, &mut bytes, MediaType::Video)
             .await
             .map_err(|error| error.to_string())?;
         let mut message = video_message(upload, {
@@ -11848,7 +12638,7 @@ async fn prepare_media(
     }
     if let Some(audio_mime) = whatsapp_audio_mime(mime) {
         let mime_owned = audio_mime.to_owned();
-        let upload = upload_media(client, bytes.clone(), MediaType::Audio)
+        let upload = upload_media(client, &mut bytes, MediaType::Audio)
             .await
             .map_err(|error| error.to_string())?;
         let message = audio_message(
@@ -11884,7 +12674,8 @@ async fn prepare_document(
 ) -> Result<Prepared, String> {
     let size = bytes.len() as u64;
     let mime_owned = mime.to_owned();
-    let upload = upload_media(client, bytes.clone(), MediaType::Document)
+    let mut bytes = bytes;
+    let upload = upload_media(client, &mut bytes, MediaType::Document)
         .await
         .map_err(|error| error.to_string())?;
     let name = file_name.unwrap_or("file").to_owned();
@@ -11912,19 +12703,21 @@ async fn prepare_document(
 
 /// Uploads a WebP sticker and builds its message without a library builder.
 async fn prepare_sticker(client: &Client, bytes: Vec<u8>) -> Result<Prepared, String> {
-    let (animated, width, height) = tokio::task::spawn_blocking({
-        let bytes = bytes.clone();
-        move || {
+    let (probe, returned) = tokio::task::spawn_blocking(move || {
+        let probe = (|| {
             let decoder = image::codecs::webp::WebPDecoder::new(std::io::Cursor::new(&bytes))
                 .map_err(|error| error.to_string())?;
             let animated = decoder.has_animation();
             let (width, height) = image::ImageDecoder::dimensions(&decoder);
             Ok::<_, String>((animated, width, height))
-        }
+        })();
+        (probe, bytes)
     })
     .await
-    .map_err(|error| error.to_string())??;
-    let upload = upload_media(client, bytes.clone(), MediaType::Sticker)
+    .map_err(|error| error.to_string())?;
+    let mut bytes = returned;
+    let (animated, width, height) = probe?;
+    let upload = upload_media(client, &mut bytes, MediaType::Sticker)
         .await
         .map_err(|error| error.to_string())?;
     let message = {
@@ -12145,6 +12938,33 @@ fn add_mentions(message: &mut wa::Message, mentions: &[String]) {
     message.set_context_info(context);
 }
 
+/// Marks a prepared photo for WhatsApp's view-once send path. The protocol
+/// library recognizes this field when it builds the outgoing stanza metadata.
+fn mark_view_once_photo(prepared: &mut Prepared) -> Result<(), String> {
+    if !matches!(&prepared.content, Content::Image { .. }) {
+        return Err("View once is only available for photos".to_owned());
+    }
+    let Some(image) = prepared.message.image_message.as_option_mut() else {
+        return Err("View once is only available for photos".to_owned());
+    };
+    image.view_once = Some(true);
+    Ok(())
+}
+
+/// Keeps the outgoing photo's thumbnail on the wire, but out of its local archive.
+/// Prepared attachments carry their photo directly in `image_message`.
+fn attachment_archive_raw(message: &wa::Message) -> Vec<u8> {
+    if message.is_view_once() {
+        let mut archived = message.clone();
+        if let Some(image) = archived.image_message.as_option_mut() {
+            image.jpeg_thumbnail = None;
+        }
+        archived.encode_to_vec()
+    } else {
+        message.encode_to_vec()
+    }
+}
+
 pub(super) async fn file_outbound(
     client: &Client,
     chat: &str,
@@ -12173,23 +12993,36 @@ pub(super) async fn file_outbound(
     }
     add_mentions(&mut prepared.message, &mentions);
     let id = client.generate_message_id().into_string();
-    let path = media_path(
-        dir,
-        chat,
-        &id,
-        &prepared.mime,
-        prepared.file_name.as_deref(),
-    );
-    tokio::fs::create_dir_all(dir)
-        .await
-        .map_err(|error| error.to_string())?;
-    tokio::fs::write(&path, &prepared.bytes)
-        .await
-        .map_err(|error| error.to_string())?;
     let mut content = prepared.content;
-    if let Some(media) = content.media_mut() {
-        media.path = Some(path);
-    }
+    let thumbnail = if prepared.message.is_view_once() {
+        let once = crate::model::OnceMedia::of(&content)
+            .filter(|kind| *kind == crate::model::OnceMedia::Photo)
+            .ok_or_else(|| "View once is only available for photos".to_owned())?;
+        content = Content::PhoneOnly {
+            view_once: true,
+            live_location: false,
+            once: Some(once),
+        };
+        None
+    } else {
+        let path = media_path(
+            dir,
+            chat,
+            &id,
+            &prepared.mime,
+            prepared.file_name.as_deref(),
+        );
+        tokio::fs::create_dir_all(dir)
+            .await
+            .map_err(|error| error.to_string())?;
+        tokio::fs::write(&path, &prepared.bytes)
+            .await
+            .map_err(|error| error.to_string())?;
+        if let Some(media) = content.media_mut() {
+            media.path = Some(path);
+        }
+        prepared.thumbnail
+    };
     let row = Message {
         id,
         chat: chat.to_owned(),
@@ -12216,7 +13049,7 @@ pub(super) async fn file_outbound(
             })
             .collect(),
         forwarded: false,
-        thumbnail: prepared.thumbnail,
+        thumbnail,
     };
     Ok((row, prepared.message.encode_to_vec()))
 }
@@ -12233,6 +13066,54 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
         };
         chats.push(parse_conversation(conversation));
     }
+    Ok(ParsedHistory {
+        chats,
+        ..history_remainder(stream)?
+    })
+}
+
+/// Reads what a history chunk holds besides its chats, with each chat's
+/// privacy id and phone number, keeping no chat: the first pass over a chunk
+/// filed one chat at a time. It fails wherever `parse_history` would.
+fn parse_history_prelude(
+    compressed: &[u8],
+) -> Result<(ParsedHistory, Vec<(String, String)>), String> {
+    let mut stream = HistorySyncStream::new(compressed, MAX_DECOMPRESSED);
+    // One conversation decoded at a time, its allocations reused.
+    let mut conversation = wa::Conversation::default();
+    let mut pairs = Vec::new();
+    while stream
+        .next_conversation_into(&mut conversation)
+        .map_err(|error| error.to_string())?
+    {
+        if let (Some(lid), Some(pn)) = (conversation.lid_jid.take(), conversation.pn_jid.take()) {
+            pairs.push((lid, pn));
+        }
+    }
+    Ok((history_remainder(stream)?, pairs))
+}
+
+/// Parses a history chunk's chats one at a time into `chats`: the second
+/// pass over a chunk filed one chat at a time. Stops once nothing listens.
+fn stream_history_chats(compressed: &[u8], chats: &mpsc::Sender<ParsedChat>) -> Result<(), String> {
+    let mut stream = HistorySyncStream::new(compressed, MAX_DECOMPRESSED);
+    while let Some(conversation) = stream
+        .next_conversation()
+        .map_err(|error| error.to_string())?
+    {
+        if chats
+            .blocking_send(parse_conversation(conversation))
+            .is_err()
+        {
+            break;
+        }
+    }
+    Ok(())
+}
+
+/// Decodes what a history chunk holds besides its chats, once `stream` has
+/// read them all.
+fn history_remainder(stream: HistorySyncStream<'_>) -> Result<ParsedHistory, String> {
     let remainder = stream.remainder().map_err(|error| error.to_string())?;
     let push_names = remainder
         .pushnames
@@ -12245,11 +13126,23 @@ fn parse_history(compressed: &[u8]) -> Result<ParsedHistory, String> {
         .filter_map(|entry| Some((entry.lid_jid.clone()?, entry.pn_jid.clone()?)))
         .collect();
     Ok(ParsedHistory {
-        chats,
+        chats: Vec::new(),
         push_names,
         lids,
         stickers: remainder.recent_stickers,
     })
+}
+
+/// Logs an on-demand history chunk's chat. Counts only.
+fn log_history_chat(chat: &ParsedChat) {
+    log::info!(
+        "history reload: parsed entries={}, visible={}, reactions={}, votes={}, counts={:?}",
+        chat.diagnostics.entries,
+        chat.messages.len(),
+        chat.reactions.len(),
+        chat.poll_updates.len(),
+        chat.diagnostics,
+    );
 }
 
 /// Converts supported protocol message content into local display types, retaining quoted source metadata.
@@ -12705,6 +13598,17 @@ mod tests {
     use super::*;
     use std::io::Cursor;
 
+    /// App-state blobs come two at a time, within the library's own budget.
+    #[test]
+    fn app_state_blobs_are_fetched_two_at_a_time() {
+        let downloads = cache_config().app_state_downloads;
+        assert_eq!(downloads.concurrency().get(), 2);
+        assert_eq!(
+            downloads.max_bytes(),
+            whatsapp_rust::AppStateDownloadConfig::default().max_bytes()
+        );
+    }
+
     /// A failed number check leaves contacts and conversation state unchanged.
     #[tokio::test]
     async fn failed_number_check_never_saves_a_contact_or_opens_a_chat() {
@@ -12790,6 +13694,34 @@ mod tests {
         }
     }
 
+    /// A saved name stays with the contact when they later send a push name:
+    /// the worker files the saved contact as well as the window.
+    #[tokio::test]
+    async fn a_saved_contact_keeps_its_name_through_a_later_push_name() {
+        const ID: &str = "15550000001@s.whatsapp.net";
+        let (mut worker, events, _, _) = super::receipt_tests::worker();
+        worker
+            .handle_command(Command::ContactSaved {
+                generation: worker.contact_generation,
+                id: ID.into(),
+                name: "Fixture".into(),
+                first_name: None,
+                error: None,
+            })
+            .await;
+        events.try_iter().for_each(drop);
+        worker.remember_push_name(ID, "Fix");
+        let handed = events
+            .try_iter()
+            .find_map(|event| match event {
+                Event::Contacts(mut contacts) => contacts.pop(),
+                _ => None,
+            })
+            .expect("the push name is sent");
+        assert_eq!(handed.full_name.as_deref(), Some("Fixture"));
+        assert_eq!(handed.push_name.as_deref(), Some("Fix"));
+    }
+
     /// A reconnect preserves valid lookups belonging to the same account.
     #[tokio::test]
     async fn reconnecting_the_same_account_keeps_contact_checks_current() {
@@ -12841,7 +13773,8 @@ mod tests {
         assert_eq!(std::fs::read(second).unwrap(), b"synthetic picture");
     }
 
-    /// A failed derived-row write keeps the album backfill retryable and preserves local paths.
+    /// A failed derived-row write keeps the album backfill retryable, leaves
+    /// its cursor before the failed batch, and preserves local paths.
     #[test]
     fn failed_album_backfill_retries_without_losing_downloaded_media() {
         let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
@@ -12864,6 +13797,13 @@ mod tests {
         crate::archive::tests::set_derived_update_failure(&worker.archive, true);
         worker.backfill_media_albums();
         assert!(worker.archive.meta("media_albums").unwrap().is_none());
+        assert!(
+            worker
+                .archive
+                .meta("media_albums_cursor")
+                .unwrap()
+                .is_none()
+        );
         crate::archive::tests::set_derived_update_failure(&worker.archive, false);
         worker.backfill_media_albums();
         assert_eq!(
@@ -12876,6 +13816,171 @@ mod tests {
             Some("album-parent")
         );
         assert_eq!(stored.content.media().unwrap().path.as_ref(), Some(&path));
+    }
+
+    fn insert_stale_texts(archive: &Archive, count: usize) {
+        let chat = "backfill-fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let raw = wa::Message::text("fresh fixture").encode_to_vec();
+        for n in 0..count {
+            let mut row = crate::archive::tests::message(chat, &format!("m{n:04}"), n as i64, true);
+            row.content = Content::text("stale fixture");
+            archive.insert_message(&row, Some(&raw)).unwrap();
+        }
+    }
+
+    fn raw_rowids(archive: &Archive) -> Vec<(i64, String)> {
+        let mut after = 0;
+        let mut seen = Vec::new();
+        loop {
+            let page = archive.rows_with_raw(after).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= crate::archive::BACKFILL_BATCH);
+            after = page.last().unwrap().0;
+            seen.extend(page.into_iter().map(|(rowid, _, id, _)| (rowid, id)));
+        }
+        seen
+    }
+
+    /// Re-deriving more than one batch writes the same bodies a single pass
+    /// would: fresh text from the protobuf, edits and revocations left alone,
+    /// and a downloaded image path kept.
+    #[test]
+    fn derived_backfill_pages_every_raw_row_and_keeps_edits_and_paths() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let chat = "backfill-fixture@s.whatsapp.net";
+        let total = crate::archive::BACKFILL_BATCH * 3 + 1;
+        insert_stale_texts(&worker.archive, total);
+        let fresh = wa::Message::text("fresh fixture");
+        assert_eq!(classify(&fresh), Some(Content::text("fresh fixture")));
+        worker
+            .archive
+            .set_content(chat, "m0000", &Content::text("edited fixture"), true)
+            .unwrap();
+        worker
+            .archive
+            .set_content(chat, "m0001", &Content::Revoked, false)
+            .unwrap();
+        let image = {
+            let mut proto = wa::Message::default();
+            proto.image_message = MessageField::some({
+                let mut image = wa::message::ImageMessage::default();
+                image.mimetype = Some("image/jpeg".into());
+                image.caption = Some("protobuf caption".into());
+                image
+            });
+            proto
+        };
+        let path = PathBuf::from("/fixture/backfill.jpg");
+        let mut photo = classify(&image).expect("image");
+        let Content::Image { caption, media, .. } = &mut photo else {
+            panic!("image");
+        };
+        *caption = Some("stale caption".into());
+        media.path = Some(path.clone());
+        let mut row = crate::archive::tests::message(chat, "photo-path", total as i64, true);
+        row.content = photo;
+        worker
+            .archive
+            .insert_message(&row, Some(&image.encode_to_vec()))
+            .unwrap();
+
+        worker.backfill();
+
+        let edited = worker.archive.message(chat, "m0000").unwrap().unwrap();
+        assert_eq!(edited.content, Content::text("edited fixture"));
+        assert!(edited.edited);
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "m0001")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::Revoked
+        );
+        for n in 2..total {
+            let id = format!("m{n:04}");
+            assert_eq!(
+                worker.archive.message(chat, &id).unwrap().unwrap().content,
+                Content::text("fresh fixture"),
+                "{id}"
+            );
+        }
+        let mut expected = classify(&image).expect("image");
+        expected.media_mut().expect("media").path = Some(path);
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "photo-path")
+                .unwrap()
+                .unwrap()
+                .content,
+            expected
+        );
+        let seen = raw_rowids(&worker.archive);
+        assert_eq!(seen.len(), total + 1);
+        assert_eq!(
+            worker.archive.meta("derived").unwrap().as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            worker.archive.meta("derived_4_cursor").unwrap().unwrap(),
+            seen.last().unwrap().0.to_string()
+        );
+        // The completion key stops a second launch from writing again.
+        worker
+            .archive
+            .set_content(chat, "m0002", &Content::text("changed after"), false)
+            .unwrap();
+        worker.backfill();
+        assert_eq!(
+            worker
+                .archive
+                .message(chat, "m0002")
+                .unwrap()
+                .unwrap()
+                .content,
+            Content::text("changed after")
+        );
+    }
+
+    /// A cursor stored in the middle of the table resumes after that row.
+    #[test]
+    fn derived_backfill_resumes_from_a_stored_cursor() {
+        let (mut worker, _events, _inbox, _wa) = super::receipt_tests::worker();
+        let chat = "backfill-fixture@s.whatsapp.net";
+        let total = crate::archive::BACKFILL_BATCH * 3 + 1;
+        insert_stale_texts(&worker.archive, total);
+        let seen = raw_rowids(&worker.archive);
+        assert_eq!(seen.len(), total);
+        let mid = seen.len() / 2;
+        let cursor = seen[mid].0;
+        worker
+            .archive
+            .set_meta("derived_4_cursor", &cursor.to_string())
+            .unwrap();
+
+        worker.backfill();
+
+        for (index, (_rowid, id)) in seen.iter().enumerate() {
+            let stored = worker.archive.message(chat, id).unwrap().unwrap();
+            if index <= mid {
+                assert_eq!(stored.content, Content::text("stale fixture"), "{id}");
+            } else {
+                assert_eq!(stored.content, Content::text("fresh fixture"), "{id}");
+            }
+        }
+        assert_eq!(
+            worker.archive.meta("derived").unwrap().as_deref(),
+            Some("4")
+        );
+        assert_eq!(
+            worker.archive.meta("derived_4_cursor").unwrap().unwrap(),
+            seen.last().unwrap().0.to_string()
+        );
     }
 
     /// Checks that derived media retains the protocol album parent used for grouping.
@@ -13001,6 +14106,51 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_staging_file_is_removed_when_its_download_ends_unpublished() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.jpg");
+        let (staging, mut file) = temporary_attachment_file(&path).unwrap();
+        // A download dropped between writing and publishing leaves nothing,
+        // however it ends; the guard removes the file even then.
+        file.write_all(b"half").unwrap();
+        drop(file);
+        assert!(staging.is_file());
+        drop(Staged(staging.clone()));
+        assert!(!staging.exists());
+    }
+
+    #[tokio::test]
+    async fn a_deadline_that_cancels_a_download_removes_its_staging_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.jpg");
+        let (staging, file) = temporary_attachment_file(&path).unwrap();
+        drop(file);
+        let held = staging.clone();
+        let result: Result<(), String> =
+            with_attachment_deadline(Duration::from_millis(1), async move {
+                // As in `fetch_attachment`: the guard outlives the writer, and
+                // the deadline cancels the future while it is in flight.
+                let _staged = Staged(held);
+                std::future::pending::<()>().await;
+                unreachable!()
+            })
+            .await;
+        assert_eq!(result.unwrap_err(), "Download timed out");
+        assert!(!staging.exists());
+    }
+
+    #[tokio::test]
+    async fn a_published_file_survives_its_staging_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("photo.jpg");
+        let (staging, file) = temporary_attachment_file(&path).unwrap();
+        drop(file);
+        publish_attachment(&staging, &path).await.unwrap();
+        drop(Staged(staging));
+        assert!(path.is_file());
+    }
+
     /// Builds a synthetic message carrying protocol quote context for parser regression tests.
     fn message_quoting(sender: &str, sender_name: Option<&str>) -> Message {
         Message {
@@ -13052,11 +14202,15 @@ mod tests {
         worker.on_contact_update(&update("My Dih", "My Dih"));
         let stored = worker.archive.contact(ID).expect("reads").expect("stored");
         assert_eq!(stored.first_name.as_deref(), Some("My Dih"));
-        assert_eq!(worker.contacts[ID].first_name.as_deref(), Some("My Dih"));
+        assert_eq!(
+            worker.contacts.get(ID).unwrap().first_name.as_deref(),
+            Some("My Dih")
+        );
 
         worker.on_contact_update(&update("My Dih", ""));
         assert_eq!(
-            worker.contacts[ID].first_name, None,
+            worker.contacts.get(ID).unwrap().first_name,
+            None,
             "an empty first name is none"
         );
         let stored = worker.archive.contact(ID).expect("reads").expect("stored");
@@ -13076,7 +14230,7 @@ mod tests {
             push_name: None,
         };
         worker.archive.upsert_contact(&contact).expect("stores");
-        worker.contacts.insert(ID.into(), contact);
+        worker.contacts.insert(contact);
         // The snapshot replays the contact with its first name.
         worker.on_contact_update(
             &wa_events::ContactUpdate::builder()
@@ -13122,15 +14276,12 @@ mod tests {
     fn polish_refreshes_a_stale_quote_label_when_the_sender_id_is_unchanged() {
         const SENDER: &str = "15551234567@s.whatsapp.net";
         let (mut worker, _events, _inbox, _wa) = receipt_tests::worker();
-        worker.contacts.insert(
-            SENDER.into(),
-            Contact {
-                id: SENDER.into(),
-                full_name: Some("Current Contact".into()),
-                first_name: None,
-                push_name: None,
-            },
-        );
+        worker.contacts.insert(Contact {
+            id: SENDER.into(),
+            full_name: Some("Current Contact".into()),
+            first_name: None,
+            push_name: None,
+        });
         let mut message = message_quoting(SENDER, Some("+1 555 123 456 7"));
 
         worker.polish(&mut message);
@@ -14430,6 +15581,89 @@ mod tests {
         ));
     }
 
+    /// Someone mentioning the group in their status sends the group a notice
+    /// the phone shows no message for, so it is not one here either (#595).
+    #[test]
+    fn a_group_status_mention_is_not_a_message() {
+        let mut proto = wa::Message::default();
+        proto.group_status_mention_message = MessageField::some({
+            let mut proto = wa::message::FutureProofMessage::default();
+            proto.message = MessageField::some(wa::Message::default());
+            proto
+        });
+        assert_eq!(classify(&proto), None);
+    }
+
+    #[test]
+    fn the_hd_copy_of_a_photo_or_video_is_not_a_message() {
+        use wa::context_info::PairedMediaType;
+        use wa::message_association::AssociationType;
+        let copy = |association_type: Option<AssociationType>, video: bool| {
+            let mut proto = wa::Message::default();
+            proto.associated_child_message = MessageField::some({
+                let mut proto = wa::message::FutureProofMessage::default();
+                proto.message = MessageField::some({
+                    let mut proto = wa::Message::default();
+                    if video {
+                        proto.video_message = MessageField::some({
+                            let mut proto = wa::message::VideoMessage::default();
+                            proto.mimetype = Some("video/mp4".into());
+                            proto
+                        });
+                    } else {
+                        proto.image_message = MessageField::some({
+                            let mut proto = wa::message::ImageMessage::default();
+                            proto.mimetype = Some("image/jpeg".into());
+                            proto
+                        });
+                    }
+                    proto
+                });
+                proto
+            });
+            proto.message_context_info = MessageField::some({
+                let mut proto = wa::MessageContextInfo::default();
+                proto.message_association = MessageField::some({
+                    let mut proto = wa::MessageAssociation::default();
+                    proto.association_type = association_type;
+                    proto
+                });
+                proto
+            });
+            proto
+        };
+        assert_eq!(
+            classify(&copy(Some(AssociationType::HD_IMAGE_DUAL_UPLOAD), false)),
+            None
+        );
+        assert_eq!(
+            classify(&copy(Some(AssociationType::HD_VIDEO_DUAL_UPLOAD), true)),
+            None
+        );
+        assert_eq!(
+            classify(&copy(Some(AssociationType::HEVC_VIDEO_DUAL_UPLOAD), true)),
+            None
+        );
+        // A copy that names no association is still known by its media.
+        let mut paired = copy(None, false);
+        paired
+            .associated_child_message
+            .as_option_mut()
+            .and_then(|wrapper| wrapper.message.as_option_mut())
+            .and_then(|child| child.image_message.as_option_mut())
+            .unwrap()
+            .context_info = MessageField::some({
+            let mut context = wa::ContextInfo::default();
+            context.paired_media_type = Some(PairedMediaType::HD_IMAGE_CHILD);
+            context
+        });
+        assert_eq!(classify(&paired), None);
+        assert!(matches!(
+            classify(&copy(None, false)),
+            Some(Content::Unsupported { .. })
+        ));
+    }
+
     #[tokio::test]
     async fn newsletter_sends_are_rejected_before_reaching_the_client() {
         let (mut worker, events, _, _) = receipt_tests::worker();
@@ -15167,6 +16401,132 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn outgoing_view_once_photos_preserve_wire_metadata_without_caching_the_photo() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = whatsapp_rust::store::SqliteStore::open(
+            directory.path().join("session.db").to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let bot = Bot::builder().with_backend(store).build().await.unwrap();
+        let client = bot.client();
+        let (mut worker, _events, _commands, _wa) = super::receipt_tests::worker();
+        worker.client = Some(client.clone());
+        let quote = Quoted {
+            chat: None,
+            id: "original".into(),
+            sender: "15551234567@s.whatsapp.net".into(),
+            sender_name: Some("Fixture".into()),
+            summary: "Original".into(),
+            labelled: Some(false),
+            mentions: vec![],
+        };
+        let mut context = wa::ContextInfo::default();
+        context.stanza_id = Some(quote.id.clone());
+        context.participant = Some(quote.sender.clone());
+        context.quoted_message = MessageField::some(wa::Message::text("Original"));
+        for view_once in [false, true] {
+            let cache = directory
+                .path()
+                .join(if view_once { "once" } else { "ordinary" });
+            let mut prepared = Prepared {
+                message: {
+                    let mut message = wa::Message::default();
+                    message.image_message = MessageField::some({
+                        let mut image = wa::message::ImageMessage::default();
+                        image.jpeg_thumbnail = Some(vec![1, 2, 3]);
+                        image
+                    });
+                    message
+                },
+                content: Content::Image {
+                    motion: None,
+                    caption: None,
+                    media: media(Some(&"image/jpeg".to_owned()), Some(4), Some(1), Some(1)),
+                },
+                thumbnail: Some(vec![1, 2, 3]),
+                bytes: vec![1, 2, 3, 4],
+                mime: "image/jpeg".into(),
+                file_name: None,
+            };
+            if view_once {
+                mark_view_once_photo(&mut prepared).unwrap();
+            }
+            let (row, raw) = quoted_outbound(
+                &client,
+                "15551234567@s.whatsapp.net",
+                "15550001111@s.whatsapp.net",
+                &cache,
+                prepared,
+                Some("Caption".into()),
+                vec!["15559876543@s.whatsapp.net".into()],
+                Some((context.clone(), quote.clone())),
+            )
+            .await
+            .unwrap();
+            assert_eq!(row.quoted, Some(quote.clone()));
+            if view_once {
+                assert_eq!(
+                    row.content,
+                    Content::PhoneOnly {
+                        view_once: true,
+                        live_location: false,
+                        once: Some(crate::model::OnceMedia::Photo),
+                    }
+                );
+                assert!(row.thumbnail.is_none());
+                assert!(
+                    !cache.exists(),
+                    "view-once bytes must not be cached locally"
+                );
+            } else {
+                let path = row.content.media().unwrap().path.as_ref().unwrap();
+                assert_eq!(std::fs::read(path).unwrap(), [1, 2, 3, 4]);
+                assert_eq!(row.thumbnail, Some(vec![1, 2, 3]));
+            }
+            let raw = wa::Message::decode_from_slice(&raw).unwrap();
+            assert_eq!(raw.is_view_once(), view_once);
+            let image = raw.image_message.as_option().unwrap();
+            assert_eq!(image.view_once, view_once.then_some(true));
+            assert_eq!(image.caption.as_deref(), Some("Caption"));
+            let context = image.context_info.as_option().unwrap();
+            assert_eq!(
+                context.mentioned_jid,
+                ["15559876543@s.whatsapp.net".to_owned()]
+            );
+            assert_eq!(context.stanza_id.as_deref(), Some("original"));
+            assert_eq!(
+                context.quoted_message.as_option().unwrap().text_content(),
+                Some("Original")
+            );
+            let id = row.id.clone();
+            worker.outbound(row.chat.clone(), row, raw.encode_to_vec());
+            let archived = wa::Message::decode_from_slice(
+                &worker
+                    .archive
+                    .raw("15551234567@s.whatsapp.net", &id)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            let mut expected = raw.clone();
+            if view_once {
+                expected
+                    .image_message
+                    .as_option_mut()
+                    .unwrap()
+                    .jpeg_thumbnail = None;
+            }
+            assert_eq!(archived, expected);
+            assert_eq!(
+                raw.image_message.as_option().unwrap().jpeg_thumbnail,
+                Some(vec![1, 2, 3]),
+                "the message sent to WhatsApp must keep its thumbnail"
+            );
+        }
+    }
+
     #[test]
     fn starting_over_keeps_the_old_archive_and_forgets_the_link() {
         let root = std::env::temp_dir().join(format!("zapfast-start-over-{}", std::process::id()));
@@ -15893,6 +17253,8 @@ mod receipt_tests {
                 info_locked: false,
                 admin: false,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             })
             .await;
         assert_eq!(
@@ -15920,6 +17282,8 @@ mod receipt_tests {
                 info_locked: false,
                 admin: false,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             })
             .await;
         assert_eq!(
@@ -15954,6 +17318,8 @@ mod receipt_tests {
                 info_locked: false,
                 admin: false,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             })
             .await;
         assert!(
@@ -15977,6 +17343,8 @@ mod receipt_tests {
                 info_locked: false,
                 admin: false,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             })
             .await;
         assert!(
@@ -16036,6 +17404,8 @@ mod receipt_tests {
                 info_locked: true,
                 admin: true,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             })
             .await;
         let row = worker.archive.chat(chat).unwrap().unwrap();
@@ -16077,6 +17447,43 @@ mod receipt_tests {
                 worker.archive.chat(group).unwrap().unwrap().info_locked,
                 expected
             );
+            assert_eq!(
+                worker.group_info_queue.front().map(String::as_str),
+                Some(group),
+                "the metadata is refreshed too"
+            );
+        }
+    }
+
+    /// "Only admins can send" and its reversal change who may post at once,
+    /// for members; an admin keeps posting either way.
+    #[tokio::test]
+    async fn group_announcement_notices_apply_before_the_refresh() {
+        use whatsapp_rust::wacore::stanza::groups::GroupNotificationAction;
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let group = "123-456@g.us";
+        worker.archive.ensure_chat(group, "Weekend plans").unwrap();
+        for (admin, action, read_only) in [
+            (false, GroupNotificationAction::Announce, true),
+            (false, GroupNotificationAction::NotAnnounce, false),
+            (true, GroupNotificationAction::Announce, false),
+        ] {
+            worker
+                .archive
+                .set_group_rights(group, false, admin)
+                .unwrap();
+            let update = wa_events::GroupUpdate::builder()
+                .group_jid(group.parse().unwrap())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
+                .is_lid_addressing_mode(false)
+                .action(Box::new(action))
+                .build();
+            worker
+                .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
+                .await;
+            let row = worker.archive.chat(group).unwrap().unwrap();
+            assert_eq!(row.read_only, read_only);
+            assert_eq!(row.can_send(), !read_only);
             assert_eq!(
                 worker.group_info_queue.front().map(String::as_str),
                 Some(group),
@@ -16200,6 +17607,8 @@ mod receipt_tests {
                     info_locked: false,
                     admin: false,
                     subject_generation: 0,
+                    settings: Default::default(),
+                    settings_generation: 0,
                 })
                 .await;
             assert!(events.try_iter().any(|event| matches!(event,
@@ -16293,6 +17702,8 @@ mod receipt_tests {
                 info_locked: false,
                 admin: false,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             })
             .await;
         assert_eq!(
@@ -16360,6 +17771,8 @@ mod receipt_tests {
                 info_locked: false,
                 admin: false,
                 subject_generation: 0,
+                settings: Default::default(),
+                settings_generation: 0,
             };
             worker.request_group_info(group, true);
             let older = snapshot(
@@ -16552,6 +17965,8 @@ mod receipt_tests {
             info_locked: false,
             admin: false,
             subject_generation,
+            settings: Default::default(),
+            settings_generation: 0,
         };
         worker
             .handle_command(Command::GroupEdited {
@@ -17098,6 +18513,40 @@ mod receipt_tests {
         );
     }
 
+    /// The window is handed the worker's own contact, not a copy of it, and
+    /// a later change leaves the one handed over as it was until the next
+    /// event replaces it.
+    #[test]
+    fn a_contact_is_handed_to_the_window_without_a_copy() {
+        let (mut worker, events, _commands, _runtime) = worker();
+        let handed = |events: &std::sync::mpsc::Receiver<Event>| {
+            events
+                .try_iter()
+                .find_map(|event| match event {
+                    Event::Contacts(mut contacts) => contacts.pop(),
+                    _ => None,
+                })
+                .expect("the contact is sent")
+        };
+        worker.remember_push_name(PEER, "Ada");
+        let first = handed(&events);
+        assert!(std::ptr::eq(&*first, worker.contacts.get(PEER).unwrap()));
+
+        worker.remember_push_name(PEER, "Ada L.");
+        let second = handed(&events);
+        assert_eq!(first.push_name.as_deref(), Some("Ada"));
+        assert_eq!(second.push_name.as_deref(), Some("Ada L."));
+        assert!(std::ptr::eq(&*second, worker.contacts.get(PEER).unwrap()));
+
+        // Nothing new: nothing is sent.
+        worker.remember_push_name(PEER, "Ada L.");
+        assert!(
+            !events
+                .try_iter()
+                .any(|event| matches!(event, Event::Contacts(_)))
+        );
+    }
+
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,
@@ -17120,6 +18569,7 @@ mod receipt_tests {
             privacy_reveal_at: None,
             privacy_attempts: 0,
             privacy_warned: false,
+            chats_dirty: false,
             privacy_recovering: false,
             privacy_generation: 0,
             message_removals_in_flight: HashSet::new(),
@@ -17137,6 +18587,7 @@ mod receipt_tests {
             client: None,
             handle: None,
             call: None,
+            phone_only_calls: Vec::new(),
             call_devices: crate::calls::DeviceList::default(),
             call_input: crate::calls::InputPreferences::default(),
             wa_sender,
@@ -17145,16 +18596,19 @@ mod receipt_tests {
             me_name: None,
             me_about: None,
             lid_to_pn: HashMap::new(),
-            contacts: HashMap::new(),
+            contacts: Contacts::default(),
             status: LinkStatus::Connected,
             pairing_phone: None,
             pair_code: None,
             qr: None,
             syncing: false,
             sync_deadline: None,
+            last_busy: Instant::now(),
+            archive_released: false,
             group_info_requested: HashSet::new(),
             leave_generation: HashMap::new(),
             subject_generation: HashMap::new(),
+            settings_generation: HashMap::new(),
             group_pictures_sent: HashMap::new(),
             description_generation: HashMap::new(),
             group_info_generation: HashMap::new(),
@@ -17166,6 +18620,8 @@ mod receipt_tests {
             presence_subscribed: HashSet::new(),
             download_folder: None,
             keep_chats_archived: true,
+            phone_unarchive_chats: None,
+            phone_unarchive_unread: false,
             online_wanted: false,
             online_changed: Instant::now(),
             online_sent: None,
@@ -17196,6 +18652,9 @@ mod receipt_tests {
             first_names_recovered: true,
             first_names_recovering: false,
             downloads: HashSet::new(),
+            download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
+            download_turns: HashMap::new(),
+            avatar_gate: Arc::new(tokio::sync::Semaphore::new(AVATAR_DOWNLOADS)),
             read_sync: ReadSync::default(),
             favorite_chats: Default::default(),
             poll_decrypting: 0,
@@ -17206,6 +18665,7 @@ mod receipt_tests {
             late_older: VecDeque::new(),
             older_ids_match: false,
             interactive_sending: HashMap::new(),
+            awaiting_ack: HashMap::new(),
             receipts_watch: None,
             receipts_pruned: Instant::now(),
             early: Default::default(),
@@ -17612,6 +19072,124 @@ mod receipt_tests {
             });
             proto
         }
+    }
+
+    /// `data` as a zlib stream of stored blocks, which inflates as the
+    /// phone's compressed chunks do.
+    fn stored_zlib(data: &[u8]) -> Vec<u8> {
+        let mut out = vec![0x78, 0x01];
+        let mut blocks = data.chunks(0xffff).peekable();
+        if blocks.peek().is_none() {
+            out.extend([1, 0, 0, 0xff, 0xff]);
+        }
+        while let Some(block) = blocks.next() {
+            out.push(u8::from(blocks.peek().is_none()));
+            let len = u16::try_from(block.len()).unwrap();
+            out.extend(len.to_le_bytes());
+            out.extend((!len).to_le_bytes());
+            out.extend(block);
+        }
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in data {
+            a = (a + u32::from(byte)) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        out.extend(((b << 16) | a).to_be_bytes());
+        out
+    }
+
+    #[tokio::test]
+    async fn a_chunk_filed_chat_by_chat_matches_one_filed_whole() {
+        const GROUP: &str = "fixture@g.us";
+        let text = |body: &str| {
+            let mut proto = wa::Message::default();
+            proto.conversation = Some(body.into());
+            proto
+        };
+        let mut sync = wa::HistorySync::default();
+        sync.sync_type = wa::history_sync::HistorySyncType::INITIAL_BOOTSTRAP;
+        sync.conversations = vec![
+            {
+                let mut proto = wa::Conversation::default();
+                proto.id = PEER_LID.into();
+                proto.messages = vec![history_entry(
+                    PEER_LID,
+                    "early",
+                    false,
+                    None,
+                    text("hi"),
+                    Vec::new(),
+                    None,
+                )];
+                proto
+            },
+            {
+                let mut proto = wa::Conversation::default();
+                proto.id = GROUP.into();
+                proto.messages = vec![history_entry(
+                    GROUP,
+                    "group",
+                    false,
+                    Some(PEER_LID),
+                    text("hello"),
+                    Vec::new(),
+                    None,
+                )];
+                proto
+            },
+            // The chunk maps the privacy id only after the chats using it.
+            {
+                let mut proto = wa::Conversation::default();
+                proto.id = PEER.into();
+                proto.lid_jid = Some(PEER_LID.into());
+                proto.pn_jid = Some(PEER.into());
+                proto
+            },
+        ];
+        sync.pushnames = vec![{
+            let mut proto = wa::Pushname::default();
+            proto.id = Some(PEER.into());
+            proto.pushname = Some("Keshav".into());
+            proto
+        }];
+        let blob = stored_zlib(&sync.encode_to_vec());
+        let (mut whole, _events, _inbox, _wa) = worker();
+        let expected = whole.apply_history(parse_history(&blob).unwrap(), true);
+        let (mut streamed, _events, _inbox, _wa) = worker();
+        let filed = streamed.stream_history(blob.clone(), false).await.unwrap();
+        assert_eq!(filed, expected);
+        let rows = |worker: &Worker, chat: &str| {
+            worker
+                .archive
+                .messages(chat, None, 50)
+                .unwrap()
+                .into_iter()
+                .map(|message| (message.id, message.sender))
+                .collect::<Vec<_>>()
+        };
+        for chat in [PEER, GROUP] {
+            assert_eq!(rows(&streamed, chat), rows(&whole, chat));
+        }
+        assert_eq!(
+            rows(&streamed, PEER),
+            [("early".to_owned(), PEER.to_owned())]
+        );
+        assert_eq!(
+            rows(&streamed, GROUP),
+            [("group".to_owned(), PEER.to_owned())]
+        );
+        assert_eq!(
+            streamed
+                .contacts
+                .get(PEER)
+                .and_then(|contact| contact.push_name.as_deref()),
+            Some("Keshav")
+        );
+        // A chunk cut short files none of its chats, even those before the cut.
+        let (mut broken, _events, _inbox, _wa) = worker();
+        let cut = blob[..blob.len() / 2].to_vec();
+        assert!(broken.stream_history(cut, false).await.is_none());
+        assert!(rows(&broken, PEER).is_empty());
     }
 
     /// A pin for everyone of the message "target".
@@ -19680,6 +21258,75 @@ mod receipt_tests {
         assert!(!worker.archive.chat(PEER).unwrap().unwrap().archived);
     }
 
+    #[test]
+    fn archive_range_names_the_newest_message() {
+        let jid: Jid = PEER.parse().unwrap();
+        let last = incoming("newest", 300);
+        let range = archive_range(&jid, Some(&last));
+        assert_eq!(range.last_message_timestamp, Some(300));
+        assert_eq!(range.messages.len(), 1);
+        assert_eq!(range.messages[0].timestamp, Some(300));
+        assert_eq!(range.messages[0].key.id.as_deref(), Some("newest"));
+    }
+
+    #[test]
+    fn archive_range_leaves_local_call_entries_out() {
+        let jid: Jid = PEER.parse().unwrap();
+        let last = incoming(&format!("{}1", crate::model::CALL_ENTRY_PREFIX), 400);
+        let range = archive_range(&jid, Some(&last));
+        assert_eq!(range.last_message_timestamp, Some(400));
+        assert!(range.messages.is_empty());
+        let empty = archive_range(&jid, None);
+        assert!(empty.messages.is_empty());
+        assert!(empty.last_message_timestamp.is_some());
+    }
+
+    #[test]
+    fn the_archive_range_skips_sends_the_phone_never_got() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(incoming("theirs", 100), None, None);
+        worker.store_message(
+            Message {
+                status: Delivery::Failed,
+                ..own_message("failed", 200)
+            },
+            None,
+            None,
+        );
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("pending", 300)
+            },
+            None,
+            None,
+        );
+        let newest = worker.newest_on_phone(PEER).unwrap().expect("a message");
+        assert_eq!(newest.id, "theirs");
+    }
+
+    #[test]
+    fn the_archive_range_names_the_sender_in_a_group() {
+        let group: Jid = "123-456@g.us".parse().unwrap();
+        let last = Message {
+            chat: "123-456@g.us".into(),
+            sender: PEER.into(),
+            ..incoming("theirs", 100)
+        };
+        let range = archive_range(&group, Some(&last));
+        assert_eq!(range.messages.len(), 1);
+        assert_eq!(range.messages[0].key.participant.as_deref(), Some(PEER));
+        let untimed = archive_range(
+            &group,
+            Some(&Message {
+                timestamp: 0,
+                ..last
+            }),
+        );
+        assert!(untimed.messages.is_empty());
+        assert!(untimed.last_message_timestamp.is_some_and(|at| at > 0));
+    }
+
     #[tokio::test]
     async fn pairing_qr_opens_linked_devices_from_a_phone_camera() {
         let (mut worker, _events, _inbox, _wa) = worker();
@@ -19745,6 +21392,53 @@ mod receipt_tests {
         stale.chats[0].archived = Some(true);
         worker.apply_history(stale, true);
         assert!(!archived(&worker), "history cannot undo it");
+    }
+
+    #[tokio::test]
+    async fn the_phones_keep_chats_archived_wins_over_settings() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        let archived = |worker: &Worker| worker.archive.chat(PEER).unwrap().unwrap().archived;
+        let setting = |unarchive: bool| {
+            let mut action = wa::sync_action_value::UnarchiveChatsSetting::default();
+            action.unarchive_chats = Some(unarchive);
+            Arc::new(wa_events::Event::UnarchiveChatsSettingUpdate(
+                wa_events::UnarchiveChatsSettingUpdate::builder()
+                    .unarchive_chats(unarchive)
+                    .timestamp(whatsapp_rust::wacore::time::now_utc())
+                    .action(Box::new(action))
+                    .from_full_sync(true)
+                    .build(),
+            ))
+        };
+        worker.store_message(incoming("before", 100), None, None);
+        worker.archive.set_archived_at(PEER, true, 200_000).unwrap();
+        // Settings keep chats archived, but the phone does not.
+        worker.handle_wa_event(setting(true)).await;
+        worker.store_message(incoming("new", 300), None, None);
+        assert!(!archived(&worker));
+
+        // Now the phone keeps them, though Settings would not.
+        worker.archive.set_archived_at(PEER, true, 400_000).unwrap();
+        worker
+            .handle_command(Command::SetKeepChatsArchived(false))
+            .await;
+        worker.handle_wa_event(setting(false)).await;
+        worker.store_message(incoming("kept", 500), None, None);
+        assert!(archived(&worker));
+    }
+
+    #[test]
+    fn an_unread_phone_setting_is_read_again_before_settings_decide() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.keep_chats_archived = true;
+        // Stored by an earlier session, but unreadable at this one's start.
+        worker.archive.set_unarchive_chats_at(true, 100).unwrap();
+        worker.phone_unarchive_unread = true;
+        assert!(
+            !worker.keeps_chats_archived(),
+            "the phone's stored setting decides"
+        );
+        assert!(!worker.phone_unarchive_unread);
     }
 
     #[test]
@@ -19972,6 +21666,124 @@ mod receipt_tests {
         worker.apply_history(chunk, true);
         assert!(marked(&worker));
         assert_eq!(unread(&worker), 0);
+    }
+
+    #[test]
+    fn the_first_server_ack_restamps_our_message() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        // Our clock is ahead: the message was stamped 200 before the server answered.
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+        );
+        let ack = |id: &str, class: &str, at: i64| {
+            wa_events::ServerAck::builder()
+                .id(id.to_owned())
+                .class(class.to_owned())
+                .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
+                .build()
+        };
+        let stamp = |worker: &Worker, id: &str| {
+            worker.archive.message(PEER, id).unwrap().unwrap().timestamp
+        };
+        worker.server_ack(&ack("mine", "message", 140));
+        assert_eq!(stamp(&worker, "mine"), 140);
+        // A resend is acked again, later; the first ack already placed it.
+        worker.server_ack(&ack("mine", "message", 500));
+        assert_eq!(stamp(&worker, "mine"), 140);
+        // An ack for another kind of stanza never moves a message.
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("other", 300)
+            },
+            None,
+            None,
+        );
+        worker.server_ack(&ack("other", "receipt", 90));
+        assert_eq!(stamp(&worker, "other"), 300);
+    }
+
+    #[test]
+    fn an_ack_without_a_time_leaves_our_message_waiting_for_one() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+        );
+        let untimed = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .build();
+        worker.server_ack(&untimed);
+        let timed = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(140).unwrap())
+            .build();
+        worker.server_ack(&timed);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .timestamp,
+            140
+        );
+    }
+
+    #[test]
+    fn an_error_ack_leaves_our_message_at_its_time() {
+        let (mut worker, _events, _inbox, _wa) = worker();
+        worker.store_message(
+            Message {
+                status: Delivery::Pending,
+                ..own_message("mine", 200)
+            },
+            None,
+            None,
+        );
+        let refused = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(140).unwrap())
+            .error("479".to_owned())
+            .build();
+        worker.server_ack(&refused);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .timestamp,
+            200
+        );
+        // The refused ack did not drop the entry: a plain ack still places it.
+        let timed = wa_events::ServerAck::builder()
+            .id("mine".to_owned())
+            .class("message".to_owned())
+            .timestamp(whatsapp_rust::wacore::time::from_secs(140).unwrap())
+            .build();
+        worker.server_ack(&timed);
+        assert_eq!(
+            worker
+                .archive
+                .message(PEER, "mine")
+                .unwrap()
+                .unwrap()
+                .timestamp,
+            140
+        );
     }
 
     #[test]
@@ -20389,6 +22201,83 @@ mod receipt_tests {
         }
     }
 
+    #[tokio::test]
+    async fn view_once_file_refusals_preserve_the_choice_without_falling_back_to_normal_media() {
+        let (mut worker, events, _commands, _wa) = worker();
+        for (paths, documents, reason) in [
+            (vec![PathBuf::from("photo.png")], false, Refusal::Offline),
+            (
+                vec![PathBuf::from("photo.png")],
+                true,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (
+                vec![PathBuf::from("photo.png"), PathBuf::from("second.jpg")],
+                false,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (
+                vec![PathBuf::from("clip.mp4")],
+                false,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (
+                vec![PathBuf::from("photo.bmp")],
+                false,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (
+                vec![PathBuf::from("photo.tiff")],
+                false,
+                Refusal::UnsupportedViewOnce,
+            ),
+            (Vec::new(), false, Refusal::UnsupportedViewOnce),
+        ] {
+            let caption = Some("Caption fixture".to_owned());
+            worker
+                .handle_command(Command::SendFiles {
+                    chat: PEER.into(),
+                    paths: paths.clone(),
+                    documents,
+                    view_once: true,
+                    caption: caption.clone(),
+                    mentions: vec![],
+                    quoting: None,
+                    uploads: Vec::new(),
+                })
+                .await;
+            let refused: Vec<_> = events
+                .try_iter()
+                .filter(|event| matches!(event, Event::SendRefused { .. }))
+                .collect();
+            let expected = Unsent::Files {
+                paths,
+                documents,
+                view_once: true,
+                caption,
+            };
+            assert!(matches!(refused.as_slice(),
+                [Event::SendRefused { unsent, reason: actual, .. }]
+                    if unsent == &expected && actual == &reason));
+        }
+        worker
+            .handle_command(Command::SendImage {
+                chat: PEER.into(),
+                width: 1,
+                height: 1,
+                rgba: vec![255; 4],
+                view_once: true,
+                caption: Some("Pasted fixture".into()),
+                mentions: vec![],
+                quoting: None,
+                upload: None,
+            })
+            .await;
+        assert!(events.try_iter().any(|event| matches!(event,
+            Event::SendRefused { unsent: Unsent::Image { view_once: true, caption: Some(caption), .. }, reason: Refusal::Offline, .. }
+                if caption == "Pasted fixture")));
+    }
+
     /// Enumerates synthetic send commands and matching unsent payloads with a shared quote target.
     fn reply_sends(quoting: Option<crate::model::ReplyTarget>) -> Vec<(Command, Unsent)> {
         let gif = Gif {
@@ -20421,6 +22310,7 @@ mod receipt_tests {
                     chat: PEER.into(),
                     paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
                     documents: false,
+                    view_once: false,
                     caption: Some("Caption fixture".into()),
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
@@ -20429,6 +22319,7 @@ mod receipt_tests {
                 Unsent::Files {
                     paths: vec!["/fixture/a.pdf".into(), "/fixture/b.png".into()],
                     documents: false,
+                    view_once: false,
                     caption: Some("Caption fixture".into()),
                 },
             ),
@@ -20437,6 +22328,7 @@ mod receipt_tests {
                     chat: PEER.into(),
                     paths: vec!["/fixture/c.png".into()],
                     documents: true,
+                    view_once: false,
                     caption: None,
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
@@ -20445,6 +22337,7 @@ mod receipt_tests {
                 Unsent::Files {
                     paths: vec!["/fixture/c.png".into()],
                     documents: true,
+                    view_once: false,
                     caption: None,
                 },
             ),
@@ -20454,6 +22347,7 @@ mod receipt_tests {
                     width: 1,
                     height: 1,
                     rgba: vec![1, 2, 3, 4],
+                    view_once: false,
                     caption: Some("Picture fixture".into()),
                     mentions: Vec::new(),
                     quoting: quoting.clone(),
@@ -20463,6 +22357,7 @@ mod receipt_tests {
                     width: 1,
                     height: 1,
                     rgba: vec![1, 2, 3, 4],
+                    view_once: false,
                     caption: Some("Picture fixture".into()),
                 },
             ),

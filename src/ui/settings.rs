@@ -12,7 +12,9 @@ use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{DOODLE_INTENSITY, DoodleColor, DoodleStyle, Settings, WallpaperColor};
+use crate::settings::{
+    DOODLE_DENSITY, DOODLE_INTENSITY, DoodleColor, DoodleStyle, Settings, WallpaperColor,
+};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -249,30 +251,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 |ui| {
                     ui.set_width(width);
                     let searching = !app.settings_search.trim().is_empty();
-                    // The Halloween page replaces the list; the swap fades out
-                    // and back in, halfway through the eased `swap`.
-                    let swap = ui.ctx().animate_value_with_time(
-                        egui::Id::new("settings-halloween-page"),
-                        if app.settings_halloween { 1.0 } else { 0.0 },
-                        theme::MOTION_PANEL,
-                    );
-                    let halloween = (swap >= 0.5) && !searching;
-                    ui.multiply_opacity(theme::ease_out(
-                        ((swap - 0.5).abs() * 2.0).clamp(0.0, 1.0),
-                    ));
-                    let all = if halloween {
-                        vec![halloween_section(app)]
-                    } else {
-                        sections(app)
-                    };
+                    let all = sections(app);
                     let section = app.settings_section.min(all.len().saturating_sub(1));
                     // Beside its categories the page shows the one picked,
                     // under its own name, or what a search finds.
-                    let one = if halloween {
-                        Some(0)
-                    } else {
-                        beside.then_some(section).filter(|_| !searching)
-                    };
+                    let one = beside.then_some(section).filter(|_| !searching);
                     let heading = match one {
                         Some(index) => all[index].title.shown.clone(),
                         None => crate::i18n::gettext(locale, "Settings"),
@@ -288,11 +271,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         )
                         .clicked()
                         {
-                            app.actions.push(if halloween {
-                                Action::ShowHalloweenPage(false)
-                            } else {
-                                Action::Open(Page::Chats)
-                            });
+                            app.actions.push(Action::Open(Page::Chats));
                         }
                         theme::text(ui, heading.as_ref(), theme::bold(24.0), palette.text);
                     });
@@ -331,14 +310,8 @@ const CATEGORY_ROW: f32 = 44.0;
 /// The icon beside a settings category, by its English name.
 fn category_icon(source: &str) -> Icon {
     match source {
-        "Appearance" => {
-            if theme::halloween() {
-                Icon::Ghost
-            } else {
-                Icon::Sun
-            }
-        }
-        "Chats" => theme::chats_icon(),
+        "Appearance" => Icon::Sun,
+        "Chats" => Icon::MessageCircle,
         "Touchpad swipes" => Icon::ArrowLeftRight,
         "Calls and voice" => Icon::Phone,
         "Notifications" => Icon::Bell,
@@ -503,44 +476,6 @@ fn search(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-/// The Halloween page's own section: the master switch and each part.
-fn halloween_section(app: &App) -> Section {
-    let locale = app.locale;
-    let mut halloween = Section::new(translated(locale, "Halloween"));
-    halloween.row(
-        translated(locale, "Halloween"),
-        translated(
-            locale,
-            "An orange theme with a night wallpaper, pumpkin icons, spooky doodles and sounds. Off puts back the doodles and sounds it changed.",
-        ),
-        halloween_switch,
-    );
-    if app.settings.halloween {
-        for part in crate::settings::HalloweenPart::ALL {
-            let note = match part {
-                crate::settings::HalloweenPart::Colors
-                    if app.settings.halloween_colors_overridden() =>
-                {
-                    "A theme file you loaded is in use, so its colours show instead. Choose a built-in theme to see the orange."
-                }
-                crate::settings::HalloweenPart::Ghost => {
-                    "Sending a message sometimes makes ghosts and skeletons fall for two seconds."
-                }
-                crate::settings::HalloweenPart::Candies => {
-                    "Sending a message sometimes makes candy fall for two seconds."
-                }
-                _ => "",
-            };
-            halloween.row(
-                translated(locale, part.label()),
-                translated(locale, note),
-                move |ui, app| halloween_part_switch(ui, app, part),
-            );
-        }
-    }
-    halloween
-}
-
 /// Every settings section, in page order, with the rows this setup offers.
 fn sections(app: &App) -> Vec<Section> {
     let locale = app.locale;
@@ -550,28 +485,6 @@ fn sections(app: &App) -> Vec<Section> {
     // The language first: it is what a reader who cannot read the rest
     // looks for.
     appearance.row(translated(locale, "Language"), "", language_picker);
-    appearance.row(
-        translated(locale, "Halloween"),
-        translated(
-            locale,
-            "An orange theme with a night wallpaper, pumpkin icons, spooky doodles and sounds. Off puts back the doodles and sounds it changed.",
-        ),
-        halloween_link,
-    );
-    if let Some((row, _)) = appearance.entries.last_mut() {
-        row.keywords = [
-            "Orange colours",
-            "Night wallpaper",
-            "Halloween doodles",
-            "Halloween icons",
-            "Spooky sounds",
-            "Ghost and skeleton rain",
-            "Candy surprise",
-            "pumpkin",
-        ]
-        .map(|word| translated(locale, word))
-        .into();
-    }
     appearance.block(
         vec![translated(locale, "Preview"), translated(locale, "Theme")],
         chat_preview,
@@ -660,6 +573,7 @@ fn sections(app: &App) -> Vec<Section> {
         vec![
             translated(locale, "Doodles"),
             translated(locale, "Wallpaper"),
+            translated(locale, "Doodle density"),
         ],
         doodle_cards,
     );
@@ -704,6 +618,14 @@ fn sections(app: &App) -> Vec<Section> {
     );
 
     let mut chats = Section::new(translated(locale, "Chats"));
+    chats.toggle(
+        translated(locale, "Open the last chat"),
+        translated(
+            locale,
+            "When off, quitting and opening Zeus again starts with no chat open.",
+        ),
+        |settings| &mut settings.restore_last_chat,
+    );
     chats.toggle(
         translated(locale, "Enter sends"),
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
@@ -1198,6 +1120,15 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         |ui, app| about(app, ui),
     );
+    if crate::benchmark::AVAILABLE {
+        about_section.block(
+            vec![
+                translated(locale, "Performance benchmark"),
+                translated(locale, "Benchmark"),
+            ],
+            |ui, app| super::benchmark::show(app, ui),
+        );
+    }
 
     vec![
         appearance,
@@ -1925,74 +1856,6 @@ fn segmented<T: Copy + PartialEq>(
     clicked
 }
 
-/// The Appearance row that opens the Halloween page: what is on, and a
-/// chevron.
-fn halloween_link(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let label = crate::i18n::gettext(
-        app.locale,
-        if app.settings.halloween { "On" } else { "Off" },
-    )
-    .into_owned();
-    if theme::soft_button(
-        ui,
-        &palette,
-        Some(Icon::ChevronRight),
-        &label,
-        app.settings.halloween,
-    )
-    .clicked()
-    {
-        app.actions.push(Action::ShowHalloweenPage(true));
-    }
-}
-
-/// The Halloween look's switch. The colours change from where it was clicked,
-/// as a theme card's do.
-fn halloween_switch(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let label = crate::i18n::gettext(app.locale, "Halloween").into_owned();
-    let mut on = app.settings.halloween;
-    let response = widgets::switch(ui, &palette, &mut on);
-    theme::reveal_focus(&response);
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, &label)
-    });
-    if response.changed() {
-        if let Some(origin) = ui.ctx().pointer_interact_pos() {
-            app.actions.push(Action::RevealThemeFrom(origin));
-        }
-        app.actions.push(Action::SetHalloween(on));
-    }
-}
-
-/// The switch of one part of the Halloween look.
-fn halloween_part_switch(ui: &mut egui::Ui, app: &mut App, part: crate::settings::HalloweenPart) {
-    let palette = app.palette;
-    let label = crate::i18n::gettext(app.locale, part.label()).into_owned();
-    let parts = app.settings.halloween_parts;
-    let mut on = match part {
-        crate::settings::HalloweenPart::Colors => parts.colors,
-        crate::settings::HalloweenPart::Wallpaper => parts.wallpaper,
-        crate::settings::HalloweenPart::Doodles => parts.doodles,
-        crate::settings::HalloweenPart::Icons => parts.icons,
-        crate::settings::HalloweenPart::Sounds => parts.sounds,
-        crate::settings::HalloweenPart::Ghost => parts.ghost,
-        crate::settings::HalloweenPart::Candies => parts.candies,
-    };
-    let response = widgets::switch(ui, &palette, &mut on);
-    theme::reveal_focus(&response);
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, &label)
-    });
-    if response.changed() {
-        if let Some(origin) = ui.ctx().pointer_interact_pos() {
-            app.actions.push(Action::RevealThemeFrom(origin));
-        }
-        app.actions.push(Action::SetHalloweenPart(part, on));
-    }
-}
-
 /// Custom or Themes: a look made your own, or a ready-made theme.
 fn style_picker(ui: &mut egui::Ui, app: &mut App) {
     let options: Vec<_> = Style::ALL
@@ -2706,7 +2569,12 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         ),
     );
     ui.add_space(2.0);
-    let look = app.wallpaper();
+    // Each card shows its whole tile, whatever the density: thinning every
+    // style at every step of the slider would draw seven tiles for each.
+    let look = wallpaper::Look {
+        density: 1.0,
+        ..app.wallpaper()
+    };
     let shown = app.settings.show_wallpaper;
     let current = app.settings.doodle_style;
     let width = ui.available_width();
@@ -2838,10 +2706,14 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             }
         }
     }
-    ui.add_space(14.0);
+    ui.add_space(PAGE_ROW_GAP + 4.0);
     doodle_ink_controls(ui, app);
     ui.add_space(4.0);
 }
+
+/// The space a doodle control's row leaves under itself, beyond the ten
+/// points `setting_row` does: as far apart as the page's own rows.
+const DOODLE_ROW_GAP: f32 = PAGE_ROW_GAP - 10.0;
 
 /// The doodles' colour, grey or the accent, and how strongly they show.
 fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
@@ -2869,39 +2741,93 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
             }
         },
     );
-    ui.add_space(10.0);
+    ui.add_space(DOODLE_ROW_GAP);
     let range = DOODLE_INTENSITY;
     let intensity = app
         .settings
         .doodle_intensity
         .clamp(*range.start(), *range.end());
-    ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::gettext(app.locale, "Doodle intensity").into_owned(),
-            theme::medium(13.5),
-            palette.text,
-        );
-        ui.add_space(6.0);
-        // The slider shows a share of the strongest doodles, not a multiple
-        // of the default, so it ends at 100%.
-        let mut percent = intensity / range.end();
-        let value = format!("{:.0}%", percent * 100.0);
-        let value_width = 48.0;
-        let width = ui.available_width() - value_width - ui.spacing().item_spacing.x;
-        let slider = widgets::glass_slider(
-            ui,
-            &palette,
-            &mut percent,
-            range.start() / range.end()..=1.0,
-            width,
-        );
-        theme::text(ui, value, theme::medium(13.0), palette.secondary);
-        if slider.changed() {
-            app.actions
-                .push(Action::SetDoodleIntensity(percent * range.end()));
-        }
-    });
+    // The slider shows a share of the strongest doodles, not a multiple of
+    // the default, so it ends at 100%.
+    if let Some(percent) = doodle_slider(
+        ui,
+        app,
+        (
+            "Doodle intensity",
+            "How strongly the doodles stand out from the wallpaper.",
+        ),
+        ("Subtle", "Strong"),
+        intensity / range.end(),
+        range.start() / range.end()..=1.0,
+    ) {
+        app.actions
+            .push(Action::SetDoodleIntensity(percent * range.end()));
+    }
+    ui.add_space(DOODLE_ROW_GAP);
+    let range = DOODLE_DENSITY;
+    let density = app
+        .settings
+        .doodle_density
+        .clamp(*range.start(), *range.end());
+    // How many doodles there are against the default tile, which is 100%.
+    if let Some(density) = doodle_slider(
+        ui,
+        app,
+        ("Doodle density", "How many doodles fill the wallpaper."),
+        ("Sparse", "Dense"),
+        density,
+        range,
+    ) {
+        app.actions.push(Action::SetDoodleDensity(density));
+    }
+}
+
+/// One of the doodle sliders, laid out as Glass's is: a row with its
+/// description and, on the right, the slider between its two ends' names.
+/// `value` is a multiple of 1.0, and what the slider moves to is returned.
+fn doodle_slider(
+    ui: &mut egui::Ui,
+    app: &App,
+    (label, description): (&'static str, &'static str),
+    (low, high): (&'static str, &'static str),
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> Option<f32> {
+    let palette = app.palette;
+    let locale = app.locale;
+    let mut moved = None;
+    widgets::setting_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(locale, label),
+        &crate::i18n::gettext(locale, description),
+        |ui| {
+            let mut value = value;
+            // As in `glass_slider`: the row lays its first item last.
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(locale, high).into_owned(),
+                    theme::medium(12.5),
+                    palette.secondary,
+                );
+                let slider = widgets::glass_slider(ui, &palette, &mut value, range, 150.0);
+                slider.widget_info(|| {
+                    egui::WidgetInfo::slider(ui.is_enabled(), f64::from(value), label)
+                });
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(locale, low).into_owned(),
+                    theme::medium(12.5),
+                    palette.secondary,
+                );
+                if slider.changed() {
+                    moved = Some(value);
+                }
+            });
+        },
+    );
+    moved
 }
 
 /// Least width of a doodle tile before the grid drops a column.
@@ -3455,10 +3381,13 @@ fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
     let clear = crate::i18n::gettext(app.locale, "Clear");
     let solid = crate::i18n::gettext(app.locale, "Solid");
     ui.add_enabled_ui(!reduced, |ui| {
-        ui.horizontal(|ui| {
+        // A setting's control sits in a right-to-left row, which lays its
+        // first item last: Solid goes first, so Clear ends up on the left,
+        // where the slider's low end is.
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             theme::text(
                 ui,
-                clear.into_owned(),
+                solid.into_owned(),
                 theme::medium(12.5),
                 palette.secondary,
             );
@@ -3468,7 +3397,7 @@ fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
             });
             theme::text(
                 ui,
-                solid.into_owned(),
+                clear.into_owned(),
                 theme::medium(12.5),
                 palette.secondary,
             );
@@ -3530,11 +3459,6 @@ fn sound_control(ui: &mut egui::Ui, app: &mut App, mention: bool) {
         app.settings.message_sound.clone()
     };
     let choices = [
-        (NotificationSound::Spooky, gettext(locale, "Spooky")),
-        (
-            NotificationSound::Witching,
-            gettext(locale, "Witching hour"),
-        ),
         (NotificationSound::Receive, "Pidgin".into()),
         (NotificationSound::Alert, gettext(locale, "Pidgin alert")),
         (NotificationSound::System, gettext(locale, "System default")),

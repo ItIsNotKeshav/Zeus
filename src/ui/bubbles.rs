@@ -121,14 +121,18 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     });
     ctx.data_mut(|data| data.insert_temp(placement_id(), placement));
     let size = window_size(placement.count, placement.open);
+    // See-through only where the main window is: its GL config then has an
+    // alpha channel. Elsewhere the window is a solid tile in the theme's
+    // colour, so no platform shows black where the circles are not.
+    let see_through = crate::backdrop::window_is_transparent();
     let mut builder = egui::ViewportBuilder::default()
         .with_title(crate::i18n::gettext(app.locale, "Zeus bubbles"))
         .with_inner_size(size)
         .with_decorations(false)
-        .with_transparent(true)
+        .with_transparent(see_through)
         .with_resizable(false)
         .with_taskbar(false)
-        .with_has_shadow(false)
+        .with_has_shadow(!see_through)
         .with_always_on_top();
     if let Some(spawn) = placement.spawn {
         builder = builder.with_position(spawn);
@@ -157,6 +161,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
 
 fn contents(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
+    if !crate::backdrop::window_is_transparent() {
+        let palette = app.palette;
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, palette.window.to_opaque());
+    }
     let now = ctx.input(|input| input.time);
     let mut placement = ctx
         .data(|data| data.get_temp::<Placement>(placement_id()))
@@ -636,7 +645,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect, settled: 
     ui.painter().circle_filled(send.center(), 20.0, fill);
     theme::paint_icon(
         ui,
-        theme::send_icon(),
+        Icon::Send,
         Rect::from_center_size(send.center(), Vec2::splat(18.0)),
         18.0,
         palette.secondary.lerp_to_gamma(palette.on_accent, lit),
@@ -732,6 +741,69 @@ fn thumbnails(app: &mut App, ui: &mut egui::Ui, chat: &Chat, strip: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug)]
+    struct Drop(std::path::PathBuf);
+    impl egui::DroppedFile for Drop {
+        fn path(&self) -> &std::path::Path {
+            &self.0
+        }
+        fn bytes(&self) -> Result<Vec<u8>, String> {
+            Ok(Vec::new())
+        }
+    }
+
+    /// A bubble opens, draws its card, takes a dropped file and goes away.
+    #[test]
+    fn a_bubble_opens_into_a_card_and_takes_a_dropped_file() {
+        let root = std::env::temp_dir().join(format!("zeus-bubbles-{}", std::process::id()));
+        let (mut app, _events) = App::headless(
+            crate::paths::AppDirs::under(&root),
+            crate::settings::Settings::default(),
+        );
+        app.settings.chat_bubbles = true;
+        let chat = "1@s.whatsapp.net".to_owned();
+        app.chats
+            .push(crate::model::Chat::new(chat.clone(), "Ada".into()));
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let run =
+            |app: &mut App,
+             time: f64,
+             drops: Vec<std::sync::Arc<dyn egui::DroppedFile + Send + Sync>>| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(900.0, 700.0))),
+                        time: Some(time),
+                        dropped_files: drops,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        app.apply_actions(ui.ctx());
+                        show(app, ui.ctx());
+                    },
+                );
+                output.textures_delta.clear();
+            };
+        app.actions.push(Action::Bubble(chat.clone()));
+        for frame in 0..8 {
+            run(&mut app, frame as f64 * 0.05, Vec::new());
+        }
+        assert_eq!(app.bubbles.list.len(), 1);
+        assert_eq!(app.bubbles.expanded.as_deref(), Some(chat.as_str()));
+        assert!(
+            ctx.data(|data| data.get_temp::<Placement>(placement_id()))
+                .is_some_and(|placement| placement.open),
+            "the window made room for the card"
+        );
+        let file = Drop(std::path::PathBuf::from("picture.png"));
+        run(&mut app, 0.5, vec![std::sync::Arc::new(file)]);
+        assert_eq!(app.bubbles.get(&chat).unwrap().staged.len(), 1);
+
+        app.actions.push(Action::DismissBubble(chat));
+        run(&mut app, 0.6, Vec::new());
+        assert!(app.bubbles.is_empty());
+    }
 
     #[test]
     fn the_window_fits_the_column_or_the_card() {

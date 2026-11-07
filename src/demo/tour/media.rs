@@ -13,7 +13,7 @@ use crate::{
 
 /// A character from the bundled color emoji font, `side` pixels square.
 pub(crate) fn emoji_image(character: char, side: u32) -> Result<RgbaImage> {
-    let font = FontRef::new(include_bytes!("../../../assets/fonts/NotoColorEmoji.ttf"))?;
+    let font = FontRef::new(crate::emoji::BUNDLED)?;
     let glyph = font
         .charmap()
         .map(character as u32)

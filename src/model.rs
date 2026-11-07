@@ -374,6 +374,9 @@ pub struct Chat {
     pub info_locked: Option<bool>,
     /// Whether we are an admin of this group, as its metadata last said.
     pub admin: bool,
+    /// Who may do what in the group, and who its admins are; `None` until
+    /// the group's metadata has said.
+    pub group_settings: Option<GroupSettings>,
     /// Hidden while WhatsApp chat lock is enabled on the phone.
     pub locked: bool,
     /// Disappearing-message duration in seconds. `Some(0)` is the timer
@@ -389,6 +392,25 @@ pub struct Chat {
     pub unread_mention: Option<String>,
     /// This chat's own voice message speed; `None` follows Settings.
     pub voice_speed: Option<f32>,
+}
+
+/// A group's permissions and admins, as its metadata says. Kept in the
+/// archive with the chat; a change made here lands once WhatsApp accepts it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GroupSettings {
+    /// Only admins may send messages (WhatsApp's announcement mode).
+    pub announce: bool,
+    /// Every member may add people, not only admins.
+    pub members_add: bool,
+    /// Admins approve people who join through the link.
+    pub approval: bool,
+    /// Every member may see and share the invite link, not only admins.
+    pub members_share_link: bool,
+    /// The admins under canonical chat ids, the creator included.
+    pub admins: Vec<String>,
+    /// The creator (WhatsApp's super admin), under canonical chat ids.
+    pub super_admins: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -455,6 +477,7 @@ impl Chat {
             left: false,
             info_locked: None,
             admin: false,
+            group_settings: None,
             locked: false,
             ephemeral_expiration: None,
             labels: Vec::new(),
@@ -476,6 +499,12 @@ impl Chat {
 
     pub fn is_group(&self) -> bool {
         self.kind == ChatKind::Group
+    }
+
+    /// Never held a message: history sync files such a conversation for
+    /// many contacts, and the phone lists none of them.
+    pub fn never_messaged(&self) -> bool {
+        self.last.is_none() && self.last_activity == 0
     }
 
     /// Counted unread, or marked unread with nothing pending.
@@ -509,6 +538,51 @@ impl Chat {
     /// not ours to edit.
     pub fn can_edit_info(&self) -> bool {
         self.is_group() && !self.left && (self.admin || self.info_locked == Some(false))
+    }
+
+    /// Whether we may add people to the group: admins always, other members
+    /// only while the group lets every member add (WhatsApp's "Add other
+    /// members"). Nothing is offered until the metadata says.
+    pub fn can_add_members(&self) -> bool {
+        self.is_group()
+            && !self.left
+            && (self.admin
+                || self
+                    .group_settings
+                    .as_ref()
+                    .is_some_and(|settings| settings.members_add))
+    }
+
+    /// Whether the group's invite link is shown: to admins, and to every
+    /// member while the group lets members share it.
+    pub fn can_share_invite_link(&self) -> bool {
+        self.is_group()
+            && !self.left
+            && (self.admin
+                || self
+                    .group_settings
+                    .as_ref()
+                    .is_some_and(|settings| settings.members_share_link))
+    }
+
+    /// Whether we run the group: its permissions, resetting its link, and
+    /// what its members may be made. Only admins do.
+    pub fn can_manage_group(&self) -> bool {
+        self.is_group() && !self.left && self.admin
+    }
+
+    /// Whether `member` is one of the group's admins, as its metadata said.
+    pub fn is_group_admin(&self, member: &str) -> bool {
+        self.group_settings
+            .as_ref()
+            .is_some_and(|settings| settings.admins.iter().any(|id| id == member))
+    }
+
+    /// Whether `member` created the group, whom nobody can dismiss or remove.
+    pub fn is_group_creator(&self, member: &str) -> bool {
+        self.group_settings
+            .as_ref()
+            .is_some_and(|settings| settings.super_admins.iter().any(|id| id == member))
     }
 
     /// Whether we may mention everyone. A group of at most
@@ -1858,6 +1932,100 @@ impl Contact {
     }
 }
 
+/// One account's contacts by id. The worker's copy, the event that hands a
+/// contact over and the window's copy point at one allocation, so an
+/// address book is held once however many sides read it. A change copies
+/// only the contact it touches, and only while another side still holds it.
+#[derive(Clone, Debug, Default)]
+pub struct Contacts(std::collections::HashSet<SharedContact>);
+
+/// A contact filed by its id alone, which is all it hashes and compares, so
+/// the set finds it by `&str` without a second copy of the id as a key.
+#[derive(Clone, Debug)]
+struct SharedContact(Arc<Contact>);
+
+impl PartialEq for SharedContact {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id
+    }
+}
+
+impl Eq for SharedContact {}
+
+impl std::hash::Hash for SharedContact {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // As a `str`, which the `Borrow` below looks it up as.
+        std::hash::Hash::hash(self.0.id.as_str(), state);
+    }
+}
+
+impl std::borrow::Borrow<str> for SharedContact {
+    fn borrow(&self) -> &str {
+        &self.0.id
+    }
+}
+
+impl Contacts {
+    pub fn get(&self, id: &str) -> Option<&Contact> {
+        self.0.get(id).map(|shared| &*shared.0)
+    }
+
+    pub fn contains_key(&self, id: &str) -> bool {
+        self.0.contains(id)
+    }
+
+    /// Files `contact` under its id, in place of the one there.
+    pub fn insert(&mut self, contact: impl Into<Arc<Contact>>) {
+        // `HashSet::insert` would keep the old contact.
+        self.0.replace(SharedContact(contact.into()));
+    }
+
+    /// Hands `change` the contact filed under `id`, an empty one when there
+    /// is none, and keeps it filed as `change` leaves it, even unchanged, as
+    /// a map's entry would. `Arc::make_mut` copies it before a change only
+    /// while another side holds it. `change` must keep its id.
+    pub fn edit<R>(&mut self, id: &str, change: impl FnOnce(&mut Arc<Contact>) -> R) -> R {
+        let mut contact = match self.0.take(id) {
+            Some(SharedContact(contact)) => contact,
+            None => Arc::new(Contact {
+                id: id.to_owned(),
+                ..Contact::default()
+            }),
+        };
+        let edited = change(&mut contact);
+        debug_assert_eq!(contact.id, id, "an edit keeps the contact's id");
+        self.0.insert(SharedContact(contact));
+        edited
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &Contact> {
+        self.0.iter().map(|shared| &*shared.0)
+    }
+
+    /// Another handle on every contact, for the window's copy.
+    pub fn shared(&self) -> Vec<Arc<Contact>> {
+        self.0.iter().map(|shared| Arc::clone(&shared.0)).collect()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+}
+
+impl FromIterator<Contact> for Contacts {
+    fn from_iter<I: IntoIterator<Item = Contact>>(contacts: I) -> Self {
+        let contacts = contacts.into_iter();
+        let mut all = Self(std::collections::HashSet::with_capacity(
+            contacts.size_hint().0,
+        ));
+        // A later contact with the same id wins, as it does in a map.
+        for contact in contacts {
+            all.insert(contact);
+        }
+        all
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Chats,
@@ -2267,6 +2435,8 @@ pub enum MediaTab {
 pub enum InfoView {
     Overview,
     Media(MediaTab),
+    /// A group's permissions, for its admins.
+    Permissions,
 }
 
 /// The info panel beside the conversation. It can show a member of the open
@@ -2355,6 +2525,15 @@ pub enum Dialog {
     Reactions {
         chat: ChatId,
         message: String,
+    },
+    /// Picks people to add to a group, with New group's check boxes.
+    AddGroupMembers(ChatId),
+    /// Confirms revoking a group's invite link for a new one.
+    ConfirmResetInviteLink(ChatId),
+    /// Confirms removing someone from a group.
+    ConfirmRemoveMember {
+        chat: ChatId,
+        member: ChatId,
     },
 }
 
@@ -2525,9 +2704,12 @@ pub enum Action {
     /// Steps forward again after a back step.
     NavigateForward,
     OpenChat(ChatId),
-    /// Starts a 1:1 voice call with the chat.
+    /// Loads a chat's newest messages ahead of opening it: a press on its row
+    /// in the list, so the click that follows opens it with them in place.
+    PreloadChat(ChatId),
+    /// Starts a voice call with the chat: the person, or everyone in a group.
     StartCall(ChatId),
-    /// Starts a 1:1 video call with the chat.
+    /// Starts a video call with the chat: the person, or everyone in a group.
     StartVideoCall(ChatId),
     /// Picks a call history row on the Calls page: its chat opens beside the
     /// list at the call, with the chat's own call buttons in its header.
@@ -3039,6 +3221,40 @@ pub enum Action {
     MuteAllChannels(bool),
     /// Joins the group of the invite being previewed.
     JoinGroup,
+    /// Gives the New chat dialog's contacts check boxes, to make a group.
+    StartNewGroup,
+    /// Picks someone for the new group, or lets them go.
+    ToggleNewGroupMember(ChatId),
+    /// From choosing the new group's members to naming it.
+    NewGroupNext,
+    /// One step back: from naming to choosing, from choosing to the list.
+    NewGroupBack,
+    /// Asks for a photo for the new group.
+    PickNewGroupPicture,
+    RemoveNewGroupPicture,
+    /// Creates the group the New chat dialog put together.
+    CreateGroup,
+    /// Asks WhatsApp for a group's invite link, for the info panel.
+    FetchInviteLink(ChatId),
+    /// Copies the group's invite link, once it is known, with a toast.
+    CopyInviteLink(ChatId),
+    /// Revokes the group's invite link; WhatsApp answers with a new one.
+    ResetInviteLink(ChatId),
+    /// Adds the people picked in the Add members dialog to its group.
+    AddGroupMembers,
+    /// Changes one of the group's permissions: `members` true lets every
+    /// member, false only admins (for approval: true turns it on).
+    SetGroupPermission {
+        chat: ChatId,
+        permission: crate::group_admin::Permission,
+        members: bool,
+    },
+    /// Makes a member an admin, dismisses one, or removes them.
+    ChangeGroupMember {
+        chat: ChatId,
+        member: ChatId,
+        change: crate::group_admin::MemberChange,
+    },
     /// A chat opened from the main list, kept there under the Unread filter.
     KeepUnread(ChatId),
     /// Focuses the chat-list search and leaves the open chat alone.
@@ -3068,6 +3284,12 @@ pub enum Action {
     CloseUpdate,
     /// Asks GitHub for a newer release now, from Settings.
     CheckForUpdates,
+    /// Runs the benchmark in a second window, from About.
+    StartBenchmark,
+    /// Closes the benchmark window before it ends.
+    StopBenchmark,
+    /// Asks where to save the finished benchmark's results.
+    SaveBenchmark,
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
@@ -3082,12 +3304,6 @@ pub enum Action {
     SetStyle(crate::chat_themes::Style),
     /// Light, dark, or as the system is.
     SetMode(crate::chat_themes::Mode),
-    /// The Halloween look on or off, with the doodles and sounds it brings.
-    SetHalloween(bool),
-    /// One part of the Halloween look on or off.
-    SetHalloweenPart(crate::settings::HalloweenPart, bool),
-    /// Opens or closes the Halloween page under Settings, Appearance.
-    ShowHalloweenPage(bool),
     /// An accent over the chat theme's own.
     SetAccent(crate::chat_themes::Accent),
     /// Draws the interface in the platform's font or in the bundled Inter.
@@ -3106,6 +3322,7 @@ pub enum Action {
     SetDoodleStyle(crate::settings::DoodleStyle),
     SetDoodleColor(crate::settings::DoodleColor),
     SetDoodleIntensity(f32),
+    SetDoodleDensity(f32),
     /// Asks for an image to use as the chat wallpaper.
     PickWallpaperImage,
     /// Goes back to the wallpaper colour and deletes the copied image.
@@ -3243,6 +3460,8 @@ pub enum Action {
     },
     /// Removes one pending attachment.
     RemovePending(usize),
+    /// Sends the one eligible staged photo as a WhatsApp view-once message.
+    SetPendingViewOnce(bool),
     /// Opens the cropper on a staged picture.
     EditPicture(crate::app::AttachmentId),
     /// Keeps the crop and the turn, replacing the staged picture.
@@ -3312,6 +3531,81 @@ mod storage_tests {
         }
         assert_eq!(cached.media().unwrap().path, None);
         assert!(kept.media().unwrap().path.is_some());
+    }
+}
+
+#[cfg(test)]
+mod contact_tests {
+    use std::sync::Arc;
+
+    use super::{Contact, Contacts};
+
+    const ADA: &str = "15550000001@s.whatsapp.net";
+
+    fn ada(push_name: &str) -> Contact {
+        Contact {
+            id: ADA.into(),
+            push_name: Some(push_name.into()),
+            ..Contact::default()
+        }
+    }
+
+    /// The worker's copy and the window's hold one allocation, and a change
+    /// on one side copies only that contact, leaving the other's as it was.
+    #[test]
+    fn both_sides_hold_one_contact_until_it_changes() {
+        let mut worker: Contacts = [ada("Ada")].into_iter().collect();
+        let mut window = Contacts::default();
+        for contact in worker.shared() {
+            window.insert(contact);
+        }
+        assert!(std::ptr::eq(
+            worker.get(ADA).unwrap(),
+            window.get(ADA).unwrap()
+        ));
+
+        let changed = worker.edit(ADA, |contact| {
+            Arc::make_mut(contact).push_name = Some("Ada L.".into());
+            Arc::clone(contact)
+        });
+        assert_eq!(window.get(ADA).unwrap().push_name.as_deref(), Some("Ada"));
+        assert_eq!(
+            worker.get(ADA).unwrap().push_name.as_deref(),
+            Some("Ada L.")
+        );
+        window.insert(changed);
+        assert!(std::ptr::eq(
+            worker.get(ADA).unwrap(),
+            window.get(ADA).unwrap()
+        ));
+    }
+
+    /// Filing a contact again replaces it, as a map's insert does, and an
+    /// edit of someone unknown files them empty, as a map's entry does.
+    #[test]
+    fn contacts_are_filed_by_id_and_replaced() {
+        let mut contacts = Contacts::default();
+        contacts.insert(ada("Ada"));
+        contacts.insert(ada("Ada L."));
+        assert_eq!(contacts.values().count(), 1);
+        assert_eq!(
+            contacts.get(ADA).unwrap().push_name.as_deref(),
+            Some("Ada L.")
+        );
+        assert!(contacts.contains_key(ADA));
+        assert!(contacts.get("15550000002@s.whatsapp.net").is_none());
+
+        let unchanged = contacts.edit("15550000002@s.whatsapp.net", |contact| contact.label());
+        assert_eq!(unchanged, None);
+        assert_eq!(
+            contacts.get("15550000002@s.whatsapp.net"),
+            Some(&Contact {
+                id: "15550000002@s.whatsapp.net".into(),
+                ..Contact::default()
+            })
+        );
+        contacts.clear();
+        assert!(!contacts.contains_key(ADA));
     }
 }
 

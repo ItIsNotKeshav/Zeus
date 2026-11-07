@@ -482,6 +482,7 @@ pub fn slide_row(
     palette: &Palette,
 ) -> f32 {
     let pull = pull.filter(|pull| icon(pull.right).is_some());
+    let armed = arm(ui.ctx(), id, pull);
     let (eased, right) = ease(ui.ctx(), id, pull);
     if eased <= 0.0 {
         return 0.0;
@@ -503,10 +504,76 @@ pub fn slide_row(
         lane.right() - shift / 2.0 - 6.0
     };
     if let Some(icon) = icon(right) {
-        badge(ui, pos2(x, lane.center().y), 30.0, eased, icon, palette);
+        badge(
+            ui,
+            pos2(x, lane.center().y),
+            30.0,
+            eased,
+            armed,
+            icon,
+            palette,
+        );
     }
     ui.ctx().request_repaint();
     eased
+}
+
+/// How far below the threshold a swipe must back off before it counts as
+/// short of it again, so fingers resting on the line do not tap twice.
+const DISARM: f32 = 0.92;
+/// How long the badge's pop lasts once a swipe reaches the threshold.
+const POP_SECONDS: f64 = 0.28;
+/// How much bigger the badge grows at the height of its pop.
+const POP_GROW: f32 = 0.16;
+
+/// Notes whether the swipe is past the threshold, and taps the trackpad as
+/// it reaches it and as it backs off it, so the fingers feel where letting
+/// go acts. Letting go past it acts with no tap: the fingers have left.
+/// Returns when the swipe reached the threshold, while it stays past it.
+fn arm(ctx: &Context, id: Id, pull: Option<Pull>) -> Option<f64> {
+    let key = id.with("armed");
+    let before = ctx.data(|data| data.get_temp::<Option<f64>>(key)).flatten();
+    let progress = pull.map_or(0.0, |pull| pull.progress);
+    let armed = if before.is_some() {
+        progress >= DISARM
+    } else {
+        progress >= 1.0
+    };
+    let now = ctx.input(|input| input.time);
+    let at = match (armed, before) {
+        (true, Some(at)) => Some(at),
+        (true, None) => {
+            crate::haptics::tap(crate::haptics::Feel::Alignment);
+            Some(now)
+        }
+        (false, Some(_)) => {
+            if pull.is_some() {
+                crate::haptics::tap(crate::haptics::Feel::Alignment);
+            }
+            None
+        }
+        (false, None) => None,
+    };
+    if at != before {
+        ctx.data_mut(|data| data.insert_temp(key, at));
+    }
+    at
+}
+
+/// How much the badge grows `since` it reached the threshold: up and back
+/// down in [`POP_SECONDS`], none with a screen reader attached.
+fn pop(ctx: &Context, since: Option<f64>) -> f32 {
+    let Some(at) = since else {
+        return 0.0;
+    };
+    if crate::motion::screen_reader_attached(ctx) {
+        return 0.0;
+    }
+    let t = ((ctx.input(|input| input.time) - at) / POP_SECONDS).clamp(0.0, 1.0) as f32;
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+    POP_GROW * (std::f32::consts::PI * t).sin() * (1.0 - t)
 }
 
 /// A badge at the open chat's edge for an action on the whole chat: it
@@ -521,6 +588,7 @@ pub fn edge_badge(
     palette: &Palette,
 ) {
     let pull = pull.filter(|pull| icon(pull.right).is_some());
+    let armed = arm(ui.ctx(), id, pull);
     let (eased, right) = ease(ui.ctx(), id, pull);
     if eased <= 0.0 {
         return;
@@ -532,16 +600,33 @@ pub fn edge_badge(
         area.right() - inset
     };
     if let Some(icon) = icon(right) {
-        badge(ui, pos2(x, area.center().y), 40.0, eased, icon, palette);
+        badge(
+            ui,
+            pos2(x, area.center().y),
+            40.0,
+            eased,
+            armed,
+            icon,
+            palette,
+        );
     }
     ui.ctx().request_repaint();
 }
 
 /// A round badge holding `icon`, growing and filling in with `eased`; full
-/// at the threshold, so the reader sees when letting go will act.
-fn badge(ui: &egui::Ui, center: Pos2, size: f32, eased: f32, icon: Icon, palette: &Palette) {
+/// at the threshold, so the reader sees when letting go will act, where it
+/// pops (`armed` is when the swipe got there) as the trackpad taps.
+fn badge(
+    ui: &egui::Ui,
+    center: Pos2,
+    size: f32,
+    eased: f32,
+    armed: Option<f64>,
+    icon: Icon,
+    palette: &Palette,
+) {
     let ready = eased >= 1.0;
-    let size = size * eased.sqrt();
+    let size = size * eased.sqrt() * (1.0 + pop(ui.ctx(), armed));
     let painter = ui.painter();
     let (fill, ink) = if ready {
         (palette.accent, palette.on_accent)
@@ -566,6 +651,35 @@ fn rubber_band(progress: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::haptics::{Feel, take_taps};
+
+    #[test]
+    fn the_trackpad_taps_at_the_threshold_and_backing_off_it_not_on_letting_go() {
+        let ctx = Context::default();
+        let id = Id::new("row");
+        let pull = |progress, fired| {
+            Some(Pull {
+                right: true,
+                progress,
+                fired,
+            })
+        };
+        take_taps();
+        assert!(arm(&ctx, id, pull(0.5, false)).is_none());
+        assert!(take_taps().is_empty(), "short of the threshold");
+        assert!(arm(&ctx, id, pull(1.0, false)).is_some());
+        assert_eq!(take_taps(), vec![Feel::Alignment], "reaching it");
+        arm(&ctx, id, pull(0.95, false));
+        arm(&ctx, id, pull(1.0, false));
+        assert!(take_taps().is_empty(), "fingers resting on the line");
+        assert!(arm(&ctx, id, pull(0.5, false)).is_none());
+        assert_eq!(take_taps(), vec![Feel::Alignment], "backing off it");
+        arm(&ctx, id, pull(1.0, false));
+        take_taps();
+        arm(&ctx, id, pull(1.0, true));
+        arm(&ctx, id, None);
+        assert!(take_taps().is_empty(), "letting go past it acts untapped");
+    }
 
     fn moving(time: f64, dx: f32, dy: f32) -> Frame {
         Frame {

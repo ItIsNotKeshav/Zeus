@@ -312,6 +312,18 @@ pub fn fitted_image(ui: &Ui, path: &Path, size: Vec2) -> egui::Image<'static> {
     egui::Image::new(crate::image_cache::fit_uri(ui.ctx(), path, size))
 }
 
+/// Like [`fitted_image`], for a sticker found still (`picker::moves`), which
+/// then decodes off the interface thread even as a WebP.
+pub fn fitted_sticker(ui: &Ui, path: &Path, size: Vec2) -> egui::Image<'static> {
+    egui::Image::new(crate::image_cache::fit_still_uri(ui.ctx(), path, size))
+}
+
+/// Like [`fitted_image`], for a picture shown whole within `bounds` points
+/// rather than cropped to fill them: decoded only as large as it fits.
+pub fn fitted_image_within(ui: &Ui, path: &Path, bounds: Vec2) -> egui::Image<'static> {
+    egui::Image::new(crate::image_cache::fit_uri_within(ui.ctx(), path, bounds))
+}
+
 /// Round profile picture, or id-colored initials when no picture is available.
 pub fn avatar(
     ui: &mut Ui,
@@ -385,11 +397,14 @@ pub fn paint_avatar(
             // person, not its digits.
             theme::paint_icon(ui, Icon::User, rect, size * 0.5, Color32::WHITE);
         } else {
+            // In whole points: each size of a font fills the glyph atlas
+            // anew, and an avatar that grows or shrinks would make one each
+            // frame.
             ui.painter().text(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 initials,
-                theme::semibold(size * 0.38),
+                theme::semibold((size * 0.38).round()),
                 Color32::WHITE,
             );
         }
@@ -458,6 +473,244 @@ pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool
         palette.on_accent,
     );
     width
+}
+
+/// What a chat row's unread badge remembers between frames, for its motion.
+#[derive(Clone, Copy)]
+struct BadgeMotion {
+    count: u32,
+    old: u32,
+    width: f32,
+    from_width: f32,
+    width_start: f64,
+    changed: f64,
+    born: f64,
+}
+
+/// Seconds a badge takes to pop in, and to fade in.
+const BADGE_POP: f32 = 0.18;
+const BADGE_FADE: f32 = 0.1;
+/// Points the old and new count slide when the number changes.
+const BADGE_SLIDE: f32 = 6.0;
+
+/// Scale of a badge `t` (0 to 1) of the way through popping in: from 0.6, a
+/// little past 1 (at most 1.08), and back to 1.
+pub fn badge_pop_scale(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    let c1 = 1.0;
+    let c3 = c1 + 1.0;
+    let back = 1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2);
+    // `back` overshoots by about 8% with c1 = 1.
+    0.6 + 0.4 * back
+}
+
+/// [`badge`] with motion: it pops in when it appears on a row already on
+/// screen (`live`), the old count slides up and the new one in from below
+/// when the number changes, and the pill's width eases. `id` is the row's.
+/// The first frame of a row draws it still.
+pub fn badge_animated(
+    ui: &Ui,
+    id: egui::Id,
+    palette: &Palette,
+    at: egui::Pos2,
+    count: u32,
+    muted: bool,
+    live: bool,
+) -> f32 {
+    let key = id.with("badge-motion");
+    if crate::motion::screen_reader_attached(ui.ctx()) {
+        ui.data_mut(|data| data.remove::<BadgeMotion>(key));
+        return badge(ui, palette, at, count, muted);
+    }
+    let now = ui.input(|input| input.time);
+    let layout = |count: u32| {
+        ui.painter()
+            .layout_no_wrap(count.to_string(), theme::semibold(11.0), palette.on_accent)
+    };
+    let galley = layout(count);
+    let target = (galley.size().x + 12.0).max(20.0);
+    let width_at = |m: &BadgeMotion, now: f64| {
+        let t = ((now - m.width_start) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0);
+        m.from_width + (m.width - m.from_width) * theme::ease_out(t)
+    };
+    let state = match ui.data(|data| data.get_temp::<BadgeMotion>(key)) {
+        Some(previous) if previous.count != count => BadgeMotion {
+            count,
+            old: previous.count,
+            width: target,
+            from_width: width_at(&previous, now),
+            width_start: now,
+            changed: now,
+            born: previous.born,
+        },
+        Some(previous) => previous,
+        None => BadgeMotion {
+            count,
+            old: count,
+            width: target,
+            from_width: target,
+            width_start: f64::NEG_INFINITY,
+            changed: f64::NEG_INFINITY,
+            born: if live { now } else { f64::NEG_INFINITY },
+        },
+    };
+    ui.data_mut(|data| data.insert_temp(key, state));
+    let width = width_at(&state, now);
+    let rect = Rect::from_min_max(
+        pos2(at.x + 10.0 - width, at.y - 10.0),
+        pos2(at.x + 10.0, at.y + 10.0),
+    );
+    let fill = if muted { palette.dim } else { palette.accent };
+    let mut shapes = vec![egui::Shape::rect_filled(rect, 10.0, fill)];
+    let slide = ((now - state.changed) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0);
+    let slide = theme::ease_out(slide);
+    let place = |galley: &std::sync::Arc<egui::Galley>, shift: f32, opacity: f32| {
+        let mut shape = egui::Shape::galley(
+            pos2(
+                rect.center().x - galley.size().x / 2.0,
+                rect.center().y - galley.size().y / 2.0 + shift,
+            ),
+            galley.clone(),
+            palette.on_accent,
+        );
+        egui::epaint::shape_transform::adjust_colors(&mut shape, move |colour| {
+            if *colour != egui::Color32::PLACEHOLDER {
+                *colour = colour.gamma_multiply(opacity);
+            }
+        });
+        shape
+    };
+    let mut moving = slide < 1.0 || width_at(&state, now) != state.width;
+    if slide < 1.0 && state.old != count {
+        shapes.push(place(&layout(state.old), -BADGE_SLIDE * slide, 1.0 - slide));
+        shapes.push(place(&galley, BADGE_SLIDE * (1.0 - slide), slide));
+    } else {
+        shapes.push(place(&galley, 0.0, 1.0));
+    }
+    let age = (now - state.born) as f32;
+    if age < BADGE_POP {
+        moving = true;
+        let scale = badge_pop_scale(age / BADGE_POP);
+        let opacity = (age / BADGE_FADE).clamp(0.0, 1.0);
+        let pivot = rect.center();
+        let transform = egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale);
+        for shape in &mut shapes {
+            shape.transform(transform);
+            egui::epaint::shape_transform::adjust_colors(shape, move |colour| {
+                if *colour != egui::Color32::PLACEHOLDER {
+                    *colour = colour.gamma_multiply(opacity);
+                }
+            });
+        }
+    }
+    ui.painter().extend(shapes);
+    if moving {
+        ui.ctx().request_repaint();
+    }
+    width
+}
+
+/// Forgets a row's badge motion once the badge is gone, so the next one pops
+/// in again.
+pub fn badge_gone(ui: &Ui, id: egui::Id) {
+    ui.data_mut(|data| data.remove::<BadgeMotion>(id.with("badge-motion")));
+}
+
+/// What a small chat-row mark (the mention badge, the manual-unread dot)
+/// remembers: whether it was drawn last frame, and when that last changed.
+#[derive(Clone, Copy)]
+struct MarkMotion {
+    present: bool,
+    since: f64,
+}
+
+/// Seconds a mark takes to pop out.
+const MARK_OUT: f32 = 0.14;
+
+/// How far a mark's motion is: `Some((scale, opacity, room))` while it pops
+/// in (`present`) or out, `None` when it is still. `age` is the seconds since
+/// it changed. `room` is the share of its slot it takes.
+pub fn mark_pop(present: bool, age: f32) -> Option<(f32, f32, f32)> {
+    if present {
+        (0.0..BADGE_POP).contains(&age).then(|| {
+            (
+                badge_pop_scale(age / BADGE_POP),
+                (age / BADGE_FADE).clamp(0.0, 1.0),
+                1.0,
+            )
+        })
+    } else {
+        (0.0..MARK_OUT).contains(&age).then(|| {
+            let t = theme::ease_out(age / MARK_OUT);
+            (1.0 - 0.4 * t, 1.0 - t, 1.0 - t)
+        })
+    }
+}
+
+/// Draws a chat-row mark with `draw`, which paints it and returns its slot's
+/// width, popping it in when it appears on a row already on screen (`live`)
+/// and out when it goes. Call it every frame, `present` or not, so a change
+/// is seen. Returns the slot's width now, closing as the mark leaves. The
+/// first frame of a row, and a screen reader, show it still.
+pub fn pop_mark(
+    ui: &Ui,
+    id: egui::Id,
+    present: bool,
+    live: bool,
+    pivot: egui::Pos2,
+    draw: impl FnOnce(&Ui) -> f32,
+) -> f32 {
+    if crate::motion::screen_reader_attached(ui.ctx()) {
+        ui.data_mut(|data| data.remove::<MarkMotion>(id));
+        return if present { draw(ui) } else { 0.0 };
+    }
+    let now = ui.input(|input| input.time);
+    let state = match ui.data(|data| data.get_temp::<MarkMotion>(id)) {
+        Some(previous) if previous.present != present => MarkMotion {
+            present,
+            since: now,
+        },
+        Some(previous) => previous,
+        None => MarkMotion {
+            present,
+            since: if present && live {
+                now
+            } else {
+                f64::NEG_INFINITY
+            },
+        },
+    };
+    ui.data_mut(|data| data.insert_temp(id, state));
+    let motion = mark_pop(present, (now - state.since) as f32);
+    if !present && motion.is_none() {
+        return 0.0;
+    }
+    let layer = ui.layer_id();
+    let first = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let width = draw(ui);
+    let Some((scale, opacity, room)) = motion else {
+        return width;
+    };
+    let transform = egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale);
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for index in first.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                egui::epaint::shape_transform::adjust_colors(&mut clipped.shape, move |colour| {
+                    if *colour != egui::Color32::PLACEHOLDER {
+                        *colour = colour.gamma_multiply(opacity);
+                    }
+                });
+                clipped.shape.transform(transform);
+            });
+        }
+    });
+    ui.ctx().request_repaint();
+    width * room
 }
 
 /// "@" in the round of a count badge: an unread message mentions us.
@@ -627,6 +880,26 @@ pub fn menu_item_enabled(
     label: &str,
     enabled: bool,
 ) -> bool {
+    let inset = icon.is_some();
+    menu_row(ui, palette, icon, inset, label, enabled)
+}
+
+/// A menu entry without an icon whose text still lines up with the entries
+/// around it that have one: the icon's place before it is left blank.
+pub fn menu_item_inset(ui: &mut Ui, palette: &Palette, label: &str) -> bool {
+    menu_row(ui, palette, None, true, label, true)
+}
+
+/// Draws one menu entry and reports a click on it. `inset` keeps the
+/// icon's place before the text, whether or not `icon` fills it.
+fn menu_row(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Option<Icon>,
+    inset: bool,
+    label: &str,
+    enabled: bool,
+) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
         vec2(width, 28.0),
@@ -662,6 +935,8 @@ pub fn menu_item_enabled(
                 16.0,
             )
             .paint_at(ui, icon_rect);
+        }
+        if inset {
             x += 26.0;
         }
         let mut job = egui::text::LayoutJob::simple_singleline(
@@ -817,6 +1092,17 @@ pub trait FrostedPopup {
         ctx: &egui::Context,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>>;
+
+    /// [`FrostedPopup::show_frosted`] for a message's menu, which lifts off
+    /// the window under [`Palette::menu_shadows`]' layered shadow instead of
+    /// a frame's single one, with [`Palette::menu_inner_edge`] inside its
+    /// outline. It brings its own frame: [`menu_frame`] without its shadow.
+    fn show_lifted<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>>;
 }
 
 impl FrostedPopup for egui::Popup<'_> {
@@ -825,49 +1111,102 @@ impl FrostedPopup for egui::Popup<'_> {
         ctx: &egui::Context,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>> {
-        let id = self.get_id();
-        let measured = ctx.read_response(id).is_some();
-        let frost = Frost::reserve(
-            ctx,
-            egui::LayerId::new(egui::Order::Foreground, id),
-            theme::RADIUS_MENU,
-        );
-        // Only an open popup runs its animation: a closed one asking for it
-        // each frame would start it anew and keep the window repainting.
-        let appear = if self.is_open() {
-            ctx.animate_bool_with_time_and_easing(
-                id.with("appear"),
-                true,
-                theme::MOTION_QUICK,
-                theme::ease_out,
-            )
-        } else {
-            0.0
-        };
-        let shown = self.show(|ui| {
-            ui.multiply_opacity(appear);
-            add(ui)
-        });
-        let Some(shown) = shown else {
-            // Closed: the next opening starts from the beginning.
-            ctx.animate_bool_with_time(id.with("appear"), false, 0.0);
-            return None;
-        };
-        if measured {
-            frost.place(shown.response.rect);
-            // Grows from the corner it opened at, glass and all, and
-            // shrinks back to it as it closes.
-            let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
-            let pivot = shown.response.rect.left_top();
-            let layer = egui::LayerId::new(egui::Order::Foreground, id);
-            ctx.transform_layer_shapes(
-                layer,
-                egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
-            );
-            super::closing::keep(ctx, layer, pivot, theme::MOTION_QUICK, appear);
-        }
-        Some(shown)
+        show_over_glass(self, ctx, None, add)
     }
+
+    fn show_lifted<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let popup = self.frame(menu_frame(palette).shadow(egui::epaint::Shadow::NONE));
+        show_over_glass(popup, ctx, Some(palette), add)
+    }
+}
+
+/// Shows `popup` over frosted glass, growing as it opens; with `lift`, under
+/// that palette's layered menu shadow as well.
+fn show_over_glass<R>(
+    popup: egui::Popup<'_>,
+    ctx: &egui::Context,
+    lift: Option<&Palette>,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let id = popup.get_id();
+    let layer = egui::LayerId::new(egui::Order::Foreground, id);
+    let measured = ctx.read_response(id).is_some();
+    // Reserved before the glass, so the shadow lies under it.
+    let shadow = lift.map(|_| ctx.layer_painter(layer).add(egui::Shape::Noop));
+    let frost = Frost::reserve(ctx, layer, theme::RADIUS_MENU);
+    // Only an open popup runs its animation: a closed one asking for it
+    // each frame would start it anew and keep the window repainting.
+    let appear = if popup.is_open() {
+        ctx.animate_bool_with_time_and_easing(
+            id.with("appear"),
+            true,
+            theme::MOTION_QUICK,
+            theme::ease_out,
+        )
+    } else {
+        0.0
+    };
+    let shown = popup.show(|ui| {
+        ui.multiply_opacity(appear);
+        add(ui)
+    });
+    let Some(shown) = shown else {
+        // Closed: the next opening starts from the beginning.
+        ctx.animate_bool_with_time(id.with("appear"), false, 0.0);
+        return None;
+    };
+    if measured {
+        let rect = shown.response.rect;
+        if let (Some(palette), Some(at)) = (lift, shadow) {
+            let painter = ctx.layer_painter(layer);
+            painter.set(at, menu_shadow(palette, rect, appear));
+            if let Some(edge) = palette.menu_inner_edge() {
+                // Just inside the outline, which takes the outermost point.
+                painter.rect_stroke(
+                    rect.shrink(1.0),
+                    CornerRadius::same(theme::RADIUS_MENU.saturating_sub(1)),
+                    Stroke::new(edge.width, edge.color.gamma_multiply(appear)),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        frost.place(rect);
+        // Grows from the corner it opened at, glass and shadow and all, and
+        // shrinks back to it as it closes.
+        let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
+        let pivot = rect.left_top();
+        ctx.transform_layer_shapes(
+            layer,
+            egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+        );
+        super::closing::keep(ctx, layer, pivot, theme::MOTION_QUICK, appear);
+    }
+    Some(shown)
+}
+
+/// The layers of `palette`'s menu shadow under a menu at `rect`, the
+/// farthest first, faded to `appear`.
+fn menu_shadow(palette: &Palette, rect: Rect, appear: f32) -> egui::Shape {
+    let corners = CornerRadius::same(theme::RADIUS_MENU);
+    egui::Shape::Vec(
+        palette
+            .menu_shadows()
+            .iter()
+            .rev()
+            .map(|layer| {
+                let layer = egui::epaint::Shadow {
+                    color: layer.color.gamma_multiply(appear),
+                    ..*layer
+                };
+                egui::Shape::from(layer.as_shape(rect, corners))
+            })
+            .collect(),
+    )
 }
 
 /// Shared popup-menu frame, see-through over [`FrostedPopup::show_frosted`]'s glass.
@@ -902,6 +1241,36 @@ pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body
 /// How strongly a search field's focus ring shows, as a tint of the text colour.
 const SEARCH_RING: f32 = 0.28;
 
+/// Where the ink of `galley`'s first row centres, from its top: halfway
+/// between its first glyph's top and its second's bottom. Laid out from "Hy",
+/// that is the span from a capital's top to a descender's bottom, which reads
+/// as centred whatever mix of letters a line holds. `None` when either glyph
+/// has no ink.
+pub fn ink_middle(galley: &egui::Galley) -> Option<f32> {
+    let row = galley.rows.first()?;
+    let [capital, descender] = [row.glyphs.first()?, row.glyphs.get(1)?];
+    let top = capital.pos.y + capital.uv_rect.offset.y;
+    let bottom = descender.pos.y + descender.uv_rect.offset.y + descender.uv_rect.size.y;
+    (!capital.uv_rect.is_nothing() && !descender.uv_rect.is_nothing())
+        .then(|| row.pos.y + (top + bottom) / 2.0)
+}
+
+/// Where a capital's ink centres in `galley`'s first row, from its top:
+/// halfway between the top and the bottom of its first glyph, laid out from
+/// "H", which stands on the baseline. `None` when the glyph has no ink.
+pub fn cap_middle(galley: &egui::Galley) -> Option<f32> {
+    let row = galley.rows.first()?;
+    let capital = row.glyphs.first()?;
+    let top = capital.pos.y + capital.uv_rect.offset.y;
+    let bottom = top + capital.uv_rect.size.y;
+    (!capital.uv_rect.is_nothing()).then(|| row.pos.y + (top + bottom) / 2.0)
+}
+
+/// Where a search field's text was laid out last frame, for layout tests.
+pub fn search_galley_id(field: egui::Id) -> egui::Id {
+    field.with("galley")
+}
+
 /// Search field with icon and clear button.
 pub fn search_field(
     ui: &mut Ui,
@@ -927,16 +1296,36 @@ pub fn search_field(
     Icon::Search
         .image(palette.secondary, 16.0)
         .paint_at(ui, icon_rect);
+    let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
+    // A capital, from its top to the baseline, centres on the icons, which
+    // is where a word reads as centred. Centring the line box left the
+    // platform font's text a point or two below the magnifier, since its box
+    // has more room above the capitals than below the descenders; centring
+    // capitals and descenders together lifted a word without descenders, the
+    // usual case, above it.
+    let probe = bidi::layout_field(ui, "H", &format, f32::INFINITY);
+    let line_height = probe.size().y;
+    let middle = cap_middle(&probe).unwrap_or(line_height / 2.0);
+    let top = fastframe_text::snap_to_pixels(rect.center().y - middle, ui.ctx().pixels_per_point());
     let field_rect = Rect::from_min_max(
-        pos2(rect.left() + 34.0, rect.top() + 1.0),
-        pos2(rect.right() - 30.0, rect.bottom() - 1.0),
+        pos2(rect.left() + 34.0, top),
+        pos2(rect.right() - 30.0, top + line_height),
     );
+    // The editor is one line tall now; the rest of the pill still focuses
+    // it, as it did when the editor filled the pill. Registered first, so
+    // the editor and the clear button win their own clicks. Not a tab
+    // stop of its own: the editor is.
+    let pill = ui
+        .interact(rect, id.with("pill"), Sense::CLICK)
+        .on_hover_cursor(egui::CursorIcon::Text);
+    if pill.clicked() {
+        ui.memory_mut(|memory| memory.request_focus(id));
+    }
     let mut child = ui.new_child(
         UiBuilder::new()
             .max_rect(field_rect)
-            .layout(Layout::left_to_right(Align::Center)),
+            .layout(Layout::left_to_right(Align::Min)),
     );
-    let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
     let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
         bidi::layout_field(ui, buffer.as_str(), &format, wrap)
     };
@@ -945,22 +1334,28 @@ pub fn search_field(
     } else {
         Align::LEFT
     };
-    let response = child.add(
-        egui::TextEdit::singleline(text)
-            .id(id)
-            .hint_text(
-                egui::RichText::new(hint)
-                    .color(palette.dim)
-                    .font(theme::regular(14.0)),
-            )
-            .font(theme::regular(14.0))
-            .text_color(palette.text)
-            .frame(egui::Frame::NONE)
-            .desired_width(field_rect.width())
-            .vertical_align(Align::Center)
-            .horizontal_align(align)
-            .layouter(&mut layouter),
-    );
+    let output = egui::TextEdit::singleline(text)
+        .id(id)
+        .hint_text(
+            egui::RichText::new(hint)
+                .color(palette.dim)
+                .font(theme::regular(14.0)),
+        )
+        .font(theme::regular(14.0))
+        .text_color(palette.text)
+        .frame(egui::Frame::NONE)
+        .margin(egui::Margin::ZERO)
+        .desired_width(field_rect.width())
+        .horizontal_align(align)
+        .layouter(&mut layouter)
+        .show(&mut child);
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            search_galley_id(id),
+            Rect::from_min_size(output.galley_pos, output.galley.size()),
+        );
+    });
+    let response = output.response.response;
     // A quiet grey ring, a tint of the text colour: a search field is
     // always at hand, and the accent there is loud.
     theme::focus_outline_colored(
@@ -973,9 +1368,11 @@ pub fn search_field(
     ui.ctx()
         .accesskit_node_builder(response.id, |node| node.set_label(hint));
     if !text.is_empty() {
+        // The button's own size: a smaller box let it overflow downwards,
+        // which put the cross below the field's middle.
         let clear_rect = Rect::from_center_size(
             pos2(rect.right() - 17.0, rect.center().y),
-            Vec2::splat(24.0),
+            Vec2::splat(15.0 + theme::ICON_BUTTON_PAD),
         );
         let mut clear = ui.new_child(
             UiBuilder::new()
@@ -1260,10 +1657,17 @@ pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color3
     ui.painter().add(egui::Shape::mesh(mesh));
 }
 
+/// Horizontal inset of the elevated hover and selection card from a list row.
+/// `ROW_SIDE` is where the avatar and the trailing text sit, sixteen points
+/// inside that card.
+pub const ROW_CARD_X: f32 = 8.0;
+/// How far a list row's avatar and trailing text sit from the row's sides.
+pub const ROW_SIDE: f32 = 24.0;
+
 /// The hover or selection behind a chat-list row: a rounded card inset from
 /// the list's edges rather than a full-width band.
 pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
-    highlight_card(ui, palette, rect.shrink2(vec2(8.0, 2.0)), color);
+    highlight_card(ui, palette, rect.shrink2(vec2(ROW_CARD_X, 2.0)), color);
 }
 
 /// The card `row_highlight` paints, over `card` itself: the rail's lit and
@@ -1282,6 +1686,12 @@ pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
             .rect_filled(card, radius, palette.tint(strength));
         return;
     }
+    // A light list stays flat. The shadow under a hovered or selected row
+    // reads as a grey halo, so both states are black at 5%.
+    if !palette.dark {
+        ui.painter().rect_filled(card, radius, theme::LIGHT_ROW);
+        return;
+    }
     // Raised like a message bubble, only more gently: the list sits on a
     // flat panel, and a hovered row should not jump out.
     let mut shadow = palette.bubble_shadow();
@@ -1293,6 +1703,53 @@ pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
         palette.raised_edge(color),
     );
     ui.painter().rect_filled(card, radius, color);
+}
+
+/// A round check box for a picking list, as WhatsApp draws one: an outlined
+/// circle in the secondary text colour, the accent with a white check once
+/// picked. It takes no room in the layout, so it can sit on top of its row.
+/// Returns whether it was clicked (never while disabled).
+pub fn round_check(
+    ui: &Ui,
+    palette: &Palette,
+    rect: Rect,
+    key: &str,
+    checked: bool,
+    enabled: bool,
+    label: &str,
+) -> bool {
+    let id = ui.id().with(("round-check", key));
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = ui.interact(rect, id, sense);
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, id, rect.expand(3.0), rect.width() / 2.0 + 3.0);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, checked, label)
+    });
+    if ui.is_rect_visible(rect) {
+        let radius = rect.width() / 2.0 - 1.0;
+        if checked {
+            ui.painter()
+                .circle_filled(rect.center(), radius, palette.accent);
+            theme::paint_icon(ui, Icon::Check, rect, rect.width() * 0.7, Color32::WHITE);
+        } else {
+            let color = if enabled && response.hovered() {
+                palette.text
+            } else {
+                palette.secondary
+            };
+            ui.painter()
+                .circle_stroke(rect.center(), radius - 0.75, egui::Stroke::new(1.5, color));
+        }
+    }
+    enabled
+        && response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
 }
 
 /// The hover behind a row in a dialog's list: flat, since the dialog itself
@@ -1416,15 +1873,6 @@ pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
     );
 }
 
-/// The same shadow cast to the right of `edge`, from `top` to `bottom`: for
-/// a panel beside content on a lower level, as the chat list is beside the
-/// conversation. The panel draws its own hairline.
-pub fn paint_shadow_beside(ui: &Ui, palette: &Palette, edge: f32, top: f32, bottom: f32) {
-    let rect = Rect::from_min_max(pos2(edge, top), pos2(edge + SHADOW_REACH, bottom));
-    ui.painter()
-        .add(shadow_mesh(palette, rect, [true, false, false, true]));
-}
-
 /// One gradient quad over `rect`, dark at the corners marked in `dark`
 /// (left top, right top, right bottom, left bottom) and clear at the others.
 fn shadow_mesh(palette: &Palette, rect: Rect, dark: [bool; 4]) -> egui::Shape {
@@ -1468,13 +1916,14 @@ pub fn bubble_corners(tail: Option<Side>) -> CornerRadius {
     corners
 }
 
-/// A message bubble's backdrop: its soft shadow, its fill, and on the first
-/// message of a run a small tail at the top corner toward the sender, as the
-/// phone draws it. A handful of vertices; bubbles off screen are culled
-/// before tessellation. `pixels_per_point` sets the soft edge the Messages
-/// style draws for itself, and `screen` is the span of the view the bubble
-/// scrolls in, down which Messages shades your own balloons; WhatsApp's
-/// style ignores both.
+/// A message bubble's backdrop: its fill, and on a dark chat the soft shadow
+/// under it. A light chat leaves the bubble flat. On the first message of a
+/// run, a small tail at the top corner toward the sender, as the phone draws
+/// it. A handful of vertices; bubbles off screen are culled before
+/// tessellation. `pixels_per_point` sets the soft edge the Messages style
+/// draws for itself, and `screen` is the span of the view the bubble scrolls
+/// in, down which Messages shades your own balloons; WhatsApp's style
+/// ignores both.
 pub fn bubble_shape(
     palette: &Palette,
     rect: Rect,
@@ -1501,8 +1950,9 @@ pub fn bubble_shape(
         return egui::Shape::mesh(fill_outline(&outline, color, 1.0 / pixels_per_point));
     }
     let corners = bubble_corners(tail);
-    let shadow = palette.bubble_shadow();
-    let mut shapes = vec![egui::Shape::Rect(shadow.as_shape(rect, corners))];
+    // Bubbles cast no shadow in either theme: under a dark bubble it read as
+    // a dark band along its bottom edge.
+    let mut shapes = Vec::new();
     // The tail overlaps the bubble by a few points so no seam shows where
     // the two anti-aliased edges meet.
     let tail_points = tail.map(|side| {
@@ -1523,11 +1973,6 @@ pub fn bubble_shape(
         }
         points
     });
-    if let Some(points) = &tail_points {
-        let offset = vec2(shadow.offset[0].into(), shadow.offset[1].into());
-        let points: Vec<_> = points.iter().map(|point| *point + offset).collect();
-        shapes.push(soft_triangle(&points, shadow.color, shadow.blur.into()));
-    }
     // The raised edge: the same outline a hair higher, under the fill, so
     // only its top shows, thinning out down the rounded corners.
     let edge = palette.raised_edge(fill);
@@ -1935,32 +2380,6 @@ fn ear_clip(points: &[egui::Pos2], winding: f32) -> Vec<[u32; 3]> {
     triangles
 }
 
-/// A triangle in `color` that fades out over `blur` points around its
-/// edges, like the blurred shadow of the bubble it belongs to: a sharp one
-/// showed as a grey wedge beneath the tail's tip. Six vertices.
-fn soft_triangle(points: &[egui::Pos2], color: Color32, blur: f32) -> egui::Shape {
-    let centre = (points
-        .iter()
-        .fold(Vec2::ZERO, |sum, point| sum + point.to_vec2())
-        / points.len() as f32)
-        .to_pos2();
-    let mut mesh = egui::Mesh::default();
-    for point in points {
-        let out = (*point - centre).normalized();
-        mesh.colored_vertex(*point - out * blur / 4.0, color);
-        mesh.colored_vertex(*point + out * blur / 2.0, Color32::TRANSPARENT);
-    }
-    let count = points.len() as u32;
-    // Inner vertices are even, their faded partners odd.
-    mesh.add_triangle(0, 2, 4);
-    for index in 0..count {
-        let next = (index + 1) % count;
-        mesh.add_triangle(2 * index, 2 * index + 1, 2 * next + 1);
-        mesh.add_triangle(2 * index, 2 * next + 1, 2 * next);
-    }
-    egui::Shape::mesh(mesh)
-}
-
 /// Small pill label used for date separators and pinned markers.
 pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     let galley =
@@ -1989,8 +2408,11 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
         } else {
             palette.panel
         };
-        ui.painter()
-            .add(palette.bubble_shadow().as_shape(rect, radius));
+        // Same flat treatment as a light bubble: no lift shadow.
+        if palette.dark {
+            ui.painter()
+                .add(palette.bubble_shadow().as_shape(rect, radius));
+        }
         ui.painter().rect_filled(
             rect.translate(vec2(0.0, -theme::RAISED_EDGE)),
             radius,
@@ -2300,6 +2722,96 @@ mod tests {
         );
     }
 
+    /// A row without an icon drawn by `menu_item_inset` starts its words
+    /// where the rows with an icon start theirs, not at the edge as a plain
+    /// row without one does.
+    #[test]
+    fn an_inset_menu_row_lines_up_with_the_rows_that_have_icons() {
+        let palette = Palette::dark();
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.set_width(200.0);
+            menu_item(ui, &palette, Some(Icon::Copy), "With icon");
+            menu_item_inset(ui, &palette, "Inset");
+            menu_item(ui, &palette, None, "Plain");
+        });
+        output.textures_delta.clear();
+        let left = |label: &str| {
+            output
+                .shapes
+                .iter()
+                .find_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.text() == label => Some(text.pos.x),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("{label} is drawn"))
+        };
+        assert_eq!(left("Inset"), left("With icon"));
+        assert!(left("Plain") < left("Inset"));
+    }
+
+    /// The blur widths of every blurred rectangle in `shapes`, in the order
+    /// they paint.
+    fn blurs(shapes: &[egui::epaint::ClippedShape]) -> Vec<f32> {
+        fn walk(shape: &egui::Shape, into: &mut Vec<f32>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| walk(shape, into)),
+                egui::Shape::Rect(rect) if rect.blur_width > 0.0 => into.push(rect.blur_width),
+                _ => {}
+            }
+        }
+        let mut into = Vec::new();
+        for clipped in shapes {
+            walk(&clipped.shape, &mut into);
+        }
+        into
+    }
+
+    /// The shapes of an open menu, lifted or only frosted, once its first
+    /// frame has measured it.
+    fn open_menu_shapes(lifted: bool) -> Vec<egui::epaint::ClippedShape> {
+        let palette = Palette::light();
+        let ctx = egui::Context::default();
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let button = ui.button("Menu");
+                let popup = egui::Popup::menu(&button)
+                    .open_memory(Some(egui::SetOpenCommand::Bool(true)))
+                    .at_position(pos2(40.0, 40.0))
+                    .width(160.0);
+                let row = |ui: &mut Ui| {
+                    menu_item(ui, &palette, None, "Row");
+                };
+                if lifted {
+                    popup.show_lifted(ui.ctx(), &palette, row);
+                } else {
+                    popup
+                        .frame(menu_frame(&palette))
+                        .show_frosted(ui.ctx(), row);
+                }
+            });
+            output.textures_delta.clear();
+            shapes = output.shapes;
+        }
+        shapes
+    }
+
+    /// A message's menu lifts off the window on five shadows painted
+    /// farthest first, each softer than the one in front of it, in place of
+    /// the single shadow other menus keep.
+    #[test]
+    fn a_lifted_menu_casts_a_layered_shadow() {
+        let lifted = blurs(&open_menu_shapes(true));
+        assert_eq!(lifted.len(), 5, "{lifted:?}");
+        assert!(
+            lifted.windows(2).all(|pair| pair[0] > pair[1]),
+            "{lifted:?}"
+        );
+        assert_eq!(blurs(&open_menu_shapes(false)).len(), 1);
+    }
+
     /// The header's shadow and the chat list's are one shadow turned a
     /// quarter: as dark at the edge casting it, clear as far into the content.
     #[test]
@@ -2511,30 +3023,119 @@ mod tests {
         );
     }
 
-    /// WhatsApp's bubbles are drawn exactly as before the Messages balloon
-    /// was rebuilt: every shape, point and colour of a tailed and a tailless
-    /// bubble, in both palettes, hashes to the value recorded then.
+    /// A WhatsApp bubble casts no shadow in either theme, and a light date
+    /// chip casts none. A hovered or selected light list row is flat black
+    /// at 5%, in either state; a dark row keeps the lift.
     #[test]
-    fn whatsapp_bubbles_are_unchanged() {
+    fn light_messages_and_rows_are_flat() {
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
-        // FNV-1a, stable across toolchains, over every shape's debug text.
-        let mut fingerprint: u64 = 0xcbf2_9ce4_8422_2325;
-        for palette in [Palette::dark(), Palette::light()] {
-            for tail in [None, Some(Side::Left), Some(Side::Right)] {
-                for (fill, ppp) in [(palette.bubble_out, 1.0), (palette.bubble_in, 1.5)] {
-                    let shape = bubble_shape(&palette, rect, fill, tail, ppp, SCREEN);
-                    for byte in format!("{shape:?}").bytes() {
-                        fingerprint = (fingerprint ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
-                    }
+        let light = Palette::light();
+        let shadow = light.bubble_shadow().color;
+        let dark = Palette::dark();
+        for palette in [&light, &dark] {
+            for fill in [palette.bubble_out, palette.bubble_in] {
+                for tail in [None, Some(Side::Left), Some(Side::Right)] {
+                    let shape = bubble_shape(palette, rect, fill, tail, 2.0, SCREEN);
+                    assert!(
+                        !uses_color(&shape, palette.bubble_shadow().color),
+                        "a bubble casts a shadow (dark: {})",
+                        palette.dark
+                    );
                 }
             }
         }
-        println!("whatsapp bubble fingerprint {fingerprint:#x}");
-        assert_eq!(fingerprint, WHATSAPP_BUBBLES);
+
+        let ctx = egui::Context::default();
+        // Medium text uses the named inter-medium family, which exists only
+        // after the interface fonts are installed.
+        crate::theme::install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            chip(ui, &light, "Thursday, 15 October 2026");
+        });
+        output.textures_delta.clear();
+        assert!(
+            output
+                .shapes
+                .iter()
+                .all(|clipped| !uses_color(&clipped.shape, shadow)),
+            "a light date chip casts a shadow"
+        );
+
+        let card = Rect::from_min_size(pos2(8.0, 8.0), vec2(240.0, 64.0));
+        for color in [light.surface_hover, light.surface_active] {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                highlight_card(ui, &light, card, color);
+            });
+            output.textures_delta.clear();
+            let fills: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Rect(shape) => Some((shape.rect, shape.fill)),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(fills, vec![(card, theme::LIGHT_ROW)]);
+        }
+
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            highlight_card(ui, &dark, card, dark.surface_active);
+        });
+        output.textures_delta.clear();
+        let mut lifted = dark.bubble_shadow();
+        lifted.color = lifted.color.gamma_multiply(0.6);
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|clipped| uses_color(&clipped.shape, lifted.color)),
+            "a dark row keeps its shadow"
+        );
     }
 
-    /// The fingerprint [`whatsapp_bubbles_are_unchanged`] recorded.
-    const WHATSAPP_BUBBLES: u64 = 0x179b_3424_7615_2b9a;
+    /// The elevated row is a card, inset from the list's sides, with the
+    /// avatar and trailing text further in than the card.
+    #[test]
+    fn elevated_row_clears_the_list_edges() {
+        let ctx = egui::Context::default();
+        let dark = Palette::dark();
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, theme::ROW_HEIGHT));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            row_highlight(ui, &dark, rect, dark.surface_active);
+        });
+        output.textures_delta.clear();
+        let card = rect.shrink2(vec2(ROW_CARD_X, 2.0));
+        let fills: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(shape) if shape.fill == dark.surface_active => Some(shape.rect),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(fills, vec![card]);
+        assert!(
+            card.left() - rect.left() >= 8.0 && rect.right() - card.right() >= 8.0,
+            "the elevated card needs room at both sides"
+        );
+        assert!(
+            rect.left() + ROW_SIDE - card.left() >= 16.0
+                && card.right() - (rect.right() - ROW_SIDE) >= 16.0,
+            "the avatar and trailing text sit well inside the card"
+        );
+    }
+
+    fn uses_color(shape: &egui::Shape, color: Color32) -> bool {
+        match shape {
+            egui::Shape::Rect(shape) => shape.fill == color,
+            egui::Shape::Path(path) => path.fill == color,
+            egui::Shape::Mesh(mesh) => mesh.vertices.iter().any(|vertex| vertex.color == color),
+            egui::Shape::Vec(shapes) => shapes.iter().any(|shape| uses_color(shape, color)),
+            _ => false,
+        }
+    }
 
     /// Every shape-checking test below draws into this view.
     const SCREEN: egui::Rangef = egui::Rangef {
@@ -2876,5 +3477,20 @@ mod tests {
         }
         // Four fans of eight triangles.
         assert_eq!(mesh.indices.len(), 4 * 8 * 3);
+    }
+}
+
+#[cfg(test)]
+mod badge_motion_tests {
+    use super::badge_pop_scale;
+
+    #[test]
+    fn pop_starts_small_overshoots_a_little_and_settles() {
+        assert!((badge_pop_scale(0.0) - 0.6).abs() < 1e-6);
+        assert!((badge_pop_scale(1.0) - 1.0).abs() < 1e-6);
+        let peak = (0..=100)
+            .map(|n| badge_pop_scale(n as f32 / 100.0))
+            .fold(0.0, f32::max);
+        assert!(peak > 1.0 && peak <= 1.08, "peak {peak}");
     }
 }

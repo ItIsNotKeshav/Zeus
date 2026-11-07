@@ -392,8 +392,15 @@ pub fn agent() -> ureq::Agent {
     if let Some(agent) = &configured().read().unwrap_or_else(|e| e.into_inner()).agent {
         return agent.clone();
     }
+    // The defaults hold 128 KiB each way per connection and ten idle ones.
+    // Downloads here are small, and the input buffer must still hold a whole
+    // response head, so it keeps room for far more than any server sends.
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .proxy(ureq_proxy())
+        .input_buffer_size(32 * 1024)
+        .output_buffer_size(16 * 1024)
+        .max_idle_connections(3)
+        .max_idle_connections_per_host(2)
         .build()
         .into();
     configured()

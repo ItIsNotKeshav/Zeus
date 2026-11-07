@@ -14,6 +14,9 @@
 //! While the window is minimised or another window has the focus, these
 //! animations ask for no frames at all: they hold still until something
 //! else draws the window, and move again as soon as it is back in front.
+//!
+//! [`Spring`] is the shared spring for one-shot motion, parametrised as
+//! SwiftUI's `spring(duration:bounce:)`.
 
 use std::time::Duration;
 
@@ -106,6 +109,120 @@ pub fn egui_spinner(ui: &mut egui::Ui) -> egui::Response {
             .add(egui::Shape::line(points, egui::Stroke::new(3.0, color)));
     }
     response
+}
+
+/// How near its target a [`Spring`] counts as at rest, as a share of the
+/// distance it travels: a third of a point over 300 points.
+const SETTLED: f64 = 1e-3;
+
+/// A spring as SwiftUI's `spring(duration:bounce:)` describes one: a damped
+/// harmonic oscillator of unit mass whose undamped period, its response, is
+/// `duration` seconds, damped at `1 - bounce` of critical. Bounce 0 is
+/// critically damped and never passes its target; 0.2 passes it by about
+/// 1.5% before it settles. Bounces are taken from 0 to 0.9.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Spring {
+    duration: f64,
+    bounce: f64,
+}
+
+impl Spring {
+    pub const fn new(duration: f64, bounce: f64) -> Self {
+        Self { duration, bounce }
+    }
+
+    /// The undamped angular frequency, `2π / duration`.
+    fn omega(self) -> f64 {
+        std::f64::consts::TAU / self.duration.max(1e-3)
+    }
+
+    /// The damping ratio, 1 for no bounce.
+    fn zeta(self) -> f64 {
+        1.0 - self.bounce.clamp(0.0, 0.9)
+    }
+
+    /// Where a step from 0 to 1, begun at rest, is `t` seconds in: 0 before
+    /// it starts, and exactly 1 once it has settled, so the last frame lands
+    /// on the target.
+    pub fn value(self, t: f64) -> f32 {
+        if t <= 0.0 {
+            return 0.0;
+        }
+        if self.settled(t) {
+            return 1.0;
+        }
+        let omega = self.omega();
+        let zeta = self.zeta();
+        let decay = (-zeta * omega * t).exp();
+        let left = if zeta >= 1.0 {
+            decay * (1.0 + omega * t)
+        } else {
+            let damped = omega * (1.0 - zeta * zeta).sqrt();
+            decay * ((damped * t).cos() + zeta * omega / damped * (damped * t).sin())
+        };
+        (1.0 - left) as f32
+    }
+
+    /// The furthest the spring can still be from its target `t` seconds in:
+    /// the envelope its swing decays inside. It only ever falls.
+    fn envelope(self, t: f64) -> f64 {
+        let omega = self.omega();
+        let zeta = self.zeta();
+        if zeta >= 1.0 {
+            (1.0 + omega * t) * (-omega * t).exp()
+        } else {
+            (-zeta * omega * t).exp() / (1.0 - zeta * zeta).sqrt()
+        }
+    }
+
+    /// Whether the spring has come to rest `t` seconds in.
+    pub fn settled(self, t: f64) -> bool {
+        t > 0.0 && self.envelope(t) <= SETTLED
+    }
+
+    /// Where a spring pulling toward 0, `position` away from it and moving
+    /// at `velocity` (per second), is `dt` seconds later, and how fast it
+    /// moves then. Exact for any step, so a late frame lands where an early
+    /// one would have.
+    pub fn advance(self, position: f32, velocity: f32, dt: f64) -> (f32, f32) {
+        if dt <= 0.0 {
+            return (position, velocity);
+        }
+        let (x0, v0) = (f64::from(position), f64::from(velocity));
+        let omega = self.omega();
+        let zeta = self.zeta();
+        let decay_rate = zeta * omega;
+        let decay = (-decay_rate * dt).exp();
+        let (x, v) = if zeta >= 1.0 {
+            let slope = v0 + omega * x0;
+            (decay * (x0 + slope * dt), decay * (v0 - omega * slope * dt))
+        } else {
+            let damped = omega * (1.0 - zeta * zeta).sqrt();
+            let (sin, cos) = (damped * dt).sin_cos();
+            (
+                decay * (x0 * cos + (v0 + decay_rate * x0) / damped * sin),
+                decay * (v0 * cos - (decay_rate * v0 + omega * omega * x0) / damped * sin),
+            )
+        };
+        (x as f32, v as f32)
+    }
+
+    /// How long the spring takes to come to rest, in seconds.
+    pub fn settle_time(self) -> f64 {
+        let (mut low, mut high) = (0.0, self.duration.max(1e-3));
+        while self.envelope(high) > SETTLED {
+            high *= 2.0;
+        }
+        for _ in 0..40 {
+            let middle = (low + high) / 2.0;
+            if self.envelope(middle) > SETTLED {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        high
+    }
 }
 
 #[cfg(test)]
@@ -285,5 +402,80 @@ pub(crate) mod tests {
             format!("{:?}", draw(true, 1.0).1),
             format!("{:?}", draw(true, 1.1).1)
         );
+    }
+
+    #[test]
+    fn a_spring_starts_at_rest_and_settles_on_its_target() {
+        for spring in [
+            Spring::new(0.5, 0.2),
+            Spring::new(0.35, 0.0),
+            Spring::new(0.45, 0.25),
+        ] {
+            assert_eq!(spring.value(-1.0), 0.0);
+            assert_eq!(spring.value(0.0), 0.0);
+            let first = spring.value(0.01);
+            assert!(first > 0.0 && first < 0.1, "{spring:?} at 10 ms: {first}");
+            let rest = spring.settle_time();
+            assert!(
+                rest > spring.duration && rest < spring.duration * 2.5,
+                "{spring:?} settles at {rest}"
+            );
+            assert!(!spring.settled(rest * 0.5));
+            assert!(spring.settled(rest + 1e-6));
+            assert_eq!(spring.value(rest + 0.01), 1.0);
+            assert_eq!(spring.value(10.0), 1.0);
+            // Settling snaps by no more than the tolerance.
+            assert!((spring.value(rest - 0.005) - 1.0).abs() < 2e-3);
+        }
+    }
+
+    #[test]
+    fn a_spring_without_bounce_never_overshoots() {
+        let spring = Spring::new(0.35, 0.0);
+        let mut last = 0.0;
+        for step in 0..=400 {
+            let value = spring.value(f64::from(step) / 400.0);
+            assert!(value <= 1.0, "{value} at step {step}");
+            assert!(value >= last, "{value} after {last}");
+            last = value;
+        }
+    }
+
+    #[test]
+    fn a_bouncy_spring_overshoots_a_little() {
+        let peak = |spring: Spring| {
+            (0..=400)
+                .map(|step| spring.value(f64::from(step) / 400.0))
+                .fold(0.0_f32, f32::max)
+        };
+        let send = peak(Spring::new(0.5, 0.2));
+        assert!(send > 1.005 && send < 1.03, "bounce 0.2 peaks at {send}");
+        // More bounce, more overshoot.
+        assert!(peak(Spring::new(0.45, 0.25)) > send);
+    }
+
+    #[test]
+    fn advancing_a_spring_follows_its_step_and_does_not_depend_on_the_frames() {
+        for spring in [Spring::new(1.0, 0.2), Spring::new(0.35, 0.0)] {
+            // Released from 1 at rest, it is where the step from 0 to 1 has
+            // yet to go.
+            for t in [0.05, 0.2, 0.5, 0.9] {
+                let (x, _) = spring.advance(1.0, 0.0, t);
+                assert!(
+                    (x - (1.0 - spring.value(t))).abs() < 1e-4,
+                    "{spring:?} at {t}"
+                );
+            }
+            // One long step lands where many short ones do.
+            let (mut x, mut v) = (12.0_f32, -30.0_f32);
+            for _ in 0..60 {
+                (x, v) = spring.advance(x, v, 1.0 / 120.0);
+            }
+            let (once, speed) = spring.advance(12.0, -30.0, 0.5);
+            assert!((x - once).abs() < 1e-3 && (v - speed).abs() < 1e-2);
+            let (rest, still) = spring.advance(12.0, -30.0, 10.0);
+            assert!(rest.abs() < 1e-3 && still.abs() < 1e-3);
+            assert_eq!(spring.advance(3.0, 4.0, 0.0), (3.0, 4.0));
+        }
     }
 }

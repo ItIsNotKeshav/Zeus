@@ -506,33 +506,50 @@ pub(super) fn context(base: &wa::Message) -> Option<&wa::ContextInfo> {
 impl Worker {
     pub(super) fn backfill_interactive(&mut self) {
         const KEY: &str = "interactive_text";
-        if self.archive.meta(KEY).ok().flatten().as_deref() == Some("4") {
+        const VERSION: &str = "4";
+        // Per version, so a later bump does not resume a finished walk and
+        // skip every row.
+        let cursor_key = format!("{KEY}_{VERSION}_cursor");
+        if self.archive.meta(KEY).ok().flatten().as_deref() == Some(VERSION) {
             return;
         }
         let result = (|| -> anyhow::Result<usize> {
             let mut updated = 0;
-            for (chat, id, raw) in self.archive.interactive_placeholders()? {
-                let Ok(message) = wa::Message::decode_from_slice(&raw) else {
-                    continue;
+            let mut after = super::backfill_cursor(&self.archive, &cursor_key);
+            loop {
+                let rows = self.archive.interactive_placeholders(after)?;
+                let Some(last) = rows.last().map(|row| row.0) else {
+                    break;
                 };
-                let base = message.get_base_message();
-                let Some(mut content) = classify(base) else {
-                    continue;
-                };
-                if let Some(old) = self.archive.message(&chat, &id)? {
-                    content.keep_local_paths(&old.content);
+                let end = rows.len() < crate::archive::BACKFILL_BATCH;
+                for (_rowid, chat, id, raw) in rows {
+                    let Ok(message) = wa::Message::decode_from_slice(&raw) else {
+                        continue;
+                    };
+                    let base = message.get_base_message();
+                    let Some(mut content) = classify(base) else {
+                        continue;
+                    };
+                    if let Some(old) = self.archive.message(&chat, &id)? {
+                        content.keep_local_paths(&old.content);
+                    }
+                    self.archive.set_derived(
+                        &chat,
+                        &id,
+                        &content,
+                        &self.mentions_of(&recorded_mention_ids(base)),
+                        image(base).and_then(|image| image.jpeg_thumbnail.as_deref()),
+                        forwarded_of(base),
+                    )?;
+                    updated += 1;
                 }
-                self.archive.set_derived(
-                    &chat,
-                    &id,
-                    &content,
-                    &self.mentions_of(&recorded_mention_ids(base)),
-                    image(base).and_then(|image| image.jpeg_thumbnail.as_deref()),
-                    forwarded_of(base),
-                )?;
-                updated += 1;
+                self.archive.set_meta(&cursor_key, &last.to_string())?;
+                if end {
+                    break;
+                }
+                after = last;
             }
-            self.archive.set_meta(KEY, "4")?;
+            self.archive.set_meta(KEY, VERSION)?;
             Ok(updated)
         })();
         match result {

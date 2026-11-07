@@ -471,7 +471,24 @@ pub fn now() -> i64 {
     if let Some(clock) = fixed_clock::get() {
         return clock.now;
     }
+    #[cfg(feature = "demo")]
+    if let Some(now) = DEMO_NOW.get() {
+        return *now;
+    }
     Timestamp::now().as_second()
+}
+
+/// The time a demo screenshot is taken at, whenever it is taken.
+#[cfg(feature = "demo")]
+static DEMO_NOW: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+
+/// Stops the clock at a fixed moment (12 March 2026, 14:30 UTC) for demo
+/// screenshots, so the same page shows the same times from any build on the
+/// same machine and their pictures can be compared pixel for pixel. Call
+/// before the sample is made.
+#[cfg(feature = "demo")]
+pub fn freeze_demo_clock() {
+    let _ = DEMO_NOW.set(1_773_325_800);
 }
 
 /// A clock for tests whose layout depends on the time: the current time, the
@@ -788,20 +805,11 @@ pub fn hue(seed: &str) -> f32 {
 const MARK: &[u8] = include_bytes!("../packaging/icons/zeus.svg");
 /// The same mark without its rim and shading, which blur below this size.
 const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-small.svg");
-/// The Halloween pumpkin that takes the logo's place while that look is on,
-/// and its small form.
-const HALLOWEEN_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-halloween.svg");
-const HALLOWEEN_SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-halloween-small.svg");
 const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.
 pub fn app_icon_rgba(size: usize) -> Vec<u8> {
-    let mark = match (crate::theme::halloween(), size < SMALL_BELOW) {
-        (false, true) => SMALL_MARK,
-        (false, false) => MARK,
-        (true, true) => HALLOWEEN_SMALL_MARK,
-        (true, false) => HALLOWEEN_MARK,
-    };
+    let mark = if size < SMALL_BELOW { SMALL_MARK } else { MARK };
     match render_mark(mark, size) {
         Some(rgba) => rgba,
         // Fall back to an accent disc if the embedded SVG cannot render.

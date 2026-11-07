@@ -1,8 +1,16 @@
 name: Zeus build
 
-# Builds Zeus for Windows, macOS and Linux on GitHub's machines. Run it from
-# the Actions tab, or push a tag like `zeus-v0.19.0` to also attach the files
-# to a GitHub release. Separate from release.yml, which is ZapFast's own.
+# Builds Zeus for Windows, macOS and Linux on GitHub's machines, and every push
+# to main leaves real installers as workflow artifacts:
+#   zeus-windows-setup  the Windows installer
+#   zeus-macos-dmg      the universal DMG (Apple silicon and Intel)
+#   zeus-linux-x86_64   .tar.gz, .deb, .rpm, .AppImage
+#   zeus-linux-aarch64  .tar.gz, .deb, .rpm, .AppImage
+# Run it from the Actions tab (any branch), or push a tag like `zeus-v0.19.0`
+# to attach the files to a GitHub prerelease. Releases themselves come from
+# `build-zeus.cmd publish` on the maintainer's PC and zeus-release.yml, which sign
+# checksums.txt for the updater; nothing here touches a `v*` release.
+# Separate from release.yml, which is ZapFast's own.
 on:
   workflow_dispatch:
   push:
@@ -18,6 +26,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CONFIG: zeus.native-packages.yaml
 
 jobs:
   build:
@@ -30,7 +39,12 @@ jobs:
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
           - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: macos-latest, target: x86_64-apple-darwin }
+          # The oldest supported Ubuntu: the binary needs the glibc it was
+          # built against or newer (2.39).
           - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          # A native arm64 runner, so the GUI's system libraries need no
+          # cross-compilation sysroot.
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
@@ -47,25 +61,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
-      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - run: cargo build --locked --release --features demo --target ${{ matrix.target }}
 
       - name: Version
         id: v
         shell: bash
         run: echo "version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)" >> "$GITHUB_OUTPUT"
-
-      - name: Package (macOS, Linux)
-        if: runner.os != 'Windows'
-        run: |
-          name="zeus-${{ steps.v.outputs.version }}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          cp "target/${{ matrix.target }}/release/zeus" "dist/$name/"
-          cp README.md LICENSE "dist/$name/"
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            cp packaging/applications/zeus.desktop packaging/icons/zeus.svg "dist/$name/"
-          fi
-          tar czf "dist/$name.tar.gz" -C dist "$name"
-          rm -rf "dist/$name"
 
       # Inno Setup ships with the runner image. PowerShell, because bash on
       # Windows rewrites /D... arguments as paths.
@@ -80,24 +81,135 @@ jobs:
             "/DOutputDir=$PWD\dist" packaging\windows\zeus.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - name: Upload the installer (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: zeus-${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*-setup.exe
+          name: zeus-windows-setup
+          path: dist/*-setup.exe
           if-no-files-found: error
 
-  release:
-    name: GitHub release
-    if: startsWith(github.ref, 'refs/tags/zeus-v')
+      # The packaging jobs below start from this binary and never rebuild.
+      # Artifacts lose the executable bit; they set it again.
+      - name: Hand on the binary (macOS, Linux)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: bin-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/zeus
+          retention-days: 1
+          if-no-files-found: error
+
+  # The universal DMG, as zeus-release.yml makes it.
+  macos:
+    name: macOS universal DMG
     needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: bin-*-apple-darwin
+          path: bin
+      - name: Universal binary
+        run: |
+          mkdir -p universal
+          lipo -create \
+            bin/bin-aarch64-apple-darwin/zeus \
+            bin/bin-x86_64-apple-darwin/zeus \
+            -output universal/zeus
+          chmod +x universal/zeus
+      - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
+        with:
+          ruby-version: '4.0'
+      - run: gem install native-packages --version 0.10.0 --no-document
+      - name: App bundle and DMG
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          mkdir -p dist/macos-input
+          bash packaging/macos/bundle-zeus.sh universal/zeus dist/macos-input/Zeus.app "$version"
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/macos-input/
+          native-packages --config "$CONFIG" build --version "$version" \
+            --target macos-universal --defer-recipes --output "$RUNNER_TEMP/macos-packages"
+          cp "$RUNNER_TEMP/macos-packages/packages/macos-universal/dmg/"*.dmg dist/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: zeus-macos-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  # .tar.gz, .deb, .rpm and .AppImage for one architecture, as zeus-release.yml
+  # makes them (zeus.native-packages.yaml).
+  linux:
+    name: Linux packages (${{ matrix.arch }})
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, target: x86_64-unknown-linux-gnu, package_target: linux-amd64 }
+          - { arch: aarch64, target: aarch64-unknown-linux-gnu, package_target: linux-arm64 }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: bin-${{ matrix.target }}
+          path: bin
+      - name: Tarball
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          name="zeus-v${version}-${{ matrix.target }}"
+          chmod +x bin/zeus
+          mkdir -p "dist/$name"
+          cp bin/zeus README.md LICENSE THIRD-PARTY-NOTICES.md "dist/$name/"
+          # A Linux copy updates itself only with this marker beside it.
+          cp packaging/zeus-portable.txt "dist/$name/"
+          cp --parents packaging/applications/zeus.desktop packaging/icons/zeus.svg "dist/$name/"
+          tar czf "dist/$name.tar.gz" -C dist "$name"
+          rm -rf "dist/$name"
+      - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
+        with:
+          ruby-version: '4.0'
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.26.4'
+          cache: false
+      - name: Packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools binutils xz-utils squashfs-tools zsync
+          gem install native-packages --version 0.10.0 --no-document
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+      - name: Build the packages
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          native-packages --config "$CONFIG" validate
+          native-packages --config "$CONFIG" build --version "$version" \
+            --target ${{ matrix.package_target }} --output dist/native-packages
+      - name: Gather
+        run: |
+          mkdir out
+          cp dist/native-packages/packages/*/{deb/*.deb,rpm/*.rpm,appimage/*.AppImage} out/
+          cp dist/*.tar.gz out/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: zeus-linux-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+
+  # A `zeus-v*` tag makes a prerelease with every installer.
+  release:
+    name: GitHub prerelease
+    if: startsWith(github.ref, 'refs/tags/zeus-v')
+    needs: [build, macos, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
+          pattern: zeus-*
           path: dist
           merge-multiple: true
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2

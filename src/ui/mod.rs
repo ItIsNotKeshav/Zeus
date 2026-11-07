@@ -1,6 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
+pub mod benchmark;
 pub mod bubbles;
 pub mod call;
 pub mod calls;
@@ -17,16 +18,19 @@ pub mod image_preview;
 pub mod info;
 pub mod keys;
 pub mod labels;
+pub(crate) mod leaving;
 pub mod locations;
 pub mod lock;
 pub mod login;
 pub mod message_info;
+pub mod new_group;
 pub mod pane;
 pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod reaction_list;
 mod room;
+pub(crate) mod scroll_springs;
 pub mod settings;
 pub mod split;
 pub(crate) mod swipe;
@@ -43,6 +47,8 @@ use crate::theme::{self, Icon};
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = ui.ctx().clone();
     let ctx = &ctx;
+    // The chat's glass this pass shares a sheet of its own.
+    glass::new_sheet();
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
@@ -605,12 +611,9 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
                 .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         theme::icon(ui, Icon::Paperclip, 28.0, palette.accent);
-                        theme::text(
-                            ui,
-                            format!("Drop to send to {name}"),
-                            theme::semibold(15.0),
-                            palette.text,
-                        );
+                        let drop_text = crate::i18n::gettext(app.locale, "Drop to send to {name}")
+                            .replace("{name}", &name);
+                        theme::text(ui, drop_text, theme::semibold(15.0), palette.text);
                     });
                 });
         });
@@ -621,61 +624,40 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 /// where it was drawn, if it was.
 fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> {
     let palette = app.palette;
-    let update = app.update.clone();
-    let (icon, text, color, retry, download) = match &app.link {
+    // An available release is the rail's ellipse, not this toast.
+    let (icon, text, color, retry) = match &app.link {
         LinkStatus::Connected if app.syncing => (
             Icon::Refresh,
             match app.sync_percent {
-                Some(percent) => format!("Loading chat history… {percent}%"),
-                None => "Loading chat history…".to_owned(),
+                Some(percent) => {
+                    crate::i18n::gettext(app.locale, "Loading chat history… {percent}%")
+                        .replace("{percent}", &percent.to_string())
+                }
+                None => crate::i18n::gettext(app.locale, "Loading chat history…").into_owned(),
             },
             palette.accent,
             false,
-            None,
         ),
-        LinkStatus::Connected if update.is_some() => {
-            let update = update.as_ref().expect("checked above");
-            let ready = matches!(app.update_download, crate::updates::DownloadState::Ready(_));
-            (
-                if ready { Icon::Download } else { Icon::Info },
-                if ready {
-                    format!("Zeus {} is ready to install", update.version)
-                } else {
-                    format!("Zeus {} is available", update.version)
-                },
-                palette.accent,
-                false,
-                Some(update.url.clone()),
-            )
-        }
         LinkStatus::Connected => return None,
         LinkStatus::Starting | LinkStatus::Connecting => (
             Icon::Refresh,
-            "Connecting to WhatsApp…".to_owned(),
+            crate::i18n::gettext(app.locale, "Connecting to WhatsApp…").into_owned(),
             palette.secondary,
             false,
-            None,
         ),
         LinkStatus::Disconnected { reason } => (
             Icon::WifiOff,
-            format!("Offline ({reason}). Reconnecting…"),
+            crate::i18n::gettext(app.locale, "Offline ({reason}). Reconnecting…")
+                .replace("{reason}", reason),
             palette.warning,
             true,
-            None,
         ),
-        LinkStatus::Failed(message) => (
-            Icon::CircleAlert,
-            message.clone(),
-            palette.danger,
-            true,
-            None,
-        ),
+        LinkStatus::Failed(message) => (Icon::CircleAlert, message.clone(), palette.danger, true),
         LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
-            "Not linked to a phone".to_owned(),
+            crate::i18n::gettext(app.locale, "Not linked to a phone").into_owned(),
             palette.warning,
             false,
-            None,
         ),
     };
     // One row at the bottom left of the side columns (or of the chat when
@@ -705,7 +687,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
         .pivot(Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, bottom))
         .order(egui::Order::Foreground)
-        .interactable(retry || download.is_some())
+        .interactable(retry)
         .show(ctx, |ui| {
             row.show(ui, |ui| {
                 ui.set_max_width(width - 20.0);
@@ -724,21 +706,15 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
                         .wrap()
                         .selectable(false),
                     );
-                    if download.is_some() {
-                        if theme::soft_button(
+                    if retry
+                        && theme::soft_button(
                             ui,
                             &palette,
-                            Some(Icon::ExternalLink),
-                            "Update",
+                            Some(Icon::Refresh),
+                            &crate::i18n::gettext(app.locale, "Retry"),
                             false,
                         )
                         .clicked()
-                        {
-                            app.actions.push(Action::ShowUpdate);
-                        }
-                    } else if retry
-                        && theme::soft_button(ui, &palette, Some(Icon::Refresh), "Retry", false)
-                            .clicked()
                     {
                         app.actions.push(Action::Reconnect);
                     }
@@ -927,7 +903,9 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
                                                         14.0,
                                                         palette.secondary,
                                                         palette.text,
-                                                        "Dismiss",
+                                                        &crate::i18n::gettext(
+                                                            app.locale, "Dismiss",
+                                                        ),
                                                     );
                                                     // Store the rect for interaction tests.
                                                     ui.ctx().data_mut(|data| {
@@ -945,7 +923,10 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
                                                         14.0,
                                                         palette.secondary,
                                                         palette.text,
-                                                        "Copy this message",
+                                                        &crate::i18n::gettext(
+                                                            app.locale,
+                                                            "Copy this message",
+                                                        ),
                                                     )
                                                     .clicked()
                                                     {
@@ -1134,7 +1115,7 @@ mod idle_tests {
         let root = tempfile::tempdir().unwrap();
         let mut app = App::headless(
             crate::paths::AppDirs::under(root.path()),
-            crate::settings::Settings::plain(),
+            crate::settings::Settings::default(),
         )
         .0;
         app.link = LinkStatus::Connected;
@@ -1595,10 +1576,10 @@ mod idle_tests {
         .0;
         app.link = LinkStatus::Connected;
         for i in 0..60 {
-            app.chats.push(crate::model::Chat::new(
-                format!("{i}@s.whatsapp.net"),
-                format!("Chat {i}"),
-            ));
+            app.chats.push(crate::model::Chat {
+                last_activity: 1,
+                ..crate::model::Chat::new(format!("{i}@s.whatsapp.net"), format!("Chat {i}"))
+            });
         }
         let ctx = egui::Context::default();
         theme::install(&ctx);

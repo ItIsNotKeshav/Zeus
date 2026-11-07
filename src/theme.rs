@@ -278,49 +278,6 @@ impl Palette {
         self
     }
 
-    /// Zeus's Halloween palette: Dark's glass in a night of plum and ember, or
-    /// Light's in candlelit cream, with a bright pumpkin orange for the
-    /// accent.
-    pub fn halloween(dark: bool) -> Self {
-        let rgb = |value: u32| {
-            let [_, r, g, b] = value.to_be_bytes();
-            Color32::from_rgb(r, g, b)
-        };
-        let mut p = if dark {
-            Self::nothing_dark()
-        } else {
-            Self::nothing_light()
-        };
-        if dark {
-            p.window = rgb(0x0b0609);
-            p.panel = rgb(0x170d12);
-            p.surface = rgb(0x28171d);
-            p.surface_hover = rgb(0x362029);
-            p.surface_active = rgb(0x442b35);
-            p.outline = rgb(0x4a3039);
-            p.text = rgb(0xfff3e8);
-            p.secondary = rgb(0xe3c7b6);
-            p.dim = rgb(0xbc9d8c);
-            p.overlay = rgb(0x1f1218);
-            p.chat = rgb(0x100a0e);
-            p.bubble_in = rgb(0x2b1a22);
-        } else {
-            p.window = rgb(0xfbe9d3);
-            p.panel = rgb(0xfff6ea);
-            p.surface = rgb(0xffe6cc);
-            p.surface_hover = rgb(0xffdab5);
-            p.surface_active = rgb(0xffcc99);
-            p.outline = rgb(0xf0c79d);
-            p.text = rgb(0x2b1408);
-            p.secondary = rgb(0x6a4630);
-            p.dim = rgb(0x7d5a44);
-            p.overlay = rgb(0xfffaf3);
-            p.chat = rgb(0xffefdb);
-            p.bubble_in = rgb(0xfffdf9);
-        }
-        p.with_accent([0xff, 0x7a, 0x1a])
-    }
-
     /// Nothing OS inspired paper-white palette with translucent panels.
     pub fn nothing_light() -> Self {
         let mut p = Self::light();
@@ -406,9 +363,9 @@ impl Palette {
     /// it a little; without one, it is the panel's own colour.
     pub fn sidebar(&self) -> Color32 {
         if self.bubbles == BubbleStyle::Nothing && crate::backdrop::active() {
-            glass_fill(self.panel, if self.dark { 210 } else { 230 })
+            window_fill(self.panel, if self.dark { 210 } else { 230 })
         } else if self.vibrant() && crate::backdrop::active() {
-            glass_multiply(self.panel, SIDEBAR_TINT)
+            window_multiply(self.panel, SIDEBAR_TINT)
         } else {
             self.panel
         }
@@ -442,9 +399,9 @@ impl Palette {
             return color;
         }
         if self.bubbles == BubbleStyle::Nothing {
-            glass_fill(color, if self.dark { 218 } else { 232 })
+            window_fill(color, if self.dark { 218 } else { 232 })
         } else {
-            glass_multiply(color, CHAT_TINT)
+            window_multiply(color, CHAT_TINT)
         }
     }
 
@@ -584,8 +541,9 @@ impl Palette {
         }
     }
 
-    /// The soft shadow that lifts message bubbles and date chips off the
-    /// wallpaper: two points down with a short blur, a little denser than
+    /// The soft shadow that lifts date chips, the composer and the message
+    /// buttons off the wallpaper (message bubbles cast none): two points
+    /// down with a short blur, a little denser than
     /// the palette's own shadow colour, so custom themes steer it. A shadow
     /// alone barely darkens a dark chat; [`Palette::raised_edge`] lights
     /// the top as well.
@@ -607,6 +565,54 @@ impl Palette {
             spread: 0,
             color: self.shadow,
         }
+    }
+
+    /// The shadow under a message's menu, five layers cast by the same
+    /// outline, nearest first: a tight, dense one where the menu all but
+    /// touches the window, then ever lower, wider and fainter ones, each
+    /// about twice as far and as soft as the last, out to a broad ambient
+    /// shade. One shadow reads as a grey box around the menu; a stack like
+    /// this falls off the way light does around a raised object, the
+    /// layered shadows Josh Comeau ("Designing Beautiful Shadows in CSS")
+    /// and Tobias Ahlin ("Smoother and sharper shadows with layered
+    /// box-shadows") describe, and shadows.brumm.af generates. The
+    /// palette's shadow colour gives the hue, so custom themes steer it,
+    /// while the strengths are the recipe's own; a dark palette's are 1.6
+    /// times as strong, since a dark window swallows a shadow. Paint the
+    /// farthest first.
+    pub fn menu_shadows(&self) -> [egui::epaint::Shadow; 5] {
+        // Offset down, blur and spread in points, and the alpha in a light
+        // palette.
+        const LAYERS: [(i8, u8, u8, f32); 5] = [
+            (1, 2, 0, 28.0),
+            (2, 5, 0, 22.0),
+            (4, 10, 0, 16.0),
+            (8, 20, 1, 10.0),
+            (14, 32, 2, 5.0),
+        ];
+        let [r, g, b, _] = self.shadow.to_srgba_unmultiplied();
+        let strength = if self.dark { DARK_MENU_SHADOW } else { 1.0 };
+        LAYERS.map(|(offset, blur, spread, alpha)| egui::epaint::Shadow {
+            offset: [0, offset],
+            blur,
+            spread,
+            color: Color32::from_rgba_unmultiplied(
+                r,
+                g,
+                b,
+                (alpha * strength).round().min(255.0) as u8,
+            ),
+        })
+    }
+
+    /// The faint light just inside a message menu's outline in a dark
+    /// palette, where the shadow alone barely parts the menu from the
+    /// window; none in a light one, whose outline and shadow do.
+    pub fn menu_inner_edge(&self) -> Option<Stroke> {
+        self.dark.then_some(Stroke::new(
+            1.0,
+            Color32::from_white_alpha(MENU_INNER_EDGE_ALPHA),
+        ))
     }
 
     /// The deeper shadow under a modal surface that holds the window until
@@ -805,10 +811,18 @@ const RAIL_SHADE: f32 = 0.05;
 const DARK_RAIL_SHADE: f32 = 0.22;
 /// How much denser than the palette's shadow colour a bubble's shadow is.
 const SHADOW_DENSITY: f32 = 1.04;
+/// How much stronger a message menu's shadow is in a dark palette than in a
+/// light one.
+const DARK_MENU_SHADOW: f32 = 1.6;
+/// The opacity of the light just inside a message menu's outline in a dark
+/// palette: white at about 10%.
+const MENU_INNER_EDGE_ALPHA: u8 = 26;
 /// How far a dark theme's raised edge moves from the surface toward the text.
 const DARK_EDGE_TINT: f32 = 0.128;
 /// The light palette's shadow opacity, the most a raised surface casts.
 const LIGHT_SHADOW_ALPHA: u8 = 50;
+/// Hover and selection on a light list: `#000` at 5% (`13/255`).
+pub const LIGHT_ROW: Color32 = Color32::from_black_alpha(13);
 /// How far a light theme's raised edge moves from the surface toward white.
 const LIGHT_EDGE_TINT: f32 = 0.48;
 /// How thick the raised edge is, in points.
@@ -832,6 +846,19 @@ fn glass_fill(color: Color32, alpha: u8) -> Color32 {
 /// `color.gamma_multiply(factor)` for glass, as [`glass_fill`] tints it.
 fn glass_multiply(color: Color32, factor: f32) -> Color32 {
     color.gamma_multiply(crate::backdrop::tinted(factor))
+}
+
+/// [`glass_fill`] for the window's own surfaces: Glass's Clear end does not
+/// thin them, as [`crate::backdrop::tinted_window`] says.
+fn window_fill(color: Color32, alpha: u8) -> Color32 {
+    let [r, g, b, _] = color.to_srgba_unmultiplied();
+    let alpha = crate::backdrop::tinted_window(f32::from(alpha) / 255.0);
+    Color32::from_rgba_unmultiplied(r, g, b, (alpha * 255.0).round() as u8)
+}
+
+/// [`glass_multiply`] for the window's own surfaces.
+fn window_multiply(color: Color32, factor: f32) -> Color32 {
+    color.gamma_multiply(crate::backdrop::tinted_window(factor))
 }
 
 /// Converts HSL to color bytes for non-egui drawing.
@@ -1117,8 +1144,43 @@ fn install_fonts(ctx: &egui::Context) {
         }
     }
     add_tabular(&mut fonts);
+    add_atlas_marker(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// Which of the two atlas markers the installed fonts carry; see
+/// [`rebuild_font_atlas`].
+static ATLAS_GENERATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Adds a family nobody draws with, named for the current atlas generation.
+/// egui's `set_fonts` does nothing when the definitions equal the installed
+/// ones, and only a new set of definitions makes epaint build its glyph atlas
+/// afresh, so a family whose name alternates is what lets the same fonts be
+/// installed again to drop the glyphs they gathered. It lists the regular
+/// weight's fonts: epaint binds a family's fonts only when text asks for it,
+/// and this one never is asked for.
+fn add_atlas_marker(fonts: &mut egui::FontDefinitions) {
+    let generation = ATLAS_GENERATION.load(std::sync::atomic::Ordering::Acquire);
+    let regular = fastframe_fonts::Weight::Regular.family();
+    let behind = fonts.families.get(&regular).cloned().unwrap_or_default();
+    fonts.families.insert(
+        egui::FontFamily::Name(format!("zeus-atlas-{generation}").into()),
+        behind,
+    );
+}
+
+/// Throws away the glyph atlas and draws text into a fresh one, which looks
+/// the same. epaint keeps every glyph it ever rasterised, at every scale,
+/// until the atlas is 80% full, and the atlas is a texture as wide as the
+/// GPU allows held on the CPU and the GPU both; after a zoom change or a move
+/// to another display the old scale's glyphs only take room.
+pub fn rebuild_font_atlas(ctx: &egui::Context) {
+    ATLAS_GENERATION.fetch_xor(1, std::sync::atomic::Ordering::AcqRel);
+    install_fonts(ctx);
+    // New fonts take over on the next pass, which an unfocused window would
+    // otherwise only run when the reader comes back.
+    ctx.request_repaint();
 }
 
 /// Puts a bundled variable font in front of each interface weight, with the
@@ -1273,14 +1335,6 @@ fastframe_icons::icons! {
         MapPin => "map-pin",
         Maximize => lucide "maximize-2",
         MessageCircle => "message-circle",
-        Pumpkin => "pumpkin",
-        SearchHw => "search-halloween",
-        VideoHw => "video-halloween",
-        PhoneHw => "phone-halloween",
-        EllipsisHw => "ellipsis-halloween",
-        MicHw => "mic-halloween",
-        SendHw => "send-halloween",
-        Ghost => "ghost",
         Mic => lucide "mic",
         MicOff => "mic-off",
         Minimize => lucide "minimize-2",
@@ -1311,9 +1365,10 @@ fastframe_icons::icons! {
         Search => lucide "search",
         Send => "send",
         Settings => lucide "settings",
+        Shield => "shield",
+        ShieldOff => "shield-off",
         Smartphone => lucide "smartphone",
         Smile => "smile",
-        SmileHw => "smile-halloween",
         SquarePen => lucide "square-pen",
         Star => "star",
         StarFill => "star-fill",
@@ -1323,81 +1378,16 @@ fastframe_icons::icons! {
         Tag => "tag",
         Trash => lucide "trash-2",
         User => lucide "user",
+        UserMinus => "user-minus",
+        UserPlus => "user-plus",
         Users => lucide "users",
         Video => "video",
         VideoOff => "video-off",
+        ViewOnce => "view-once",
         Volume2 => lucide "volume-2",
         VolumeX => lucide "volume-x",
         WifiOff => "wifi-off",
         X => lucide "x",
-    }
-}
-
-static HALLOWEEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Whether the Halloween look is drawn, which `App` sets whenever it applies
-/// the theme: its chat icon is a pumpkin.
-pub fn set_halloween(on: bool) {
-    HALLOWEEN.store(on, std::sync::atomic::Ordering::Relaxed);
-}
-
-pub fn halloween() -> bool {
-    HALLOWEEN.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The icon for chats: a speech bubble, or a pumpkin at Halloween.
-pub fn chats_icon() -> Icon {
-    if halloween() {
-        Icon::Pumpkin
-    } else {
-        Icon::MessageCircle
-    }
-}
-
-/// The icons that change at Halloween, each its usual one or its own.
-pub fn search_icon() -> Icon {
-    if halloween() {
-        Icon::SearchHw
-    } else {
-        Icon::Search
-    }
-}
-pub fn video_icon() -> Icon {
-    if halloween() {
-        Icon::VideoHw
-    } else {
-        Icon::Video
-    }
-}
-pub fn phone_icon() -> Icon {
-    if halloween() {
-        Icon::PhoneHw
-    } else {
-        Icon::Phone
-    }
-}
-pub fn ellipsis_icon() -> Icon {
-    if halloween() {
-        Icon::EllipsisHw
-    } else {
-        Icon::Ellipsis
-    }
-}
-pub fn mic_icon() -> Icon {
-    if halloween() { Icon::MicHw } else { Icon::Mic }
-}
-pub fn smile_icon() -> Icon {
-    if halloween() {
-        Icon::SmileHw
-    } else {
-        Icon::Smile
-    }
-}
-pub fn send_icon() -> Icon {
-    if halloween() {
-        Icon::SendHw
-    } else {
-        Icon::Send
     }
 }
 
@@ -1469,12 +1459,8 @@ pub fn circle_button(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
     if ui.is_rect_visible(rect) {
-        let hovered = response.hovered();
-        let grow = if hovered { 1.05 } else { 1.0 };
-        let radius = diameter / 2.0 * grow;
-        let fill = if hovered { fill_hover } else { fill };
-        ui.painter().circle_filled(rect.center(), radius, fill);
-        let icon_size = diameter * 0.46;
+        let scale = circle_body(ui, &response, rect, diameter, fill, fill_hover);
+        let icon_size = diameter * 0.46 * scale;
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
         icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
     }
@@ -1484,6 +1470,148 @@ pub fn circle_button(
     } else {
         response.on_hover_text(tooltip)
     }
+}
+
+/// What a morphing circle button last showed, kept between frames.
+#[derive(Clone, Copy)]
+struct Morph {
+    from_icon: Icon,
+    from_fill: Color32,
+    icon: Icon,
+    fill: Color32,
+    start: f64,
+}
+
+/// A [`circle_button`] whose icon and fill change with a morph: the old icon
+/// shrinks and fades out while the new one grows and fades in, and the fill
+/// blends from the old colour, over [`MOTION_QUICK`]. The first frame it is
+/// seen has no morph. `id_salt` names the button between frames.
+#[allow(clippy::too_many_arguments)]
+pub fn circle_button_morph(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    icon: Icon,
+    diameter: f32,
+    fill: Color32,
+    fill_hover: Color32,
+    icon_color: Color32,
+    tooltip: &str,
+) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(diameter), Sense::click());
+    reveal_focus(&response);
+    focus_outline_on_fill(ui, response.id, rect, diameter / 2.0, fill);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    if ui.is_rect_visible(rect) {
+        let ctx = ui.ctx().clone();
+        let key = egui::Id::new(("circle-morph", id_salt));
+        let now = ctx.input(|input| input.time);
+        let mut morph = ctx
+            .data_mut(|data| data.get_temp::<Morph>(key))
+            .unwrap_or(Morph {
+                from_icon: icon,
+                from_fill: fill,
+                icon,
+                fill,
+                start: f64::NEG_INFINITY,
+            });
+        if morph.icon != icon {
+            // Start from the fill that was showing, so a change mid-morph does not jump.
+            morph = Morph {
+                from_icon: morph.icon,
+                from_fill: morph.fill,
+                icon,
+                fill,
+                start: now,
+            };
+        }
+        morph.fill = fill;
+        ctx.data_mut(|data| data.insert_temp(key, morph));
+        let seconds = if crate::motion::screen_reader_attached(&ctx) {
+            0.0
+        } else {
+            MOTION_QUICK
+        };
+        let raw = if seconds <= 0.0 {
+            1.0
+        } else {
+            ((now - morph.start) as f32 / seconds).clamp(0.0, 1.0)
+        };
+        if raw < 1.0 {
+            ctx.request_repaint();
+        }
+        let t = ease_out(raw);
+        let blended = morph.from_fill.lerp_to_gamma(fill, t);
+        let hover_blended = morph.from_fill.lerp_to_gamma(fill_hover, t);
+        let scale = circle_body(ui, &response, rect, diameter, blended, hover_blended);
+        let base = diameter * 0.46 * scale;
+        let paint = |icon: Icon, incoming: bool| {
+            let (grow, alpha) = morph_phase(t, incoming);
+            let size = base * grow;
+            let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(size));
+            icon.image(icon_color.gamma_multiply(alpha), size)
+                .paint_at(ui, icon_rect);
+        };
+        if raw < 1.0 {
+            paint(morph.from_icon, false);
+        }
+        paint(icon, true);
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
+}
+
+/// Seconds a pressed circle button takes to shrink and to spring back.
+const PRESS_SECONDS: f32 = 0.1;
+/// How far a pressed circle button shrinks.
+const PRESS_SCALE: f32 = 0.94;
+/// How far a hovered circle button grows.
+const HOVER_GROW: f32 = 1.05;
+/// The size an icon has at the far end of its morph, in or out.
+const MORPH_SCALE: f32 = 0.6;
+
+/// The scale and opacity of an icon `t` (0 to 1, already eased) of the way
+/// through a morph: the new one grows in from `MORPH_SCALE` while it fades
+/// in, the old one shrinks to it while it fades out.
+fn morph_phase(t: f32, incoming: bool) -> (f32, f32) {
+    let t = t.clamp(0.0, 1.0);
+    let k = if incoming { t } else { 1.0 - t };
+    (MORPH_SCALE + (1.0 - MORPH_SCALE) * k, k)
+}
+
+/// Paints a circle button's disc, easing hover and press instead of
+/// snapping, and returns the scale of the whole button.
+fn circle_body(
+    ui: &egui::Ui,
+    response: &Response,
+    rect: egui::Rect,
+    diameter: f32,
+    fill: Color32,
+    fill_hover: Color32,
+) -> f32 {
+    let ctx = ui.ctx();
+    let hover = animate(
+        ctx,
+        response.id.with("hover"),
+        response.hovered(),
+        MOTION_QUICK,
+    );
+    let press = animate(
+        ctx,
+        response.id.with("press"),
+        response.is_pointer_button_down_on(),
+        PRESS_SECONDS,
+    );
+    let scale = (1.0 + (HOVER_GROW - 1.0) * hover) * (1.0 + (PRESS_SCALE - 1.0) * press);
+    let fill = fill.lerp_to_gamma(fill_hover, hover);
+    ui.painter()
+        .circle_filled(rect.center(), diameter / 2.0 * scale, fill);
+    scale
 }
 
 /// Draws the app's mark as it ships: the lit disc and the ink bubble of
@@ -1522,7 +1650,9 @@ pub fn logo(ui: &egui::Ui, center: egui::Pos2, diameter: f32, disc: Color32, gly
         center + Vec2::new(diameter * 0.009, -diameter * 0.009),
         Vec2::splat(icon_size),
     );
-    chats_icon().image(glyph, icon_size).paint_at(ui, icon_rect);
+    Icon::MessageCircle
+        .image(glyph, icon_size)
+        .paint_at(ui, icon_rect);
 }
 
 /// A pill-shaped text button: filled for the primary action, outlined otherwise.
@@ -1963,7 +2093,64 @@ pub fn titlebar_inset(ctx: &egui::Context) -> f32 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn morph_phase_runs_from_small_and_clear_to_full() {
+        assert_eq!(super::morph_phase(0.0, true), (0.6, 0.0));
+        assert_eq!(super::morph_phase(1.0, true), (1.0, 1.0));
+        assert_eq!(super::morph_phase(0.0, false), (1.0, 1.0));
+        assert_eq!(super::morph_phase(1.0, false), (0.6, 0.0));
+        let (scale, alpha) = super::morph_phase(0.5, true);
+        assert!((scale - 0.8).abs() < 1e-6 && (alpha - 0.5).abs() < 1e-6);
+    }
+
     use super::*;
+
+    /// Rebuilding the atlas installs the very fonts again, so epaint starts a
+    /// fresh glyph atlas, and text still lays out.
+    #[test]
+    fn rebuilding_the_atlas_installs_the_same_fonts_under_a_new_marker() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let markers = |ctx: &egui::Context| -> Vec<String> {
+            ctx.fonts(|fonts| {
+                fonts
+                    .definitions()
+                    .families
+                    .keys()
+                    .filter_map(|family| match family {
+                        egui::FontFamily::Name(name) if name.starts_with("zeus-atlas-") => {
+                            Some(name.to_string())
+                        }
+                        _ => None,
+                    })
+                    .collect()
+            })
+        };
+        let before = markers(&ctx);
+        assert_eq!(before.len(), 1);
+        rebuild_font_atlas(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |_| {})
+            .textures_delta
+            .clear();
+        let after = markers(&ctx);
+        assert_eq!(after.len(), 1);
+        assert_ne!(before, after, "the fonts are installed anew");
+        // Text still lays out afterwards, in the interface and tabular faces.
+        ctx.fonts_mut(|fonts| {
+            for font in [
+                regular(14.0),
+                medium(14.0),
+                semibold(14.0),
+                tabular(fastframe_fonts::Weight::Medium, 14.0),
+            ] {
+                let galley = fonts.layout_no_wrap("Zeus".into(), font, egui::Color32::WHITE);
+                assert!(galley.size().x > 0.0);
+            }
+        });
+    }
 
     /// Timers count in Inter's tabular figures whatever face draws the
     /// rest, and fall back like the interface text of their weight.
@@ -2052,6 +2239,43 @@ mod tests {
                 palette.shadow
             );
         }
+    }
+
+    /// A message menu's shadow is five layers, each lower, softer and
+    /// fainter than the one before, in the palette's own shadow hue, and
+    /// half as strong again and more in a dark palette, which also lights
+    /// the menu's edge from inside.
+    #[test]
+    fn a_message_menu_casts_a_layered_shadow() {
+        let mut tinted = Palette::light();
+        tinted.shadow = Color32::from_rgba_unmultiplied(0x20, 0x10, 0x40, 90);
+        let light = tinted.menu_shadows();
+        for pair in light.windows(2) {
+            let (near, far) = (pair[0], pair[1]);
+            assert!(far.offset[1] > near.offset[1], "{near:?} then {far:?}");
+            assert!(far.blur > near.blur, "{near:?} then {far:?}");
+            assert!(far.color.a() < near.color.a(), "{near:?} then {far:?}");
+        }
+        // The densest layer keeps the palette's hue; the faintest ones are
+        // too faint to keep it exactly through premultiplied alpha.
+        let [r, g, b, _] = light[0].color.to_srgba_unmultiplied();
+        for (channel, hue) in [(r, 0x20u8), (g, 0x10), (b, 0x40)] {
+            assert!(channel.abs_diff(hue) <= 8, "{:?}", light[0]);
+        }
+        assert!(tinted.menu_inner_edge().is_none());
+        let mut dark = tinted;
+        dark.dark = true;
+        for (on_light, on_dark) in light.iter().zip(dark.menu_shadows()) {
+            assert_eq!(
+                (on_light.offset, on_light.blur, on_light.spread),
+                (on_dark.offset, on_dark.blur, on_dark.spread)
+            );
+            assert!(
+                on_dark.color.a() > on_light.color.a(),
+                "{on_light:?} and {on_dark:?}"
+            );
+        }
+        assert!(dark.menu_inner_edge().is_some());
     }
 
     /// The palette decides the theme, and the desktop's rendering its text

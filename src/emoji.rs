@@ -7,23 +7,38 @@
 //! Layout replaces each emoji sequence with a transparent placeholder, and
 //! its picture is painted over it. New pictures are drawn on a worker
 //! thread, so a picker full of unseen emoji never stalls a frame; tests and
-//! demo builds draw them inside the frame so every screenshot shows them.
-//! These wrappers install ZapFast's choice before the first use.
+//! the demo's screenshots draw them inside the frame so every picture they
+//! save shows them ([`draw_in_frame`]). These wrappers install ZapFast's
+//! choice before the first use.
 
 use egui::text::LayoutJob;
 use egui::{Pos2, Rect, TextFormat};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 pub use fastframe_emoji::{PLACEHOLDER, only_emoji};
 
 /// Noto Color Emoji, behind the platform's font.
-const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
+pub(crate) const BUNDLED: &[u8] = include_bytes!("../assets/fonts/NotoColorEmoji.ttf");
+
+/// Whether new pictures are drawn inside the frame that first shows them.
+/// Decided at run time, not by the `demo` feature: Zeus releases carry the
+/// demo for the benchmark, and drawing a whole picker's worth of emoji in
+/// one frame held the window for half a second.
+static IN_FRAME: AtomicBool = AtomicBool::new(cfg!(test));
+
+/// Draws new pictures inside the frame rather than on the worker thread, for
+/// a screenshot or recorded tour that must show every one. Call before the
+/// first emoji is laid out.
+pub fn draw_in_frame() {
+    IN_FRAME.store(true, Ordering::Relaxed);
+}
 
 fn setup() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         fastframe_emoji::EmojiSetup::default()
             .bundled(BUNDLED)
-            .synchronous(cfg!(any(test, feature = "demo")))
+            .synchronous(IN_FRAME.load(Ordering::Relaxed))
             .install();
     });
 }

@@ -109,8 +109,10 @@
             libxi
             libxrandr
           ];
-          zapfast = rustPlatform.buildRustPackage rec {
-            pname = "zapfast";
+          # This fork builds Zeus (src/brand.rs): its binary, launcher, icon
+          # and app bundle are named zeus, beside ZapFast's own.
+          zeus = rustPlatform.buildRustPackage rec {
+            pname = "zeus";
             version = (pkgs.lib.importTOML ./Cargo.toml).package.version;
             src = self;
 
@@ -185,11 +187,12 @@
                 install -Dm755 contrib/omarchy/zapfast-theme \
                   $out/share/zapfast/omarchy/zapfast-theme
               ''
-              # Mirrors packaging/macos/bundle-zeus.sh: Zeus.app around the built
-              # binary, with the version stripped of any prerelease suffix.
+              # Mirrors packaging/macos/bundle-zeus.sh: Zeus.app around the
+              # built binary, with the version stripped of any prerelease suffix.
               + pkgs.lib.optionalString isDarwin ''
                 app=$out/Applications/Zeus.app
-                mkdir -p $app/Contents/MacOS $app/Contents/Resources
+                mkdir -p $app/Contents/MacOS $app/Contents/Resources \
+                  $app/Contents/Library/LaunchAgents
                 mv $out/bin/zeus $app/Contents/MacOS/zeus
                 chmod 755 $app/Contents/MacOS/zeus
                 # The command runs the bundled executable, so macOS applies the
@@ -198,8 +201,16 @@
                 makeWrapper $app/Contents/MacOS/zeus $out/bin/zeus
                 sed "s/__VERSION__/''${version%%-*}/g" packaging/macos/Info-zeus.plist \
                   > $app/Contents/Info.plist
+                install -Dm644 packaging/macos/autostart-zeus.plist \
+                  $app/Contents/Library/LaunchAgents/app.zeus.Zeus.autostart.plist
                 icnsify packaging/icons/zeus-1024.png \
                   --output $app/Contents/Resources/zeus.icns
+                # Notification sounds are played from the bundle by these
+                # names (src/notify.rs).
+                install -Dm644 assets/sounds/receive.wav \
+                  $app/Contents/Resources/zapfast-receive.wav
+                install -Dm644 assets/sounds/alert.wav \
+                  $app/Contents/Resources/zapfast-alert.wav
               '';
 
             meta = {
@@ -214,8 +225,8 @@
           };
         in
         {
-          default = zapfast;
-          inherit zapfast;
+          default = zeus;
+          inherit zeus;
         }
       );
 

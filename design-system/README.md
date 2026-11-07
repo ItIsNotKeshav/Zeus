@@ -21,7 +21,7 @@ Browse it with live previews of every component and all eight palettes on the [Z
 - Descriptions say the consequence: "Messages are removed from this device. People in the chat still have them."
 - Toasts are two or three words: "Link copied", "Message deleted".
 - Address the person as "you"; the app does not speak as "I" or "we".
-- Name the default themes **Dark** and **Light**. The others are WhatsApp Dark, WhatsApp Light, Messages and Halloween. The colour themes are named by their colour.
+- Name the default themes **Dark** and **Light**. The others are WhatsApp Dark, WhatsApp Light and Messages. The colour themes are named by their colour.
 - No emoji in interface copy. Emoji belong to messages and reactions.
 
 ## Colour
@@ -52,9 +52,8 @@ Eight palettes ship. Dark is the default; Follow system picks Dark or Light.
 | Red, Blue, Green, Pink, Purple, Yellow | Dark with `accent-red` … `accent-yellow` |
 | WhatsApp Dark, WhatsApp Light | WhatsApp's teal-green palette, tailed bubbles lifted by a shadow, opaque surfaces |
 | Messages (dark and light) | macOS greys, system blue, Apple's balloon shape and blue gradient |
-| Halloween (dark and light) | Dark's glass in plum and ember, or Light's in candlelit cream, with pumpkin `#ff7a1a` |
 
-Known contrast exceptions, kept on purpose: white on the Messages accent and own bubbles is Apple's choice (2.6 to 3.5:1); white on Halloween Dark's orange accent is 2.6:1; WhatsApp Light's `link` on `chat` is 3.8:1. Keep text on those fills short and semibold.
+Known contrast exceptions, kept on purpose: white on the Messages accent and own bubbles is Apple's choice (2.6 to 3.5:1); WhatsApp Light's `link` on `chat` is 3.8:1. Keep text on those fills short and semibold.
 
 ## Typography
 
@@ -127,7 +126,7 @@ Reduced motion: while a screen reader is attached, decorative animations (typing
 
 ## Iconography
 
-- Lucide icons: 24 grid, 2px stroke, round caps and joins, no fill. Zeus adds its own in the same style (delivery ticks, star fill, Halloween variants) under `assets/icons/`.
+- Lucide icons: 24 grid, 2px stroke, round caps and joins, no fill. Zeus adds its own in the same style (delivery ticks, star fill) under `assets/icons/`.
 - Sizes: 16 in menus and fields, 18 to 20 in headers, 22 in the composer, 40 for empty states. Icon buttons add 12 around the icon.
 - Colour: `secondary` at rest, `text` on hover; `accent` or `danger` only for state. Icons are drawn white in the files and tinted at paint time.
 - Every icon-only control has a tooltip, which is also its accessible name.

@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
-use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2, vec2};
+use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 
 pub use crate::settings::DoodleStyle;
 
@@ -20,7 +20,6 @@ fn svg(style: DoodleStyle) -> &'static [u8] {
         DoodleStyle::Food => include_bytes!("../assets/doodles/food.svg"),
         DoodleStyle::Travel => include_bytes!("../assets/doodles/travel.svg"),
         DoodleStyle::Play => include_bytes!("../assets/doodles/play.svg"),
-        DoodleStyle::Halloween => include_bytes!("../assets/doodles/halloween.svg"),
     }
 }
 
@@ -31,8 +30,12 @@ pub const MAX_SIDE: u32 = 2560;
 /// The extensions a copied wallpaper image may have.
 const EXTENSIONS: [&str; 4] = ["jpg", "png", "webp", "gif"];
 
+/// A doodle tile's texture: its style, and how much of it is drawn (see
+/// [`level`]).
+type TileKey = (DoodleStyle, u8);
+
 #[derive(Clone, Default)]
-struct Cache(Arc<Mutex<HashMap<DoodleStyle, TextureHandle>>>);
+struct Cache(Arc<Mutex<HashMap<TileKey, TextureHandle>>>);
 
 /// The uploaded custom image and which image it was made from.
 #[derive(Clone)]
@@ -52,12 +55,13 @@ pub struct Look {
     pub style: DoodleStyle,
     /// How strongly they show, as a multiple of the default.
     pub intensity: f32,
+    /// How many of them there are, as a multiple of the default (see
+    /// [`level`] and [`tile_scale`]).
+    pub density: f32,
     /// The accent they are drawn in, or nothing for the grey ink.
     pub accent: Option<Color32>,
-    /// Halloween's night sky, moon and skyline under the doodles.
-    pub scene: bool,
     /// A decoded image of the reader's, which wins over colour and doodles.
-    pub image: Option<(u64, Arc<ColorImage>)>,
+    pub image: Option<(u64, Arc<Pixels>)>,
 }
 
 /// Paint the wallpaper over the conversation panel, its colour rounded by
@@ -79,163 +83,43 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
 
     match &look.image {
         Some(image) => {
-            let texture = image_texture(ui.ctx(), image);
-            let uv = cover_uv(texture.size_vec2(), rect.size());
-            painter.image(texture.id(), rect, uv, Color32::WHITE);
+            if let Some(texture) = image_texture(ui.ctx(), image) {
+                let uv = cover_uv(texture.size_vec2(), rect.size());
+                painter.image(texture.id(), rect, uv, Color32::WHITE);
+            }
             return;
         }
         None => forget_image(ui.ctx()),
     }
 
-    if look.scene {
-        paint_sky(&painter, rect, look.color);
-    }
     if look.doodles {
-        paint_doodles(ui, rect, look, look.style);
-    }
-    if look.scene {
-        paint_skyline(ui.ctx(), &painter, rect, look.color);
-    }
-}
-
-/// Whether `color` is a dark background, for tinting what is drawn over it.
-fn is_dark(color: Color32) -> bool {
-    0.2126 * f32::from(color.r()) + 0.7152 * f32::from(color.g()) + 0.0722 * f32::from(color.b())
-        < 128.0
-}
-
-/// Halloween's sky: the background colour warming towards an ember glow at
-/// the horizon, and a moon with a soft halo high on the right.
-fn paint_sky(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let dark = is_dark(color);
-    let horizon = if dark {
-        color.lerp_to_gamma(Color32::from_rgb(0xff, 0x6a, 0x10), 0.22)
-    } else {
-        color.lerp_to_gamma(Color32::from_rgb(0xff, 0x9a, 0x3c), 0.45)
-    };
-    let mid = color.lerp_to_gamma(horizon, 0.18);
-    let mut mesh = egui::Mesh::default();
-    for (fraction, tone) in [(0.0, color), (0.55, mid), (1.0, horizon)] {
-        let y = rect.top() + rect.height() * fraction;
-        mesh.colored_vertex(pos2(rect.left(), y), tone);
-        mesh.colored_vertex(pos2(rect.right(), y), tone);
-    }
-    for step in 0..2 {
-        let at = step * 2;
-        mesh.add_triangle(at, at + 1, at + 2);
-        mesh.add_triangle(at + 1, at + 2, at + 3);
-    }
-    painter.add(egui::Shape::mesh(mesh));
-
-    let radius = (rect.width().min(rect.height()) * 0.055).clamp(16.0, 40.0);
-    let center = pos2(
-        rect.right() - (rect.width() * 0.2).max(radius * 2.4),
-        rect.top() + (rect.height() * 0.17).max(radius * 2.2),
-    );
-    let (disc, halo) = if dark {
-        (
-            Color32::from_rgb(0xe9, 0xc9, 0x8f),
-            Color32::from_rgb(0xff, 0x9a, 0x3c),
-        )
-    } else {
-        (
-            Color32::from_rgb(0xff, 0xd2, 0x8a),
-            Color32::from_rgb(0xff, 0xd8, 0x9c),
-        )
-    };
-    for ring in (1..=8).rev() {
-        let grow = ring as f32 / 8.0;
-        let alpha = (if dark { 5.0 } else { 7.0 } * (1.0 - grow) + 1.0) as u8;
-        painter.circle_filled(
-            center,
-            radius * (1.0 + 2.2 * grow),
-            Color32::from_rgba_unmultiplied(halo.r(), halo.g(), halo.b(), alpha),
+        // A new density eases in rather than jumping: the doodles thin out
+        // or fill in over the same time a panel takes.
+        let density = eased_density(ui.ctx(), ui.id().with("doodle-density"), look.density);
+        paint_doodles(
+            ui,
+            rect,
+            &Look {
+                density,
+                ..look.clone()
+            },
+            look.style,
         );
     }
-    painter.circle_filled(center, radius, disc);
-    let crater = Color32::from_rgba_unmultiplied(0xc9, 0x8a, 0x3a, if dark { 70 } else { 60 });
-    painter.circle_filled(
-        center + vec2(-radius * 0.3, -radius * 0.2),
-        radius * 0.2,
-        crater,
-    );
-    painter.circle_filled(
-        center + vec2(radius * 0.25, radius * 0.3),
-        radius * 0.28,
-        crater,
-    );
-    painter.circle_filled(
-        center + vec2(radius * 0.35, -radius * 0.35),
-        radius * 0.12,
-        crater,
-    );
-}
-
-/// The skyline along the bottom edge: hills, a bare tree, graves, a patch of
-/// pumpkins, in near-black at night and umber by day.
-fn paint_skyline(ctx: &egui::Context, painter: &egui::Painter, rect: Rect, color: Color32) {
-    let Some(texture) = scene_texture(ctx) else {
-        return;
-    };
-    let size = texture.size_vec2();
-    let width = rect.width();
-    let height = width * size.y / size.x;
-    // A tall window crops the sky out of the picture rather than stretching it.
-    let shown = height.min(rect.height() * 0.42);
-    let uv = Rect::from_min_max(pos2(0.0, 1.0 - shown / height), pos2(1.0, 1.0));
-    let area = Rect::from_min_max(
-        pos2(rect.left(), rect.bottom() - shown),
-        rect.right_bottom(),
-    );
-    let tint = if is_dark(color) {
-        Color32::from_rgba_unmultiplied(0x07, 0x03, 0x06, 0xf2)
-    } else {
-        Color32::from_rgba_unmultiplied(0x5a, 0x24, 0x08, 0xd8)
-    };
-    painter.image(texture.id(), area, uv, tint);
-}
-
-/// The skyline's mask, rendered once per window.
-fn scene_texture(ctx: &egui::Context) -> Option<TextureHandle> {
-    let id = egui::Id::new("halloween-scene");
-    if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
-        return Some(texture);
-    }
-    let tree = resvg::usvg::Tree::from_data(
-        include_bytes!("../assets/halloween-scene.svg"),
-        &resvg::usvg::Options::default(),
-    )
-    .ok()?;
-    let (width, height) = (tree.size().width() as u32, tree.size().height() as u32);
-    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
-    resvg::render(
-        &tree,
-        resvg::tiny_skia::Transform::identity(),
-        &mut pixmap.as_mut(),
-    );
-    let rgba = pixmap
-        .pixels()
-        .iter()
-        .flat_map(|pixel| {
-            let color = pixel.demultiply();
-            [color.red(), color.green(), color.blue(), color.alpha()]
-        })
-        .collect::<Vec<u8>>();
-    let image = ColorImage::from_rgba_unmultiplied([width as usize, height as usize], &rgba);
-    let texture = ctx.load_texture("halloween-scene", image, TextureOptions::LINEAR);
-    ctx.data_mut(|data| data.insert_temp(id, texture.clone()));
-    Some(texture)
 }
 
 /// The doodles of `style` over `rect`, inked as `look` says for its
 /// background, which the caller has already painted.
 pub fn paint_doodles(ui: &egui::Ui, rect: Rect, look: &Look, style: DoodleStyle) {
     let painter = ui.painter().with_clip_rect(rect);
-    let Some(texture) = texture(ui.ctx(), style) else {
+    let density = clamp_density(look.density);
+    let Some(texture) = texture_at(ui.ctx(), style, level(density)) else {
         return;
     };
 
-    let tile = texture.size_vec2();
+    // Past the default, the same tile is drawn smaller: more doodles to a
+    // screenful, each a little smaller than before.
+    let tile = texture.size_vec2() * tile_scale(density);
     if tile.x <= 0.0 || tile.y <= 0.0 {
         return;
     }
@@ -258,6 +142,90 @@ pub fn paint_doodles(ui: &egui::Ui, rect: Rect, look: &Look, style: DoodleStyle)
         }
         y += tile.y;
     }
+}
+
+/// How the density moves from one value to the next: where it started, where
+/// it is going, and when it set off.
+#[derive(Clone, Copy)]
+struct Glide {
+    from: f32,
+    to: f32,
+    start: f64,
+}
+
+/// `target` as it shows now: the density glides to a new value over
+/// [`crate::theme::MOTION_PANEL`] on [`crate::theme::ease_out`], at once
+/// while a screen reader is attached (see [`crate::motion`]).
+fn eased_density(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
+    let target = clamp_density(target);
+    let now = ctx.input(|input| input.time);
+    let seconds = if crate::motion::screen_reader_attached(ctx) {
+        0.0
+    } else {
+        f64::from(crate::theme::MOTION_PANEL)
+    };
+    let mut glide = ctx
+        .data(|data| data.get_temp::<Glide>(id))
+        .unwrap_or(Glide {
+            from: target,
+            to: target,
+            start: now,
+        });
+    let at = |glide: &Glide| {
+        let t = if seconds > 0.0 {
+            ((now - glide.start) / seconds) as f32
+        } else {
+            1.0
+        };
+        (
+            egui::lerp(glide.from..=glide.to, crate::theme::ease_out(t)),
+            t,
+        )
+    };
+    if (glide.to - target).abs() > f32::EPSILON {
+        glide = Glide {
+            from: at(&glide).0,
+            to: target,
+            start: now,
+        };
+    }
+    let (value, t) = at(&glide);
+    ctx.data_mut(|data| data.insert_temp(id, glide));
+    if t < 1.0 {
+        ctx.request_repaint();
+    }
+    value
+}
+
+/// The doodle density in range, or the default when it is not a number.
+fn clamp_density(density: f32) -> f32 {
+    if density.is_finite() {
+        density.clamp(
+            *crate::settings::DOODLE_DENSITY.start(),
+            *crate::settings::DOODLE_DENSITY.end(),
+        )
+    } else {
+        1.0
+    }
+}
+
+/// How many twentieths of a tile's doodles a full tile has: all of them.
+const FULL: u8 = 20;
+
+/// How much of the tile `density` draws, in twentieths of its doodles. Up to
+/// the default the tile is thinned, and `FULL` is every doodle; past it the
+/// tile keeps them all and shrinks instead ([`tile_scale`]). Twentieths keep
+/// the textures to a few, as moving the slider makes a new one for each.
+pub fn level(density: f32) -> u8 {
+    let kept = clamp_density(density).min(1.0) * f32::from(FULL);
+    (kept.round() as u8).clamp(1, FULL)
+}
+
+/// How large a tile is drawn, against its own size: the default, and any
+/// thinner density, at its own size, a denser one smaller, so that `density`
+/// times as many doodles fill a screenful.
+pub fn tile_scale(density: f32) -> f32 {
+    clamp_density(density).max(1.0).sqrt().recip()
 }
 
 /// The doodles' tint for `look`: the grey ink of [`doodle_ink`], or the accent
@@ -324,20 +292,60 @@ fn image_texture_id() -> egui::Id {
     egui::Id::new("chat-wallpaper-image")
 }
 
+/// The custom image's pixels, held on the CPU only until a window uploads
+/// them. The texture is the one copy after that (about 26 MB at the largest);
+/// a window that needs one again, because the last was destroyed with its
+/// window or dropped by [`forget_image`], decodes the file once more.
+pub struct Pixels {
+    path: PathBuf,
+    held: Mutex<Option<ColorImage>>,
+    /// Demos and tests have no file to decode again, so they keep the pixels.
+    retain: bool,
+}
+
+impl Pixels {
+    fn new(path: &Path, image: ColorImage, retain: bool) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            held: Mutex::new(Some(image)),
+            retain,
+        }
+    }
+
+    /// The pixels for an upload: the held ones, which are let go unless kept,
+    /// else the file decoded again.
+    fn take(&self) -> Option<ColorImage> {
+        let mut held = self
+            .held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if self.retain {
+            return held.clone();
+        }
+        held.take().or_else(|| match decode(&self.path) {
+            Ok(image) => Some(image),
+            Err(error) => {
+                log::debug!("wallpaper image could not be decoded again: {error}");
+                None
+            }
+        })
+    }
+}
+
 /// The custom image's texture, uploaded once per image and window.
 fn image_texture(
     ctx: &egui::Context,
-    (generation, image): &(u64, Arc<ColorImage>),
-) -> TextureHandle {
+    (generation, image): &(u64, Arc<Pixels>),
+) -> Option<TextureHandle> {
     let cached = ctx.data(|data| data.get_temp::<ImageTexture>(image_texture_id()));
     if let Some(cached) = cached.filter(|cached| cached.generation == *generation) {
-        return cached.texture;
+        return Some(cached.texture);
     }
     let options = TextureOptions {
         mipmap_mode: Some(egui::TextureFilter::Linear),
         ..TextureOptions::LINEAR
     };
-    let texture = ctx.load_texture("chat-wallpaper-image", Arc::clone(image), options);
+    let texture = ctx.load_texture("chat-wallpaper-image", image.take()?, options);
     ctx.data_mut(|data| {
         data.insert_temp(
             image_texture_id(),
@@ -347,7 +355,7 @@ fn image_texture(
             },
         );
     });
-    texture
+    Some(texture)
 }
 
 /// Drops the custom image's texture, which frees it once nothing draws it.
@@ -364,8 +372,17 @@ pub(crate) fn texture_ids(ctx: &egui::Context) -> (Option<egui::TextureId>, egui
     (image.map(|image| image.texture.id()), doodles.id())
 }
 
-/// The tile of `style`, rendered once per window.
+/// The whole tile of `style`, rendered once per window.
 pub fn texture(ctx: &egui::Context, style: DoodleStyle) -> Option<TextureHandle> {
+    texture_at(ctx, style, FULL)
+}
+
+/// The tile of `style` with `level` twentieths of its doodles, rendered when
+/// first asked for. A window keeps every style's whole tile, for the cards
+/// that show them, and the one thinned tile the chat draws now: a density
+/// that moves on lets go of the one it leaves.
+pub fn texture_at(ctx: &egui::Context, style: DoodleStyle, level: u8) -> Option<TextureHandle> {
+    let level = level.clamp(1, FULL);
     let cache = ctx.data_mut(|data| {
         data.get_temp_mut_or_default::<Cache>(egui::Id::new("chat-wallpaper"))
             .clone()
@@ -374,24 +391,26 @@ pub fn texture(ctx: &egui::Context, style: DoodleStyle) -> Option<TextureHandle>
         .0
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if let Some(texture) = cached.get(&style) {
+    if let Some(texture) = cached.get(&(style, level)) {
         return Some(texture.clone());
     }
 
-    let image = rasterize(style)?;
+    let image = rasterize(style, level)?;
     let texture = ctx.load_texture(
-        format!("chat-wallpaper-{style:?}"),
+        format!("chat-wallpaper-{style:?}-{level}"),
         image,
         TextureOptions::LINEAR,
     );
-    cached.insert(style, texture.clone());
+    cached.retain(|(_, kept), _| *kept == FULL || *kept == level);
+    cached.insert((style, level), texture.clone());
     Some(texture)
 }
 
-fn rasterize(style: DoodleStyle) -> Option<ColorImage> {
+fn rasterize(style: DoodleStyle, level: u8) -> Option<ColorImage> {
     // The source uses currentColor. Render a white mask once, then use the
     // painter tint to adapt the line colour and opacity to the active theme.
     let source = String::from_utf8_lossy(svg(style)).replace("currentColor", "#ffffff");
+    let source = thinned(&source, level);
     let tree =
         resvg::usvg::Tree::from_data(source.as_bytes(), &resvg::usvg::Options::default()).ok()?;
     let size = tree.size();
@@ -417,6 +436,115 @@ fn rasterize(style: DoodleStyle) -> Option<ColorImage> {
     ))
 }
 
+/// One doodle of a tile's SVG, which is a `<use>` line placing an icon. An
+/// icon that crosses the tile's edge is placed again a tile away, so that the
+/// pattern repeats without a seam: those copies are one doodle.
+struct Doodle {
+    /// The lines of the SVG that place it.
+    lines: Vec<usize>,
+    /// Where it sits in the tile, wrapped into it.
+    at: (f32, f32),
+}
+
+/// `svg` with only `level` twentieths of its doodles, as even a spread of
+/// them as the tile has: the first doodle, then each time the one furthest
+/// from all those taken (the tile wraps, so distances do too). A thinner
+/// tile always holds the doodles of a fuller one and none besides, so moving
+/// the density only ever adds or removes some. The whole tile is returned
+/// untouched when `level` is `FULL`, or the SVG is not laid out as ours.
+fn thinned(svg: &str, level: u8) -> std::borrow::Cow<'_, str> {
+    if level >= FULL {
+        return svg.into();
+    }
+    let lines: Vec<&str> = svg.split_inclusive('\n').collect();
+    let tile = tile_size(svg).unwrap_or((374.0, 666.0));
+    let mut doodles: Vec<Doodle> = Vec::new();
+    let mut keys: Vec<String> = Vec::new();
+    for (index, line) in lines.iter().enumerate() {
+        let Some((key, at)) = placement(line) else {
+            continue;
+        };
+        let at = (at.0.rem_euclid(tile.0), at.1.rem_euclid(tile.1));
+        match keys.iter().position(|known| *known == key) {
+            Some(found) => doodles[found].lines.push(index),
+            None => {
+                keys.push(key);
+                doodles.push(Doodle {
+                    lines: vec![index],
+                    at,
+                });
+            }
+        }
+    }
+    if doodles.is_empty() {
+        return svg.into();
+    }
+    let keep = (doodles.len() * usize::from(level)).div_ceil(usize::from(FULL));
+    let distance = |a: (f32, f32), b: (f32, f32)| {
+        let (dx, dy) = ((a.0 - b.0).abs(), (a.1 - b.1).abs());
+        let (dx, dy) = (dx.min(tile.0 - dx), dy.min(tile.1 - dy));
+        dx * dx + dy * dy
+    };
+    let mut taken = vec![0];
+    let mut gap: Vec<f32> = doodles
+        .iter()
+        .map(|doodle| distance(doodle.at, doodles[0].at))
+        .collect();
+    while taken.len() < keep {
+        let next = (0..doodles.len())
+            .filter(|index| !taken.contains(index))
+            .fold(None::<usize>, |best, index| match best {
+                Some(best) if gap[best] >= gap[index] => Some(best),
+                _ => Some(index),
+            });
+        let Some(next) = next else { break };
+        taken.push(next);
+        for (index, gap) in gap.iter_mut().enumerate() {
+            *gap = gap.min(distance(doodles[index].at, doodles[next].at));
+        }
+    }
+    let dropped: std::collections::HashSet<usize> = doodles
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !taken.contains(index))
+        .flat_map(|(_, doodle)| doodle.lines.iter().copied())
+        .collect();
+    lines
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !dropped.contains(index))
+        .map(|(_, line)| *line)
+        .collect::<String>()
+        .into()
+}
+
+/// What a `<use>` line places: the icon with its turn and size, the same for
+/// a doodle's copies, and the point it is moved to.
+fn placement(line: &str) -> Option<(String, (f32, f32))> {
+    let line = line.trim_start().strip_prefix("<use ")?;
+    let attribute = |name: &str| {
+        let start = line.find(name)? + name.len();
+        line[start..].split('"').next()
+    };
+    let icon = attribute("xlink:href=\"")?;
+    let transform = attribute("transform=\"")?;
+    let moved = transform.strip_prefix("translate(")?;
+    let (point, rest) = moved.split_once(')')?;
+    let (x, y) = point.split_once(' ')?;
+    Some((format!("{icon}{rest}"), (x.parse().ok()?, y.parse().ok()?)))
+}
+
+/// The tile's width and height as its SVG says.
+fn tile_size(svg: &str) -> Option<(f32, f32)> {
+    let root = &svg[svg.find("<svg")?..];
+    let root = &root[..root.find('>')?];
+    let attribute = |name: &str| {
+        let start = root.find(name)? + name.len();
+        root[start..].split('"').next()?.parse::<f32>().ok()
+    };
+    Some((attribute("width=\"")?, attribute("height=\"")?))
+}
+
 /// The wallpaper image named in the settings, decoded off the interface
 /// thread. A file that is missing or cannot be decoded leaves the colour in
 /// place and is not tried again until the setting changes.
@@ -427,7 +555,7 @@ pub struct CustomImage {
     /// Bumped for every new file, so a window's texture of an earlier one is
     /// replaced even when the copy kept its name.
     generation: u64,
-    image: Option<Arc<ColorImage>>,
+    image: Option<Arc<Pixels>>,
     pending: Option<mpsc::Receiver<Result<ColorImage, String>>>,
 }
 
@@ -460,7 +588,9 @@ impl CustomImage {
         };
         match pending.try_recv() {
             Ok(Ok(image)) => {
-                self.image = Some(Arc::new(image));
+                if let Some(path) = &self.path {
+                    self.image = Some(Arc::new(Pixels::new(path, image, false)));
+                }
                 self.pending = None;
             }
             Ok(Err(error)) => {
@@ -485,7 +615,7 @@ impl CustomImage {
     }
 
     /// The decoded image, if one is ready, with its generation.
-    pub fn ready(&self) -> Option<(u64, Arc<ColorImage>)> {
+    pub fn ready(&self) -> Option<(u64, Arc<Pixels>)> {
         self.image
             .as_ref()
             .map(|image| (self.generation, Arc::clone(image)))
@@ -496,7 +626,7 @@ impl CustomImage {
     pub fn show_now(&mut self, path: &Path, image: ColorImage) {
         self.path = Some(path.to_path_buf());
         self.generation += 1;
-        self.image = Some(Arc::new(image));
+        self.image = Some(Arc::new(Pixels::new(path, image, true)));
         self.pending = None;
     }
 }
@@ -589,7 +719,7 @@ mod tests {
     #[test]
     fn every_doodle_tile_keeps_its_intrinsic_dimensions() {
         for style in DoodleStyle::ALL {
-            let image = rasterize(style).expect("doodle SVG renders");
+            let image = rasterize(style, FULL).expect("doodle SVG renders");
             assert_eq!(image.size, [374, 666], "{style:?}");
             assert!(image.pixels.iter().any(|pixel| pixel.a() != 0), "{style:?}");
         }
@@ -666,9 +796,9 @@ mod tests {
         Look {
             color: Color32::from_rgb(22, 23, 23),
             doodles: true,
-            scene: false,
             style: DoodleStyle::Classic,
             intensity,
+            density: 1.0,
             accent,
             image: None,
         }
@@ -712,6 +842,145 @@ mod tests {
             tinted.to_srgba_unmultiplied()[..3],
             grey.to_srgba_unmultiplied()[..3]
         );
+    }
+
+    /// The `<use>` lines of a tile's SVG.
+    fn placed(svg: &str) -> Vec<&str> {
+        svg.lines()
+            .filter(|line| line.trim_start().starts_with("<use "))
+            .collect()
+    }
+
+    #[test]
+    fn density_asks_for_a_thinner_tile_up_to_the_default_and_a_smaller_one_past_it() {
+        assert_eq!(level(1.0), FULL);
+        assert_eq!(level(0.5), FULL / 2);
+        assert_eq!(level(0.25), FULL / 4);
+        // Past the default every doodle is there, and the tile shrinks.
+        assert_eq!(level(2.0), FULL);
+        assert_eq!(tile_scale(1.0), 1.0);
+        assert_eq!(tile_scale(0.25), 1.0);
+        assert!((tile_scale(2.0) - 0.5_f32.sqrt()).abs() < 1e-6);
+        // Four times the doodles in a quarter of the area is the same density.
+        assert!((1.0 / (tile_scale(2.0) * tile_scale(2.0)) - 2.0).abs() < 1e-5);
+        // Out of range, or not a number, falls back to the slider's ends or 1.
+        assert_eq!(level(-4.0), level(*crate::settings::DOODLE_DENSITY.start()));
+        assert_eq!(
+            tile_scale(50.0),
+            tile_scale(*crate::settings::DOODLE_DENSITY.end())
+        );
+        assert_eq!(level(f32::NAN), FULL);
+        assert_eq!(tile_scale(f32::NAN), 1.0);
+    }
+
+    #[test]
+    fn a_thinned_tile_keeps_an_even_share_of_whole_doodles() {
+        for style in DoodleStyle::ALL {
+            let source = String::from_utf8_lossy(svg(style)).into_owned();
+            let all = placed(&source);
+            assert!(all.len() > 100, "{style:?}");
+            assert_eq!(thinned(&source, FULL), source, "{style:?}");
+
+            let mut before: Vec<String> = Vec::new();
+            for level in [1, 5, 10, 15, 19] {
+                let thin = thinned(&source, level);
+                let kept = placed(&thin);
+                // About `level` twentieths of the doodles; a doodle that
+                // wraps over the edge counts once, so the lines are close to
+                // that share, not exactly it.
+                let share = kept.len() as f32 / all.len() as f32;
+                let want = f32::from(level) / f32::from(FULL);
+                assert!((share - want).abs() < 0.1, "{style:?} {level}: {share}");
+                // Whatever the tile keeps of a doodle, it keeps all of: the
+                // copies a tile away carry the same icon, turn and size.
+                for line in &kept {
+                    let (key, _) = placement(line).unwrap();
+                    let copies = all
+                        .iter()
+                        .filter(|other| placement(other).unwrap().0 == key)
+                        .count();
+                    let there = kept
+                        .iter()
+                        .filter(|other| placement(other).unwrap().0 == key)
+                        .count();
+                    assert_eq!(copies, there, "{style:?} {level}");
+                }
+                // A thinner tile is a part of a fuller one, never another.
+                assert!(before.iter().all(|line| kept.contains(&line.as_str())));
+                before = kept.iter().map(|line| (*line).to_owned()).collect();
+            }
+        }
+    }
+
+    #[test]
+    fn a_thinned_tile_is_drawn_with_fewer_doodles() {
+        let ink = |level| {
+            rasterize(DoodleStyle::Classic, level)
+                .expect("renders")
+                .pixels
+                .iter()
+                .map(|pixel| u64::from(pixel.a()))
+                .sum::<u64>()
+        };
+        let (quarter, half, full) = (ink(FULL / 4), ink(FULL / 2), ink(FULL));
+        assert!(quarter > 0, "something is left of the thinnest tile");
+        assert!(quarter < half && half < full, "{quarter} {half} {full}");
+    }
+
+    #[test]
+    fn a_window_keeps_each_whole_tile_and_the_one_thinned_tile_in_use() {
+        let ctx = egui::Context::default();
+        let whole = texture(&ctx, DoodleStyle::Nature).expect("renders").id();
+        let thin = texture_at(&ctx, DoodleStyle::Nature, 8).expect("renders");
+        assert_ne!(thin.id(), whole);
+        assert_eq!(
+            texture_at(&ctx, DoodleStyle::Nature, 8).unwrap().id(),
+            thin.id()
+        );
+        // Another density lets go of the one before it, but not the whole tile.
+        let other = texture_at(&ctx, DoodleStyle::Nature, 12).expect("renders");
+        assert_ne!(other.id(), thin.id());
+        assert_eq!(texture(&ctx, DoodleStyle::Nature).unwrap().id(), whole);
+        let cache = ctx.data_mut(|data| {
+            data.get_temp_mut_or_default::<Cache>(egui::Id::new("chat-wallpaper"))
+                .clone()
+        });
+        let kept: Vec<TileKey> = cache.0.lock().unwrap().keys().copied().collect();
+        assert!(!kept.contains(&(DoodleStyle::Nature, 8)), "{kept:?}");
+        assert!(kept.contains(&(DoodleStyle::Nature, 12)));
+        assert!(kept.contains(&(DoodleStyle::Nature, FULL)));
+    }
+
+    #[test]
+    fn a_new_density_glides_in_and_does_not_jump() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("density");
+        let at = |time: f64, target: f32| {
+            let mut shown = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| shown = eased_density(ui.ctx(), id, target),
+            );
+            output.textures_delta.clear();
+            shown
+        };
+        // The first frame shows what it is given, and so does a steady one.
+        assert_eq!(at(0.0, 1.0), 1.0);
+        assert_eq!(at(1.0, 1.0), 1.0);
+        // A change starts from where it was, passes between, and arrives.
+        assert_eq!(at(2.0, 0.5), 1.0);
+        let middle = at(2.0 + f64::from(crate::theme::MOTION_PANEL) / 2.0, 0.5);
+        assert!(middle < 1.0 && middle > 0.5, "{middle}");
+        // Ease out: more than half the way there at half the time.
+        assert!(middle < 0.75, "{middle}");
+        assert_eq!(at(4.0, 0.5), 0.5);
+        // A change in the middle of another starts from where that had got to.
+        assert_eq!(at(5.0, 0.25), 0.5);
+        let partway = at(5.0 + f64::from(crate::theme::MOTION_PANEL) / 2.0, 1.0);
+        assert!(partway > 0.25 && partway < 0.5, "{partway}");
     }
 
     fn write_image(path: &Path, width: u32, height: u32) {
@@ -796,7 +1065,10 @@ mod tests {
             custom.sync(Some(&path), &waker);
         }
         let (generation, image) = custom.ready().expect("decoded");
-        assert_eq!(image.size, [20, 10]);
+        // The first upload takes the pixels; a later one decodes the file again.
+        assert_eq!(image.take().expect("first upload").size, [20, 10]);
+        assert!(image.held.lock().unwrap().is_none());
+        assert_eq!(image.take().expect("decoded again").size, [20, 10]);
         custom.reload();
         custom.sync(Some(&path), &waker);
         assert!(custom.ready().is_none_or(|(next, _)| next > generation));

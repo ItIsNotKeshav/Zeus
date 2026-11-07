@@ -53,7 +53,7 @@ pub fn swatch_id(hex: &str) -> egui::Id {
 /// Reads a `#rrggbb` colour, falling back to the theme accent.
 pub fn color_of(palette: &Palette, hex: &str) -> Color32 {
     let digits = hex.trim_start_matches('#');
-    if digits.len() != 6 {
+    if digits.len() != 6 || !digits.is_ascii() {
         return palette.accent;
     }
     let channel = |at: usize| u8::from_str_radix(&digits[at..at + 2], 16).ok();
@@ -644,6 +644,8 @@ mod tests {
         assert_eq!(color_of(&palette, "22c55e"), Color32::from_rgb(34, 197, 94));
         assert_eq!(color_of(&palette, "green"), palette.accent);
         assert_eq!(color_of(&palette, "#12345"), palette.accent);
+        // Six bytes, but a letter that two-byte pairs would cut in half.
+        assert_eq!(color_of(&palette, "#aébbb"), palette.accent);
     }
 
     #[test]

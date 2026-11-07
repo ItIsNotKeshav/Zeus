@@ -182,6 +182,26 @@ const VOICE_FETCH_HOLD: Duration = Duration::from_secs(10);
 /// most likely found it through search or by scrolling far up, and are still
 /// reading there (and scrolling through that much history would be slow).
 const FOLLOW_REPLY: usize = 25;
+/// How long the zoom and display scale hold still before the font atlas is
+/// rebuilt for them, so a drag between displays or a run of zoom steps
+/// rebuilds it once.
+const ATLAS_SETTLE: Duration = Duration::from_secs(2);
+/// How long the window stays unfocused before the font atlas is rebuilt.
+const ATLAS_IDLE: Duration = Duration::from_secs(5 * 60);
+
+/// What `App::follow_font_atlas` has seen of the scale and of the window's
+/// focus, to know when the font atlas has gathered glyphs nobody draws now.
+#[derive(Default)]
+struct AtlasWatch {
+    /// The zoom factor and native pixels per point last seen.
+    scale: Option<(f32, f32)>,
+    /// When that scale last changed, until the atlas is rebuilt for it.
+    changed: Option<Instant>,
+    /// Since when the window has been unfocused.
+    away: Option<Instant>,
+    /// Whether the atlas was rebuilt during this unfocused spell.
+    rebuilt_away: bool,
+}
 
 /// Loaded chat history and paging state.
 #[derive(Default)]
@@ -208,12 +228,18 @@ pub struct Conversation {
     /// The height each row last took, keyed by message id, so the transcript
     /// can skip rows far from the viewport instead of laying them out.
     pub(crate) rows: HashMap<String, RowHeight>,
+    /// The rows that may hold an end of egui's text selection, by message
+    /// id, which the transcript keeps laid out while the selection lasts.
+    pub(crate) text_ends: HashSet<String>,
     /// The keyboard page, Home, or End scroll under way in the message list.
     pub(crate) key_scroll: Option<KeyScroll>,
     /// The first row whose top was in the message list's view last frame,
     /// and that top's distance from the start of the transcript, which the
     /// list keeps in place when rows above it change height or arrive.
     pub(crate) top_row: Option<(String, f32)>,
+    /// Messages just deleted from this chat while it was open, drawn
+    /// leaving for a moment where they were.
+    pub(crate) leaving: Vec<crate::ui::leaving::Leaving>,
 }
 
 /// A keyboard scroll the message list eases through, one instant step per
@@ -318,6 +344,10 @@ impl Conversation {
             let added = self.messages.len() - old_len;
             self.messages.rotate_right(added);
         }
+        self.sort();
+    }
+
+    fn sort(&mut self) {
         self.messages
             .sort_by_key(|message| (message.timestamp, message.history_order.unwrap_or(i64::MAX)));
     }
@@ -427,12 +457,11 @@ pub struct App {
     theme_transition: fastframe_theme::Transition,
     /// A chat theme picked in Settings, opening from its card.
     theme_reveal: crate::theme_reveal::Reveal,
-    /// The Halloween ghost or candy on screen.
-    pub(crate) surprise: crate::surprise::Surprise,
     /// Whether palette changes are revealed. Off in tests, whose frames send
     /// no screenshots and would hold the old palette.
     pub reveal_theme_changes: bool,
     zoom_applied: bool,
+    atlas_watch: AtlasWatch,
     /// The wallpaper image named in the settings, decoded off this thread.
     pub wallpaper_image: crate::wallpaper::CustomImage,
 
@@ -510,6 +539,9 @@ pub struct App {
     /// The shown group's members in display order, sorted once per change
     /// rather than every frame.
     pub(crate) info_members: Option<(ChatId, Vec<(String, String)>)>,
+    /// The shown group's invite link, asked for when its row is drawn and
+    /// dropped with the panel: it is a secret, never kept longer.
+    pub info_invite: Option<(ChatId, crate::group_admin::LinkState)>,
     /// The panel control that takes the keyboard on the next frame.
     pub(crate) info_focus: Option<InfoFocus>,
     /// Whether the locked-chats folder is open.
@@ -574,6 +606,9 @@ pub struct App {
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
+    /// Demo/test: keep this group member's menu open in the info panel.
+    #[cfg(any(test, feature = "demo"))]
+    pub open_member_menu: Option<ChatId>,
     /// Demo/test: keep the selection bar's delete menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_selection_delete_menu: bool,
@@ -581,6 +616,8 @@ pub struct App {
     pub emoji_jump: Option<&'static str>,
     /// Attachments pending in the composer.
     pub pending: Vec<Staged>,
+    /// Whether the single staged photo will be sent as view-once media.
+    pub(crate) pending_view_once: bool,
     /// The next identity to give a staged attachment.
     next_pending_id: AttachmentId,
     /// Whether the composer plus menu is open or closing.
@@ -713,6 +750,9 @@ pub struct App {
     unread_kept: HashSet<ChatId>,
     pub toasts: Vec<Toast>,
     pub actions: Vec<Action>,
+    /// Invalidates editor history when a composer closes and reopens before
+    /// another frame, including a new session reusing the same account id.
+    composer_undo_epoch: u64,
     /// Text a link put in the composer, with the chat it belongs to. Text the
     /// reader never changed is not their draft, so a chat they leave does not
     /// store it in place of the one they wrote.
@@ -731,6 +771,10 @@ pub struct App {
     last_cache_prune: Option<Instant>,
     /// The check the reader asked for from Settings, and what it found.
     pub update_check: crate::updates::Check,
+    /// The benchmark About runs, under way or with its results.
+    pub benchmark: Option<crate::benchmark::Benchmark>,
+    /// Whether About shows what sharing the benchmark's results would send.
+    pub benchmark_share: bool,
     pub show_update: bool,
     pub update_download: crate::updates::DownloadState,
     pub update_support: Option<Result<crate::updates::Installation, String>>,
@@ -762,8 +806,6 @@ pub struct App {
     pub settings_search: String,
     /// The settings category shown beside the list of them.
     pub settings_section: usize,
-    /// Whether Settings shows the Halloween page instead of the list.
-    pub settings_halloween: bool,
     pub focus_settings_search: bool,
     pub quit_requested: bool,
     pub window_focused: bool,
@@ -813,6 +855,8 @@ pub struct App {
     /// When the call on screen was placed here, while the worker has not
     /// said anything about it yet.
     call_placed: Option<Instant>,
+    /// A placed or linked call waiting for macOS to grant microphone or camera access.
+    call_access: Option<calls::PendingCallAccess>,
     /// The newest camera preview and peer picture of a video call.
     pub call_local_frame: Option<std::sync::Arc<egui::ColorImage>>,
     pub call_remote_frame: Option<std::sync::Arc<egui::ColorImage>>,
@@ -932,6 +976,7 @@ pub(crate) struct AttachmentDraft {
     /// a switch and cropping it again still starts from its original rather
     /// than from the crop that came out of it.
     pub(crate) pending: Vec<Staged>,
+    pub(crate) view_once: bool,
     quoting: Option<crate::model::ReplyTarget>,
 }
 
@@ -990,6 +1035,26 @@ impl App {
         id
     }
 
+    /// Whether exactly one staged photo can be sent with WhatsApp's view-once
+    /// restriction. Documents and batches cannot carry this option.
+    pub(crate) fn pending_supports_view_once(&self) -> bool {
+        matches!(
+            self.pending.as_slice(),
+            [Staged {
+                item: Pending::Picture { .. },
+                ..
+            }]
+        ) || matches!(
+            self.pending.as_slice(),
+            [Staged { item: Pending::File(path), .. }]
+                if Pending::is_view_once_photo_file(path)
+        )
+    }
+
+    fn set_pending_view_once(&mut self, view_once: bool) {
+        self.pending_view_once = view_once && self.pending_supports_view_once();
+    }
+
     /// The identity for the next attachment, whether it lands in the composer
     /// or in a chat's draft.
     fn next_attachment_id(&mut self) -> AttachmentId {
@@ -1038,6 +1103,13 @@ impl Pending {
         mime_guess2::from_path(path)
             .first()
             .is_some_and(|mime| mime.type_() == "image")
+    }
+
+    /// Whether this file can be decoded and sent as a WhatsApp view-once photo.
+    pub fn is_view_once_photo_file(path: &std::path::Path) -> bool {
+        mime_guess2::from_path(path)
+            .first_raw()
+            .is_some_and(|mime| matches!(mime, "image/jpeg" | "image/png" | "image/webp"))
     }
 }
 
@@ -1334,10 +1406,17 @@ impl App {
         dirs: AppDirs,
         settings: Settings,
         roster: AccountRoster,
-        accounts: Vec<Account>,
+        mut accounts: Vec<Account>,
         active: usize,
         waker: Waker,
     ) -> Self {
+        // Each account still remembers its last chat. A fresh start opens
+        // one only when asked; the default is the list with no chat.
+        if !settings.restore_last_chat {
+            for account in &mut accounts {
+                account.open_chat = None;
+            }
+        }
         // Until the window says, a theme that follows the system starts dark.
         let palette = settings.palette(settings.mode != crate::chat_themes::Mode::Light);
         let locale = crate::i18n::resolve(settings.interface_language);
@@ -1362,9 +1441,9 @@ impl App {
             applied_dark: None,
             theme_transition: fastframe_theme::Transition::default(),
             theme_reveal: crate::theme_reveal::Reveal::default(),
-            surprise: crate::surprise::Surprise::default(),
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
+            atlas_watch: AtlasWatch::default(),
             wallpaper_image: crate::wallpaper::CustomImage::default(),
             scroll_chats_to_top: false,
             stale_images: Vec::new(),
@@ -1391,6 +1470,7 @@ impl App {
             info_media_request: 0,
             info_media_failed: false,
             info_members: None,
+            info_invite: None,
             info_focus: None,
             chat_search: String::new(),
             chat_search_hits: Vec::new(),
@@ -1435,9 +1515,12 @@ impl App {
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
             #[cfg(any(test, feature = "demo"))]
+            open_member_menu: None,
+            #[cfg(any(test, feature = "demo"))]
             open_selection_delete_menu: false,
             emoji_jump: None,
             pending: Vec::new(),
+            pending_view_once: false,
             next_pending_id: 0,
             composer_tools_open: false,
             player: Player::new(waker.clone()),
@@ -1497,6 +1580,7 @@ impl App {
             unread_kept: HashSet::new(),
             toasts: Vec::new(),
             actions: Vec::new(),
+            composer_undo_epoch: 0,
             prefilled: None,
             deferred_account_actions: Vec::new(),
             events_hidden: false,
@@ -1504,6 +1588,8 @@ impl App {
             last_update_check: None,
             last_cache_prune: None,
             update_check: crate::updates::Check::default(),
+            benchmark: None,
+            benchmark_share: false,
             show_update: false,
             update_download: Default::default(),
             update_support: None,
@@ -1520,7 +1606,6 @@ impl App {
             focus_search: false,
             settings_search: String::new(),
             settings_section: 0,
-            settings_halloween: false,
             focus_settings_search: false,
             quit_requested: false,
             window_focused: false,
@@ -1541,6 +1626,7 @@ impl App {
             call_dismissed: None,
             call_cancel: None,
             call_placed: None,
+            call_access: None,
             call_local_frame: None,
             call_remote_frame: None,
             call_local_texture: None,
@@ -1666,6 +1752,7 @@ impl App {
         }
         self.picker = None;
         self.pending.clear();
+        self.pending_view_once = false;
         self.forget_unstaged_pictures();
         self.reply_to = None;
         self.editing = None;
@@ -1679,15 +1766,18 @@ impl App {
         // Whatever the composer held is not a link's text any more.
         self.prefilled = None;
         if let Some(id) = self.open_chat.clone() {
+            self.open_draft_priority = self.parked_draft(&id);
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_caret_end = !self.composer.is_empty();
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
             self.pending = attachments.pending;
+            self.pending_view_once = attachments.view_once;
             self.reply_to = attachments.quoting;
         } else {
             self.composer.clear();
             self.composer_mentions.clear();
+            self.pending_view_once = false;
         }
         self.focus_composer = self.open_chat.is_some();
     }
@@ -1729,6 +1819,7 @@ impl App {
     /// Drops App-owned pointers into the previous account's chats and media.
     fn clear_account_ui(&mut self) {
         self.recent_chats.clear();
+        self.invalidate_composer_undo();
         // The pop-out and the bubbles show the previous account's chats.
         self.pop_out = None;
         self.bubbles.clear();
@@ -1759,6 +1850,7 @@ impl App {
         self.reaction_anchor = None;
         self.picker = None;
         self.pending.clear();
+        self.pending_view_once = false;
         self.forget_unstaged_pictures();
         self.invite = None;
         self.message_receipts = None;
@@ -1911,6 +2003,7 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+        self.trim_open_conversations();
         self.window_hidden = true;
         self.window_focused = false;
         self.hide_intent = false;
@@ -1940,12 +2033,9 @@ impl App {
             // Messages draws its conversations on a plain background.
             doodles: self.settings.show_wallpaper
                 && self.palette.bubbles != crate::theme::BubbleStyle::Messages,
-            scene: self.settings.halloween_wallpaper()
-                && self.settings.wallpaper_color_for(self.palette.dark)
-                    == crate::settings::WallpaperColor::Theme
-                && self.account().settings.wallpaper_image.is_none(),
             style: self.settings.doodle_style,
             intensity: self.settings.doodle_intensity,
+            density: self.settings.doodle_density,
             accent: (self.settings.doodle_color == crate::settings::DoodleColor::Accent)
                 .then_some(self.palette.accent),
             image: self
@@ -2120,7 +2210,7 @@ impl App {
 
     /// Sends a desktop notification for an unseen incoming message.
     fn maybe_notify(&mut self, chat_id: &str, message: &Message) {
-        if !self.account().settings.notifications {
+        if !self.account().settings.notifications || self.power.conditions().display_off {
             return;
         }
         let Some(chat) = self.chat(chat_id) else {
@@ -2325,7 +2415,7 @@ impl App {
         // the tray installs one when it makes its item on the first window.
         // Ours hands the tray its own events (#215).
         #[cfg(target_os = "macos")]
-        crate::macos::attach(ctx);
+        crate::macos::attach(ctx, &self.waker);
         if let Some(tray) = &mut self.tray {
             tray.attach();
         }
@@ -2392,6 +2482,8 @@ impl App {
         self.chats.retain(|chat| chat.id != id);
         self.recent_chats.retain(|recent| recent != id);
         self.conversations.remove(id);
+        self.left_chats.retain(|left| left != id);
+        self.phone_history.remove(id);
         // The recorded places belong to the account on screen, and chat ids
         // repeat across accounts.
         if !self.events_hidden {
@@ -2419,6 +2511,9 @@ impl App {
     /// hits and dialogs, and, when it is open, the conversation with its
     /// composer, recording and playback. Keeping a draft is up to the caller.
     fn leave_chat(&mut self, id: &str) {
+        if !self.events_hidden && self.open_chat.as_deref() == Some(id) {
+            self.invalidate_composer_undo();
+        }
         self.clear_chat_notifications(id);
         self.search_hits.retain(|message| message.chat != id);
         // A locked or deleted chat keeps none of its pinned words on screen.
@@ -2465,6 +2560,7 @@ impl App {
             self.composer.clear();
             self.composer_mentions.clear();
             self.pending.clear();
+            self.pending_view_once = false;
             self.forget_unstaged_pictures();
             self.reply_to = None;
             self.editing = None;
@@ -2972,20 +3068,52 @@ impl App {
             && !self.settings.chat_lock_hint_dismissed
     }
 
+    /// A person never written to, left out of the list as on the phone. One
+    /// the reader kept (pinned, a favorite, labeled, unread, locked, or with
+    /// an unsent draft) stays listed.
+    fn unlisted_stranger(&self, chat: &Chat) -> bool {
+        chat.kind == crate::model::ChatKind::Direct
+            && chat.never_messaged()
+            && !chat.pinned
+            && !chat.favorite
+            && !chat.looks_unread()
+            && chat.labels.is_empty()
+            && !chat.locked
+            && !self.has_draft(&chat.id)
+    }
+
     /// Visible chats filtered by search, archive state, and the chat filter,
-    /// with pinned chats first.
+    /// with pins first, then parked drafts. The Favorites chip retains the
+    /// phone's order below pins instead of promoting drafts.
     /// Locked chats only appear inside the locked folder.
     pub fn visible_chats(&self) -> Vec<&Chat> {
+        self.visible_chat_indices()
+            .into_iter()
+            .map(|index| &self.chats[index])
+            .collect()
+    }
+
+    /// `visible_chats` as positions in `chats`, so a list can copy just the
+    /// rows it draws instead of every chat each frame.
+    pub fn visible_chat_indices(&self) -> Vec<usize> {
         let needle = crate::util::search_key(self.search.trim());
         let locked = self.locked_folder_open();
         let filtering = !locked && needle.is_empty() && !self.show_archived;
         // Each chat comes with whether it matched only loosely.
-        let mut chats: Vec<(bool, &Chat)> = self
+        let mut indices: Vec<(bool, usize)> = self
             .chats
             .iter()
-            .filter(|chat| chat.locked == locked)
-            .filter(|chat| locked || chat.archived == self.show_archived || !needle.is_empty())
-            .filter(|chat| match &self.label_filter {
+            .enumerate()
+            .filter(|(_, chat)| chat.locked == locked)
+            .filter(|(_, chat)| locked || chat.archived == self.show_archived || !needle.is_empty())
+            // Searching still finds people never written to, and one being
+            // opened stays.
+            .filter(|(_, chat)| {
+                !needle.is_empty()
+                    || self.open_chat.as_deref() == Some(chat.id.as_str())
+                    || !self.unlisted_stranger(chat)
+            })
+            .filter(|(_, chat)| match &self.label_filter {
                 // A label lists every chat wearing it, channels included,
                 // because someone put each of them there.
                 _ if !filtering => true,
@@ -2996,11 +3124,11 @@ impl App {
                             && self.unread_kept.contains(&chat.id))
                 }
             })
-            .filter_map(|chat| {
+            .filter_map(|(index, chat)| {
                 // Inside the locked folder the typed text is the secret code,
                 // not a query to match.
                 if (self.locked_folder && !self.chat_lock_authenticated()) || needle.is_empty() {
-                    return Some((false, chat));
+                    return Some((false, index));
                 }
                 let title = crate::util::search_key(&self.chat_title(chat));
                 let exact = title.contains(&needle)
@@ -3010,14 +3138,15 @@ impl App {
                     });
                 // A name with letters left out is found too, below the
                 // chats the search matches as typed.
-                (exact || crate::util::fuzzy_matches(&title, &needle)).then_some((!exact, chat))
+                (exact || crate::util::fuzzy_matches(&title, &needle)).then_some((!exact, index))
             })
             .collect();
         // The Favorites chip keeps the phone's order below the pinned chats.
         let favorites_order = self.favorites_order();
-        chats.sort_by(|(loose_a, a), (loose_b, b)| {
+        indices.sort_by(|&(loose_a, a), &(loose_b, b)| {
+            let (a, b) = (&self.chats[a], &self.chats[b]);
             loose_a
-                .cmp(loose_b)
+                .cmp(&loose_b)
                 .then_with(|| b.pinned.cmp(&a.pinned))
                 .then_with(|| {
                     if a.pinned && b.pinned {
@@ -3027,13 +3156,14 @@ impl App {
                             .cmp(&b.favorite_position)
                             .then(a.id.cmp(&b.id))
                     } else {
-                        self.sort_activity(b)
-                            .cmp(&self.sort_activity(a))
+                        self.draft_priority(&b.id)
+                            .cmp(&self.draft_priority(&a.id))
+                            .then_with(|| self.sort_activity(b).cmp(&self.sort_activity(a)))
                             .then(a.id.cmp(&b.id))
                     }
                 })
         });
-        chats.into_iter().map(|(_, chat)| chat).collect()
+        indices.into_iter().map(|(_, index)| index).collect()
     }
 
     /// When a chat counts as last active for the list order: a chat holding a
@@ -3103,7 +3233,7 @@ impl App {
     pub fn archived_count(&self) -> usize {
         self.chats
             .iter()
-            .filter(|chat| chat.archived && !chat.locked)
+            .filter(|chat| chat.archived && !chat.locked && !self.unlisted_stranger(chat))
             .count()
     }
 
@@ -3169,19 +3299,34 @@ impl App {
             && crate::util::now() - message.timestamp <= REVOKE_WINDOW.as_secs() as i64
     }
 
+    /// Whether a closed chat has unsent text or attachments.
+    fn parked_draft(&self, chat: &str) -> bool {
+        self.drafts
+            .get(chat)
+            .is_some_and(|text| !text.trim().is_empty())
+            || self
+                .attachment_drafts
+                .get(chat)
+                .is_some_and(|draft| !draft.pending.is_empty())
+    }
+
+    /// Opening a draft keeps its priority until the reader leaves. New
+    /// typing is promoted only after leaving, so editing cannot move a row.
+    fn draft_priority(&self, chat: &str) -> bool {
+        if self.open_chat.as_deref() == Some(chat) {
+            self.open_draft_priority
+        } else {
+            self.parked_draft(chat)
+        }
+    }
+
     /// Whether a chat holds unsent text or attachments. Editing a sent
     /// message is not a draft.
     fn has_draft(&self, chat: &str) -> bool {
         if self.open_chat.as_deref() == Some(chat) {
             (self.editing.is_none() && !self.composer.trim().is_empty()) || !self.pending.is_empty()
         } else {
-            self.drafts
-                .get(chat)
-                .is_some_and(|text| !text.trim().is_empty())
-                || self
-                    .attachment_drafts
-                    .get(chat)
-                    .is_some_and(|draft| !draft.pending.is_empty())
+            self.parked_draft(chat)
         }
     }
 
@@ -3273,6 +3418,8 @@ impl App {
         for index in removed.into_iter().rev() {
             self.finish_removed(index);
         }
+        // A lock or a hidden account's event may have closed a chat.
+        self.settle_conversations();
     }
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
@@ -3334,6 +3481,7 @@ impl App {
                 self.me_about = about;
             }
             Event::Call(update) => self.handle_call_update(*update),
+            Event::PhoneOnlyCall(update) => self.handle_phone_only_call(*update),
             Event::CallDevices(devices) => self.call_devices = *devices,
             Event::CallVideo {
                 local,
@@ -3359,6 +3507,12 @@ impl App {
                         && self.editing.is_none()
                         && self.composer.is_empty()
                     {
+                        // Startup restoration may establish priority, but a
+                        // late answer must not move a chat where the reader
+                        // has already started composing with attachments.
+                        if self.pending.is_empty() {
+                            self.open_draft_priority = !text.trim().is_empty();
+                        }
                         self.composer = text;
                     } else {
                         self.drafts.entry(chat).or_insert(text);
@@ -3457,6 +3611,9 @@ impl App {
                 }
                 if let Some(open) = self.open_chat.clone() {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
+                        if live {
+                            self.invalidate_composer_undo();
+                        }
                         self.open_chat = None;
                     } else {
                         // Show archived messages immediately, including offline.
@@ -3494,7 +3651,15 @@ impl App {
                 {
                     self.backend.send(Command::LoadCallLog);
                 }
-                let conversation = self.conversations.entry(chat.clone()).or_default();
+                // Only a conversation in memory takes the message. Any other
+                // chat finds it in the archive when it opens; keeping it here
+                // would hold every chat's messages for good.
+                let Some(conversation) = self.resident_conversation(&chat) else {
+                    if !older {
+                        self.refresh_viewer_album(&chat);
+                    }
+                    return;
+                };
                 let was_empty = conversation.messages.is_empty();
                 if older && !messages.is_empty() {
                     conversation.phone_delivered = true;
@@ -3716,6 +3881,7 @@ impl App {
                     }
                     self.reload_lists();
                 }
+                let mut restamped = None;
                 if let Some(conversation) = self.conversations.get_mut(&message.chat)
                     && let Some(existing) = conversation.message_mut(&message.id)
                 {
@@ -3737,6 +3903,7 @@ impl App {
                             .collect::<Vec<_>>(),
                         _ => Vec::new(),
                     };
+                    let moved = existing.timestamp != message.timestamp;
                     *existing = message;
                     for (index, state) in carousel_states.into_iter().enumerate() {
                         if let (Some(state), Some(media)) =
@@ -3758,14 +3925,24 @@ impl App {
                     {
                         motion.state = state;
                     }
+                    if moved {
+                        // Our own message, restamped with the server's time.
+                        restamped = Some(existing.chat.clone());
+                        conversation.sort();
+                    }
+                }
+                // A hidden account's events never touch the window's selection.
+                if let Some(chat) = restamped.filter(|_| !self.events_hidden) {
+                    self.order_selection(&chat);
                 }
             }
             Event::Contacts(contacts) => {
                 if live {
                     self.info_members = None;
                 }
+                // The worker's own allocations: kept, never copied.
                 for contact in contacts {
-                    self.contacts.insert(contact.id.clone(), contact);
+                    self.contacts.insert(contact);
                 }
             }
             Event::UploadProgress {
@@ -3888,7 +4065,26 @@ impl App {
                 }
             }
             Event::MessageDeleted { chat, id } => {
+                let open = live && self.open_chat.as_deref() == Some(chat.as_str());
                 if let Some(conversation) = self.conversations.get_mut(&chat) {
+                    // A message deleted from the open chat leaves with motion.
+                    if open
+                        && let Some(index) = conversation
+                            .messages
+                            .iter()
+                            .position(|message| message.id == id)
+                    {
+                        let after = index
+                            .checked_sub(1)
+                            .map(|before| conversation.messages[before].id.clone());
+                        let message = conversation.messages[index].clone();
+                        crate::ui::leaving::record(
+                            &mut conversation.leaving,
+                            message,
+                            after,
+                            Instant::now(),
+                        );
+                    }
                     conversation.messages.retain(|message| message.id != id);
                 }
                 if live && self.editing.as_deref() == Some(id.as_str()) {
@@ -3978,7 +4174,11 @@ impl App {
             }
             Event::SyncProgress(percent) => self.sync_percent = Some(percent),
             Event::OlderFetched { chat, more, silent } => {
-                let conversation = self.conversations.entry(chat).or_default();
+                // A chat not in memory pages the archive afresh when it opens,
+                // and the worker keeps what the phone said about it.
+                let Some(conversation) = self.resident_conversation(&chat) else {
+                    return;
+                };
                 if silent {
                     // A background page is not an answer to a request the
                     // reader made: it must not clear the spinner of a
@@ -4109,6 +4309,56 @@ impl App {
                             if let Some(invite) = self.invite.as_mut() {
                                 invite.state = crate::model::InviteState::Failed(error);
                             }
+                        }
+                    }
+                }
+            }
+            Event::NewGroupPicture(result) => match result {
+                Ok(path) => {
+                    if let Some(draft) = self.new_group.as_mut() {
+                        draft.picture = Some(path);
+                    }
+                }
+                Err(_) if live => {
+                    let said = crate::i18n::gettext(self.locale, "Could not use this picture.");
+                    self.toast_error(said.into_owned());
+                }
+                Err(_) => {}
+            },
+            Event::GroupCreated { request, result } => self.group_created(request, result, live),
+            Event::GroupInviteLink {
+                chat,
+                reset,
+                result,
+            } => self.group_invite_link(chat, reset, result, live),
+            Event::GroupMembersAdded { chat, result } => {
+                self.group_members_added(chat, result, live)
+            }
+            Event::GroupPermissionSaved { result, .. } => {
+                if let Err(failure) = result
+                    && live
+                {
+                    let said = failure.message(self.locale);
+                    self.toast_error(said);
+                }
+            }
+            Event::GroupMemberChanged {
+                member,
+                change,
+                result,
+                ..
+            } => {
+                if live {
+                    match result {
+                        Ok(()) => {
+                            let name = self.display_name(&member);
+                            let said =
+                                crate::group_admin::changed_message(self.locale, change, &name);
+                            self.toast(said);
+                        }
+                        Err(failure) => {
+                            let said = failure.message(self.locale);
+                            self.toast_error(said);
                         }
                     }
                 }
@@ -4292,13 +4542,26 @@ impl App {
                         "This chat already has three pinned messages",
                     )
                     .into_owned(),
+                    crate::calls::GROUP_CALLS_NOT_ENABLED => crate::i18n::gettext(
+                        self.locale,
+                        "WhatsApp hasn't turned on group calls from a computer for your account yet. Ask someone in the group to call it, and answer here.",
+                    )
+                    .into_owned(),
+                    crate::calls::CALL_LINKS_OFF => crate::i18n::gettext(
+                        self.locale,
+                        "ZapFast can't join group calls yet: open the link on your phone.",
+                    )
+                    .into_owned(),
                     _ => message,
                 };
                 self.toast_error(shown);
             }
             Event::AccountRemoved => {}
         }
-        self.prune_selection();
+        // A hidden account's events never touch the window's selection.
+        if !self.events_hidden {
+            self.prune_selection();
+        }
     }
 
     fn prune_selection(&mut self) {
@@ -4335,6 +4598,24 @@ impl App {
             sweep.base = base;
         }
         self.selection = Some((chat, ids));
+    }
+
+    /// Puts the selected messages of `chat` back in chat order after one of
+    /// them moved, so selection actions keep following the chat.
+    fn order_selection(&mut self, chat: &str) {
+        let Some((selected, mut ids)) = self.selection.clone() else {
+            return;
+        };
+        let Some(conversation) = self.conversations.get(chat).filter(|_| selected == chat) else {
+            return;
+        };
+        ids.sort_by_key(|id| {
+            conversation
+                .messages
+                .iter()
+                .position(|message| message.id == *id)
+        });
+        self.selection = Some((selected, ids));
     }
 
     /// Updates one account's link state, discarding its drafts when it is unlinked.
@@ -4392,6 +4673,9 @@ impl App {
                 }
             }
             LinkStatus::LoggedOut => {
+                if live {
+                    self.invalidate_composer_undo();
+                }
                 // Account-scoped lookup results are discarded by the worker.
                 // End their UI requests too, so a later account can retry.
                 self.new_contact_request = None;
@@ -4405,6 +4689,8 @@ impl App {
                 self.notifications.clear_account(&account);
                 self.chats.clear();
                 self.conversations.clear();
+                self.left_chats.clear();
+                self.phone_history.clear();
                 self.contacts.clear();
                 self.avatars.clear();
                 self.starred.clear();
@@ -4428,6 +4714,7 @@ impl App {
                 self.attachment_drafts.clear();
                 if live {
                     self.pending.clear();
+                    self.pending_view_once = false;
                     self.reply_to = None;
                     self.composer.clear();
                     self.composer_mentions.clear();
@@ -4603,27 +4890,36 @@ impl App {
         let editing = self.editing.clone();
         let reply = self.reply_to.clone();
         let reaction = self.reaction_target.clone();
-        let (editing_gone, reply_gone, reaction_gone) = {
-            let conversation = self.conversations.entry(id.to_owned()).or_default();
-            conversation
-                .messages
-                .retain(|message| message.timestamp > through);
-            conversation.requested = true;
-            conversation.complete = true;
-            conversation.phone_exhausted = true;
-            conversation.loading_older = false;
-            (
-                editing
-                    .as_ref()
-                    .is_some_and(|edit| conversation.message(edit).is_none()),
-                reply.as_ref().is_some_and(|reply| {
-                    reply.source_chat(id) == id && conversation.message(&reply.id).is_none()
-                }),
-                reaction
-                    .as_ref()
-                    .is_some_and(|(_, target)| conversation.message(target).is_none()),
-            )
-        };
+        let (editing_gone, reply_gone, reaction_gone) =
+            if let Some(conversation) = self.resident_conversation(id) {
+                conversation
+                    .messages
+                    .retain(|message| message.timestamp > through);
+                conversation.requested = true;
+                conversation.complete = true;
+                conversation.phone_exhausted = true;
+                conversation.loading_older = false;
+                (
+                    editing
+                        .as_ref()
+                        .is_some_and(|edit| conversation.message(edit).is_none()),
+                    reply.as_ref().is_some_and(|reply| {
+                        reply.source_chat(id) == id && conversation.message(&reply.id).is_none()
+                    }),
+                    reaction
+                        .as_ref()
+                        .is_some_and(|(_, target)| conversation.message(target).is_none()),
+                )
+            } else {
+                // A chat not in memory reads what is left from the archive
+                // when it opens. Only the phone's word goes with it: what was
+                // cleared is not asked for again.
+                self.phone_history
+                    .entry(id.to_owned())
+                    .or_default()
+                    .exhausted = true;
+                (false, false, false)
+            };
         if open && live {
             if editing_gone {
                 self.editing = None;
@@ -4699,6 +4995,7 @@ impl App {
             // when this chat cannot be asked for yet.
             self.reset_info_media();
             self.info_members = None;
+            self.info_invite = None;
             self.info = Some(InfoPanel {
                 chat,
                 view: InfoView::Overview,
@@ -4728,6 +5025,7 @@ impl App {
         self.info = None;
         self.reset_info_media();
         self.info_members = None;
+        self.info_invite = None;
         self.info_focus = None;
         self.contact_edit = None;
         self.group_name_edit = None;
@@ -4749,6 +5047,9 @@ impl App {
     fn set_open_chat(&mut self, id: Option<ChatId>) {
         if self.open_chat != id {
             self.close_info();
+            if let Some(left) = self.open_chat.clone() {
+                self.account_mut().note_left(&left);
+            }
         }
         self.open_chat = id;
     }
@@ -4967,6 +5268,7 @@ impl App {
             Unsent::Files {
                 paths,
                 documents,
+                view_once,
                 caption,
             } => {
                 let pending = if documents {
@@ -4974,13 +5276,14 @@ impl App {
                 } else {
                     Pending::File
                 };
-                self.restore_attachments(&chat, paths.into_iter().map(pending), quoting);
+                self.restore_attachments(&chat, paths.into_iter().map(pending), quoting, view_once);
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
             Unsent::Image {
                 width,
                 height,
                 rgba,
+                view_once,
                 caption,
             } => {
                 self.restore_attachments(
@@ -4992,6 +5295,7 @@ impl App {
                         texture: None,
                     }],
                     quoting,
+                    view_once,
                 );
                 self.restore_text(&chat, caption.unwrap_or_default());
             }
@@ -5005,6 +5309,10 @@ impl App {
                 self.locale,
                 "Not sent: the message you’re replying to isn’t available on this computer. Cancel the reply to send without a quote.",
             ),
+            Refusal::UnsupportedViewOnce => crate::i18n::gettext(
+                self.locale,
+                "Not sent: view-once mode is available for one photo at a time.",
+            ),
         };
         self.toast_error(message.into_owned());
     }
@@ -5015,11 +5323,17 @@ impl App {
         chat: &str,
         pending: impl IntoIterator<Item = Pending>,
         quoting: Option<crate::model::ReplyTarget>,
+        view_once: bool,
     ) {
         if !self.events_hidden && self.open_chat.as_deref() == Some(chat) {
+            let preserve_view_once = self.pending_view_once || view_once;
             for item in pending {
                 self.stage(item);
             }
+            // Recovery can merge with a newer draft. Keep the privacy choice;
+            // send_pending refuses an unsupported combination until the user
+            // removes the extra attachments or explicitly turns the option off.
+            self.pending_view_once = preserve_view_once;
         } else if self.chat(chat).is_some() {
             // Named here as well, so the draft carries an identity back with
             // the attachment rather than handing out a new one later.
@@ -5032,6 +5346,7 @@ impl App {
                 .collect();
             let draft = self.attachment_drafts.entry(chat.to_owned()).or_default();
             draft.pending.extend(staged);
+            draft.view_once |= view_once;
             if draft.quoting.is_none() {
                 draft.quoting = quoting;
             }
@@ -5239,10 +5554,17 @@ impl App {
 
     fn ensure_loaded(&mut self, chat: &str) {
         let request = {
-            let conversation = self.conversations.entry(chat.to_owned()).or_default();
+            let account = &mut self.accounts[self.active];
+            // A chat dropped from memory opens as it first did, knowing what
+            // the phone said about its history.
+            let phone = account.phone_history.remove(chat);
+            let conversation = account.conversations.entry(chat.to_owned()).or_default();
             if conversation.requested {
                 false
             } else {
+                if let Some(phone) = phone {
+                    conversation.resume_phone(phone);
+                }
                 conversation.requested = true;
                 true
             }
@@ -5463,12 +5785,14 @@ impl App {
                 self.recent_chats.insert(1, previous);
             }
             self.recent_chats.truncate(2);
+            self.invalidate_composer_undo();
             self.reaction_target = None;
             self.reaction_anchor = None;
             self.composer_tools_open = false;
             self.emoji_jump = None;
             self.jump_highlight = None;
             if let Some(previous) = self.open_chat.take() {
+                self.account_mut().note_left(&previous);
                 self.save_attachment_draft(&previous);
                 let draft = std::mem::take(&mut self.composer);
                 // Text a link brought, and the reader never changed, is not
@@ -5500,12 +5824,14 @@ impl App {
                         placed: false,
                         first: None,
                     });
+            self.open_draft_priority = self.parked_draft(&id);
             self.composer = self.drafts.remove(&id).unwrap_or_default();
             self.composer_caret_end = !self.composer.is_empty();
             self.prefilled = None;
             self.composer_mentions = self.draft_mentions.remove(&id).unwrap_or_default();
             let attachments = self.attachment_drafts.remove(&id).unwrap_or_default();
             self.pending = attachments.pending;
+            self.pending_view_once = attachments.view_once;
             // A search belongs to the chat it was typed in.
             self.close_chat_search();
             self.close_info();
@@ -5686,31 +6012,6 @@ impl App {
     }
 
     /// Dispatches composed text with its explicit quote target and restores it on refusal.
-    /// Sometimes a ghost jumps out or candy falls when a message is sent, if
-    /// Halloween asks for it. Never during a call, while a screen reader is
-    /// attached, or from an account that is not on screen.
-    fn halloween_surprise(&mut self, ctx: &egui::Context) {
-        if self.call.is_some()
-            || self.events_hidden
-            || self.surprise.running()
-            || crate::motion::screen_reader_attached(ctx)
-        {
-            return;
-        }
-        let Some(kind) = crate::surprise::pick(
-            self.settings.halloween_ghost(),
-            self.settings.halloween_candies(),
-            rand::random::<f64>(),
-            rand::random::<f64>(),
-        ) else {
-            return;
-        };
-        self.surprise.start(ctx, kind);
-        if kind == crate::surprise::Kind::Ghost && self.settings.halloween_parts.sounds {
-            crate::notify::play_boo();
-        }
-    }
-
     fn send_text(
         &mut self,
         chat: ChatId,
@@ -5823,10 +6124,12 @@ impl App {
         } else {
             let draft = AttachmentDraft {
                 pending: std::mem::take(&mut self.pending),
+                view_once: self.pending_view_once,
                 quoting: self.reply_to.take(),
             };
             self.attachment_drafts.insert(chat.to_owned(), draft);
         }
+        self.pending_view_once = false;
     }
 
     /// Adds files to the open chat's composer.
@@ -5886,6 +6189,23 @@ impl App {
         if self.pending.is_empty() {
             return;
         }
+        if self.pending_view_once && !self.pending_supports_view_once() {
+            let restore_mentions = self.composer.trim().is_empty() && self.editing.is_none();
+            self.restore_text(&chat, caption);
+            if restore_mentions {
+                self.composer_mentions = selected;
+            }
+            self.toast_error(
+                crate::i18n::gettext(
+                    self.locale,
+                    "Not sent: view-once mode is available for one photo at a time.",
+                )
+                .into_owned(),
+            );
+            return;
+        }
+        let view_once = self.pending_view_once;
+        self.pending_view_once = false;
         self.drafts.remove(&chat);
         self.draft_mentions.remove(&chat);
         self.store_draft(&chat, "");
@@ -5902,7 +6222,7 @@ impl App {
             .into_iter()
             .map(|staged| staged.item)
             .collect();
-        self.send_staged(&chat, items, caption, mentions, quoting);
+        self.send_staged(&chat, items, caption, mentions, quoting, view_once);
         // Everything staged has gone, so nothing is remembered about it.
         self.forget_unstaged_pictures();
         self.follow_outgoing(quoted.as_ref());
@@ -5917,6 +6237,7 @@ impl App {
         mut caption: Option<String>,
         mut mentions: Vec<String>,
         mut quoting: Option<crate::model::ReplyTarget>,
+        view_once: bool,
     ) {
         let chat = chat.clone();
         // Files go in runs of one kind, in the order they were staged.
@@ -5945,6 +6266,7 @@ impl App {
                         width: width as u32,
                         height: height as u32,
                         rgba: std::sync::Arc::try_unwrap(rgba).unwrap_or_else(|arc| (*arc).clone()),
+                        view_once,
                         caption: caption.take(),
                         mentions: std::mem::take(&mut mentions),
                         quoting: quoting.take(),
@@ -5978,6 +6300,7 @@ impl App {
                 chat: chat.clone(),
                 paths,
                 documents,
+                view_once,
                 caption: caption.take(),
                 mentions: std::mem::take(&mut mentions),
                 quoting: quoting.take(),
@@ -6004,6 +6327,7 @@ impl App {
             chat,
             paths,
             documents: false,
+            view_once: false,
             caption: None,
             mentions: Vec::new(),
             quoting: None,
@@ -6120,19 +6444,13 @@ impl App {
         }
     }
 
-    /// Takes a newer release GitHub named. A release not offered before
-    /// opens the update window, as does any the reader asked for; during a
-    /// call, over another dialog, or from an account not on screen it waits
-    /// in the banner and a toast instead.
+    /// Stores a newer release GitHub named. The rail shows it. A check the
+    /// reader asked for also opens the update window.
     fn offer_update(&mut self, release: crate::updates::Release, asked: bool) {
-        let new = self.update.as_ref() != Some(&release);
-        let version = release.version.clone();
         self.update = Some(release);
-        if asked || (new && !self.events_hidden && !self.call_live() && self.dialog.is_none()) {
+        if asked {
             self.show_update = true;
             self.inspect_update();
-        } else if new {
-            self.toast(format!("Zeus {version} is available"));
         }
     }
 
@@ -6245,6 +6563,11 @@ impl App {
     /// from `eframe::App::logic`, after [`Self::background_frame`].
     pub fn window_logic(&mut self, ctx: &egui::Context) {
         self.sync_window_state(ctx);
+        // A minimized window shows no pictures or stickers, so it keeps none.
+        if ctx.input(|input| input.viewport().minimized) == Some(true) {
+            crate::image_cache::release(ctx);
+            crate::animation::release(ctx);
+        }
         // Close the window and continue headless when background mode is
         // enabled. Decided here rather than in `frame_ui`, which eframe skips
         // for a minimized window: closing one from the taskbar quit instead.
@@ -6336,23 +6659,6 @@ impl App {
             }
         };
         crate::backdrop::set_glass(self.settings.glass_shown());
-        let halloween = self.settings.halloween_icons();
-        if crate::theme::halloween() != halloween {
-            crate::theme::set_halloween(halloween);
-            // The window's picture changes with the look; macOS keeps the
-            // bundle's Dock icon.
-            #[cfg(not(target_os = "macos"))]
-            {
-                let icon = crate::util::app_icon_rgba(256);
-                ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
-                    egui::IconData {
-                        rgba: icon,
-                        width: 256,
-                        height: 256,
-                    },
-                ))));
-            }
-        }
         let palette = self.settings.palette(dark);
         if crate::theme::apply_text_rendering_change(ctx) {
             self.applied_dark = None;
@@ -6392,7 +6698,7 @@ impl App {
         }
     }
 
-    fn apply_actions(&mut self, ctx: &egui::Context) {
+    pub(crate) fn apply_actions(&mut self, ctx: &egui::Context) {
         let deferred = std::mem::take(&mut self.deferred_account_actions);
         for (id, action) in deferred {
             let Some(index) = self.accounts.iter().position(|account| account.id == id) else {
@@ -6414,6 +6720,9 @@ impl App {
         // A frame with no queued action still fixes the opening place, so the
         // first navigation has somewhere to return to.
         self.record_location();
+        // After every action, so a quote started as its chat was left still
+        // holds its message when that chat is trimmed.
+        self.settle_conversations();
     }
 
     /// Applies one model action after drawing the views, respecting the app lock and account state.
@@ -6541,7 +6850,6 @@ impl App {
                     self.cancel_contact_dialog_request();
                 }
                 self.page = page;
-                self.settings_halloween = false;
                 self.dialog = None;
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -6585,6 +6893,13 @@ impl App {
             | Action::BubbleUnstage { .. }) => self.apply_bubble(action, ctx),
             Action::DockPopOut => self.dock_pop_out(),
             Action::PopOutSend { chat, text } => self.send_from_pop_out(chat, text),
+            Action::PreloadChat(id) => {
+                // A locked chat's messages stay in the locked folder.
+                let locked = self.chat(&id).is_some_and(|chat| chat.locked);
+                if !locked || self.locked_folder_open() {
+                    self.ensure_loaded(&id);
+                }
+            }
             Action::OpenChat(id) => {
                 // A chat where someone mentioned us opens at the mention, as
                 // on WhatsApp, rather than at the first unread message.
@@ -6746,6 +7061,8 @@ impl App {
                 // call history.
                 self.picked_call = None;
                 if let Some(chat) = self.open_chat.take() {
+                    self.account_mut().note_left(&chat);
+                    self.invalidate_composer_undo();
                     self.save_attachment_draft(&chat);
                     self.stop_composing(&chat);
                     let draft = std::mem::take(&mut self.composer);
@@ -6776,12 +7093,8 @@ impl App {
                 text,
                 quoting,
             } => {
-                let sent = !text.trim().is_empty();
                 self.send_text(chat, text, quoting);
                 self.reply_to = None;
-                if sent {
-                    self.halloween_surprise(ctx);
-                }
             }
             Action::SendLocation {
                 chat,
@@ -7130,7 +7443,14 @@ impl App {
             }
             Action::OpenUrl(url) => {
                 if let Some((token, video)) = crate::safety::call_link(&url) {
-                    self.join_call_link(token, video);
+                    if crate::calls::group_calls_enabled() {
+                        self.join_call_link(token, video);
+                    } else {
+                        self.toast(crate::i18n::gettext(
+                            self.locale,
+                            "ZapFast can't join group calls yet: open the link on your phone.",
+                        ));
+                    }
                 } else if let Some(code) = crate::safety::group_invite_code(&url) {
                     self.invite = Some(crate::model::GroupInvite {
                         code: code.clone(),
@@ -7571,8 +7891,12 @@ impl App {
             Action::RemovePending(index) => {
                 if index < self.pending.len() {
                     self.pending.remove(index);
+                    self.pending_view_once &= !self.pending.is_empty();
                     self.forget_unstaged_pictures();
                 }
+            }
+            Action::SetPendingViewOnce(view_once) => {
+                self.set_pending_view_once(view_once);
             }
             Action::EditPicture(target) => {
                 // Whatever was being waited for is not what is wanted now.
@@ -7627,6 +7951,8 @@ impl App {
                 }
             }
             Action::ApplyPictureEdit => {
+                // The editor is closing, and its picture goes with it.
+                self.picture_texture = None;
                 if let Some(edit) = self.picture_edit.take() {
                     // Held against the attachment until the file lands, so a
                     // second edit started meanwhile cannot take its origin.
@@ -7652,10 +7978,12 @@ impl App {
             }
             Action::CancelPictureEdit => {
                 self.picture_edit = None;
+                self.picture_texture = None;
                 self.picture_inspecting = None;
             }
             Action::ClearPending => {
                 self.pending.clear();
+                self.pending_view_once = false;
                 self.forget_unstaged_pictures();
             }
             Action::PlayVoice { message, path } => self.play_voice(message, path),
@@ -8164,6 +8492,18 @@ impl App {
                 self.clear_chat_lock_entry();
                 if dialog == Dialog::NewChat {
                     self.new_chat_search.clear();
+                    self.new_group = None;
+                }
+                if let Dialog::AddGroupMembers(chat) = &dialog {
+                    let Some(existing) = self
+                        .chat(chat)
+                        .filter(|chat| chat.can_add_members())
+                        .map(|chat| chat.participants.clone())
+                    else {
+                        return;
+                    };
+                    self.new_chat_search.clear();
+                    self.new_group = Some(crate::new_group::Draft::adding(chat.clone(), existing));
                 }
                 self.emoji_start = None;
                 self.mention_start = None;
@@ -8209,6 +8549,8 @@ impl App {
                 self.forward_reviewing = false;
                 self.contact_edit = None;
                 self.group_name_edit = None;
+                // A group on its way still opens once WhatsApp makes it.
+                self.new_group = None;
                 self.refocus_composer(ctx);
             }
             Action::EditContact { id, name } => {
@@ -8492,7 +8834,9 @@ impl App {
                     // The keyboard follows the view: Back after the media row
                     // opened the media view, the row after Back closed it.
                     self.info_focus = match (info.view, view) {
-                        (InfoView::Overview, InfoView::Media(_)) => Some(InfoFocus::Back),
+                        (InfoView::Overview, InfoView::Media(_) | InfoView::Permissions) => {
+                            Some(InfoFocus::Back)
+                        }
                         (InfoView::Media(_), InfoView::Overview) => Some(InfoFocus::MediaRow),
                         _ => None,
                     };
@@ -8523,6 +8867,28 @@ impl App {
             }
             Action::CloseUpdate => self.show_update = false,
             Action::CheckForUpdates => self.check_for_updates_now(),
+            Action::StartBenchmark => {
+                if crate::benchmark::AVAILABLE
+                    && !self.benchmark.as_ref().is_some_and(|run| run.running())
+                {
+                    let ctx = ctx.clone();
+                    self.benchmark_share = false;
+                    self.benchmark = Some(crate::benchmark::Benchmark::start(move || {
+                        ctx.request_repaint();
+                    }));
+                }
+            }
+            Action::StopBenchmark => {
+                if let Some(run) = &self.benchmark {
+                    run.stop();
+                }
+            }
+            Action::SaveBenchmark => {
+                if let Some(run) = &self.benchmark {
+                    let ctx = ctx.clone();
+                    run.save(move || ctx.request_repaint());
+                }
+            }
             Action::DownloadUpdate => self.download_update(),
             Action::InstallUpdate => {
                 if matches!(
@@ -8557,10 +8923,6 @@ impl App {
                 self.settings_section = index;
                 self.settings_search.clear();
             }
-            Action::ShowHalloweenPage(open) => {
-                self.settings_halloween = open;
-                self.settings_search.clear();
-            }
             Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),
             Action::SetStyle(style) => {
                 if self.settings.choose_style(style) {
@@ -8570,16 +8932,6 @@ impl App {
             }
             Action::SetMode(mode) => {
                 self.settings.mode = mode;
-                self.mark_settings_dirty();
-                self.apply_theme(ctx);
-            }
-            Action::SetHalloweenPart(part, on) => {
-                self.settings.set_halloween_part(part, on);
-                self.mark_settings_dirty();
-                self.apply_theme(ctx);
-            }
-            Action::SetHalloween(on) => {
-                self.settings.set_halloween(on);
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
             }
@@ -8637,6 +8989,13 @@ impl App {
                 self.settings.doodle_intensity = intensity.clamp(
                     *crate::settings::DOODLE_INTENSITY.start(),
                     *crate::settings::DOODLE_INTENSITY.end(),
+                );
+                self.mark_settings_dirty();
+            }
+            Action::SetDoodleDensity(density) => {
+                self.settings.doodle_density = density.clamp(
+                    *crate::settings::DOODLE_DENSITY.start(),
+                    *crate::settings::DOODLE_DENSITY.end(),
                 );
                 self.mark_settings_dirty();
             }
@@ -8738,6 +9097,127 @@ impl App {
             Action::SetGroupName { chat, name } => {
                 self.group_name_edit = None;
                 self.backend.send(Command::SetGroupName { chat, name });
+            }
+            Action::StartNewGroup => {
+                self.new_chat_search.clear();
+                self.new_group = Some(Default::default());
+            }
+            Action::ToggleNewGroupMember(id) => {
+                let Some(draft) = self.new_group.as_mut() else {
+                    return;
+                };
+                let adding = !draft.picked(&id);
+                if draft.toggle(&id) == crate::new_group::Step::Leave {
+                    self.new_group = None;
+                } else if adding {
+                    // Ready for the next name, as on the phone.
+                    self.new_chat_search.clear();
+                }
+            }
+            Action::NewGroupNext => {
+                if let Some(draft) = self.new_group.as_mut() {
+                    draft.advance();
+                }
+            }
+            Action::NewGroupBack => {
+                let adding = self
+                    .new_group
+                    .as_ref()
+                    .is_some_and(|draft| draft.adding.is_some());
+                if self
+                    .new_group
+                    .as_mut()
+                    .is_some_and(|draft| draft.back() == crate::new_group::Step::Leave)
+                {
+                    self.new_group = None;
+                    // Add members has no plain list to step back to.
+                    if adding {
+                        self.actions.push(Action::CloseDialog);
+                    }
+                }
+            }
+            Action::PickNewGroupPicture => {
+                if self.new_group.is_some() {
+                    self.backend.send(Command::PickNewGroupPicture);
+                }
+            }
+            Action::RemoveNewGroupPicture => {
+                if let Some(draft) = self.new_group.as_mut() {
+                    draft.picture = None;
+                }
+            }
+            Action::CreateGroup => self.create_group(),
+            Action::FetchInviteLink(chat) => {
+                let asked = self.info_invite.as_ref().is_some_and(|(shown, state)| {
+                    shown == &chat && !matches!(state, crate::group_admin::LinkState::Failed(_))
+                });
+                if !asked && self.chat(&chat).is_some_and(Chat::can_share_invite_link) {
+                    self.info_invite = Some((chat.clone(), crate::group_admin::LinkState::Loading));
+                    self.backend
+                        .send(Command::GroupInviteLink { chat, reset: false });
+                }
+            }
+            Action::CopyInviteLink(chat) => {
+                if let Some((_, crate::group_admin::LinkState::Known(link))) = self
+                    .info_invite
+                    .as_ref()
+                    .filter(|(shown, _)| shown == &chat)
+                {
+                    ctx.copy_text(link.as_str().to_owned());
+                    let said = crate::i18n::gettext(self.locale, "Invite link copied");
+                    self.toast(said.into_owned());
+                }
+            }
+            Action::ResetInviteLink(chat) => {
+                if self.dialog == Some(Dialog::ConfirmResetInviteLink(chat.clone())) {
+                    self.dialog = None;
+                }
+                if self.chat(&chat).is_some_and(Chat::can_manage_group) {
+                    self.info_invite = Some((chat.clone(), crate::group_admin::LinkState::Loading));
+                    self.backend
+                        .send(Command::GroupInviteLink { chat, reset: true });
+                }
+            }
+            Action::AddGroupMembers => {
+                let Some(draft) = self.new_group.as_mut().filter(|draft| draft.can_add()) else {
+                    return;
+                };
+                let Some(chat) = draft.adding.clone() else {
+                    return;
+                };
+                draft.creating = true;
+                let members = draft.members.clone();
+                self.backend
+                    .send(Command::AddGroupMembers { chat, members });
+            }
+            Action::SetGroupPermission {
+                chat,
+                permission,
+                members,
+            } => {
+                if self.chat(&chat).is_some_and(Chat::can_manage_group) {
+                    self.backend.send(Command::SetGroupPermission {
+                        chat,
+                        permission,
+                        members,
+                    });
+                }
+            }
+            Action::ChangeGroupMember {
+                chat,
+                member,
+                change,
+            } => {
+                if matches!(&self.dialog, Some(Dialog::ConfirmRemoveMember { .. })) {
+                    self.dialog = None;
+                }
+                if self.chat(&chat).is_some_and(Chat::can_manage_group) {
+                    self.backend.send(Command::ChangeGroupMember {
+                        chat,
+                        member,
+                        change,
+                    });
+                }
             }
             Action::PickGroupPicture(chat) => self.backend.send(Command::PickGroupPicture(chat)),
             Action::RemoveGroupPicture(chat) => {
@@ -8999,6 +9479,174 @@ impl App {
         )
     }
 
+    /// Sends the group the New chat dialog put together to WhatsApp.
+    fn create_group(&mut self) {
+        let Some(draft) = self.new_group.as_mut() else {
+            return;
+        };
+        if draft.stage != crate::new_group::Stage::Naming || draft.creating {
+            return;
+        }
+        if let Some(problem) = draft.problem() {
+            let said = problem.message(self.locale);
+            self.toast_error(said);
+            return;
+        }
+        draft.creating = true;
+        let subject = draft.subject().to_owned();
+        let members = draft.members.clone();
+        let picture = draft.picture.clone();
+        self.new_group_sequence = self.new_group_sequence.wrapping_add(1);
+        let request = self.new_group_sequence;
+        self.new_group_request = Some(request);
+        self.backend.send(Command::CreateGroup {
+            request,
+            subject,
+            members,
+            picture,
+        });
+    }
+
+    /// WhatsApp answered `CreateGroup`: the new group opens, or the dialog
+    /// says why not and stays for another try. An answer the window no
+    /// longer waits for opens nothing; its group is filed all the same.
+    fn group_created(
+        &mut self,
+        request: u64,
+        result: Result<crate::new_group::Created, crate::new_group::CreateFailure>,
+        live: bool,
+    ) {
+        if self.new_group_request != Some(request) {
+            return;
+        }
+        self.new_group_request = None;
+        match result {
+            Ok(created) => {
+                self.new_group = None;
+                if !live {
+                    return;
+                }
+                if self.dialog == Some(Dialog::NewChat) {
+                    self.dialog = None;
+                }
+                self.actions.push(Action::OpenChat(created.chat));
+                if !created.unadded.is_empty() {
+                    let names: Vec<String> = created
+                        .unadded
+                        .iter()
+                        .map(|id| self.display_name(id))
+                        .collect();
+                    let said = crate::new_group::unadded_message(self.locale, &names);
+                    self.toast(said);
+                }
+            }
+            Err(failure) => {
+                if let Some(draft) = self.new_group.as_mut() {
+                    draft.creating = false;
+                }
+                if live {
+                    let said = failure.message(self.locale);
+                    self.toast_error(said);
+                }
+            }
+        }
+    }
+
+    /// WhatsApp answered for a group's invite link: the panel's row shows
+    /// it, and a reset says so.
+    fn group_invite_link(
+        &mut self,
+        chat: ChatId,
+        reset: bool,
+        result: Result<crate::group_admin::InviteLink, crate::group_admin::Failure>,
+        live: bool,
+    ) {
+        use crate::group_admin::LinkState;
+        // The panel is the window's: another account's answer is not for it.
+        if !live
+            || self
+                .info_invite
+                .as_ref()
+                .is_none_or(|(shown, _)| shown != &chat)
+        {
+            return;
+        }
+        match result {
+            Ok(link) => {
+                self.info_invite = Some((chat, LinkState::Known(link)));
+                if reset {
+                    let said = crate::i18n::gettext(
+                        self.locale,
+                        "The old link no longer works. Here is a new one.",
+                    );
+                    self.toast(said.into_owned());
+                }
+            }
+            Err(failure) => {
+                self.info_invite = Some((chat, LinkState::Failed(failure)));
+                if reset {
+                    let said = failure.message(self.locale);
+                    self.toast_error(said);
+                }
+            }
+        }
+    }
+
+    /// WhatsApp answered Add members: the dialog closes, and the toasts say
+    /// who joined and who could not be added, by name.
+    fn group_members_added(
+        &mut self,
+        chat: ChatId,
+        result: Result<crate::group_admin::Added, crate::group_admin::Failure>,
+        live: bool,
+    ) {
+        let waiting = self
+            .new_group
+            .as_ref()
+            .is_some_and(|draft| draft.adding.as_deref() == Some(chat.as_str()));
+        match result {
+            Ok(added) => {
+                if waiting {
+                    self.new_group = None;
+                    if self.dialog == Some(Dialog::AddGroupMembers(chat.clone())) {
+                        self.dialog = None;
+                    }
+                }
+                if !live {
+                    return;
+                }
+                if !added.added.is_empty() {
+                    let count = added.added.len();
+                    let said = crate::i18n::ngettext(
+                        self.locale,
+                        "{count} person added to the group",
+                        "{count} people added to the group",
+                        count as u32,
+                    )
+                    .replace("{count}", &count.to_string());
+                    self.toast(said);
+                }
+                let refused: Vec<(String, crate::group_admin::Refusal)> = added
+                    .refused
+                    .iter()
+                    .map(|(id, why)| (self.display_name(id), *why))
+                    .collect();
+                for said in crate::group_admin::refused_messages(self.locale, &refused) {
+                    self.toast(said);
+                }
+            }
+            Err(failure) => {
+                if waiting && let Some(draft) = self.new_group.as_mut() {
+                    draft.creating = false;
+                }
+                if live {
+                    let said = failure.message(self.locale);
+                    self.toast_error(said);
+                }
+            }
+        }
+    }
+
     pub fn toast(&mut self, message: impl Into<String>) {
         self.toast_with_undo(message.into(), Vec::new());
     }
@@ -9128,7 +9776,8 @@ impl App {
     /// Tells the backend whether the person is looking at the app, so the
     /// phone keeps its notifications while they are not.
     fn report_presence(&mut self) {
-        let looking = self.window_focused && !self.window_hidden;
+        let looking =
+            self.window_focused && !self.window_hidden && !self.power.conditions().display_off;
         let active = self.active;
         for (index, account) in self.accounts.iter_mut().enumerate() {
             let online = looking && index == active;
@@ -9164,6 +9813,7 @@ impl App {
         self.wallpaper_image.sync(wallpaper.as_deref(), &self.waker);
         self.handle_notification_opens();
         self.handle_events();
+        self.poll_call_access();
         for uri in std::mem::take(&mut self.stale_images) {
             crate::image_cache::forget(ctx, &uri);
         }
@@ -9179,6 +9829,103 @@ impl App {
         self.follow_receipts();
         self.sync_badge();
         self.request_attention(ctx);
+        self.log_memory(ctx, false);
+        self.follow_font_atlas(ctx);
+    }
+
+    /// Rebuilds the font atlas once the zoom or the display's scale has held
+    /// for `ATLAS_SETTLE`, and once the window has been unfocused for
+    /// `ATLAS_IDLE`: epaint never forgets a glyph it drew, so the old scale's
+    /// glyphs would stay in the atlas, on the CPU and on the GPU. The wait ends
+    /// in a repaint request, never a timer, and the rebuild of an unfocused
+    /// window runs then, not as a hitch when the reader comes back.
+    fn follow_font_atlas(&mut self, ctx: &egui::Context) {
+        if self.window_hidden {
+            // The window's context, and its atlas, went with it.
+            self.atlas_watch = AtlasWatch::default();
+            return;
+        }
+        let now = Instant::now();
+        let scale = (
+            ctx.zoom_factor(),
+            ctx.native_pixels_per_point().unwrap_or(1.0),
+        );
+        let focused = self.window_focused;
+        let watch = &mut self.atlas_watch;
+        match watch.scale {
+            Some(seen) if seen == scale => {}
+            Some(_) => {
+                watch.scale = Some(scale);
+                watch.changed = Some(now);
+            }
+            None => watch.scale = Some(scale),
+        }
+        let mut rebuild = false;
+        if let Some(changed) = watch.changed {
+            let left = ATLAS_SETTLE.saturating_sub(now.saturating_duration_since(changed));
+            if left.is_zero() {
+                watch.changed = None;
+                rebuild = true;
+            } else {
+                ctx.request_repaint_after(left);
+            }
+        }
+        if focused {
+            watch.away = None;
+            watch.rebuilt_away = false;
+        } else if !watch.rebuilt_away {
+            let since = *watch.away.get_or_insert(now);
+            let left = ATLAS_IDLE.saturating_sub(now.saturating_duration_since(since));
+            if left.is_zero() {
+                watch.rebuilt_away = true;
+                rebuild = true;
+            } else {
+                ctx.request_repaint_after(left);
+            }
+        }
+        if rebuild {
+            crate::theme::rebuild_font_atlas(ctx);
+        }
+    }
+
+    /// One line a minute when `ZAPFAST_MEMORY_LOG` is `1`.
+    ///
+    /// `interface` is the call from [`Self::frame_ui`], after the image sweep,
+    /// and that is the line a window frame writes. The call from
+    /// [`Self::background_frame`] writes only when no interface frame will
+    /// follow (the window is hidden, minimized, or not up yet), or when a
+    /// sample was held for an interface frame that never ran. Checking the
+    /// variable is a single load after the first frame, and a minute with no
+    /// frame logs nothing: this never asks for a repaint.
+    fn log_memory(&self, ctx: &egui::Context, interface: bool) {
+        if !crate::memory::enabled() {
+            return;
+        }
+        let write = if interface {
+            crate::memory::interface_due()
+        } else {
+            let follows = !self.window_hidden
+                && !self.hide_intent
+                && ctx.input(|input| input.viewport().minimized) != Some(true);
+            crate::memory::background_due(follows)
+        };
+        if !write {
+            return;
+        }
+        crate::memory::sample(
+            ctx,
+            self.accounts
+                .iter()
+                .map(|account| crate::memory::AccountCounts {
+                    id: account.id.as_str(),
+                    conversations: account.conversations.len(),
+                    messages: account
+                        .conversations
+                        .values()
+                        .map(|conversation| conversation.messages.len())
+                        .sum(),
+                }),
+        );
     }
 
     /// Answers the system's sleep and wake. Every account reconnects its link
@@ -9212,15 +9959,22 @@ impl App {
     /// viewport too, since `window_focused` stays false behind the app lock
     /// even while the lock screen has the focus.
     fn request_attention(&mut self, ctx: &egui::Context) {
-        self.request_attention_on(ctx, fastframe_desktop::is_gnome());
+        let skip = fastframe_desktop::is_gnome()
+            || hyprland(
+                std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some(),
+                std::env::var("XDG_CURRENT_DESKTOP").ok().as_deref(),
+            );
+        self.request_attention_on(ctx, skip);
     }
 
-    /// [`Self::request_attention`] on a desktop that is GNOME or not, which
-    /// shows its own "is ready" notice instead of marking the taskbar (#466).
-    fn request_attention_on(&mut self, ctx: &egui::Context, gnome: bool) {
+    /// [`Self::request_attention`] on a desktop that marks no taskbar entry
+    /// for the request (`skip`) or one that does. GNOME shows its own "is
+    /// ready" notice instead (#466), and Hyprland focuses the window when
+    /// `misc:focus_on_activate` is on (#530).
+    fn request_attention_on(&mut self, ctx: &egui::Context, skip: bool) {
         if std::mem::take(&mut self.wants_attention)
             && cfg!(target_os = "linux")
-            && !gnome
+            && !skip
             && !self.window_hidden
             && !self.window_focused
             && ctx.input(|input| input.viewport().focused) != Some(true)
@@ -9910,6 +10664,7 @@ impl App {
                 || self.image_preview.is_some()
                 || egui::Popup::is_any_open(ctx);
             crate::ui::swipe::update(ctx, covered);
+            Self::paste_shift_insert(ctx);
             self.take_drops_and_pastes(ctx);
         }
         crate::ui::show(self, ui);
@@ -9924,9 +10679,11 @@ impl App {
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         self.theme_reveal.paint(ctx);
-        self.surprise.paint(ctx);
         // Release the image caches of everything that scrolled away.
         crate::image_cache::sweep(ctx);
+        // Likewise the decoded frames of stickers and GIFs nothing draws now.
+        crate::animation::sweep(ctx);
+        self.log_memory(ctx, true);
         // Only fading info toasts animate. Errors wait for the reader.
         if self
             .toasts
@@ -9954,6 +10711,33 @@ impl App {
         self.set_composer_cursor(ctx, at + text.chars().count());
     }
 
+    fn invalidate_composer_undo(&mut self) {
+        self.composer_undo_epoch = self.composer_undo_epoch.wrapping_add(1);
+    }
+
+    /// Keep the fixed editor id for focus/cursor handling, but discard undo
+    /// snapshots before keyboard input reaches a different composer owner.
+    pub(crate) fn prepare_composer_undo(&self, ctx: &egui::Context) {
+        let id = egui::Id::new("composer-text");
+        let owner_id = id.with("undo-owner");
+        let owner = (
+            self.account().id.clone(),
+            self.open_chat.clone(),
+            self.editing.clone(),
+            self.composer_undo_epoch,
+        );
+        let previous = ctx.data(|data| {
+            data.get_temp::<(AccountId, Option<ChatId>, Option<String>, u64)>(owner_id)
+        });
+        if previous.as_ref() != Some(&owner) {
+            if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+                state.clear_undoer();
+                egui::TextEdit::store_state(ctx, id, state);
+            }
+            ctx.data_mut(|data| data.insert_temp(owner_id, owner));
+        }
+    }
+
     fn set_composer_cursor(&self, ctx: &egui::Context, at: usize) {
         let id = egui::Id::new("composer-text");
         let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
@@ -9970,6 +10754,55 @@ impl App {
         self.settings.recent_emoji.insert(0, emoji.to_owned());
         self.settings.recent_emoji.truncate(36);
         self.mark_settings_dirty();
+    }
+
+    /// Pastes the clipboard's text on Shift+Insert, as Linux applications do.
+    ///
+    /// egui-winit turns only Ctrl/Cmd+V into a `Paste` event, but on Wayland
+    /// espanso pastes clipboard-based expansions (non-ASCII text, long
+    /// replacements) with Shift+Insert, so without this their trigger is
+    /// deleted and nothing appears.
+    fn paste_shift_insert(ctx: &egui::Context) {
+        if !ctx.text_edit_focused() {
+            return;
+        }
+        let is_shift_insert = |event: &egui::Event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: egui::Key::Insert,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.shift && !modifiers.command && !modifiers.alt
+            )
+        };
+        if !ctx.input(|input| input.events.iter().any(&is_shift_insert)) {
+            return;
+        }
+        // Tests inject fixtures and must never read the system clipboard.
+        let text = if cfg!(test) {
+            ctx.data_mut(|data| data.remove_temp::<String>(egui::Id::new("fixture-clipboard-text")))
+        } else {
+            clipboard_text()
+        };
+        let text = text.filter(|text| !text.is_empty());
+        // Replacing the key event where it is keeps the paste's place in the
+        // frame's event order, ahead of anything typed after it.
+        ctx.input_mut(|input| {
+            input.events.retain_mut(|event| {
+                if !is_shift_insert(event) {
+                    return true;
+                }
+                match &text {
+                    Some(text) => {
+                        *event = egui::Event::Paste(text.clone());
+                        true
+                    }
+                    None => false,
+                }
+            });
+        });
     }
 
     /// Handles dropped files and pasted images for the open chat.
@@ -10418,6 +11251,11 @@ fn clipboard_contents(
     }
 }
 
+/// The clipboard's text, if it holds any.
+fn clipboard_text() -> Option<String> {
+    arboard::Clipboard::new().ok()?.get_text().ok()
+}
+
 /// Files copied to the clipboard by a file manager.
 fn clipboard_files() -> Result<Vec<PathBuf>, String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|error| error.to_string())?;
@@ -10537,6 +11375,21 @@ fn is_user_input(event: &egui::Event) -> bool {
     )
 }
 
+/// Whether the session is Hyprland, when both its instance signature and the
+/// desktop name say so, since either alone can be left over from another
+/// session (the rule `backdrop` uses). On Wayland an attention request is an
+/// xdg-activation request, and Hyprland focuses the window for it when
+/// `misc:focus_on_activate` is on, as Omarchy sets it: a window in a special
+/// workspace then opens that workspace over what the user is doing (#530).
+fn hyprland(signature: bool, desktop: Option<&str>) -> bool {
+    signature
+        && desktop.is_some_and(|desktop| {
+            desktop
+                .split(':')
+                .any(|name| name.trim().eq_ignore_ascii_case("Hyprland"))
+        })
+}
+
 fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
     if chat.archived || chat.unread == 0 || chat.muted(now) || chat.locked {
         return false;
@@ -10550,6 +11403,8 @@ pub(crate) mod split;
 pub use split::{PaneView, PopOut, Side, Split};
 pub(crate) mod bubbles;
 pub use bubbles::{Bubble, Bubbles, MAX_BUBBLES};
+mod conversations;
+pub(crate) use conversations::PhoneHistory;
 mod voice_input;
 #[cfg(any(test, feature = "demo"))]
 pub(crate) use voice_input::demo_microphones;
@@ -10559,6 +11414,238 @@ mod tests {
     use super::*;
     use crate::model::{ChatKind, Content, Dialog, Media, MediaState, ReplyTarget, ToastKind};
     use crate::settings::ThemeChoice;
+
+    fn composer_undo_boundary_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        time: f64,
+        events: Vec<egui::Event>,
+    ) {
+        let id = egui::Id::new("composer-text");
+        ctx.memory_mut(|memory| memory.request_focus(id));
+        if time == 0.0 {
+            app.attach(ctx);
+        }
+        app.link = crate::backend::LinkStatus::Connected;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(time),
+                events,
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                ..Default::default()
+            },
+            |ui| app.frame_ui(ui),
+        );
+        output.textures_delta.clear();
+    }
+
+    fn composer_undo_key() -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::Z,
+            physical_key: Some(egui::Key::Z),
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::COMMAND,
+        }
+    }
+
+    /// Real keyboard undo cannot restore a previous chat/account's text
+    /// through the production composer, even with a stored checkpoint.
+    #[test]
+    fn editor_undo_cannot_restore_text_from_another_chat_or_account() {
+        for switch_account in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = two_accounts(directory.path());
+            for account in &mut app.accounts {
+                account
+                    .chats
+                    .push(Chat::new("source@s.whatsapp.net".into(), "Source".into()));
+                account
+                    .chats
+                    .push(Chat::new("target@s.whatsapp.net".into(), "Target".into()));
+            }
+            let ctx = egui::Context::default();
+            let marker = "Synthetic source account draft";
+            app.open_chat("source@s.whatsapp.net".into());
+            composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![egui::Event::Text(marker.into())],
+            );
+            // egui's default stable_time is 1 second. No sleeping is needed.
+            composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+            assert_eq!(app.composer, marker);
+            if switch_account {
+                let second = app.accounts[1].id.clone();
+                app.switch_account(&second);
+                app.open_chat("source@s.whatsapp.net".into());
+            } else {
+                app.open_chat("target@s.whatsapp.net".into());
+            }
+            assert!(app.composer.is_empty());
+            composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![composer_undo_key()]);
+            assert!(
+                !app.composer.contains(marker),
+                "Ctrl/Cmd+Z crossed the composer ownership boundary"
+            );
+        }
+    }
+
+    /// Normal edits within one ownership lifetime keep ordinary undo/redo.
+    #[test]
+    fn composer_owner_isolation_preserves_same_chat_undo_and_redo() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.chats
+            .push(Chat::new("source@s.whatsapp.net".into(), "Source".into()));
+        app.open_chat("source@s.whatsapp.net".into());
+        composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.1, vec![egui::Event::Text("alpha".into())]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![egui::Event::Text(" beta".into())]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+        assert_eq!(app.composer, "alpha");
+        let mut redo = composer_undo_key();
+        if let egui::Event::Key { modifiers, .. } = &mut redo {
+            modifiers.shift = true;
+        }
+        composer_undo_boundary_frame(&mut app, &ctx, 1.5, vec![redo]);
+        assert_eq!(app.composer, "alpha beta");
+    }
+
+    /// Reusing exactly the same ids cannot revive history from a composer
+    /// closed or unlinked between frames.
+    #[test]
+    fn composer_undo_resets_on_close_reopen_and_logout_with_reused_ids() {
+        for logout in [false, true] {
+            let mut app = app();
+            let ctx = egui::Context::default();
+            let chat = "source@s.whatsapp.net";
+            let marker = "Synthetic previous lifetime";
+            app.chats.push(Chat::new(chat.into(), "Source".into()));
+            app.open_chat(chat.into());
+            composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![egui::Event::Text(marker.into())],
+            );
+            composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+            if logout {
+                app.handle_link(LinkStatus::LoggedOut, true);
+                app.handle_link(LinkStatus::Connected, true);
+                app.chats.push(Chat::new(chat.into(), "New session".into()));
+                app.open_chat(chat.into());
+                composer_undo_boundary_frame(
+                    &mut app,
+                    &ctx,
+                    1.3,
+                    vec![egui::Event::Text("Fresh draft".into())],
+                );
+                composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+                assert!(
+                    !app.composer.contains(marker),
+                    "a new session restored old editor history"
+                );
+            } else {
+                app.apply(Action::CloseChat, &ctx);
+                app.open_chat(chat.into());
+                assert_eq!(app.composer, marker);
+                composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![composer_undo_key()]);
+                assert_eq!(
+                    app.composer, marker,
+                    "closing/reopening starts fresh editor history"
+                );
+            }
+        }
+    }
+
+    /// Editing owns a distinct history from another message and the draft.
+    #[test]
+    fn composer_undo_cannot_cross_edit_targets_or_return_to_draft() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        let chat = "source@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Source".into()));
+        let mut first = message(chat, "first", crate::util::now());
+        first.from_me = true;
+        first.content = Content::text("First edit target");
+        let mut second = message(chat, "second", crate::util::now());
+        second.from_me = true;
+        second.content = Content::text("Second edit target");
+        app.conversations.insert(
+            chat.into(),
+            Conversation {
+                messages: vec![first, second],
+                requested: true,
+                ..Default::default()
+            },
+        );
+        app.open_chat(chat.into());
+        composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+        app.apply(Action::Edit("first".into()), &ctx);
+        composer_undo_boundary_frame(&mut app, &ctx, 0.1, vec![]);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+        assert_eq!(app.composer, "First edit target");
+        app.apply(Action::Edit("second".into()), &ctx);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.3, vec![composer_undo_key()]);
+        assert_eq!(app.composer, "Second edit target");
+        app.apply(Action::CancelEdit, &ctx);
+        composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+        assert!(
+            app.composer.is_empty(),
+            "draft undo cannot restore either edited message"
+        );
+    }
+
+    /// Events for an account off screen cannot discard the active editor's
+    /// normal undo checkpoints, including removal that changes the roster.
+    #[test]
+    fn hidden_account_logout_and_removal_preserve_active_composer_undo() {
+        for remove in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let (mut app, _) = two_accounts(directory.path());
+            let ctx = egui::Context::default();
+            let chat = "source@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Source".into()));
+            app.open_chat(chat.into());
+            let (backend, events) = Backend::detached();
+            app.accounts[1].backend = backend;
+            composer_undo_boundary_frame(&mut app, &ctx, 0.0, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                0.1,
+                vec![egui::Event::Text("alpha".into())],
+            );
+            composer_undo_boundary_frame(&mut app, &ctx, 1.2, vec![]);
+            composer_undo_boundary_frame(
+                &mut app,
+                &ctx,
+                1.3,
+                vec![egui::Event::Text(" beta".into())],
+            );
+            events
+                .send(if remove {
+                    Event::AccountRemoved
+                } else {
+                    Event::Link(LinkStatus::LoggedOut)
+                })
+                .unwrap();
+            app.handle_events();
+            composer_undo_boundary_frame(&mut app, &ctx, 1.4, vec![composer_undo_key()]);
+            assert_eq!(
+                app.composer, "alpha",
+                "hidden account event erased active undo"
+            );
+        }
+    }
 
     #[test]
     fn toasts_errors_and_connection_changes_are_announced() {
@@ -10635,7 +11722,7 @@ mod tests {
 
     fn app() -> App {
         let root = std::env::temp_dir().join(format!("zapfast-app-{}", std::process::id()));
-        App::headless(AppDirs::under(&root), Settings::plain()).0
+        App::headless(AppDirs::under(&root), Settings::default()).0
     }
 
     /// A contact who types a letter, stops, and types again pauses between
@@ -11324,12 +12411,14 @@ mod tests {
                     width: 1,
                     height: 1,
                     rgba: vec![1, 2, 3, 4],
+                    view_once: true,
                     caption: Some(caption.into()),
                 }
             } else {
                 Unsent::Files {
                     paths: vec!["Hidden account.pdf".into()],
                     documents: false,
+                    view_once: false,
                     caption: Some(caption.into()),
                 }
             };
@@ -11348,11 +12437,16 @@ mod tests {
             );
             assert!(app.composer.is_empty());
             assert!(app.reply_to.is_none());
+            assert!(
+                !app.pending_view_once,
+                "the hidden privacy choice stays in its account"
+            );
             app.open_chat("other@s.whatsapp.net".into());
             assert!(!app.accounts[0].attachment_drafts.contains_key(chat));
             let second = app.accounts[1].id.clone();
             app.switch_account(&second);
             assert_eq!(app.composer, caption);
+            assert_eq!(app.pending_view_once, image);
             assert_eq!(app.reply_to.as_deref(), Some("hidden-quote"));
             assert_eq!(app.pending.len(), 1);
             if image {
@@ -15772,7 +16866,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_release_opens_the_update_window_once() {
+    fn a_new_release_waits_on_the_rail() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
@@ -15781,11 +16875,14 @@ mod tests {
             url: "https://github.com/ItIsNotKeshav/Zeus/releases/tag/v99.0.0".into(),
         };
         app.apply_backend_event(Event::UpdateChecked(Ok(Some(release.clone()))), true);
-        assert!(app.show_update, "a new release prompts");
-        assert!(matches!(commands.try_recv(), Ok(Command::InspectUpdate)));
-        app.show_update = false;
+        assert!(!app.show_update, "a new release waits on the rail");
+        assert!(app.update.is_some());
+        assert!(
+            commands.try_recv().is_err(),
+            "finding a release does not open or inspect it"
+        );
         app.apply_backend_event(Event::UpdateChecked(Ok(Some(release.clone()))), true);
-        assert!(!app.show_update, "a dismissed release waits in the banner");
+        assert!(!app.show_update, "the same release still waits on the rail");
         app.update = None;
         app.dialog = Some(Dialog::Shortcuts);
         app.apply_backend_event(Event::UpdateChecked(Ok(Some(release))), true);
@@ -16360,7 +17457,7 @@ mod tests {
 
     #[test]
     fn mentions_sound_even_in_quiet_groups_and_chat_sounds_win() {
-        let mut settings = Settings::plain();
+        let mut settings = Settings::default();
         let sound = |settings: &Settings, chat, group, for_us| {
             notification_sound(settings, chat, group, for_us)
         };
@@ -16448,6 +17545,112 @@ mod tests {
         // A second click while joining sends nothing more.
         app.apply(Action::JoinGroup, &ctx);
         assert!(commands.try_recv().is_err());
+    }
+
+    /// Create sends the draft once; WhatsApp's answer opens the group and
+    /// names who could not be added, a failure keeps the dialog for another
+    /// try, and an answer nobody waits for opens nothing.
+    #[test]
+    fn a_created_group_opens_and_names_who_was_left_out() {
+        use crate::new_group::{CreateFailure, Created, Draft, Stage};
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let ada = "15550000001@s.whatsapp.net";
+        let grace = "15550000002@s.whatsapp.net";
+        app.contacts.insert(Contact {
+            id: grace.into(),
+            full_name: Some("Grace Hopper".into()),
+            ..Default::default()
+        });
+        app.apply(Action::ShowDialog(Dialog::NewChat), &ctx);
+        app.apply(Action::StartNewGroup, &ctx);
+        app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
+        app.apply(Action::ToggleNewGroupMember(grace.into()), &ctx);
+        app.apply(Action::CreateGroup, &ctx);
+        assert!(commands.try_recv().is_err(), "not before the name");
+        app.apply(Action::NewGroupNext, &ctx);
+        app.new_group.as_mut().unwrap().name = " Book club ".into();
+        app.apply(Action::CreateGroup, &ctx);
+        app.apply(Action::CreateGroup, &ctx);
+        let request = match commands.try_recv() {
+            Ok(Command::CreateGroup {
+                request,
+                subject,
+                members,
+                picture: None,
+            }) => {
+                assert_eq!(subject, "Book club");
+                assert_eq!(members, [ada, grace]);
+                request
+            }
+            other => panic!("{other:?}"),
+        };
+        assert!(commands.try_recv().is_err(), "sent once");
+
+        // A failure says why in plain words and leaves the name for a retry.
+        app.apply_backend_event(
+            Event::GroupCreated {
+                request,
+                result: Err(CreateFailure::RateLimited),
+            },
+            true,
+        );
+        let draft = app.new_group.as_ref().unwrap();
+        assert!(!draft.creating);
+        assert_eq!(draft.stage, Stage::Naming);
+        assert!(
+            app.toasts
+                .iter()
+                .any(|toast| toast.message.contains("too many groups")),
+        );
+
+        app.apply(Action::CreateGroup, &ctx);
+        let Ok(Command::CreateGroup { request, .. }) = commands.try_recv() else {
+            panic!("retried");
+        };
+        let chat = "120363000000000001@g.us";
+        app.chats.push(Chat::new(chat.into(), "Book club".into()));
+        // An earlier request's answer is not the one the window waits for.
+        app.apply_backend_event(
+            Event::GroupCreated {
+                request: request.wrapping_sub(1),
+                result: Ok(Created {
+                    chat: chat.into(),
+                    unadded: Vec::new(),
+                }),
+            },
+            true,
+        );
+        assert!(app.new_group.is_some());
+        app.apply_backend_event(
+            Event::GroupCreated {
+                request,
+                result: Ok(Created {
+                    chat: chat.into(),
+                    unadded: vec![grace.into()],
+                }),
+            },
+            true,
+        );
+        assert_eq!(app.dialog, None);
+        assert!(app.new_group.is_none());
+        assert!(
+            app.actions
+                .iter()
+                .any(|action| matches!(action, Action::OpenChat(id) if id == chat))
+        );
+        assert!(app.toasts.iter().any(|toast| toast.message
+            == "Grace Hopper could not be added to the group. Their privacy settings may not allow it."));
+
+        // Back out of naming and choosing; letting the last one go leaves too.
+        app.apply(Action::ShowDialog(Dialog::NewChat), &ctx);
+        assert!(app.new_group.is_none(), "a new dialog starts fresh");
+        app.new_group = Some(Draft::default());
+        app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
+        app.apply(Action::ToggleNewGroupMember(ada.into()), &ctx);
+        assert!(app.new_group.is_none());
     }
 
     #[test]
@@ -16799,6 +18002,28 @@ mod tests {
         app.window_focused = true;
         app.report_presence();
         assert!(reported().is_empty());
+    }
+
+    #[test]
+    fn presence_goes_offline_while_the_display_is_off() {
+        let mut app = app();
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        app.window_focused = true;
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+
+        app.power.set_conditions(fastframe_power::Conditions {
+            display_off: true,
+            ..Default::default()
+        });
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(false))));
+
+        app.power.set_conditions(Default::default());
+        app.report_presence();
+        assert!(matches!(commands.try_recv(), Ok(Command::SetOnline(true))));
+        assert!(commands.try_recv().is_err());
     }
 
     #[test]
@@ -18345,11 +19570,13 @@ mod tests {
                 width: 1,
                 height: 1,
                 rgba: vec![1, 2, 3, 4],
+                view_once: false,
                 caption: Some("Caption fixture".into()),
             },
             Unsent::Files {
                 paths: vec!["/fixture/a.pdf".into()],
                 documents: false,
+                view_once: false,
                 caption: None,
             },
             Unsent::Gif,
@@ -18375,6 +19602,196 @@ mod tests {
         assert_eq!(app.reply_to.as_deref(), Some("original"));
         // Repeats of one error share a toast.
         assert_eq!(error_toasts(&app).len(), 1);
+    }
+
+    #[test]
+    fn a_pasted_photo_can_be_sent_view_once_and_keeps_the_choice_in_its_draft() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let chat = "fixture@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.open_chat(chat.into());
+        app.stage(Pending::Picture {
+            width: 1,
+            height: 1,
+            rgba: std::sync::Arc::new(vec![1, 2, 3, 4]),
+            texture: None,
+        });
+        assert!(app.pending_supports_view_once());
+        let ctx = egui::Context::default();
+        app.apply(Action::SetPendingViewOnce(true), &ctx);
+        assert!(app.pending_view_once);
+
+        app.park_composer();
+        assert!(app.attachment_drafts[chat].view_once);
+        app.restore_composer();
+        assert!(app.pending_view_once);
+
+        // Extra attachments cannot silently switch the photo back to normal
+        // media. The choice stays until the draft is valid again or disabled.
+        app.stage(Pending::File("notes.pdf".into()));
+        assert!(app.pending_view_once);
+        app.apply(Action::RemovePending(1), &ctx);
+        assert!(app.pending_view_once);
+
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let account = app.account().id.clone();
+        app.send_pending(account, chat.into(), "Caption".into(), Vec::new());
+        let sent: Vec<_> = std::iter::from_fn(|| commands.try_recv().ok()).collect();
+        assert!(sent.iter().any(|command| matches!(command,
+            Command::SendImage { chat: sent_chat, view_once: true, caption: Some(caption), .. }
+                if sent_chat == chat && caption == "Caption")));
+        assert!(app.pending.is_empty());
+        assert!(!app.pending_view_once);
+    }
+
+    #[test]
+    fn one_supported_photo_file_can_be_sent_view_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+        let chat = "fixture@s.whatsapp.net";
+        app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+        app.open_chat(chat.into());
+        app.stage(Pending::File("photo.png".into()));
+        assert!(app.pending_supports_view_once());
+        let ctx = egui::Context::default();
+        app.apply(Action::SetPendingViewOnce(true), &ctx);
+
+        let (backend, mut commands) = Backend::recording();
+        app.backend = backend;
+        let account = app.account().id.clone();
+        app.send_pending(account, chat.into(), String::new(), Vec::new());
+        assert!(
+            std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(command,
+            Command::SendFiles { paths, documents: false, view_once: true, .. }
+                if paths == [PathBuf::from("photo.png")]))
+        );
+    }
+
+    #[test]
+    fn a_refused_view_once_photo_returns_to_its_chat_with_caption_and_quote() {
+        for away in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+            let chat = "fixture@s.whatsapp.net";
+            let other = "other@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+            app.chats.push(Chat::new(other.into(), "Other".into()));
+            app.open_chat(if away { other } else { chat }.into());
+            app.send_refused(
+                chat.into(),
+                Some("original".into()),
+                Unsent::Files {
+                    paths: vec!["photo.png".into()],
+                    documents: false,
+                    view_once: true,
+                    caption: Some("Caption fixture".into()),
+                },
+                Refusal::Offline,
+            );
+            if away {
+                assert!(app.pending.is_empty());
+                assert!(!app.pending_view_once);
+                assert!(app.attachment_drafts[chat].view_once);
+                app.open_chat(chat.into());
+            }
+            assert!(app.pending_view_once);
+            assert_eq!(app.pending.len(), 1);
+            assert_eq!(app.composer, "Caption fixture");
+            assert_eq!(app.reply_to.as_deref(), Some("original"));
+        }
+    }
+
+    #[test]
+    fn a_refused_view_once_photo_cannot_be_downgraded_when_new_attachments_exist() {
+        for away in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut app = App::headless(AppDirs::under(directory.path()), Settings::default()).0;
+            let chat = "fixture@s.whatsapp.net";
+            let other = "other@s.whatsapp.net";
+            app.chats.push(Chat::new(chat.into(), "Fixture".into()));
+            app.chats.push(Chat::new(other.into(), "Other".into()));
+            app.open_chat(chat.into());
+            app.stage(Pending::Document("notes.pdf".into()));
+            app.stage(Pending::Document("second.pdf".into()));
+            if away {
+                app.open_chat(other.into());
+            }
+            app.send_refused(
+                chat.into(),
+                None,
+                Unsent::Files {
+                    paths: vec!["photo.png".into()],
+                    documents: false,
+                    view_once: true,
+                    caption: Some("Caption fixture".into()),
+                },
+                Refusal::Offline,
+            );
+            if away {
+                app.open_chat(chat.into());
+            }
+            let (backend, mut commands) = Backend::recording();
+            app.backend = backend;
+            // The view takes the caption before submitting SendPending.
+            let caption = std::mem::take(&mut app.composer);
+            app.send_pending(app.account().id.clone(), chat.into(), caption, vec![]);
+            assert!(
+                !std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                    command,
+                    Command::SendFiles { .. } | Command::SendImage { .. }
+                ))
+            );
+            assert_eq!(app.pending.len(), 3);
+            assert!(app.pending_view_once);
+            assert_eq!(app.composer, "Caption fixture");
+            assert!(!error_toasts(&app).is_empty());
+
+            // Removing only one extra does not silently clear the choice.
+            app.apply(Action::RemovePending(0), &egui::Context::default());
+            assert!(app.pending_view_once);
+            let caption = std::mem::take(&mut app.composer);
+            app.send_pending(app.account().id.clone(), chat.into(), caption, vec![]);
+            assert!(
+                !std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                    command,
+                    Command::SendFiles { .. } | Command::SendImage { .. }
+                ))
+            );
+            assert_eq!(app.composer, "Caption fixture");
+            // Once only the original photo remains, it keeps the option.
+            app.apply(Action::RemovePending(0), &egui::Context::default());
+            let caption = std::mem::take(&mut app.composer);
+            app.send_pending(app.account().id.clone(), chat.into(), caption, vec![]);
+            assert!(
+                std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
+                    command,
+                    Command::SendFiles {
+                        view_once: true,
+                        ..
+                    }
+                ))
+            );
+        }
+    }
+
+    #[test]
+    fn view_once_file_types_match_the_enabled_photo_decoders() {
+        for extension in ["jpg", "jpeg", "png", "webp"] {
+            let path = PathBuf::from(format!("photo.{extension}"));
+            assert!(
+                Pending::is_view_once_photo_file(&path),
+                "{extension} should be eligible"
+            );
+        }
+        for extension in ["bmp", "tif", "tiff", "gif", "avif", "pdf"] {
+            let path = PathBuf::from(format!("attachment.{extension}"));
+            assert!(
+                !Pending::is_view_once_photo_file(&path),
+                "{extension} should not be eligible"
+            );
+        }
     }
 
     /// Checks that an unsent recording remains scoped to its destination and retains its quote.
@@ -18457,6 +19874,7 @@ mod tests {
                 Unsent::Files {
                     paths: vec!["/fixture/b.png".into()],
                     documents: true,
+                    view_once: false,
                     caption: None,
                 },
                 Refusal::Offline,
@@ -18925,6 +20343,7 @@ mod tests {
                 other.into(),
                 AttachmentDraft {
                     pending: Vec::new(),
+                    view_once: false,
                     quoting: Some(quote.clone()),
                 },
             );
@@ -19432,6 +20851,68 @@ mod tests {
         assert_eq!(ids, vec!["a", "b", "c"]);
         conversation.merge(vec![message("c", "c", 3)], false);
         assert_eq!(conversation.messages.len(), 3);
+    }
+
+    #[test]
+    fn a_restamped_message_moves_to_its_new_place() {
+        let mut app = app();
+        let (backend, events) = Backend::detached();
+        app.backend = backend;
+        let chat = "1@s.whatsapp.net";
+        let mut mine = message(chat, "mine", 200);
+        mine.from_me = true;
+        let restamped = Message {
+            timestamp: 120,
+            ..mine.clone()
+        };
+        app.conversations.entry(chat.into()).or_default().merge(
+            vec![message(chat, "a", 100), mine, message(chat, "reply", 150)],
+            false,
+        );
+        let ids = |app: &App| {
+            app.conversations[chat]
+                .messages
+                .iter()
+                .map(|m| m.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&app), ["a", "reply", "mine"]);
+        app.selection = Some((chat.into(), vec!["reply".into(), "mine".into()]));
+        // The server's time for our message arrives as an update.
+        events
+            .send(Event::MessageUpdated(Box::new(restamped)))
+            .unwrap();
+        app.handle_events();
+        assert_eq!(ids(&app), ["a", "mine", "reply"]);
+        assert_eq!(
+            app.selection.as_ref().map(|(_, ids)| ids.as_slice()),
+            Some(["mine".to_owned(), "reply".to_owned()].as_slice()),
+            "the selection follows the chat's order"
+        );
+    }
+
+    /// Events of a hidden account are checked against that account's chats,
+    /// so they must not prune the selection the window holds.
+    #[test]
+    fn a_hidden_accounts_event_keeps_the_window_selection() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _commands) = two_accounts(directory.path());
+        let chat = "15550003333@s.whatsapp.net";
+        app.conversations
+            .entry(chat.into())
+            .or_default()
+            .merge(vec![message(chat, "reply", 150)], false);
+        app.selection = Some((chat.into(), vec!["reply".into()]));
+        app.active = 1;
+        app.events_hidden = true;
+        app.apply_backend_event(Event::Info("Contact saved".into()), false);
+        app.events_hidden = false;
+        app.active = 0;
+        assert_eq!(
+            app.selection,
+            Some((chat.into(), vec!["reply".into()])),
+            "the window's selection survives another account's event"
+        );
     }
 
     #[test]
@@ -20544,26 +22025,19 @@ mod tests {
             push_name: None,
         };
         // Exclude contacts that already have chats.
-        app.contacts.insert(
-            "491700000001@s.whatsapp.net".into(),
-            contact("491700000001@s.whatsapp.net", "Ada Lovelace"),
-        );
+        app.contacts
+            .insert(contact("491700000001@s.whatsapp.net", "Ada Lovelace"));
         app.chats.push(Chat::new(
             "491700000001@s.whatsapp.net".into(),
             "Ada Lovelace".into(),
         ));
         // Include contacts without chats.
-        app.contacts.insert(
-            "491700000002@s.whatsapp.net".into(),
-            contact("491700000002@s.whatsapp.net", "Adele Goldberg"),
-        );
-        // Exclude groups and our own id.
         app.contacts
-            .insert("12345@g.us".into(), contact("12345@g.us", "Adventurers"));
-        app.contacts.insert(
-            "490000000000@s.whatsapp.net".into(),
-            contact("490000000000@s.whatsapp.net", "Adah Me"),
-        );
+            .insert(contact("491700000002@s.whatsapp.net", "Adele Goldberg"));
+        // Exclude groups and our own id.
+        app.contacts.insert(contact("12345@g.us", "Adventurers"));
+        app.contacts
+            .insert(contact("490000000000@s.whatsapp.net", "Adah Me"));
         app.search = "ad".into();
         let names: Vec<&str> = app
             .matching_contacts()
@@ -20742,9 +22216,10 @@ mod tests {
                 .collect()
         };
         assert_eq!(names(&app), ["Ada", "Bob"]);
-        // A newer message in another chat moves it back down.
+        // Parked drafts are their own group under the pins, so a newer
+        // message in another chat stays below the draft.
         app.chats[1].last_activity = 40;
-        assert_eq!(names(&app), ["Bob", "Ada"]);
+        assert_eq!(names(&app), ["Ada", "Bob"]);
         // Clearing the draft returns the chat to its normal place.
         app.chats[1].last_activity = 20;
         app.drafts.clear();
@@ -20767,9 +22242,14 @@ mod tests {
             favorite("1@s.whatsapp.net", "Ada", 1, 30),
             favorite("2@s.whatsapp.net", "Bob", 0, 10),
             pinned,
-            Chat::new("4@s.whatsapp.net".into(), "Dee".into()),
+            Chat {
+                last_activity: 1,
+                ..Chat::new("4@s.whatsapp.net".into(), "Dee".into())
+            },
         ];
         app.chat_filter = ChatFilter::Favorites;
+        app.drafts
+            .insert("1@s.whatsapp.net".into(), "Unsent favorite".into());
         let names: Vec<&str> = app
             .visible_chats()
             .iter()
@@ -20787,6 +22267,129 @@ mod tests {
             ["Cy", "Ada", "Bob", "Dee"],
             "other chips keep recency"
         );
+    }
+
+    /// Pins retain their order above text and attachment drafts; filtered
+    /// chats do not reappear merely because they contain a draft.
+    #[test]
+    fn pins_stay_above_eligible_text_and_attachment_drafts() {
+        let mut app = app();
+        let mut chat = |id: &str, activity| {
+            let mut chat = Chat::new(id.into(), id.into());
+            chat.last_activity = activity;
+            app.chats.push(chat);
+        };
+        chat("pin-old", 1);
+        chat("pin-new", 2);
+        chat("recent", 50);
+        chat("text", 20);
+        chat("file", 10);
+        chat("locked", 100);
+        chat("archived", 100);
+        app.chats[0].pinned = true;
+        app.chats[0].pinned_at = 10;
+        app.chats[1].pinned = true;
+        app.chats[1].pinned_at = 20;
+        app.chats[5].locked = true;
+        app.chats[6].archived = true;
+        for id in ["pin-old", "text", "locked", "archived"] {
+            app.drafts.insert(id.into(), "Unsent text".into());
+        }
+        app.open_chat("file".into());
+        app.stage_files(vec!["Synthetic document.pdf".into()]);
+        app.apply(Action::CloseChat, &egui::Context::default());
+        let ids: Vec<_> = app
+            .visible_chats()
+            .iter()
+            .map(|chat| chat.id.clone())
+            .collect();
+        assert_eq!(ids, ["pin-new", "pin-old", "text", "file", "recent"]);
+    }
+
+    /// A new draft moves only on leaving; reopening and clearing a saved
+    /// draft cannot move its row while the reader is composing.
+    #[test]
+    fn draft_priority_changes_on_leaving_instead_of_typing_or_opening() {
+        let mut app = app();
+        let mut recent = Chat::new("recent".into(), "Recent".into());
+        recent.last_activity = 20;
+        // An older chat, not a stranger never written to: those leave the
+        // list once their draft is gone.
+        let mut draft = Chat::new("draft".into(), "Draft".into());
+        draft.last_activity = 10;
+        app.chats = vec![recent, draft];
+        let ids = |app: &App| -> Vec<String> {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.id.clone())
+                .collect()
+        };
+        app.open_chat("draft".into());
+        app.composer = "Typing a new draft".into();
+        assert_eq!(ids(&app), ["recent", "draft"]);
+        app.open_chat("recent".into());
+        assert_eq!(ids(&app), ["draft", "recent"]);
+        app.open_chat("draft".into());
+        assert_eq!(ids(&app), ["draft", "recent"]);
+        app.composer.clear();
+        assert_eq!(ids(&app), ["draft", "recent"]);
+        app.open_chat("recent".into());
+        assert_eq!(ids(&app), ["recent", "draft"]);
+    }
+
+    /// Archive drafts can establish the initial startup priority, but a
+    /// delayed answer cannot promote an active attachment composer.
+    #[test]
+    fn late_archived_draft_keeps_an_attachment_composers_priority() {
+        for staged_attachment in [false, true] {
+            let mut app = app();
+            let mut recent = Chat::new("recent".into(), "Recent".into());
+            recent.last_activity = 20;
+            app.chats = vec![recent, Chat::new("draft".into(), "Draft".into())];
+            app.open_chat("draft".into());
+            if staged_attachment {
+                app.stage_files(vec!["Synthetic document.pdf".into()]);
+            }
+            assert_eq!(app.visible_chats()[0].id, "recent");
+            events_for(
+                &mut app,
+                Event::Drafts(vec![("draft".into(), "Saved archive text".into(), 0)]),
+            );
+            assert_eq!(app.composer, "Saved archive text");
+            assert_eq!(app.pending.len(), usize::from(staged_attachment));
+            assert_eq!(
+                app.visible_chats()[0].id,
+                if staged_attachment { "recent" } else { "draft" },
+                "only the untouched startup composer gains draft priority"
+            );
+            app.open_chat("recent".into());
+            assert_eq!(app.visible_chats()[0].id, "draft");
+        }
+    }
+
+    /// Identical chat ids in two accounts never share draft priority, and
+    /// restoring an account keeps its parked draft in the same priority group.
+    #[test]
+    fn draft_priority_stays_with_its_account() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _) = two_accounts(directory.path());
+        for account in &mut app.accounts {
+            let mut recent = Chat::new("recent".into(), "Recent".into());
+            recent.last_activity = 20;
+            account.chats = vec![recent, Chat::new("draft".into(), "Draft".into())];
+        }
+        let first = app.account().id.clone();
+        let second = app.accounts[1].id.clone();
+        app.drafts
+            .insert("draft".into(), "First account only".into());
+        app.open_chat("draft".into());
+        assert_eq!(app.visible_chats()[0].id, "draft");
+        app.switch_account(&second);
+        app.open_chat("draft".into());
+        assert_eq!(app.visible_chats()[0].id, "recent");
+        app.switch_account(&first);
+        assert_eq!(app.visible_chats()[0].id, "draft");
+        assert_eq!(app.composer, "First account only");
     }
 
     #[test]
@@ -20842,10 +22445,12 @@ mod tests {
         let mut app = app();
         let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
         ada.unread = 1;
+        ada.last_activity = 2;
         let bob = Chat::new("2@s.whatsapp.net".into(), "Bob".into());
         app.chats = vec![ada, bob];
         let mut cy = Chat::new("3@s.whatsapp.net".into(), "Cy".into());
         cy.unread = 1;
+        cy.last_activity = 1;
         app.chats.push(cy);
         app.chat_filter = ChatFilter::Unread;
         let ctx = egui::Context::default();
@@ -20870,6 +22475,68 @@ mod tests {
         app.apply(Action::KeepUnread("2@s.whatsapp.net".into()), &ctx);
         app.apply(Action::SetChatFilter(ChatFilter::Unread), &ctx);
         assert!(app.visible_chats().is_empty());
+    }
+
+    #[test]
+    fn people_never_written_to_stay_out_of_the_list_until_searched() {
+        let mut app = app();
+        let mut ada = Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        ada.last_activity = 10;
+        let stranger = Chat::new("2@s.whatsapp.net".into(), "Stranger".into());
+        let group = Chat::new("3@g.us".into(), "Group".into());
+        app.chats = vec![ada, stranger, group];
+        let names = |app: &App| {
+            app.visible_chats()
+                .iter()
+                .map(|chat| chat.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&app), ["Ada", "Group"], "groups stay listed");
+        app.search = "Stran".into();
+        assert_eq!(names(&app), ["Stranger"]);
+        app.search.clear();
+        app.open_chat("2@s.whatsapp.net".into());
+        assert_eq!(names(&app), ["Ada", "Stranger", "Group"]);
+        // A draft left unsent keeps the chat listed once it is closed, and
+        // parked drafts come before other chats.
+        app.open_chat = None;
+        app.drafts.insert("2@s.whatsapp.net".into(), "hello".into());
+        assert_eq!(names(&app), ["Stranger", "Ada", "Group"]);
+    }
+
+    #[test]
+    fn strangers_the_reader_kept_stay_listed_and_counted() {
+        let mut app = app();
+        let stranger = |id: &str| Chat::new(id.into(), id.into());
+        let mut pinned = stranger("1@s.whatsapp.net");
+        pinned.pinned = true;
+        let mut favorite = stranger("2@s.whatsapp.net");
+        favorite.favorite = true;
+        let mut unread = stranger("3@s.whatsapp.net");
+        unread.unread = 1;
+        let mut locked = stranger("4@s.whatsapp.net");
+        locked.locked = true;
+        let mut labeled = stranger("6@s.whatsapp.net");
+        labeled.labels = vec!["label".into()];
+        let mut archived = stranger("5@s.whatsapp.net");
+        archived.archived = true;
+        app.chats = vec![pinned, favorite, unread, locked, labeled, archived];
+        let unlisted: Vec<bool> = app
+            .chats
+            .iter()
+            .map(|chat| app.unlisted_stranger(chat))
+            .collect();
+        assert_eq!(unlisted, [false, false, false, false, false, true]);
+        assert_eq!(
+            app.archived_count(),
+            0,
+            "Archived does not count a hidden stranger"
+        );
+        assert_eq!(
+            app.locked_count(),
+            1,
+            "the locked folder keeps a locked stranger"
+        );
     }
 
     #[test]
@@ -21218,6 +22885,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let settings = Settings {
             last_chat: Some("locked".into()),
+            restore_last_chat: true,
             ..Default::default()
         };
         let (mut app, events) = App::headless(AppDirs::under(root.path()), settings);
@@ -21227,6 +22895,27 @@ mod tests {
         app.handle_events();
         assert!(app.open_chat.is_none());
         assert!(app.conversations.is_empty());
+    }
+
+    #[test]
+    fn the_last_chat_stays_closed_unless_restore_is_on() {
+        let closed = Settings {
+            last_chat: Some("1@s.whatsapp.net".into()),
+            ..Default::default()
+        };
+        let root = tempfile::tempdir().unwrap();
+        let (app, _) = App::headless(AppDirs::under(root.path()), closed);
+        assert!(app.open_chat.is_none());
+        assert_eq!(app.settings.last_chat.as_deref(), Some("1@s.whatsapp.net"));
+
+        let open = Settings {
+            last_chat: Some("1@s.whatsapp.net".into()),
+            restore_last_chat: true,
+            ..Default::default()
+        };
+        let root = tempfile::tempdir().unwrap();
+        let (app, _) = App::headless(AppDirs::under(root.path()), open);
+        assert_eq!(app.open_chat.as_deref(), Some("1@s.whatsapp.net"));
     }
 
     #[test]
@@ -21262,7 +22951,7 @@ mod tests {
             first_name: None,
             push_name: None,
         };
-        app.contacts.insert(contact.id.clone(), contact);
+        app.contacts.insert(contact);
         for query in ["angel", "ÁNGEL", "A\u{301}ngel"] {
             app.search = query.into();
             assert_eq!(app.visible_chats().len(), 1, "{query}");
@@ -21685,33 +23374,57 @@ mod tests {
     #[test]
     fn names_fall_back_from_contacts_to_phones() {
         let mut app = app();
-        app.contacts.insert(
-            "1@s.whatsapp.net".into(),
-            Contact {
-                id: "1@s.whatsapp.net".into(),
-                full_name: Some("Ada".into()),
-                first_name: None,
-                push_name: None,
-            },
-        );
+        app.contacts.insert(Contact {
+            id: "1@s.whatsapp.net".into(),
+            full_name: Some("Ada".into()),
+            first_name: None,
+            push_name: None,
+        });
         assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada");
         assert_eq!(
             app.display_name("393331234567@s.whatsapp.net"),
             "+39 333 123 4567"
         );
         assert_eq!(app.display_name("42@lid"), "Unknown");
-        app.contacts.insert(
-            "42@lid".into(),
-            Contact {
-                id: "42@lid".into(),
-                full_name: None,
-                first_name: None,
-                push_name: Some("Bob".into()),
-            },
-        );
+        app.contacts.insert(Contact {
+            id: "42@lid".into(),
+            full_name: None,
+            first_name: None,
+            push_name: Some("Bob".into()),
+        });
         assert_eq!(app.display_name("42@lid"), "~Bob");
         app.me = Some("42@lid".into());
         assert_eq!(app.display_name("42@lid"), "You");
+    }
+
+    /// The window keeps the contact the worker sent, not a copy of it, until
+    /// a newer one for the same person replaces it.
+    #[test]
+    fn the_window_keeps_the_contact_the_worker_sent() {
+        let mut app = app();
+        let sent = std::sync::Arc::new(Contact {
+            id: "1@s.whatsapp.net".into(),
+            full_name: Some("Ada".into()),
+            ..Contact::default()
+        });
+        app.apply_backend_event(Event::Contacts(vec![std::sync::Arc::clone(&sent)]), true);
+        assert!(std::ptr::eq(
+            app.contacts.get("1@s.whatsapp.net").unwrap(),
+            &*sent
+        ));
+        assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada");
+
+        let renamed = Contact {
+            full_name: Some("Ada Lovelace".into()),
+            ..(*sent).clone()
+        };
+        app.apply_backend_event(Event::Contacts(vec![renamed.into()]), true);
+        assert_eq!(app.display_name("1@s.whatsapp.net"), "Ada Lovelace");
+        assert_eq!(
+            sent.full_name.as_deref(),
+            Some("Ada"),
+            "the old one is left as it was"
+        );
     }
 
     #[test]
@@ -21754,24 +23467,18 @@ mod name_tests {
         let (mut app, _events) = App::headless(AppDirs::under(&root), Settings::default());
         app.me = Some("15550001111@s.whatsapp.net".into());
         app.me_name = Some("Carmine".into());
-        app.contacts.insert(
-            "1@s.whatsapp.net".into(),
-            Contact {
-                id: "1@s.whatsapp.net".into(),
-                full_name: Some("Ada Lovelace".into()),
-                first_name: None,
-                push_name: Some("Ada".into()),
-            },
-        );
-        app.contacts.insert(
-            "2@s.whatsapp.net".into(),
-            Contact {
-                id: "2@s.whatsapp.net".into(),
-                full_name: None,
-                first_name: None,
-                push_name: Some("Bob".into()),
-            },
-        );
+        app.contacts.insert(Contact {
+            id: "1@s.whatsapp.net".into(),
+            full_name: Some("Ada Lovelace".into()),
+            first_name: None,
+            push_name: Some("Ada".into()),
+        });
+        app.contacts.insert(Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: None,
+            first_name: None,
+            push_name: Some("Bob".into()),
+        });
         app
     }
 
@@ -21786,21 +23493,23 @@ mod name_tests {
             (3, "Stray Name", Some("")),
         ] {
             let id = format!("1555000001{index}@s.whatsapp.net");
-            app.contacts.insert(
-                id.clone(),
-                Contact {
-                    id: id.clone(),
-                    full_name: Some(full_name.into()),
-                    first_name: first_name.map(Into::into),
-                    push_name: None,
-                },
-            );
+            app.contacts.insert(Contact {
+                id: id.clone(),
+                full_name: Some(full_name.into()),
+                first_name: first_name.map(Into::into),
+                push_name: None,
+            });
             chat.participants.push(id);
         }
         // Without a saved first name (a profile name, or a contact synced
         // before first names were kept) the line keeps the first word.
         chat.participants.push("2@s.whatsapp.net".into());
-        app.contacts.get_mut("2@s.whatsapp.net").unwrap().push_name = Some("Bob Builder".into());
+        app.contacts.insert(Contact {
+            id: "2@s.whatsapp.net".into(),
+            full_name: None,
+            first_name: None,
+            push_name: Some("Bob Builder".into()),
+        });
         assert_eq!(
             app.participant_names(&chat),
             "Bob, Grace, Mary, My Dih, Stray"
@@ -21828,15 +23537,12 @@ mod name_tests {
         let mut app = app();
         let ctx = egui::Context::default();
         let saved = |app: &mut App, id: &str, full: &str, first: Option<&str>| {
-            app.contacts.insert(
-                id.into(),
-                Contact {
-                    id: id.into(),
-                    full_name: Some(full.into()),
-                    first_name: first.map(Into::into),
-                    push_name: None,
-                },
-            );
+            app.contacts.insert(Contact {
+                id: id.into(),
+                full_name: Some(full.into()),
+                first_name: first.map(Into::into),
+                push_name: None,
+            });
         };
         let edit = |app: &mut App, id: &str, name: &str| {
             app.apply(
@@ -21897,15 +23603,12 @@ mod name_tests {
         .enumerate()
         {
             let id = format!("1555000000{index}@s.whatsapp.net");
-            app.contacts.insert(
-                id.clone(),
-                Contact {
-                    id: id.clone(),
-                    full_name: Some((*name).into()),
-                    first_name: name.split(' ').next().map(Into::into),
-                    push_name: Some((*name).into()),
-                },
-            );
+            app.contacts.insert(Contact {
+                id: id.clone(),
+                full_name: Some((*name).into()),
+                first_name: name.split(' ').next().map(Into::into),
+                push_name: Some((*name).into()),
+            });
             chat.participants.push(id);
         }
         // Duplicate entries for the same identity must not inflate the count.
@@ -21941,15 +23644,12 @@ mod name_tests {
         let mut app = app();
         let mut chat = Chat::new("fixture@g.us".into(), String::new());
         let id = "15550000001@s.whatsapp.net".to_owned();
-        app.contacts.insert(
-            id.clone(),
-            Contact {
-                id: id.clone(),
-                full_name: Some("Ada Lovelace".into()),
-                first_name: Some("Ada".into()),
-                push_name: None,
-            },
-        );
+        app.contacts.insert(Contact {
+            id: id.clone(),
+            full_name: Some("Ada Lovelace".into()),
+            first_name: Some("Ada".into()),
+            push_name: None,
+        });
         chat.participants.push(id);
         chat.participants.push(app.me.clone().unwrap());
         app.chats.push(chat.clone());
@@ -22526,6 +24226,19 @@ mod app_lock_tests {
         assert!(!attention_requested(&ctx));
     }
 
+    /// Hyprland is known by its instance signature and the desktop name
+    /// together, in any entry of the desktop list.
+    #[test]
+    fn hyprland_needs_its_signature_and_its_desktop_name() {
+        assert!(hyprland(true, Some("Hyprland")));
+        assert!(hyprland(true, Some("Hyprland:wlroots")));
+        assert!(hyprland(true, Some("hyprland")));
+        // A signature left over, or a desktop name alone, is not enough.
+        assert!(!hyprland(true, Some("KDE")));
+        assert!(!hyprland(true, None));
+        assert!(!hyprland(false, Some("Hyprland")));
+    }
+
     /// Behind the app lock `window_focused` stays false, but a lock screen
     /// that has the focus is no window to point at.
     #[cfg(target_os = "linux")]
@@ -22617,6 +24330,24 @@ mod app_lock_tests {
             shown.sound, app.settings.message_sound,
             "the chat's own sound would name it"
         );
+    }
+
+    #[test]
+    fn messages_do_not_notify_while_the_display_is_off() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.power.set_conditions(fastframe_power::Conditions {
+            display_off: true,
+            ..Default::default()
+        });
+
+        app.maybe_notify(CHAT, &message);
+        assert!(app.notifications.shown.is_empty());
+        assert!(!app.wants_attention);
+
+        app.power.set_conditions(Default::default());
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
     }
 
     #[test]
