@@ -313,6 +313,7 @@ fn category_icon(source: &str) -> Icon {
         "Appearance" => Icon::Sun,
         "Chats" => Icon::MessageCircle,
         "Touchpad swipes" => Icon::ArrowLeftRight,
+        "Message menu" => Icon::Ellipsis,
         "Calls and voice" => Icon::Phone,
         "Notifications" => Icon::Bell,
         "Privacy" => Icon::Lock,
@@ -711,6 +712,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
 
     let swipes = swipe_section(locale);
+    let message_menu = message_menu_section(locale);
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
@@ -1115,6 +1117,7 @@ fn sections(app: &App) -> Vec<Section> {
         appearance,
         chats,
         swipes,
+        message_menu,
         notifications,
         voice,
         privacy,
@@ -1123,6 +1126,109 @@ fn sections(app: &App) -> Vec<Section> {
         files,
         about_section,
     ]
+}
+
+/// Which actions the right-click menu on a message offers, and whether it
+/// lists them or shows icons only.
+fn message_menu_section(locale: Locale) -> Section {
+    use crate::settings::MenuLayout;
+    let mut menu = Section::new(translated(locale, "Message menu"));
+    menu.row(
+        translated(locale, "Layout"),
+        translated(
+            locale,
+            "Icons only is a horizontal row of buttons; hover one to see its name.",
+        ),
+        move |ui, app| {
+            let palette = app.palette;
+            let locale = app.locale;
+            let selected = app.settings.message_menu.layout;
+            controls::dropdown(
+                ui,
+                &palette,
+                "message-menu-layout",
+                &crate::i18n::gettext(locale, "Layout"),
+                &selected.label(locale),
+                controls::WIDTH,
+                |ui| {
+                    for choice in MenuLayout::ALL {
+                        if controls::option(ui, &palette, &choice.label(locale), selected == choice)
+                        {
+                            app.settings.message_menu.layout = choice;
+                            app.actions.push(Action::SettingsChanged);
+                        }
+                    }
+                },
+            );
+        },
+    );
+    menu.toggle(
+        translated(locale, "Reply"),
+        translated(
+            locale,
+            "Double-click or swipe a message to reply without the menu.",
+        ),
+        |settings| &mut settings.message_menu.reply,
+    );
+    menu.toggle(
+        translated(locale, "Reply privately"),
+        translated(locale, "On a group member's message."),
+        |settings| &mut settings.message_menu.reply_privately,
+    );
+    menu.toggle(
+        translated(locale, "Edit"),
+        translated(locale, "On your own recent text messages."),
+        |settings| &mut settings.message_menu.edit,
+    );
+    menu.toggle(
+        translated(locale, "Forward"),
+        translated(
+            locale,
+            "Select the message to forward it with the selection bar.",
+        ),
+        |settings| &mut settings.message_menu.forward,
+    );
+    menu.toggle(
+        translated(locale, "Copy text"),
+        translated(locale, "For messages that have text."),
+        |settings| &mut settings.message_menu.copy_text,
+    );
+    menu.toggle(
+        translated(locale, "Select"),
+        translated(locale, "Starts choosing messages."),
+        |settings| &mut settings.message_menu.select,
+    );
+    menu.toggle(
+        translated(locale, "Star"),
+        translated(locale, "Star or unstar the message."),
+        |settings| &mut settings.message_menu.star,
+    );
+    menu.toggle(
+        translated(locale, "Pin message"),
+        translated(locale, "Pin or unpin the message."),
+        |settings| &mut settings.message_menu.pin,
+    );
+    menu.toggle(
+        translated(locale, "Message info"),
+        translated(locale, "Who it was delivered to and read by."),
+        |settings| &mut settings.message_menu.message_info,
+    );
+    menu.toggle(
+        translated(locale, "Copy image"),
+        translated(locale, "For photos you have downloaded."),
+        |settings| &mut settings.message_menu.copy_image,
+    );
+    menu.toggle(
+        translated(locale, "Save as…"),
+        translated(locale, "Saves a downloaded file, or a whole album."),
+        |settings| &mut settings.message_menu.save,
+    );
+    menu.toggle(
+        translated(locale, "Show in folder"),
+        translated(locale, "For files you have downloaded."),
+        |settings| &mut settings.message_menu.show_in_folder,
+    );
+    menu
 }
 
 /// What each two-finger touchpad swipe does, one drop-down per swipe.

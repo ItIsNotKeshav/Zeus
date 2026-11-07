@@ -132,6 +132,9 @@ fn common_setup(app: &mut App) {
     assert!(app.backend.is_offline(), "a tour requires an offline app");
     app.settings.set_theme(ThemeChoice::Dark);
     app.settings.keep_running_in_background = false;
+    // The tour right-clicks a message and picks Reply, which the menu hides
+    // until Settings turns it on.
+    app.settings.message_menu.reply = true;
     app.page = Page::Chats;
     app.dialog = None;
     app.picker = None;

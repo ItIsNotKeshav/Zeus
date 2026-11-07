@@ -869,6 +869,21 @@ pub fn submenu<R>(
     })
 }
 
+/// The submenu of a button the caller drew, as wide as the widest of
+/// `items`. For menus whose entries are icons only.
+pub fn submenu_of<R>(
+    ui: &mut Ui,
+    response: &egui::Response,
+    items: &[&str],
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let width = submenu_width(ui, items);
+    egui::containers::menu::SubMenu::new().show(ui, response, |ui| {
+        ui.set_width(width);
+        add_contents(ui)
+    })
+}
+
 pub fn menu_item(ui: &mut Ui, palette: &Palette, icon: Option<Icon>, label: &str) -> bool {
     menu_item_enabled(ui, palette, icon, label, true)
 }

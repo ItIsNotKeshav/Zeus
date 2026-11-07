@@ -1043,6 +1043,7 @@ fn starred_row(
             ui,
             app.locale,
             &app.settings.reaction_emoji,
+            app.settings.message_menu,
             message,
         ));
     let popup = if force_menu {

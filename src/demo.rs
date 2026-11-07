@@ -3922,6 +3922,15 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // With "voice": the menu of a playable voice message, which
             // lists every playback speed.
             "voice-menu" => app.open_message_menu = Some("ada-voice".into()),
+            // With "react-menu" or "voice-menu": the icons-only layout.
+            "menu-icons" => {
+                app.settings.message_menu.layout = crate::settings::MenuLayout::Icons;
+            }
+            // With "react-menu": Reply and Forward turned on, as Settings can.
+            "menu-reply-forward" => {
+                app.settings.message_menu.reply = true;
+                app.settings.message_menu.forward = true;
+            }
             "react-menu" => {
                 app.open_message_menu = Some("ada-link".into());
                 if let Some(row) = app
@@ -6492,6 +6501,8 @@ mod tests {
             "gifs",
             "gifs-badkey",
             "react-menu",
+            "react-menu,menu-icons",
+            "settings,section-3",
             "starred",
             "star-menu",
             "react-picker",
@@ -11439,14 +11450,12 @@ mod tests {
             render(&mut app, &ctx);
             let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
             assert!(nodes.iter().any(|(label, _, _)| label == "Delete"));
-            // Selecting and forwarding start from a Ctrl-click and the
-            // selection bar, never from the menu.
-            for action in ["Select", "Forward"] {
-                assert!(
-                    nodes.iter().all(|(label, _, _)| label != action),
-                    "no message's menu offers {action}"
-                );
-            }
+            // Forwarding starts from the selection bar: the menu has no
+            // Forward until Settings turns it on.
+            assert!(
+                nodes.iter().all(|(label, _, _)| label != "Forward"),
+                "no message's menu offers Forward by default"
+            );
         }
     }
 
@@ -11912,17 +11921,20 @@ mod tests {
                 "the menu has no {status}row"
             );
         }
-        for present in [
-            "Reply",
-            "Forward",
-            "Select",
-            "Message info",
-            "Reload earlier messages",
-            "Copy message ID",
-        ] {
+        for present in ["Select", "Message info", "Copy text", "Star", "Pin message"] {
             find(present);
         }
-        for gone in ["Delete for me", "Delete for everyone"] {
+        // Reply and Forward are off until Settings turns them on; the rest
+        // never come back.
+        for gone in [
+            "Forward",
+            "Reload earlier messages",
+            "Copy message ID",
+            "Open file",
+            "Open in the viewer",
+            "Delete for me",
+            "Delete for everyone",
+        ] {
             assert!(
                 nodes.iter().all(|(label, _, _)| label != gone),
                 "the menu has no {gone} row"
@@ -11944,6 +11956,54 @@ mod tests {
         };
         click(&mut app, copy);
         assert!(app.toasts.iter().any(|toast| toast.message == "Copied"));
+    }
+
+    /// Settings choose which rows the message menu has: Reply and Forward
+    /// join it when turned on, and any row goes when turned off.
+    #[test]
+    fn the_message_menu_follows_the_settings() {
+        let labels = |flags: &str, edit: fn(&mut App)| {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut app = app();
+            apply_flags(&mut app, Some(flags));
+            edit(&mut app);
+            app.attach(&ctx);
+            let id = crate::ui::conversation::bubble_id(sample_ids()[0], "ada-link");
+            render(&mut app, &ctx);
+            let menu = ctx
+                .data(|data| data.get_temp::<egui::Rect>(id.with("menu-rect")))
+                .expect("the menu is open");
+            accessible_nodes(&mut app, &ctx, Vec::new())
+                .into_iter()
+                .filter(|(_, _, centre)| menu.contains(*centre))
+                .map(|(label, _, _)| label)
+                .collect::<Vec<_>>()
+        };
+        let count = |labels: &[String], wanted: &str| {
+            labels.iter().filter(|label| *label == wanted).count()
+        };
+        let on = labels("react-menu,menu-reply-forward", |_| {});
+        let default = labels("react-menu", |_| {});
+        // A hover button beside the bubble is also called Reply, so the menu's
+        // own row shows as one more.
+        assert!(count(&on, "Reply") > count(&default, "Reply"));
+        assert_eq!(count(&default, "Forward"), 0);
+        assert_eq!(count(&on, "Forward"), 1);
+        let off = labels("react-menu", |app| {
+            app.settings.message_menu.star = false;
+            app.settings.message_menu.select = false;
+        });
+        assert!(off.iter().all(|label| label != "Star" && label != "Select"));
+        assert!(off.iter().any(|label| label == "Delete"));
+        // Icons only keeps the same rows, named for screen readers.
+        let icons = labels("react-menu,menu-icons", |_| {});
+        for present in ["Copy text", "Pin message", "Message info", "Delete"] {
+            assert!(
+                icons.iter().any(|label| label == present),
+                "icons layout has {present}"
+            );
+        }
     }
 
     /// Reloading history before a message asks the phone for what came

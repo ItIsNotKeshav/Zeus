@@ -2483,6 +2483,8 @@ struct View<'a> {
     /// The reaction picker was opened from the message's context menu.
     reaction_menu: bool,
     reaction_emoji: &'a [(String, u32)],
+    /// Which actions the message menu shows, and its layout.
+    menu: crate::settings::MessageMenu,
     keyboard_navigation: &'a std::cell::Cell<bool>,
     /// Resolves a name with the message's stored name as fallback.
     names_or: &'a dyn Fn(&str, Option<&str>) -> String,
@@ -3162,6 +3164,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .map(|(_, message)| message.as_str()),
         reaction_menu: app.reaction_beside_menu,
         reaction_emoji: &app.settings.reaction_emoji,
+        menu: app.settings.message_menu,
         keyboard_navigation: &keyboard_navigation,
         names_or: &names_or,
         mention_names: &mention_names,
@@ -7412,7 +7415,7 @@ fn bubble_frame(
         || (album.is_some()
             && view.reaction_menu
             && view.reaction == Some(menu_target.id.as_str()));
-    let width = menu_width(ui, view.locale, view.reaction_emoji, menu_target);
+    let width = menu_width(ui, view.locale, view.reaction_emoji, view.menu, menu_target);
     let keyboard_clicked =
         bubble.clicked() && bubble.has_focus() && !ui.input(|input| input.pointer.any_click());
     let open = if right_clicked || force_menu || reacting || keyboard_clicked {
@@ -8879,9 +8882,15 @@ pub(crate) fn menu_width(
     ui: &egui::Ui,
     locale: crate::i18n::Locale,
     reaction_emoji: &[(String, u32)],
+    menu: crate::settings::MessageMenu,
     message: &Message,
 ) -> f32 {
     let quick = quick_reactions(message, reaction_emoji).len() as f32 + 1.0;
+    // Icons only is as wide as the reactions above it, one more point so a
+    // row of buttons as long as theirs does not wrap on rounding.
+    if menu.layout == crate::settings::MenuLayout::Icons {
+        return quick * 36.0 + 13.0;
+    }
     let labels = message_menu_labels(locale);
     let refs: Vec<&str> = labels.iter().map(String::as_str).collect();
     widgets::menu_width(ui, &refs, true).max(quick * 36.0 + 12.0)
@@ -8902,17 +8911,12 @@ fn message_menu_labels(locale: crate::i18n::Locale) -> Vec<String> {
         gettext(locale, "Pin message"),
         gettext(locale, "Unpin message"),
         gettext(locale, "Forward"),
-        gettext(locale, "Open in the viewer"),
         gettext(locale, "Select"),
         gettext(locale, "Copy text"),
         gettext(locale, "Edit"),
         gettext(locale, "Delete"),
         gettext(locale, "Message info"),
-        gettext(locale, "Reload earlier messages"),
-        gettext(locale, "Copy message ID"),
         gettext(locale, "Add to favorites"),
-        gettext(locale, "Open in system player"),
-        gettext(locale, "Open file"),
         gettext(locale, "Copy image"),
         gettext(locale, "Save as…"),
         gettext(locale, "Show in folder"),
@@ -8974,6 +8978,7 @@ pub(crate) fn list_menu(
         reaction: None,
         reaction_menu: false,
         reaction_emoji: &app.settings.reaction_emoji,
+        menu: app.settings.message_menu,
         keyboard_navigation: &keyboard_navigation,
         names_or: &names_or,
         mention_names: &mention_names,
@@ -9024,23 +9029,6 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
         list.push(mine);
     }
     list
-}
-
-/// The file the menu's viewer item would open, when the message has one to
-/// show.
-///
-/// The album decides what belongs in the viewer: a sticker, a GIF or a card's
-/// image is not in it, so none of them offers the item. The recorded path has
-/// to still be a file: a path the archive kept after the file was deleted or
-/// moved elsewhere would open a viewer with nothing to show, and the click
-/// would fall back to opening a file that is not there.
-fn viewer_file(message: &Message) -> Option<&Path> {
-    message.content.gallery_kind()?;
-    message
-        .content
-        .media()
-        .and_then(|media| media.path.as_deref())
-        .filter(|path| crate::image_preview::can_view(path) && path.is_file())
 }
 
 /// Checks every selected message's revoke eligibility with one scan of loaded history.
@@ -9218,122 +9206,162 @@ fn context_menu(
         return;
     }
     let mine = own_reaction(message);
-    ui.allocate_ui_with_layout(
-        vec2(ui.available_width(), 34.0),
-        Layout::left_to_right(Align::Center),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            let calm = crate::motion::screen_reader_attached(ui.ctx());
-            let opened = quick_reactions_opened(ui, calm);
-            for (index, emoji) in quick_reactions(message, view.reaction_emoji)
-                .into_iter()
-                .enumerate()
-            {
-                let chosen = mine == Some(emoji);
-                let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
+    let (opened, calm) = ui
+        .allocate_ui_with_layout(
+            vec2(ui.available_width(), 34.0),
+            Layout::left_to_right(Align::Center),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                let calm = crate::motion::screen_reader_attached(ui.ctx());
+                let opened = quick_reactions_opened(ui, calm);
+                for (index, emoji) in quick_reactions(message, view.reaction_emoji)
+                    .into_iter()
+                    .enumerate()
+                {
+                    let chosen = mine == Some(emoji);
+                    let line =
+                        widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
+                    let (rect, response) =
+                        ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
+                    let first_shape = super::swipe::mark(ui);
+                    let old_opacity = ui.opacity();
+                    let entry = if calm {
+                        1.0
+                    } else {
+                        quick_reaction_progress(opened, index)
+                    };
+                    let target = if response.is_pointer_button_down_on() {
+                        QUICK_PRESS_SCALE
+                    } else if response.hovered() {
+                        QUICK_HOVER_SCALE
+                    } else {
+                        1.0
+                    };
+                    let lift = quick_reaction_lift(ui.ctx(), response.id, target, calm);
+                    ui.set_opacity(old_opacity * entry.clamp(0.0, 1.0));
+                    theme::focus_outline(ui, response.id, rect, 17.0);
+                    if chosen {
+                        ui.painter()
+                            .circle_filled(rect.center(), 17.0, palette.surface_active);
+                        ui.painter().circle_stroke(
+                            rect.center(),
+                            16.0,
+                            Stroke::new(1.5, palette.accent),
+                        );
+                    } else if response.hovered() {
+                        ui.painter()
+                            .circle_filled(rect.center(), 17.0, palette.surface_hover);
+                    }
+                    line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
+                    ui.set_opacity(old_opacity);
+                    let scale = (0.4 + 0.6 * entry) * lift;
+                    if (scale - 1.0).abs() > f32::EPSILON {
+                        let centre = rect.center().to_vec2();
+                        let transform =
+                            egui::emath::TSTransform::new(centre * (1.0 - scale), scale);
+                        let layer = ui.layer_id();
+                        ui.ctx().graphics_mut(|graphics| {
+                            let list = graphics.entry(layer);
+                            for shape in first_shape.0..list.next_idx().0 {
+                                list.mutate_shape(egui::layers::ShapeIdx(shape), |clipped| {
+                                    clipped.shape.transform(transform);
+                                });
+                            }
+                        });
+                    }
+                    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let response = if chosen {
+                        response.on_hover_text(
+                            crate::i18n::gettext(view.locale, "Remove your reaction").into_owned(),
+                        )
+                    } else {
+                        response
+                    };
+                    if response.clicked() {
+                        crate::haptics::tap(crate::haptics::Feel::Alignment);
+                        // Selecting our current reaction removes it.
+                        actions.push(Action::React {
+                            chat: chat.clone(),
+                            message: message.id.clone(),
+                            emoji: reaction_choice(mine, emoji),
+                        });
+                        ui.close();
+                    }
+                }
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
-                let first_shape = super::swipe::mark(ui);
-                let old_opacity = ui.opacity();
-                let entry = if calm {
-                    1.0
-                } else {
-                    quick_reaction_progress(opened, index)
-                };
-                let target = if response.is_pointer_button_down_on() {
-                    QUICK_PRESS_SCALE
-                } else if response.hovered() {
-                    QUICK_HOVER_SCALE
-                } else {
-                    1.0
-                };
-                let lift = quick_reaction_lift(ui.ctx(), response.id, target, calm);
-                ui.set_opacity(old_opacity * entry.clamp(0.0, 1.0));
                 theme::focus_outline(ui, response.id, rect, 17.0);
-                if chosen {
-                    ui.painter()
-                        .circle_filled(rect.center(), 17.0, palette.surface_active);
+                if ui.is_rect_visible(rect) {
+                    let hovered = response.hovered();
+                    ui.painter().circle_filled(
+                        rect.center(),
+                        17.0,
+                        if hovered {
+                            palette.surface_hover
+                        } else {
+                            palette.surface
+                        },
+                    );
                     ui.painter().circle_stroke(
                         rect.center(),
                         16.0,
-                        Stroke::new(1.5, palette.accent),
+                        Stroke::new(1.0, palette.outline),
                     );
-                } else if response.hovered() {
-                    ui.painter()
-                        .circle_filled(rect.center(), 17.0, palette.surface_hover);
+                    theme::paint_icon(ui, Icon::Plus, rect, 16.0, palette.secondary);
                 }
-                line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
-                ui.set_opacity(old_opacity);
-                let scale = (0.4 + 0.6 * entry) * lift;
-                if (scale - 1.0).abs() > f32::EPSILON {
-                    let centre = rect.center().to_vec2();
-                    let transform = egui::emath::TSTransform::new(centre * (1.0 - scale), scale);
-                    let layer = ui.layer_id();
-                    ui.ctx().graphics_mut(|graphics| {
-                        let list = graphics.entry(layer);
-                        for shape in first_shape.0..list.next_idx().0 {
-                            list.mutate_shape(egui::layers::ShapeIdx(shape), |clipped| {
-                                clipped.shape.transform(transform);
-                            });
-                        }
-                    });
-                }
-                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                let response = if chosen {
-                    response.on_hover_text(
-                        crate::i18n::gettext(view.locale, "Remove your reaction").into_owned(),
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(
+                        crate::i18n::gettext(view.locale, "React with any emoji").into_owned(),
                     )
-                } else {
-                    response
-                };
-                if response.clicked() {
-                    crate::haptics::tap(crate::haptics::Feel::Alignment);
-                    // Selecting our current reaction removes it.
-                    actions.push(Action::React {
+                    .clicked()
+                {
+                    actions.push(Action::OpenReactionPicker {
                         chat: chat.clone(),
                         message: message.id.clone(),
-                        emoji: reaction_choice(mine, emoji),
+                        beside_menu: true,
                     });
-                    ui.close();
                 }
-            }
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
-            theme::focus_outline(ui, response.id, rect, 17.0);
-            if ui.is_rect_visible(rect) {
-                let hovered = response.hovered();
-                ui.painter().circle_filled(
-                    rect.center(),
-                    17.0,
-                    if hovered {
-                        palette.surface_hover
-                    } else {
-                        palette.surface
-                    },
-                );
-                ui.painter()
-                    .circle_stroke(rect.center(), 16.0, Stroke::new(1.0, palette.outline));
-                theme::paint_icon(ui, Icon::Plus, rect, 16.0, palette.secondary);
-            }
-            if response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(
-                    crate::i18n::gettext(view.locale, "React with any emoji").into_owned(),
-                )
-                .clicked()
-            {
-                actions.push(Action::OpenReactionPicker {
-                    chat: chat.clone(),
-                    message: message.id.clone(),
-                    beside_menu: true,
-                });
-            }
-        },
-    );
+                (opened, calm)
+            },
+        )
+        .inner;
     widgets::menu_separator(ui, &palette);
-    // Answering first: a private reply and Edit. Then what to do with its
-    // contents, keeping it, and its media, with deleting it set apart below.
-    // Replying, forwarding and selecting have their own ways in (a double
-    // click or a swipe, the selection bar, a Ctrl-click), and the details
-    // open from the message's time.
+    let mut rows = MenuRows {
+        icons: view.menu.layout == crate::settings::MenuLayout::Icons,
+        opened,
+        calm,
+        // The icons come in after the reactions, each a little later.
+        index: quick_reactions(message, view.reaction_emoji).len() + 1,
+    };
+    if rows.icons {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+            message_rows(ui, view, message, album, origin, &mut rows, actions);
+        });
+    } else {
+        message_rows(ui, view, message, album, origin, &mut rows, actions);
+    }
+}
+
+/// The actions of a message's menu below its reactions, in the layout the
+/// settings chose and with only the rows they leave on.
+fn message_rows(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    album: &[Message],
+    origin: MenuOrigin,
+    rows: &mut MenuRows,
+    actions: &mut Vec<Action>,
+) {
+    let palette = view.palette;
+    let chat = &view.chat.id;
+    let menu = view.menu;
+    // Answering first: Reply and a private reply, and Edit. Then what to do
+    // with its contents, keeping it, and its media, with deleting it set
+    // apart below. Replying and forwarding are off until Settings turns them
+    // on: they have their own ways in (a double click or a swipe, the
+    // selection bar, a Ctrl-click).
     let actions_from = ui.cursor().min.y;
     let age = view.now - message.timestamp;
     let can_edit = message.from_me
@@ -9342,11 +9370,12 @@ fn context_menu(
     let can_revoke = message.from_me
         && !matches!(message.content, Content::Revoked)
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
-    if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(
+    if menu.reply
+        && !matches!(message.content, Content::Revoked)
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Reply),
+            Icon::Reply,
             &crate::i18n::gettext(view.locale, "Reply"),
         )
     {
@@ -9360,12 +9389,13 @@ fn context_menu(
     }
     // From the starred list the source chat is not on screen, and the
     // private reply starts from the group the reader is looking at.
-    if !matches!(origin, MenuOrigin::List)
+    if menu.reply_privately
+        && !matches!(origin, MenuOrigin::List)
         && message.private_reply_recipient().is_some()
-        && widgets::menu_item(
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Reply),
+            Icon::Reply,
             &crate::i18n::gettext(view.locale, "Reply privately"),
         )
     {
@@ -9374,11 +9404,12 @@ fn context_menu(
             message: message.id.clone(),
         });
     }
-    if can_edit
-        && widgets::menu_item(
+    if menu.edit
+        && can_edit
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Pencil),
+            Icon::Pencil,
             &crate::i18n::gettext(view.locale, "Edit"),
         )
     {
@@ -9390,11 +9421,12 @@ fn context_menu(
         }
         actions.push(Action::Edit(message.id.clone()));
     }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(
+    if menu.forward
+        && crate::app::can_select(&message.content)
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Forward),
+            Icon::Forward,
             &crate::i18n::gettext(view.locale, "Forward"),
         )
     {
@@ -9421,22 +9453,24 @@ fn context_menu(
         Content::Contact { vcard, .. } => Some(vcard.clone()),
         _ => None,
     };
-    if let Some(text) = text
-        && widgets::menu_item(
+    if menu.copy_text
+        && let Some(text) = text
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Copy),
+            Icon::Copy,
             &crate::i18n::gettext(view.locale, "Copy text"),
         )
     {
         let mentions = mentions_of(view, message);
         actions.push(Action::CopyText(markup::plain(&text, &mentions)));
     }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(
+    if menu.select
+        && crate::app::can_select(&message.content)
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Check),
+            Icon::Check,
             &crate::i18n::gettext(view.locale, "Select"),
         )
     {
@@ -9454,8 +9488,9 @@ fn context_menu(
     } else {
         crate::i18n::gettext(view.locale, "Star")
     };
-    if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(ui, &palette, Some(Icon::Star), &star_label)
+    if menu.star
+        && !matches!(message.content, Content::Revoked)
+        && rows.item(ui, &palette, Icon::Star, &star_label)
     {
         actions.push(Action::SetStar {
             chat: chat.clone(),
@@ -9470,8 +9505,9 @@ fn context_menu(
     } else {
         crate::i18n::gettext(view.locale, "Pin message")
     };
-    if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(ui, &palette, Some(Icon::Pin), &pin_label)
+    if menu.pin
+        && !matches!(message.content, Content::Revoked)
+        && rows.item(ui, &palette, Icon::Pin, &pin_label)
     {
         actions.push(Action::SetMessagePinned {
             chat: chat.clone(),
@@ -9479,40 +9515,15 @@ fn context_menu(
             pinned: !pinned,
         });
     }
-    // A photo opens the viewer on its own click; a clip plays in its bubble
-    // there, so this is how the album is reached from a chat that holds no
-    // pictures.
-    if let Some(path) = viewer_file(message)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Maximize),
-            &crate::i18n::gettext(view.locale, "Open in the viewer"),
-        )
-    {
-        actions.push(Action::PreviewImage {
-            path: path.to_owned(),
-            chat: chat.clone(),
-            message: message.id.clone(),
-            card: None,
-        });
-    }
     if let Some(media) = message.content.media() {
         match &media.path {
             Some(path) => {
-                let open = if matches!(message.content, Content::Video { gif: false, .. }) {
-                    crate::i18n::gettext(view.locale, "Open in system player")
-                } else {
-                    crate::i18n::gettext(view.locale, "Open file")
-                };
-                if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
-                    actions.push(Action::OpenFile(path.clone()));
-                }
-                if matches!(message.content, Content::Image { .. })
-                    && widgets::menu_item(
+                if menu.copy_image
+                    && matches!(message.content, Content::Image { .. })
+                    && rows.item(
                         ui,
                         &palette,
-                        Some(Icon::Copy),
+                        Icon::Copy,
                         &crate::i18n::gettext(view.locale, "Copy image"),
                     )
                 {
@@ -9535,18 +9546,19 @@ fn context_menu(
                 } else {
                     crate::i18n::gettext(view.locale, "Save this item")
                 };
-                if widgets::menu_item(ui, &palette, Some(Icon::Download), &save) {
+                if menu.save && rows.item(ui, &palette, Icon::Download, &save) {
                     actions.push(Action::SaveAttachmentAs {
                         path: path.clone(),
                         name: attachment_name(&message.content, path),
                     });
                 }
-                if in_album
+                if menu.save
+                    && in_album
                     && files.len() > 1
-                    && widgets::menu_item(
+                    && rows.item(
                         ui,
                         &palette,
-                        Some(Icon::Download),
+                        Icon::Download,
                         &crate::i18n::gettext(
                             view.locale,
                             if album
@@ -9562,11 +9574,12 @@ fn context_menu(
                 {
                     actions.push(Action::SaveAttachments { files });
                 }
-                if let Some(folder) = path.parent()
-                    && widgets::menu_item(
+                if menu.show_in_folder
+                    && let Some(folder) = path.parent()
+                    && rows.item(
                         ui,
                         &palette,
-                        Some(Icon::FileText),
+                        Icon::FileText,
                         &crate::i18n::gettext(view.locale, "Show in folder"),
                     )
                 {
@@ -9575,10 +9588,10 @@ fn context_menu(
             }
             None => {
                 let downloading = matches!(media.state, MediaState::Downloading);
-                if widgets::menu_item_enabled(
+                if rows.item_enabled(
                     ui,
                     &palette,
-                    Some(Icon::Download),
+                    Icon::Download,
                     &if downloading {
                         crate::i18n::gettext(view.locale, "Downloading…")
                     } else {
@@ -9603,10 +9616,10 @@ fn context_menu(
     }
     if let Content::Sticker { media, .. } = &message.content
         && let Some(path) = &media.path
-        && widgets::menu_item(
+        && rows.item(
             ui,
             &palette,
-            Some(Icon::Star),
+            Icon::Star,
             &crate::i18n::gettext(view.locale, "Add to favorites"),
         )
     {
@@ -9615,13 +9628,13 @@ fn context_menu(
     // A message with nothing above, such as a deleted one, keeps a single
     // line between its reactions and Delete.
     if ui.cursor().min.y > actions_from {
-        widgets::menu_separator(ui, &palette);
+        rows.separator(ui, &palette);
     }
-    if has_message_info(message) {
-        if widgets::menu_item(
+    if menu.message_info && has_message_info(message) {
+        if rows.item(
             ui,
             &palette,
-            Some(Icon::Info),
+            Icon::Info,
             &crate::i18n::gettext(view.locale, "Message info"),
         ) {
             actions.push(Action::ShowDialog(Dialog::MessageInfo {
@@ -9629,40 +9642,20 @@ fn context_menu(
                 message: message.id.clone(),
             }));
         }
-        widgets::menu_separator(ui, &palette);
+        rows.separator(ui, &palette);
     }
-    delete_submenu(ui, view, message, can_revoke, actions);
-    widgets::menu_separator(ui, &palette);
-    if widgets::menu_item_enabled(
-        ui,
-        &palette,
-        Some(Icon::Refresh),
-        &crate::i18n::gettext(view.locale, "Reload earlier messages"),
-        view.connected && !matches!(message.status, Delivery::Pending | Delivery::Failed),
-    ) {
-        actions.push(Action::ReloadHistory {
-            chat: chat.clone(),
-            message: message.id.clone(),
-        });
-    }
-    // The id helps when looking a message up for a bug report.
-    if widgets::menu_item(
-        ui,
-        &palette,
-        Some(Icon::Copy),
-        &crate::i18n::gettext(view.locale, "Copy message ID"),
-    ) {
-        actions.push(Action::CopyText(message.id.clone()));
-    }
+    delete_submenu(ui, view, message, can_revoke, rows, actions);
 }
 
 /// The menu's Delete row, which opens the ways to delete `message`: for me,
-/// then for everyone while it can still be revoked. Each asks to confirm.
+/// then for everyone while it can still be revoked. Each asks to confirm. In
+/// the icons layout it is a trash button that opens the same two choices.
 fn delete_submenu(
     ui: &mut egui::Ui,
     view: &View<'_>,
     message: &Message,
     can_revoke: bool,
+    rows: &mut MenuRows,
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
@@ -9672,30 +9665,163 @@ fn delete_submenu(
     if can_revoke {
         items.push(&*for_everyone);
     }
-    widgets::submenu(
-        ui,
-        &palette,
-        Icon::Trash,
-        &crate::i18n::gettext(view.locale, "Delete"),
-        &items,
-        |ui| {
-            if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), &for_me) {
-                actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
-                    chat: view.chat.id.clone(),
-                    message: message.id.clone(),
-                    for_everyone: false,
-                }));
-            }
-            if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), &for_everyone) {
-                actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
-                    chat: view.chat.id.clone(),
-                    message: message.id.clone(),
-                    for_everyone: true,
-                }));
-            }
-        },
-    );
+    let choices = |ui: &mut egui::Ui| {
+        if widgets::menu_item(ui, &palette, Some(Icon::EyeOff), &for_me) {
+            actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+                chat: view.chat.id.clone(),
+                message: message.id.clone(),
+                for_everyone: false,
+            }));
+        }
+        if can_revoke && widgets::menu_item(ui, &palette, Some(Icon::Trash), &for_everyone) {
+            actions.push(Action::ShowDialog(Dialog::ConfirmDeleteMessage {
+                chat: view.chat.id.clone(),
+                message: message.id.clone(),
+                for_everyone: true,
+            }));
+        }
+    };
+    let label = crate::i18n::gettext(view.locale, "Delete");
+    if rows.icons {
+        let response = rows.icon_button(ui, &palette, Icon::Trash, &label, true);
+        widgets::submenu_of(ui, &response, &items, choices);
+    } else {
+        widgets::submenu(ui, &palette, Icon::Trash, &label, &items, choices);
+    }
 }
+
+/// How the rows of a message menu are drawn: one per line with its name, or
+/// as icon-only buttons in a wrapped row.
+struct MenuRows {
+    icons: bool,
+    /// Seconds since the menu opened, for the icons' entrance.
+    opened: f32,
+    /// Whether the system asks for calm: the icons then appear at once.
+    calm: bool,
+    /// The icon's place in the entrance, counted after the reactions.
+    index: usize,
+}
+
+impl MenuRows {
+    fn item(&mut self, ui: &mut egui::Ui, palette: &Palette, icon: Icon, label: &str) -> bool {
+        self.item_enabled(ui, palette, icon, label, true)
+    }
+
+    fn item_enabled(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &Palette,
+        icon: Icon,
+        label: &str,
+        enabled: bool,
+    ) -> bool {
+        if !self.icons {
+            return widgets::menu_item_enabled(ui, palette, Some(icon), label, enabled);
+        }
+        let clicked = self
+            .icon_button(ui, palette, icon, label, enabled)
+            .clicked();
+        if clicked {
+            ui.close();
+        }
+        clicked
+    }
+
+    /// The line between groups of rows. Icons run on without one.
+    fn separator(&self, ui: &mut egui::Ui, palette: &Palette) {
+        if !self.icons {
+            widgets::menu_separator(ui, palette);
+        }
+    }
+
+    /// One icon-only button, its name in a tooltip. It comes in like the
+    /// quick reactions do (a staggered spring), grows a little under the
+    /// pointer, and shrinks while pressed, with the same springs.
+    fn icon_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        palette: &Palette,
+        icon: Icon,
+        label: &str,
+        enabled: bool,
+    ) -> egui::Response {
+        let index = self.index;
+        self.index += 1;
+        let (rect, response) = ui.allocate_exact_size(
+            Vec2::splat(MENU_ICON_BUTTON),
+            if enabled {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
+        theme::reveal_focus(&response);
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), label)
+        });
+        let first_shape = super::swipe::mark(ui);
+        let old_opacity = ui.opacity();
+        let entry = if self.calm {
+            1.0
+        } else {
+            quick_reaction_progress(self.opened, index)
+        };
+        let open = egui::Popup::is_id_open(
+            ui.ctx(),
+            egui::containers::menu::SubMenu::id_from_widget_id(response.id),
+        );
+        let target = if enabled && response.is_pointer_button_down_on() {
+            QUICK_PRESS_SCALE
+        } else if enabled && (response.hovered() || open) {
+            MENU_ICON_HOVER_SCALE
+        } else {
+            1.0
+        };
+        let lift = quick_reaction_lift(ui.ctx(), response.id, target, self.calm);
+        ui.set_opacity(old_opacity * entry.clamp(0.0, 1.0));
+        if enabled && (response.hovered() || open) {
+            ui.painter().rect_filled(
+                rect,
+                CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        theme::paint_icon(
+            ui,
+            icon,
+            rect,
+            18.0,
+            if enabled { palette.text } else { palette.dim },
+        );
+        ui.set_opacity(old_opacity);
+        let scale = (0.4 + 0.6 * entry) * lift;
+        if (scale - 1.0).abs() > f32::EPSILON {
+            let centre = rect.center().to_vec2();
+            let transform = egui::emath::TSTransform::new(centre * (1.0 - scale), scale);
+            let layer = ui.layer_id();
+            ui.ctx().graphics_mut(|graphics| {
+                let list = graphics.entry(layer);
+                for shape in first_shape.0..list.next_idx().0 {
+                    list.mutate_shape(egui::layers::ShapeIdx(shape), |clipped| {
+                        clipped.shape.transform(transform);
+                    });
+                }
+            });
+        }
+        if enabled {
+            response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(label)
+        } else {
+            response
+        }
+    }
+}
+
+/// Side of an icon-only menu button.
+const MENU_ICON_BUTTON: f32 = 34.0;
+/// How far an icon-only button grows under the pointer.
+const MENU_ICON_HOVER_SCALE: f32 = 1.12;
 
 fn mentions_of(view: &View<'_>, message: &Message) -> Vec<markup::Mention> {
     message
@@ -15523,52 +15649,6 @@ mod tests {
         }
     }
 
-    /// The menu offers the viewer for a message the album takes and a file
-    /// that is still on disk. A recorded path whose file was deleted elsewhere
-    /// offers nothing, or the click would fall back to opening a file that is
-    /// not there.
-    #[test]
-    fn the_viewer_item_needs_a_file_that_is_still_here() {
-        let dir = tempfile::tempdir().unwrap();
-        let picture = |path: &Path| {
-            message(Content::Image {
-                media: Media {
-                    path: Some(path.to_path_buf()),
-                    ..media(None, None)
-                },
-                caption: None,
-                motion: None,
-            })
-        };
-
-        let photo = dir.path().join("photo.png");
-        std::fs::write(&photo, b"jpeg").unwrap();
-        let downloaded = picture(&photo);
-        assert_eq!(viewer_file(&downloaded), Some(photo.as_path()));
-
-        let deleted = dir.path().join("deleted.png");
-        let gone = picture(&deleted);
-        assert_eq!(
-            viewer_file(&gone),
-            None,
-            "a path with no file offers nothing"
-        );
-
-        // A GIF plays inline as an animation, so the album leaves it out.
-        let animation = dir.path().join("animation.gif");
-        std::fs::write(&animation, b"gif").unwrap();
-        let inline = picture(&animation);
-        assert_eq!(viewer_file(&inline), None);
-
-        // Neither does a message whose file was never downloaded.
-        let pending = message(Content::Image {
-            media: media(None, None),
-            caption: None,
-            motion: None,
-        });
-        assert_eq!(viewer_file(&pending), None);
-    }
-
     #[test]
     fn picture_placeholder_matches_decoded_dimensions() {
         for limit in [200.0, PICTURE_WIDTH] {
@@ -15997,6 +16077,7 @@ mod tests {
             reaction: None,
             reaction_menu: false,
             reaction_emoji: &app.settings.reaction_emoji,
+            menu: app.settings.message_menu,
             keyboard_navigation: &keyboard_navigation,
             names_or: &names_or,
             mention_names: &mention_names,
@@ -16798,7 +16879,15 @@ mod reaction_tests {
         let directory = tempfile::tempdir().unwrap();
         let (mut app, _) = App::headless(
             crate::paths::AppDirs::under(directory.path()),
-            crate::settings::Settings::default(),
+            crate::settings::Settings {
+                // Off by default, but still rows the menu's width allows for.
+                message_menu: crate::settings::MessageMenu {
+                    reply: true,
+                    forward: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
         );
         app.locale = locale;
         if row.pinned {
@@ -16907,7 +16996,7 @@ mod reaction_tests {
         for spanish in [
             "Copiar texto",
             "Eliminar",
-            "Abrir archivo",
+            "Copiar imagen",
             "Mostrar en la carpeta",
             "Descargar",
         ] {
