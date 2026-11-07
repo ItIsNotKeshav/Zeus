@@ -2021,11 +2021,15 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     } else {
                         (Icon::Send, icon, "Send")
                     };
+                    // Smaller than the band it sits in, so it clears the
+                    // field's rounded corner without making the field taller.
+                    let breathing = SEND_CLEARANCE;
+                    ui.add_space(breathing);
                     let send = theme::circle_button_morph(
                         ui,
                         "composer-send",
                         icon_kind,
-                        button_width,
+                        button_width - 2.0 * breathing,
                         fill,
                         hover,
                         tint,
@@ -2155,8 +2159,11 @@ const COMPOSER_PADDING: f32 = 14.0;
 /// Height of the plus and emoji buttons: a row is never shorter, or they
 /// would stretch it and pull the text off its centre.
 const COMPOSER_CONTROL: f32 = 36.0;
+/// Space the send button keeps on every side inside its band, so it sits
+/// clear of the field's corner while the field stays one line thick.
+const SEND_CLEARANCE: f32 = 4.0;
 /// Space between the composer's rounded field and the buttons at its ends.
-const COMPOSER_INSET: i8 = 6;
+const COMPOSER_INSET: i8 = 2;
 /// Space between the plus and emoji buttons' hit areas. Each area pads its
 /// 22-point icon by six points a side, so this leaves eight between the
 /// icons, a pair.
