@@ -360,6 +360,19 @@ strip = true
 # `contain_panics` in src/main.rs.
 panic = "unwind"
 
+# The quick build for trying a change on the maintainer's machine
+# (`packaging\windows\build-zeus.cmd test`): the release profile without thin
+# LTO and its single code generation unit, built incrementally, so a rebuild
+# after an edit links in a fraction of a release build. Releases and installers
+# keep `release`.
+[profile.fast]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+
 # Optimize dependencies in development for usable decryption and UI layout.
 # Keep the application crate incremental.
 [profile.dev.package."*"]

@@ -804,15 +804,15 @@ A release is not finished when the tag is pushed. Do these in order:
   `--demo-shot` to look at the result.
 - Update the docs site (`docs/`) when user-visible behaviour, settings,
   files, or network access changes. The README stays a short pointer to it.
-- In this fork, a routine change does not wait on the full suite: build it,
-  run `cargo fmt --all --check` and only the tests that directly cover the
-  change, then push to `main` and let GitHub CI (`ci.yml`) run the rest. If
-  CI fails, fix it forward. A test build installed on the maintainer's PC
-  needs no checks at all. The maintainer asked for this because waiting on
-  the full suite on their machine (15 to 20 minutes, and it can run out of
-  memory) cost more than it caught.
-- Run the full checks locally at most once a day, and before a major
-  release:
+- In this fork, run no tests or checks on the maintainer's machine: no
+  `cargo test`, `clippy`, `doc` or `fmt --all --check`. Push to `main` (or the
+  pull request branch) and let GitHub CI (`ci.yml`) run them; if CI fails, fix
+  it forward. Compile only when a build is wanted to try a change, with the
+  fast test build below. The full local suite is for a release, where a failure
+  is fixed before tagging. The maintainer asked for this because waiting on
+  checks on their machine (15 to 20 minutes, and it can run out of memory) cost
+  more than they caught.
+- Before a release, run the full checks locally (and only then):
 
   ```sh
   cargo fmt --all --check
@@ -844,7 +844,16 @@ maintainer's Windows machine:
   `dist/zeus-v<version>-x86_64-pc-windows-msvc-setup.exe` (the name the
   updater asks a release for). A warm release build takes about
   5 minutes; a cold one about 15.
-- Debug builds, tests and previews run from Git Bash with plain `cargo`: a
+- To try a change on the maintainer's PC, build it with
+  `packaging\windows\build-zeus.cmd test` (same environment and rules as the
+  release build, so not from Git Bash): the `fast` profile in `Cargo.toml`
+  (no LTO, 16 code generation units, incremental) leaves
+  `dist/test/zeus.exe` without an installer. The first build compiles the C
+  dependencies once, about as long as a cold release build; after that an
+  edit rebuilds much faster than a release build. Use `fast` only for
+  builds to try; releases and the installer keep `release`. Do not run tests
+  or checks around it on this machine.
+- Debug builds and previews run from Git Bash with plain `cargo`: a
   local, untracked `.cargo/config.toml` sets `target-nmake` and NMake.
 - To show the maintainer a change without their account, preview it with the
   synthetic demo: `cargo build --features demo`, then

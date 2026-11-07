@@ -3,7 +3,7 @@ rem Builds Zeus's release binary and its Windows installer, as the maintainer's
 rem machine does. Needs the Visual Studio 2019 Build Tools, Scoop's perl (Git
 rem Bash's perl lacks modules OpenSSL's configure needs) and Inno Setup 6.
 rem
-rem   packaging\windows\build-zeus.cmd [publish or bench]
+rem   packaging\windows\build-zeus.cmd [publish, test or bench]
 rem
 rem Leaves target-nmake\release\zeus.exe and
 rem dist\zeus-v<version>-x86_64-pc-windows-msvc-setup.exe. With publish, it then
@@ -28,6 +28,17 @@ set "PATH=%USERPROFILE%\scoop\apps\perl\current\perl\bin;%USERPROFILE%\scoop\app
 set "CMAKE_GENERATOR=NMake Makefiles"
 rem The cache that already holds the C dependencies; another folder starts cold.
 set "CARGO_TARGET_DIR=%CD%\target-nmake"
+
+rem With test, the quick build for trying a change (the fast profile in
+rem Cargo.toml: no LTO, incremental): the demo feature as the release build has
+rem it, no installer. Leaves dist\test\zeus.exe, which is not for sharing.
+if /i "%~1"=="test" (
+  cargo build --profile fast --locked --features demo || exit /b 1
+  if not exist dist\test mkdir dist\test
+  copy /y "%CARGO_TARGET_DIR%\fast\zeus.exe" dist\test\zeus.exe >nul || exit /b 1
+  echo Built dist\test\zeus.exe for trying a change.
+  exit /b 0
+)
 
 rem With bench, a build for the benchmark instead (scripts\bench): the
 rem demo with its scenario, no installer. Run it with scripts\bench\run.ps1.
