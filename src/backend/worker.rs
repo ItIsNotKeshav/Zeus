@@ -37,6 +37,7 @@ use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
+mod blocking;
 mod bot_replies;
 mod calls;
 mod channel_pictures;
@@ -800,6 +801,7 @@ pub async fn run(
         wa_sender,
         me_pn: None,
         me_lid: None,
+        blocklist: Default::default(),
         me_name: None,
         me_about: None,
         lid_to_pn: HashMap::new(),
@@ -1245,6 +1247,7 @@ struct Worker {
     wa_sender: mpsc::UnboundedSender<RuntimeEvent>,
     me_pn: Option<String>,
     me_lid: Option<String>,
+    blocklist: crate::blocking::Blocklist,
     me_name: Option<String>,
     me_about: Option<String>,
     /// Privacy-id user part to phone-number user part.
@@ -2144,8 +2147,20 @@ impl Worker {
                 // The phone may have history for us again.
                 self.prefetch.on_connected();
             }
+            // Dropping the link ends what was in flight.
+            let mut blocks_changed = false;
+            if !status.is_connected() {
+                blocks_changed = self.blocklist.loading || self.blocklist.pending;
+                self.blocklist.invalidate();
+                if matches!(status, LinkStatus::LoggedOut) {
+                    blocks_changed |= self.blocklist.ids.take().is_some();
+                }
+            }
             self.status = status.clone();
             self.emit(Event::Link(status));
+            if blocks_changed {
+                self.publish_blocklist(None);
+            }
         }
     }
 
@@ -3829,6 +3844,7 @@ impl Worker {
                 };
                 self.remember_identity(pn, lid, name);
                 self.set_status(LinkStatus::Connected);
+                self.fetch_blocklist();
                 self.retry_message_removals();
                 // A new connection may reach a phone that was away before.
                 self.older_warned.clear();
@@ -6685,6 +6701,13 @@ impl Worker {
             _ => None,
         };
         if let Some(chat) = destination
+            && self.destination_writable(chat)
+            && self.is_blocked(chat)
+        {
+            self.refuse_blocked(command);
+            return;
+        }
+        if let Some(chat) = destination
             && !self.destination_writable(chat)
         {
             let error = "This conversation is read-only in Zeus".to_owned();
@@ -6699,6 +6722,17 @@ impl Worker {
             return;
         }
         match command {
+            Command::FetchBlocklist => self.fetch_blocklist(),
+            Command::SetBlocked { chat, blocked } => self.set_blocked(chat, blocked),
+            Command::BlocklistFetched { generation, result } => {
+                self.blocklist_fetched(generation, result).await
+            }
+            Command::BlockedSet {
+                generation,
+                chat,
+                blocked,
+                result,
+            } => self.blocked_set(generation, chat, blocked, result),
             Command::StartCall {
                 chat,
                 video,
@@ -18695,6 +18729,7 @@ mod receipt_tests {
             wa_sender,
             me_pn: Some(ME.to_owned()),
             me_lid: None,
+            blocklist: Default::default(),
             me_name: None,
             me_about: None,
             lid_to_pn: HashMap::new(),

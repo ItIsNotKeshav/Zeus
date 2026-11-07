@@ -3400,6 +3400,14 @@ impl App {
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
+            Event::Blocklist { state, error } => {
+                self.blocklist = state;
+                if !self.events_hidden
+                    && let Some(error) = error
+                {
+                    self.toast_error(error.message(self.locale).into_owned());
+                }
+            }
             Event::StorageStats {
                 stats,
                 token,
@@ -4526,7 +4534,7 @@ impl App {
                         "ZapFast can't join group calls yet: open the link on your phone.",
                     )
                     .into_owned(),
-                    _ => message,
+                    _ => crate::blocking::localize_error(self.locale, message),
                 };
                 self.toast_error(shown);
             }
@@ -4673,6 +4681,7 @@ impl App {
                 self.pins.clear();
                 self.chat_pins.clear();
                 self.account_privacy = crate::privacy::Snapshot::default();
+                self.blocklist = Default::default();
                 self.account_receipts_off = false;
                 self.open_chat = None;
                 // Every recorded place named a chat of the account that just
@@ -5285,6 +5294,9 @@ impl App {
                 self.locale,
                 "Not sent: view-once mode is available for one photo at a time.",
             ),
+            Refusal::Blocked => {
+                crate::i18n::gettext(self.locale, "Unblock this contact to send messages.")
+            }
         };
         self.toast_error(message.into_owned());
     }
@@ -6774,6 +6786,12 @@ impl App {
             return;
         }
         match action {
+            Action::FetchBlocklist => self.backend.send(Command::FetchBlocklist),
+            Action::SetBlocked { chat, blocked } => {
+                if self.is_connected() && self.blocklist.editable() {
+                    self.backend.send(Command::SetBlocked { chat, blocked });
+                }
+            }
             Action::Open(page) => {
                 let opens_chats = page == Page::Chats;
                 // Privacy can change on the phone at any time, and nothing
