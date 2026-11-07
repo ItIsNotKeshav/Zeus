@@ -164,10 +164,11 @@ mod platform {
     use std::sync::Mutex;
 
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Foundation::{COLORREF, HWND};
     use windows::Win32::Graphics::Dwm::{
-        DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_USE_IMMERSIVE_DARK_MODE,
-        DwmExtendFrameIntoClientArea, DwmSetWindowAttribute,
+        DWMSBT_MAINWINDOW, DWMSBT_NONE, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
+        DWMWA_TEXT_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE, DwmExtendFrameIntoClientArea,
+        DwmSetWindowAttribute,
     };
     use windows::Win32::UI::Controls::MARGINS;
     use windows::core::BOOL;
@@ -205,9 +206,16 @@ mod platform {
         status == 0 && value == 0
     }
 
-    /// The window last given a backdrop, whether it was dark, and whether
-    /// Windows accepted it, so DWM is asked only when something changes.
-    static APPLIED: Mutex<Option<(isize, bool, bool, bool)>> = Mutex::new(None);
+    /// The window last given a backdrop, whether it was wanted and dark, the
+    /// title bar's colour (a COLORREF) and its text's, and whether Windows
+    /// accepted the backdrop, so DWM is asked only when something changes.
+    type Applied = (isize, bool, bool, u32, u32);
+    static APPLIED: Mutex<Option<(Applied, bool)>> = Mutex::new(None);
+
+    /// `color` as a COLORREF, which is 0x00BBGGRR.
+    fn colorref(color: egui::Color32) -> u32 {
+        u32::from(color.r()) | u32::from(color.g()) << 8 | u32::from(color.b()) << 16
+    }
 
     pub fn apply(frame: &eframe::Frame, palette: &crate::theme::Palette, wanted: bool) -> bool {
         let Ok(handle) = frame.window_handle() else {
@@ -217,10 +225,21 @@ mod platform {
             return false;
         };
         let hwnd = HWND(handle.hwnd.get() as *mut _);
-        let key = (handle.hwnd.get(), wanted, palette.dark);
+        // The title bar is the system's, and stays solid: Glass moves the
+        // window's material and nothing here, so the bar is the same colour
+        // at every setting instead of turning the grey of Mica.
+        let caption = colorref(palette.titlebar());
+        let caption_text = colorref(palette.text);
+        let key = (
+            handle.hwnd.get(),
+            wanted,
+            palette.dark,
+            caption,
+            caption_text,
+        );
         let mut applied = APPLIED.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some((window, was_wanted, dark, accepted)) = *applied
-            && (window, was_wanted, dark) == key
+        if let Some((was, accepted)) = *applied
+            && was == key
         {
             return accepted;
         }
@@ -233,6 +252,21 @@ mod platform {
                 DWMWA_USE_IMMERSIVE_DARK_MODE,
                 (&raw const dark).cast(),
                 size_of::<BOOL>() as u32,
+            );
+            // Windows 11 22000 and later; earlier versions refuse, which
+            // leaves the system's own title bar.
+            let (bar, bar_text) = (COLORREF(caption), COLORREF(caption_text));
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_CAPTION_COLOR,
+                (&raw const bar).cast(),
+                size_of::<COLORREF>() as u32,
+            );
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_TEXT_COLOR,
+                (&raw const bar_text).cast(),
+                size_of::<COLORREF>() as u32,
             );
             let backdrop = if wanted {
                 DWMSBT_MAINWINDOW
@@ -265,7 +299,7 @@ mod platform {
         if wanted && !accepted {
             log::info!("Mica is unavailable here; the Messages theme stays opaque");
         }
-        *applied = Some((key.0, key.1, key.2, accepted));
+        *applied = Some((key, accepted));
         accepted
     }
 }

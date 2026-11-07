@@ -388,7 +388,19 @@ impl Palette {
     /// translucent sidebar darkens the same way, with a little more of it
     /// opaque.
     pub fn rail(&self) -> Color32 {
-        let sidebar = self.sidebar();
+        self.shaded_rail(self.sidebar())
+    }
+
+    /// The window's title bar where the system draws it (Windows): the rail
+    /// as it is at Solid Glass, opaque whatever Glass says, so the bar is the
+    /// same solid colour with the desktop showing through the window or not.
+    pub fn titlebar(&self) -> Color32 {
+        let [r, g, b, _] = self.shaded_rail(self.panel).to_array();
+        Color32::from_rgb(r, g, b)
+    }
+
+    /// `sidebar` one shade darker, as [`Palette::rail`] lays it.
+    fn shaded_rail(&self, sidebar: Color32) -> Color32 {
         let shade = if self.dark {
             DARK_RAIL_SHADE
         } else {
@@ -2447,6 +2459,26 @@ mod tests {
         assert!(!whatsapp.vibrant());
         assert!(zeus.vibrant());
         crate::backdrop::set_glass(before);
+    }
+
+    /// The system title bar's colour is opaque and the same at every Glass.
+    #[test]
+    fn titlebar_ignores_glass() {
+        for palette in [
+            Palette::dark(),
+            Palette::light(),
+            Palette::nothing_dark(),
+            Palette::nothing_light(),
+        ] {
+            let before = crate::backdrop::glass();
+            crate::backdrop::set_glass(0.0);
+            let clear = palette.titlebar();
+            crate::backdrop::set_glass(1.0);
+            let solid = palette.titlebar();
+            crate::backdrop::set_glass(before);
+            assert_eq!(clear, solid);
+            assert!(clear.is_opaque());
+        }
     }
 
     /// Bubble contents stay readable for every palette, custom ones included.
