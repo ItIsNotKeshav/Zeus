@@ -218,7 +218,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     super::accounts::login_choices(app, ui);
-    ui.add_space(18.0);
+    ui.add_space(16.0);
     theme::paragraph(
         ui,
         crate::i18n::gettext(
@@ -290,7 +290,7 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
             );
         });
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     if theme::link(
         ui,
         crate::i18n::gettext(locale, "Link with phone number instead"),
@@ -361,7 +361,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             );
         });
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space((ui.available_width() - 200.0).max(0.0) / 2.0);
         if theme::soft_button(

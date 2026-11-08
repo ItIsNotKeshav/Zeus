@@ -40,7 +40,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     let stage = app.benchmark.as_ref().map(benchmark::Benchmark::stage);
     let running = matches!(stage, Some(Stage::Running { .. }));
     // The progress fades in as the run starts, the results as it ends.
@@ -89,7 +89,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         None => run_button(ui, app, &palette, "Run benchmark"),
     }
-    ui.add_space(6.0);
+    ui.add_space(8.0);
 }
 
 fn run_button(ui: &mut egui::Ui, app: &mut App, palette: &Palette, label: &'static str) {
@@ -133,7 +133,7 @@ fn progress(
         painter.rect_filled(rect, 3.0, palette.surface_active);
         let filled = Rect::from_min_size(rect.min, vec2(rect.width() * fraction, rect.height()));
         painter.rect_filled(filled, 3.0, palette.accent);
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
             theme::spinner(ui, 14.0, palette.accent);
             let doing = gettext(locale, benchmark::phase_label(phase.unwrap_or_default()));
@@ -154,7 +154,7 @@ fn progress(
                 }
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         theme::paragraph(
             ui,
             gettext(
@@ -181,7 +181,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
             theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         smoothness_table(ui, palette, locale, report);
         ui.add_space(12.0);
         phase_table(ui, palette, locale, report);
@@ -206,7 +206,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
             palette.secondary,
         );
         if !report.checks_passed() {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             theme::paragraph(
                 ui,
                 gettext(
@@ -247,7 +247,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
             run_button(ui, app, palette, "Run again");
         });
         if let Some(saved) = app.benchmark.as_ref().and_then(benchmark::Benchmark::saved) {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             let (text, color) = match saved {
                 Ok(path) => (
                     gettext(locale, "Saved to {path}.")
@@ -301,7 +301,7 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                     theme::regular(theme::TEXT_CAPTION),
                     palette.text,
                 );
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .id_salt("benchmark-share-text")
                     .max_height(220.0 * shown)
@@ -316,7 +316,7 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                             .wrap_mode(egui::TextWrapMode::Wrap),
                         );
                     });
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     if theme::soft_button(

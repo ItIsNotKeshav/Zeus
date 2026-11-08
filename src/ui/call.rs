@@ -143,7 +143,7 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                         let key = crate::voice_input::key_label(app.settings.push_to_talk_key());
                         gettext(locale, "Hold {key} to talk").replace("{key}", &key)
                     };
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     theme::text(
                         ui,
                         "·",
@@ -232,9 +232,9 @@ fn live(
             } else {
                 widgets::avatar(ui, palette, peer, &call.chat, size, picture);
             }
-            ui.add_space(18.0);
+            ui.add_space(16.0);
             theme::text(ui, peer, theme::bold(theme::TEXT_DISPLAY), palette.text);
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             theme::text(
                 ui,
                 status(locale, call),
@@ -884,9 +884,9 @@ fn ringing(
         ui.add_space(area.height() * 0.18);
         let size = (area.height() * 0.24).clamp(96.0, 160.0);
         widgets::avatar(ui, palette, who.peer, &call.chat, size, who.picture);
-        ui.add_space(18.0);
+        ui.add_space(16.0);
         theme::text(ui, who.peer, theme::bold(theme::TEXT_DISPLAY), palette.text);
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         theme::text(
             ui,
             incoming_text(locale, call, who.caller),
@@ -1069,7 +1069,7 @@ fn group_live(
     ui.scope_builder(egui::UiBuilder::new().max_rect(header), |ui| {
         ui.vertical_centered(|ui| {
             theme::text(ui, who.peer, theme::bold(theme::TEXT_TITLE), palette.text);
-            ui.add_space(2.0);
+            ui.add_space(4.0);
             theme::text(
                 ui,
                 status(locale, call),

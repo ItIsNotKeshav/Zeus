@@ -1001,7 +1001,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 theme::regular(theme::TEXT_CONTROL),
                 palette.danger,
             );
-            ui.add_space(6.0);
+            ui.add_space(8.0);
         }
         theme::paragraph(
             ui,
@@ -1013,7 +1013,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::regular(theme::TEXT_CONTROL),
             palette.text,
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         if theme::link(
             ui,
             "developers.giphy.com",
@@ -1025,7 +1025,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             app.actions
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         let response = controls::Field::new(&mut app.settings.giphy_key)
             .hint("GIPHY API key")
             .width(f32::INFINITY)
@@ -1278,7 +1278,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         &gettext(locale, "Search by emoji, word, or pack"),
     );
     shelf_strip(app, ui, palette);
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let query = app.sticker_search.trim().to_owned();
     let shelf = app.sticker_shelf.clone();
     if query.is_empty() && shelf == StickerShelf::Add {
@@ -1485,7 +1485,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             );
             ui.add_space(4.0);
             import_row(app, ui, palette);
-            ui.add_space(14.0);
+            ui.add_space(16.0);
             theme::text(
                 ui,
                 gettext(locale, "Make your own"),
@@ -1503,7 +1503,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             );
             ui.add_space(4.0);
             new_pack_row(app, ui, palette);
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             if theme::soft_button(
                 ui,
                 palette,
@@ -1583,7 +1583,7 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         }
     });
     if app.sticker_import_pending {
-        ui.add_space(2.0);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             theme::spinner(ui, 14.0, palette.accent);
             theme::text(

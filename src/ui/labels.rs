@@ -99,7 +99,7 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if app.labels.is_empty() {
         return;
     }
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let row = widgets::chip_scroll_row(ui, "label-chips", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
@@ -249,7 +249,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         theme::regular(theme::TEXT_CAPTION),
         palette.dim,
     );
-    ui.add_space(14.0);
+    ui.add_space(16.0);
 
     let full = app.labels.len() >= crate::archive::LABEL_LIMIT;
     if full {
@@ -290,7 +290,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
     ui.add_space(8.0);
     ui.separator();
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     let wearing: Vec<(Label, usize)> = app
         .labels
         .iter()

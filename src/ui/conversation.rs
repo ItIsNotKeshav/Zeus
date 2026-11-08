@@ -3738,7 +3738,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         if let Some((id, count, placed)) = &divider
                             && row_contains(id)
                         {
-                            ui.add_space(6.0);
+                            ui.add_space(8.0);
                             let label = crate::i18n::ngettext(
                                 app.locale,
                                 "{} unread message",
@@ -4669,7 +4669,7 @@ fn top_of_history(
             if conversation.loading_older {
                 theme::spinner(ui, 18.0, palette.accent);
             } else {
-                ui.add_space(18.0);
+                ui.add_space(16.0);
             }
         } else if conversation.fetching_phone {
             ui.horizontal(|ui| {
@@ -4691,7 +4691,7 @@ fn top_of_history(
                 widgets::chip(ui, palette, "No messages here yet");
             }
         } else {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
         }
     });
 }
@@ -4760,7 +4760,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
             },
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
 }
 
 const TYPING_BUBBLE_PAD_X: f32 = 14.0;
@@ -5896,6 +5896,8 @@ fn bubble_row(
             // reacting to its own item.
             let members = album.unwrap_or(std::slice::from_ref(message));
             if members.iter().any(|member| !member.reactions.is_empty()) {
+                // Off the spacing scale on purpose: the chips overlap the
+                // bubble's lower edge.
                 ui.add_space(-5.0);
                 // Chips hang off the bubble's far side: the right of a
                 // received message, the left of one we sent.
@@ -5926,7 +5928,7 @@ fn bubble_row(
                         reactions(ui, view, member, actions);
                     }
                 });
-                ui.add_space(2.0);
+                ui.add_space(4.0);
             }
             // Members without a pill record that, so the first reaction
             // that arrives live pops like any later change.
@@ -7025,7 +7027,7 @@ fn speed_menu_row(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             for option in crate::audio::SPEEDS {
                 let selected = option == speed;
                 let response = speed_pill(
@@ -11402,7 +11404,7 @@ fn interactive_buttons(
         }
     }
     if card.needs_phone {
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         widgets::rich_text(
             ui,
             "More content in WhatsApp Web or on your phone",

@@ -78,7 +78,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
         .unwrap_or_default();
     if !members.is_empty() {
         chips(app, ui, &members);
-        ui.add_space(2.0);
+        ui.add_space(4.0);
     }
     let width = ui.available_width();
     let hint = crate::i18n::gettext(app.locale, "Search contacts");
@@ -320,7 +320,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             draft.picture.as_deref(),
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let add = crate::i18n::gettext(app.locale, "Add group photo");
     let change = crate::i18n::gettext(app.locale, "Change photo");
     let remove = crate::i18n::gettext(app.locale, "Remove photo");

@@ -262,7 +262,7 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         let back = if app.adding_account {
             gettext(app.locale, "Cancel").into_owned()

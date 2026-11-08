@@ -405,7 +405,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
 
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             search_and_filters(app, ui);
         });
 }
@@ -730,7 +730,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             search_and_filters(app, ui);
         });
 }
@@ -1732,7 +1732,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,

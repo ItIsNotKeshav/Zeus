@@ -280,10 +280,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             palette.text,
                         );
                     });
-                    ui.add_space(14.0);
+                    ui.add_space(16.0);
                     if !beside {
                         search(app, ui);
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                     }
                     let filter = Filter::new(&app.settings_search);
                     let mut found = false;
@@ -839,7 +839,7 @@ fn sections(app: &App) -> Vec<Section> {
                 theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
-            ui.add_space(10.0);
+            ui.add_space(8.0);
         });
     }
     for kind in PrivacyKind::ALL {
@@ -1571,7 +1571,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
             app.actions.push(Action::AppLockForm(None));
         }
     });
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     if submit && !busy {
         app.actions.push(Action::SubmitAppLockForm);
     }
@@ -1606,7 +1606,7 @@ fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description:
             description.paint(ui, rect.min, palette.secondary);
         }
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
 }
 
 /// How tall the live preview of a conversation is.
@@ -1621,7 +1621,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     let locale = app.locale;
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), PREVIEW_HEIGHT), Sense::hover());
-    ui.add_space(14.0);
+    ui.add_space(16.0);
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -2031,7 +2031,7 @@ fn look_cards(ui: &mut egui::Ui, app: &mut App) {
             "Zeus's monochrome glass, WhatsApp's greens, or the bubbles of Messages.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     chat_theme_cards(ui, app, "look", &ChatTheme::LOOKS);
     ui.add_space(4.0);
 }
@@ -2048,7 +2048,7 @@ fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
             "Ported from Agent Orchestrator, each with its own accent.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let themes: Vec<ChatTheme> = ChatTheme::ALL
         .into_iter()
         .filter(|choice| !choice.is_look())
@@ -2334,7 +2334,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                     );
                                     ui.add_space(8.0);
                                     image_buttons(app, ui);
-                                    ui.add_space(22.0);
+                                    ui.add_space(24.0);
                                     block_heading(
                                         ui,
                                         &palette,
@@ -2344,7 +2344,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             "Pick the background. Doodles are chosen under Appearance.",
                                         ),
                                     );
-                                    ui.add_space(10.0);
+                                    ui.add_space(8.0);
                                     let selected = app.settings.wallpaper_color_for(palette.dark);
                                     let gap = 10.0;
                                     let columns = ((palette_width + gap) / (COLOR_SWATCH + gap))
@@ -2564,7 +2564,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             "The pattern drawn over the wallpaper colour in your chats.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     // Each card shows its whole tile, whatever the density: thinning every
     // style at every step of the slider would draw seven tiles for each.
     let look = wallpaper::Look {
@@ -2870,7 +2870,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     // Each number has a cache of its own: say whose this is.
     let account = app.account().display_label(locale);
     let hint = widgets::line(
@@ -2892,7 +2892,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
     if !measured {
         return;
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     // Other only shows when there is something in it.
     for (label, count, bytes, always) in [
         (
@@ -3087,7 +3087,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     &crate::i18n::gettext(app.locale, "Your name"),
                     25,
                 );
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 submitted |= profile_field(
                     ui,
                     &palette,
@@ -3180,7 +3180,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     if let Some((draft_name, draft_about)) = &draft {
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         let mut done = false;
         ui.horizontal(|ui| {
             ui.add_space(56.0 + 14.0);
@@ -3209,7 +3209,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             draft = None;
         }
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.data_mut(|data| {
         if let Some(draft) = draft {
             data.insert_temp(draft_id, draft);
@@ -3327,7 +3327,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             crate::updates::Check::Idle | crate::updates::Check::Checking => None,
         };
         if let Some((text, color)) = status {
-            ui.add_space(10.0);
+            ui.add_space(8.0);
             theme::paragraph(ui, text, theme::regular(theme::TEXT_CONTROL), color);
         }
     }
@@ -3335,7 +3335,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         ui.add_space(12.0);
         update_channel_picker(app, ui);
     }
-    ui.add_space(14.0);
+    ui.add_space(16.0);
     if let Some(url) = widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
     }
@@ -3357,7 +3357,7 @@ fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
             theme::medium(theme::TEXT_CONTROL),
             palette.secondary,
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         if let Some(channel) = segmented(ui, &palette, "channel", &options, selected, 88.0) {
             app.actions.push(Action::SetUpdateChannel(channel));
         }
@@ -3366,7 +3366,7 @@ fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
         crate::updates::Channel::Stable => "Tested releases only.",
         crate::updates::Channel::Beta => "Early builds first. They may have rough edges.",
     };
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     theme::paragraph(
         ui,
         crate::i18n::gettext(locale, note),

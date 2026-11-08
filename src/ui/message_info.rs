@@ -321,7 +321,7 @@ fn section(
         theme::text(ui, title, theme::semibold(theme::TEXT_BODY), palette.text);
     });
     if recipients.is_empty() {
-        ui.add_space(2.0);
+        ui.add_space(4.0);
         theme::text(
             ui,
             gettext(app.locale, "No one yet"),
@@ -331,7 +331,7 @@ fn section(
         return;
     }
     for recipient in recipients {
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         let name = app.display_name(&recipient.id);
         let picture = app.avatar(&recipient.id);
         ui.horizontal(|ui| {
