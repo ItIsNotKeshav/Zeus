@@ -3400,24 +3400,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     if reduce_motion || !view.animate || view.reaction.is_some() {
         overscroll.clear();
     } else {
-        let wheel = ui.input(|input| super::overscroll::Wheel {
-            precise: list_hovered(input, list)
-                && input.raw.events.iter().any(|event| {
-                    matches!(
-                        event,
-                        egui::Event::MouseWheel { unit, delta, .. }
-                            if super::overscroll::is_precise(*unit, delta.y)
-                    )
-                }),
-            delta: if list_hovered(input, list) {
-                input.smooth_scroll_delta.y
-            } else {
-                0.0
-            },
-        });
+        let wheel = ui.input(|input| super::overscroll::read_wheel(input, list));
         overscroll.advance(time, wheel);
     }
-    let over = overscroll.position();
+    let stretch = overscroll.position();
     let mut laid_rows = Vec::new();
     let mut content_top_drawn = None;
     let layer = ui.layer_id();
@@ -3702,7 +3688,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         // slot where it belongs, so clicks land on what is
                         // drawn. Always in a row of its own, so its widgets
                         // keep their ids whether it springs or not.
-                        let row_shift = row_shifts.get(&message.id).copied().unwrap_or(0.0) + over;
+                        let row_shift =
+                            row_shifts.get(&message.id).copied().unwrap_or(0.0) + stretch;
                         // The message edited in its bubble goes on the layer
                         // above the scrim the rest of the chat recedes under.
                         let lifted = edited.as_ref().is_some_and(|id| *id == message.id);
@@ -5307,14 +5294,6 @@ fn bezier_sample(t: f32, a: f32, b: f32) -> f32 {
 fn bezier_slope(t: f32, a: f32, b: f32) -> f32 {
     let u = 1.0 - t;
     3.0 * u * u * a + 6.0 * u * t * (b - a) + 3.0 * t * t * (1.0 - b)
-}
-
-/// Whether the pointer is over `list` this frame.
-fn list_hovered(input: &egui::InputState, list: Rect) -> bool {
-    input
-        .pointer
-        .hover_pos()
-        .is_some_and(|pos| list.contains(pos))
 }
 
 /// Stiffness and damping for Motion's `{ duration, bounce }` spring. `duration`

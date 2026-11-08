@@ -217,6 +217,7 @@ fn show_rows_under(
     row_height: f32,
     total: usize,
     inset: f32,
+    stretch: f32,
     add_rows: impl FnOnce(&mut egui::Ui, std::ops::Range<usize>),
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     let spacing = ui.spacing().item_spacing.y;
@@ -232,7 +233,8 @@ fn show_rows_under(
         }
         let y_min = ui.max_rect().top() + inset + first as f32 * step;
         let y_max = ui.max_rect().top() + inset + last as f32 * step;
-        let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), y_min..=y_max);
+        let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), y_min..=y_max)
+            .translate(vec2(0.0, stretch));
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |rows_ui| {
             plain_rows(rows_ui);
             rows_ui.skip_ahead_auto_ids(first);
@@ -1192,114 +1194,143 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
     } else {
         0.0
     };
-    let output = show_rows_under(scroll_area, ui, row_height, total, inset, |ui, range| {
-        if carried != 0.0 {
-            ui.scroll_with_delta_animation(
-                vec2(0.0, carried),
-                egui::style::ScrollAnimation::none(),
-            );
-        }
-        if !copy {
-            remember_rows(
-                ui,
-                list_id,
-                view,
-                &app.chats,
-                &chats[range.clone()],
-                range.start,
-            );
-        }
-        let motion = !copy && !crate::motion::screen_reader_attached(ui.ctx());
-        let now = ui.input(|input| input.time);
-        let origin = ui.max_rect().top() - inset - range.start as f32 * step;
-        let before = if motion {
-            ui.ctx()
-                .data(|data| data.get_temp::<RowFlips>(list_id.with("flips")))
-                .filter(|flips| flips.view == view)
-        } else {
-            None
-        };
-        let mut flips = RowFlips {
-            view,
-            born: before.as_ref().map_or(now, |flips| flips.born),
-            first: range.start,
-            last: range.end,
-            rows: std::collections::HashMap::new(),
-        };
-        let mut animating = false;
-        for index in range {
-            let Some(chat) = app.chats.get(chats[index]).cloned() else {
-                continue;
+    // A touchpad swipe past either end of the list stretches it and it
+    // springs back, as the chat's messages do (`overscroll`).
+    let list_rect = ui.available_rect_before_wrap();
+    let mut overscroll = super::overscroll::Overscroll::load(ui.ctx(), "chat-list");
+    if copy || !ui.is_enabled() || crate::motion::screen_reader_attached(ui.ctx()) {
+        overscroll.clear();
+    } else {
+        let wheel = ui.input(|input| super::overscroll::read_wheel(input, list_rect));
+        overscroll.advance(ui.input(|input| input.time), wheel);
+    }
+    let stretch = overscroll.position();
+    let output = show_rows_under(
+        scroll_area,
+        ui,
+        row_height,
+        total,
+        inset,
+        stretch,
+        |ui, range| {
+            if carried != 0.0 {
+                ui.scroll_with_delta_animation(
+                    vec2(0.0, carried),
+                    egui::style::ScrollAnimation::none(),
+                );
+            }
+            if !copy {
+                remember_rows(
+                    ui,
+                    list_id,
+                    view,
+                    &app.chats,
+                    &chats[range.clone()],
+                    range.start,
+                );
+            }
+            let motion = !copy && !crate::motion::screen_reader_attached(ui.ctx());
+            let now = ui.input(|input| input.time);
+            let origin = ui.max_rect().top() - inset - range.start as f32 * step;
+            let before = if motion {
+                ui.ctx()
+                    .data(|data| data.get_temp::<RowFlips>(list_id.with("flips")))
+                    .filter(|flips| flips.view == view)
+            } else {
+                None
             };
-            let natural = origin + inset + index as f32 * step;
-            let previous = before.as_ref().and_then(|flips| flips.rows.get(&chat.id));
-            if motion {
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(chat_row_id(&chat.id).with("live"), previous.is_some())
-                });
-            }
-            let mark = super::swipe::mark(ui);
-            // Key by chat so an open menu survives list reordering.
-            let response = ui
-                .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
-                .inner;
-            if motion {
-                let mut flip = match previous {
-                    Some(flip) => *flip,
-                    None => RowFlip {
-                        top: natural,
-                        origin,
-                        from: 0.0,
-                        start: f64::NEG_INFINITY,
-                        shift: 0.0,
-                        born: before
-                            .as_ref()
-                            .filter(|flips| {
-                                now - flips.born > 0.5 && (flips.first..flips.last).contains(&index)
-                            })
-                            .map_or(f64::NEG_INFINITY, |_| now),
-                    },
+            let mut flips = RowFlips {
+                view,
+                born: before.as_ref().map_or(now, |flips| flips.born),
+                first: range.start,
+                last: range.end,
+                rows: std::collections::HashMap::new(),
+            };
+            let mut animating = false;
+            for index in range {
+                let Some(chat) = app.chats.get(chats[index]).cloned() else {
+                    continue;
                 };
-                // Where the row was last drawn, in this frame's scroll.
-                let drawn = flip.top + (origin - flip.origin) + flip.shift;
-                if previous.is_some() && (drawn - flip.shift - natural).abs() > 0.5 {
-                    flip.from = drawn - natural;
-                    flip.start = now;
+                let natural = origin + inset + index as f32 * step;
+                let previous = before.as_ref().and_then(|flips| flips.rows.get(&chat.id));
+                if motion {
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(chat_row_id(&chat.id).with("live"), previous.is_some())
+                    });
                 }
-                flip.top = natural;
-                flip.origin = origin;
-                flip.shift = row_flip_shift(flip.from, (now - flip.start) as f32);
-                let age = (now - flip.born) as f32;
-                let appear = row_appear(age);
-                if flip.shift != 0.0 || appear.is_some() {
-                    let (opacity, scale) = appear.unwrap_or((1.0, 1.0));
-                    shift_row(ui, mark, flip.shift, opacity, scale, response.rect.center());
-                    animating = true;
+                let mark = super::swipe::mark(ui);
+                // Key by chat so an open menu survives list reordering.
+                let response = ui
+                    .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
+                    .inner;
+                if motion {
+                    let mut flip = match previous {
+                        Some(flip) => *flip,
+                        None => RowFlip {
+                            top: natural,
+                            origin,
+                            from: 0.0,
+                            start: f64::NEG_INFINITY,
+                            shift: 0.0,
+                            born: before
+                                .as_ref()
+                                .filter(|flips| {
+                                    now - flips.born > 0.5
+                                        && (flips.first..flips.last).contains(&index)
+                                })
+                                .map_or(f64::NEG_INFINITY, |_| now),
+                        },
+                    };
+                    // Where the row was last drawn, in this frame's scroll.
+                    let drawn = flip.top + (origin - flip.origin) + flip.shift;
+                    if previous.is_some() && (drawn - flip.shift - natural).abs() > 0.5 {
+                        flip.from = drawn - natural;
+                        flip.start = now;
+                    }
+                    flip.top = natural;
+                    flip.origin = origin;
+                    flip.shift = row_flip_shift(flip.from, (now - flip.start) as f32);
+                    let age = (now - flip.born) as f32;
+                    let appear = row_appear(age);
+                    if flip.shift != 0.0 || appear.is_some() {
+                        let (opacity, scale) = appear.unwrap_or((1.0, 1.0));
+                        shift_row(ui, mark, flip.shift, opacity, scale, response.rect.center());
+                        animating = true;
+                    }
+                    flips.rows.insert(chat.id.clone(), flip);
                 }
-                flips.rows.insert(chat.id.clone(), flip);
+                // Store the row rect for interaction tests.
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(chat_row_id(&chat.id).with("widget"), response.id);
+                });
+                if response.clicked() && !app.show_archived {
+                    app.actions.push(Action::KeepUnread(chat.id.clone()));
+                }
             }
-            // Store the row rect for interaction tests.
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
-            #[cfg(test)]
-            ui.ctx().data_mut(|data| {
-                data.insert_temp(chat_row_id(&chat.id).with("widget"), response.id);
-            });
-            if response.clicked() && !app.show_archived {
-                app.actions.push(Action::KeepUnread(chat.id.clone()));
+            if motion {
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(list_id.with("flips"), flips));
+                if animating {
+                    ui.ctx().request_repaint();
+                }
             }
-        }
-        if motion {
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(list_id.with("flips"), flips));
-            if animating {
-                ui.ctx().request_repaint();
-            }
-        }
-    });
+        },
+    );
     if !copy {
         ui.ctx()
             .data_mut(|data| data.insert_temp(shared_offset_id(), output.state.offset.y));
+        overscroll.set_edges(super::overscroll::Edges::of(
+            output.state.offset.y,
+            output.inner_rect.height(),
+            output.content_size.y,
+        ));
+        if overscroll.moving() {
+            crate::motion::request_frame(ui.ctx());
+        }
+        overscroll.store(ui.ctx(), "chat-list");
     }
     app.scroll_route
         .place(crate::app::ScrollPane::Chats, output.inner_rect);
@@ -1629,6 +1660,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
             theme::ROW_HEIGHT,
             chats.len(),
             inset,
+            0.0,
             |ui, range| {
                 for &index in &chats[range] {
                     let Some(chat) = app.chats.get(index).cloned() else {

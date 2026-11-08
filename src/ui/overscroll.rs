@@ -10,6 +10,7 @@
 //! the content.
 
 use crate::motion::Spring;
+use egui::Rect;
 
 /// The release: a shade over a third of a second, bouncing a little, in
 /// step with the app's other springs.
@@ -42,6 +43,24 @@ pub(crate) fn is_precise(unit: egui::MouseWheelUnit, delta: f32) -> bool {
             delta != 0.0 && part > 0.01 && part < 0.99
         }
         egui::MouseWheelUnit::Page => false,
+    }
+}
+
+/// The wheel input over `list` this frame. A wheel notch is not precise, so
+/// it never stretches the list.
+pub(crate) fn read_wheel(input: &egui::InputState, list: Rect) -> Wheel {
+    if !input
+        .pointer
+        .hover_pos()
+        .is_some_and(|pos| list.contains(pos))
+    {
+        return Wheel::default();
+    }
+    Wheel {
+        precise: input.raw.events.iter().any(|event| {
+            matches!(event, egui::Event::MouseWheel { unit, delta, .. } if is_precise(*unit, delta.y))
+        }),
+        delta: input.smooth_scroll_delta.y,
     }
 }
 
