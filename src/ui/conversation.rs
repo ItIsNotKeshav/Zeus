@@ -4605,7 +4605,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                 spread: 0,
                 color: palette.lift_shadow(),
             }
-            .as_shape(button, CornerRadius::same(20)),
+            .as_shape(button, CornerRadius::from(button.height() / 2.0)),
         );
         // Frosted over the messages it floats on; solid while Blur is off.
         child
@@ -8048,7 +8048,6 @@ const FOOTER_MARK: f32 = 13.0;
 const FOOTER_MARK_GAP: f32 = 8.0;
 /// Room one visible mark keeps next to the clock.
 const FOOTER_MARK_SLOT: f32 = FOOTER_MARK + FOOTER_MARK_GAP;
-const FOOTER_STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
 
 /// The clock's own width at the footer's size: the floor a footer starts from,
 /// and the one part of it that depends on the reader's clock format.
@@ -8488,7 +8487,7 @@ fn footer_over_picture(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
     ui.ctx().data_mut(|data| {
@@ -8674,7 +8673,7 @@ fn footer(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
 }
@@ -8742,7 +8741,7 @@ fn reference_footer_marks(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
 }
@@ -10545,7 +10544,7 @@ fn carousel(
                                 } else {
                                     view.palette.bubble_in
                                 })
-                                .corner_radius(10)
+                                .corner_radius(widgets::BUBBLE_RADIUS)
                                 .inner_margin(Margin {
                                     left: 10,
                                     right: 10,
@@ -11120,7 +11119,8 @@ fn carousel_picture(
                 image
                     .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
                     .fit_to_exact_size(size)
-                    .corner_radius(6.0)
+                    // Nested in its card's bubble corner, less the room between.
+                    .corner_radius(widgets::BUBBLE_RADIUS - 4)
                     .paint_at(ui, rect);
             } else if media.path.is_some() {
                 theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, view.palette.danger);
@@ -11715,7 +11715,7 @@ fn preview_card(
                             let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
                             egui::Image::new(uri)
                                 .fit_to_exact_size(rect.size())
-                                .corner_radius(4.0)
+                                .corner_radius(theme::RADIUS_SMALL)
                                 .paint_at(ui, rect);
                         }
                     }
@@ -11799,7 +11799,7 @@ fn location_card(
                     .maintain_aspect_ratio(false)
                     .uv(Rect::from_min_max(pos2(0.0, crop), pos2(1.0, 1.0 - crop)))
                     .fit_to_exact_size(Vec2::new(card, height))
-                    .corner_radius(8.0),
+                    .corner_radius(theme::RADIUS_SMALL),
             );
             ui.add_space(4.0);
         }
@@ -16131,7 +16131,7 @@ mod tests {
     #[test]
     fn the_star_mark_tint_is_not_the_secondary() {
         let palette = Palette::dark();
-        assert_ne!(FOOTER_STAR, palette.secondary);
+        assert_ne!(theme::STAR, palette.secondary);
     }
 
     #[test]

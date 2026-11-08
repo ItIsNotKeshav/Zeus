@@ -1366,7 +1366,7 @@ fn microphone_check(ui: &mut egui::Ui, app: &mut App) {
 /// A horizontal bar filled to `level`, from 0 to 1.
 fn level_meter(ui: &mut egui::Ui, palette: &Palette, level: f32) {
     let (rect, response) = ui.allocate_exact_size(vec2(120.0, 6.0), Sense::hover());
-    let radius = CornerRadius::same(3);
+    let radius = CornerRadius::from(rect.height() / 2.0);
     ui.painter()
         .rect_filled(rect, radius, palette.surface_active);
     if level > 0.0 {

@@ -197,7 +197,8 @@ fn chips(app: &mut App, ui: &mut egui::Ui, members: &[String]) {
                 } else {
                     palette.surface
                 };
-                ui.painter().rect_filled(rect, CornerRadius::same(15), fill);
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::from(rect.height() / 2.0), fill);
                 let face = Rect::from_center_size(
                     pos2(rect.left() + 4.0 + avatar / 2.0, rect.center().y),
                     egui::Vec2::splat(avatar),
