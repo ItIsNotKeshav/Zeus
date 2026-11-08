@@ -457,9 +457,11 @@ pub fn tick_icon(status: Delivery) -> Option<Icon> {
 /// one-digit round; a longer count widens the pill to the left from there,
 /// so it keeps its right edge where the round's is.
 pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool) -> f32 {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(count.to_string(), theme::semibold(11.0), palette.on_accent);
+    let galley = ui.painter().layout_no_wrap(
+        count.to_string(),
+        theme::semibold(theme::TEXT_MICRO),
+        palette.on_accent,
+    );
     let width = (galley.size().x + 12.0).max(20.0);
     let rect = Rect::from_min_max(
         pos2(at.x + 10.0 - width, at.y - 10.0),
@@ -524,8 +526,11 @@ pub fn badge_animated(
     }
     let now = ui.input(|input| input.time);
     let layout = |count: u32| {
-        ui.painter()
-            .layout_no_wrap(count.to_string(), theme::semibold(11.0), palette.on_accent)
+        ui.painter().layout_no_wrap(
+            count.to_string(),
+            theme::semibold(theme::TEXT_MICRO),
+            palette.on_accent,
+        )
     };
     let galley = layout(count);
     let target = (galley.size().x + 12.0).max(20.0);
@@ -715,9 +720,11 @@ pub fn pop_mark(
 
 /// "@" in the round of a count badge: an unread message mentions us.
 pub fn mention_badge(ui: &Ui, palette: &Palette, at: egui::Pos2) -> f32 {
-    let galley =
-        ui.painter()
-            .layout_no_wrap("@".to_owned(), theme::semibold(12.0), palette.on_accent);
+    let galley = ui.painter().layout_no_wrap(
+        "@".to_owned(),
+        theme::semibold(theme::TEXT_CAPTION),
+        palette.on_accent,
+    );
     let rect = Rect::from_center_size(at, vec2(20.0, 20.0));
     ui.painter()
         .circle_filled(rect.center(), 10.0, palette.accent);
@@ -775,7 +782,11 @@ pub fn menu_width(ui: &Ui, labels: &[&str], icons: bool) -> f32 {
         .iter()
         .map(|label| {
             ui.painter()
-                .layout_no_wrap(label.to_string(), theme::regular(13.5), Color32::WHITE)
+                .layout_no_wrap(
+                    label.to_string(),
+                    theme::regular(theme::TEXT_BODY),
+                    Color32::WHITE,
+                )
                 .size()
                 .x
         })
@@ -846,7 +857,7 @@ pub fn submenu<R>(
         let x = rect.left() + 36.0;
         let mut job = egui::text::LayoutJob::simple_singleline(
             label.to_string(),
-            theme::regular(13.5),
+            theme::regular(theme::TEXT_BODY),
             palette.text,
         );
         job.wrap = egui::text::TextWrapping {
@@ -941,7 +952,7 @@ fn menu_row(
         }
         let mut job = egui::text::LayoutJob::simple_singleline(
             label.to_string(),
-            theme::regular(13.5),
+            theme::regular(theme::TEXT_BODY),
             color,
         );
         job.wrap = egui::text::TextWrapping {
@@ -1224,12 +1235,17 @@ pub fn empty_state(ui: &mut Ui, palette: &Palette, icon: Icon, title: &str, body
     ui.vertical_centered(|ui| {
         theme::icon(ui, icon, 40.0, palette.dim);
         ui.add_space(8.0);
-        theme::text(ui, title, theme::semibold(16.0), palette.text);
+        theme::text(
+            ui,
+            title,
+            theme::semibold(theme::TEXT_SECTION),
+            palette.text,
+        );
         ui.add_space(2.0);
         ui.add(
             egui::Label::new(
                 egui::RichText::new(body)
-                    .font(theme::regular(13.5))
+                    .font(theme::regular(theme::TEXT_BODY))
                     .color(palette.secondary),
             )
             .wrap()
@@ -1296,7 +1312,7 @@ pub fn search_field(
     Icon::Search
         .image(palette.secondary, 16.0)
         .paint_at(ui, icon_rect);
-    let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
+    let format = egui::TextFormat::simple(theme::regular(theme::TEXT_BODY), palette.text);
     // A capital, from its top to the baseline, centres on the icons, which
     // is where a word reads as centred. Centring the line box left the
     // platform font's text a point or two below the magnifier, since its box
@@ -1339,9 +1355,9 @@ pub fn search_field(
         .hint_text(
             egui::RichText::new(hint)
                 .color(palette.dim)
-                .font(theme::regular(14.0)),
+                .font(theme::regular(theme::TEXT_BODY)),
         )
-        .font(theme::regular(14.0))
+        .font(theme::regular(theme::TEXT_BODY))
         .text_color(palette.text)
         .frame(egui::Frame::NONE)
         .margin(egui::Margin::ZERO)
@@ -1583,9 +1599,14 @@ pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Op
                     break;
                 };
                 if at > 0 {
-                    theme::text(ui, &rest[..at], theme::regular(13.0), palette.secondary);
+                    theme::text(
+                        ui,
+                        &rest[..at],
+                        theme::regular(theme::TEXT_CONTROL),
+                        palette.secondary,
+                    );
                 }
-                if theme::link(ui, name, theme::medium(13.0), palette.link)
+                if theme::link(ui, name, theme::medium(theme::TEXT_CONTROL), palette.link)
                     .on_hover_text(url)
                     .clicked()
                 {
@@ -1594,13 +1615,23 @@ pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Op
                 rest = &rest[at + placeholder.len()..];
             }
             if !rest.is_empty() {
-                theme::text(ui, rest, theme::regular(13.0), palette.secondary);
+                theme::text(
+                    ui,
+                    rest,
+                    theme::regular(theme::TEXT_CONTROL),
+                    palette.secondary,
+                );
             }
         });
     };
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        theme::text(ui, "\u{2665}  ", theme::regular(13.0), palette.danger);
+        theme::text(
+            ui,
+            "\u{2665}  ",
+            theme::regular(theme::TEXT_CONTROL),
+            palette.danger,
+        );
         sentence(ui, &built, &[("{name}", "Keshav", BUILDER_URL)]);
     });
     sentence(
@@ -1625,12 +1656,12 @@ pub fn setting_row(
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - super::controls::WIDTH - 52.0).max(120.0));
-            rich_text(ui, label, theme::medium(14.0), palette.text);
+            rich_text(ui, label, theme::medium(theme::TEXT_BODY), palette.text);
             if !description.is_empty() {
                 let description = line(
                     ui,
                     description,
-                    theme::regular(12.5),
+                    theme::regular(theme::TEXT_CAPTION),
                     palette.secondary,
                     ui.available_width(),
                     usize::MAX,
@@ -2382,9 +2413,11 @@ fn ear_clip(points: &[egui::Pos2], winding: f32) -> Vec<[u32; 3]> {
 
 /// Small pill label used for date separators and pinned markers.
 pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), theme::medium(12.0), palette.secondary);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        theme::medium(theme::TEXT_CAPTION),
+        palette.secondary,
+    );
     let size = galley.size() + vec2(20.0, 10.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -2455,9 +2488,14 @@ pub fn dotted_chip(
         palette.secondary
     };
     let painter = ui.painter();
-    let text = painter.layout_no_wrap(label.to_owned(), theme::medium(12.5), color);
-    let number =
-        (count > 0).then(|| painter.layout_no_wrap(count.to_string(), theme::regular(11.5), color));
+    let text = painter.layout_no_wrap(label.to_owned(), theme::medium(theme::TEXT_CAPTION), color);
+    let number = (count > 0).then(|| {
+        painter.layout_no_wrap(
+            count.to_string(),
+            theme::regular(theme::TEXT_CAPTION),
+            color,
+        )
+    });
     let gap = 5.0;
     let dot_width = if dot.is_some() { 8.0 + gap } else { 0.0 };
     let width =

@@ -566,7 +566,12 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
                         theme::icon(ui, Icon::Paperclip, 28.0, palette.accent);
                         let drop_text = crate::i18n::gettext(app.locale, "Drop to send to {name}")
                             .replace("{name}", &name);
-                        theme::text(ui, drop_text, theme::semibold(15.0), palette.text);
+                        theme::text(
+                            ui,
+                            drop_text,
+                            theme::semibold(theme::TEXT_SECTION),
+                            palette.text,
+                        );
                     });
                 });
         });
@@ -653,7 +658,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(text)
-                                .font(theme::medium(12.5))
+                                .font(theme::medium(theme::TEXT_CAPTION))
                                 .color(palette.text),
                         )
                         .wrap()
@@ -789,7 +794,7 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
                                 .show(ui, |ui| {
                                     // One width for all: the message wraps beside its
                                     // buttons.
-                                    let font = theme::medium(13.5);
+                                    let font = theme::medium(theme::TEXT_BODY);
                                     let inner = width - 28.0;
                                     let undo = crate::i18n::gettext(app.locale, "Undo");
                                     let offer = toast

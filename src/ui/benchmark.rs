@@ -24,7 +24,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     theme::text(
         ui,
         gettext(locale, "Performance benchmark"),
-        theme::semibold(14.0),
+        theme::semibold(theme::TEXT_BODY),
         palette.text,
     );
     ui.add_space(4.0);
@@ -37,7 +37,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
              memory, CPU and GPU. Your chats and account are not used, and nothing leaves this \
              computer unless you share it.",
         ),
-        theme::regular(12.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
     ui.add_space(10.0);
@@ -68,7 +68,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         Some(Stage::Done(report)) => results(ui, app, &palette, &report, finished),
         Some(Stage::Failed(reason)) => {
-            theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+            theme::paragraph(
+                ui,
+                reason,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.danger,
+            );
             ui.add_space(8.0);
             run_button(ui, app, &palette, "Try again");
         }
@@ -76,7 +81,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             theme::paragraph(
                 ui,
                 gettext(locale, "Stopped before the end."),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.secondary,
             );
             ui.add_space(8.0);
@@ -140,7 +145,7 @@ fn progress(
                 .replace("{doing}", &doing)
                 .replace("{elapsed}", &clock(elapsed))
                 .replace("{total}", &clock(length));
-            theme::text(ui, line, theme::medium(13.0), palette.text);
+            theme::text(ui, line, theme::medium(theme::TEXT_CONTROL), palette.text);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if theme::soft_button(ui, palette, Some(Icon::X), &gettext(locale, "Stop"), false)
                     .clicked()
@@ -157,7 +162,7 @@ fn progress(
                 "Leave the benchmark window alone until it closes by itself. Using the computer \
                  meanwhile changes the numbers.",
             ),
-            theme::regular(12.0),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
     });
@@ -173,7 +178,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
         theme::paragraph(
             ui,
             report.machine_line(),
-            theme::regular(12.0),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
         ui.add_space(10.0);
@@ -194,7 +199,12 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                 .into(),
             );
         }
-        theme::paragraph(ui, notes.join(" "), theme::regular(12.0), palette.secondary);
+        theme::paragraph(
+            ui,
+            notes.join(" "),
+            theme::regular(theme::TEXT_CAPTION),
+            palette.secondary,
+        );
         if !report.checks_passed() {
             ui.add_space(6.0);
             theme::paragraph(
@@ -204,7 +214,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                     "Some of the test's checks failed, so these numbers may not compare with \
                      other runs.",
                 ),
-                theme::regular(12.0),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.warning,
             );
         }
@@ -250,7 +260,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                     palette.danger,
                 ),
             };
-            theme::paragraph(ui, text, theme::regular(12.0), color);
+            theme::paragraph(ui, text, theme::regular(theme::TEXT_CAPTION), color);
         }
         share_preview(ui, app, palette, report, sharing);
     });
@@ -288,7 +298,7 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                          your browser, and it is shared only if you submit it there. The issue \
                          is public and shows your GitHub name. It holds only what is below.",
                     ),
-                    theme::regular(12.5),
+                    theme::regular(theme::TEXT_CAPTION),
                     palette.text,
                 );
                 ui.add_space(10.0);
@@ -351,9 +361,9 @@ fn table(ui: &mut egui::Ui, palette: &Palette, header: &[String], rows: &[(Strin
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::hover());
         let painter = ui.painter();
         let font = if strong {
-            theme::medium(12.0)
+            theme::medium(theme::TEXT_CAPTION)
         } else {
-            theme::regular(12.5)
+            theme::regular(theme::TEXT_CAPTION)
         };
         let color = if strong {
             palette.secondary

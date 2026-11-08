@@ -198,6 +198,10 @@ Treat light and dark variants as parallel themes with the same hierarchy. They d
 
 Typography must make conversations easy to read for long periods and let the user scan lists quickly. Prefer the existing bundled/platform font system. Inter is a design reference where supported; do not introduce a new font dependency or replace platform font behavior merely to match this document.
 
+### Scale in code
+
+Views pass a size from `src/theme.rs` to `theme::regular`, `medium`, `semibold` or `bold`, never a literal: `TEXT_MICRO` 11, `TEXT_CAPTION` 12, `TEXT_CONTROL` 13, `TEXT_BODY` 14, `TEXT_SECTION` 16, `TEXT_TITLE` 20, `TEXT_DISPLAY` 24. A size outside the scale, such as an emoji glyph or the pairing code, carries a comment saying why.
+
 ### Hierarchy
 
 - Use one clear title for the current screen or dialog, not several competing headings.

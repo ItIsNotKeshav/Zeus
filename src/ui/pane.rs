@@ -221,7 +221,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 theme::text(
                     ui,
                     crate::i18n::gettext(app.locale, "Search messages"),
-                    theme::semibold(16.0),
+                    theme::semibold(theme::TEXT_SECTION),
                     palette.text,
                 );
             });
@@ -295,7 +295,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
             let line = widgets::line(
                 ui,
                 &hint,
-                theme::regular(13.5),
+                theme::regular(theme::TEXT_BODY),
                 palette.dim,
                 ui.available_width() - 28.0,
                 2,
@@ -348,7 +348,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                     let line = widgets::line(
                         ui,
                         &notice,
-                        theme::regular(12.0),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.dim,
                         ui.available_width() - 14.0,
                         3,
@@ -486,7 +486,7 @@ fn month_header(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         theme::text(
             ui,
             util::month_heading(app.locale, month),
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -537,7 +537,7 @@ fn month_grid(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             ),
             Align2::CENTER_CENTER,
             name,
-            theme::regular(11.0),
+            theme::regular(theme::TEXT_MICRO),
             palette.dim,
         );
     }
@@ -599,7 +599,7 @@ fn month_grid(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             cell.center(),
             Align2::CENTER_CENTER,
             day.to_string(),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             colour,
         );
         if response.clicked() {
@@ -690,7 +690,7 @@ fn hit_row(
             pos2(left, rect.top() + 10.0),
             Align2::LEFT_TOP,
             &stamp,
-            theme::regular(11.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.dim,
         );
         let line_y = rect.top() + 30.0;
@@ -703,7 +703,7 @@ fn hit_row(
             let name = widgets::line(
                 ui,
                 &format!("{who}: "),
-                theme::regular(13.5),
+                theme::regular(theme::TEXT_BODY),
                 palette.dim,
                 (right - x) * 0.5,
                 1,
@@ -796,8 +796,8 @@ fn paint_snippet(
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
     job.wrap.overflow_character = Some('…');
-    let plain = egui::TextFormat::simple(theme::regular(13.5), palette.secondary);
-    let strong = egui::TextFormat::simple(theme::semibold(13.5), palette.text);
+    let plain = egui::TextFormat::simple(theme::regular(theme::TEXT_BODY), palette.secondary);
+    let strong = egui::TextFormat::simple(theme::semibold(theme::TEXT_BODY), palette.text);
     let mut placements = Vec::new();
     match found {
         Some(found) => {

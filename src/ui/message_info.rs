@@ -15,7 +15,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         theme::text(
             ui,
             gettext(locale, "Message info"),
-            theme::semibold(18.0),
+            theme::semibold(theme::TEXT_TITLE),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -42,7 +42,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         widgets::rich_text(
             ui,
             &gettext(locale, "This message is no longer available."),
-            theme::regular(14.0),
+            theme::regular(theme::TEXT_BODY),
             palette.secondary,
         );
         return;
@@ -91,7 +91,7 @@ fn receipts(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str, message: &Me
         widgets::rich_text(
             ui,
             &gettext(app.locale, "Loading…"),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.secondary,
         );
         return;
@@ -110,7 +110,7 @@ fn preview(
     let text = widgets::line(
         ui,
         &message.content.summary_in(locale),
-        theme::regular(14.0),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
         (ui.available_width() * 0.85 - 24.0).max(1.0),
         4,
@@ -143,7 +143,7 @@ fn bubble(
         .show(ui, |ui| {
             let clock = ui.painter().layout_no_wrap(
                 crate::util::clock(message.timestamp),
-                theme::regular(11.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
             let (rect, _) =
@@ -218,13 +218,18 @@ fn direct(app: &App, ui: &mut egui::Ui, message: &Message) {
             theme::paint_icon(ui, Icon::DeliveryTicks, rect, 18.0, color);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                theme::text(ui, label, theme::medium(14.0), palette.text);
+                theme::text(ui, label, theme::medium(theme::TEXT_BODY), palette.text);
                 let when = match (reached, known_time(at)) {
                     (true, Some(at)) => crate::util::moment_stamp(locale, at),
                     (true, None) => gettext(locale, "Time not recorded").into_owned(),
                     (false, _) => "—".to_owned(),
                 };
-                theme::text(ui, when, theme::regular(12.0), palette.secondary);
+                theme::text(
+                    ui,
+                    when,
+                    theme::regular(theme::TEXT_CAPTION),
+                    palette.secondary,
+                );
             });
         });
     }
@@ -294,7 +299,7 @@ fn group(app: &mut App, ui: &mut egui::Ui, receipts: &MessageReceipts) {
             ui,
             ngettext(locale, "{} remaining", "{} remaining", remaining as u32)
                 .replace("{}", &remaining.to_string()),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.secondary,
         );
     }
@@ -313,14 +318,14 @@ fn section(
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
         theme::paint_icon(ui, Icon::DeliveryTicks, rect, 16.0, color);
-        theme::text(ui, title, theme::semibold(14.0), palette.text);
+        theme::text(ui, title, theme::semibold(theme::TEXT_BODY), palette.text);
     });
     if recipients.is_empty() {
         ui.add_space(2.0);
         theme::text(
             ui,
             gettext(app.locale, "No one yet"),
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
         return;
@@ -333,12 +338,12 @@ fn section(
             widgets::avatar(ui, &palette, &name, &recipient.id, 34.0, picture.as_deref());
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                widgets::rich_text(ui, &name, theme::regular(14.0), palette.text);
+                widgets::rich_text(ui, &name, theme::regular(theme::TEXT_BODY), palette.text);
                 if let Some(at) = known_time(at(recipient)) {
                     theme::text(
                         ui,
                         crate::util::moment_stamp(app.locale, at),
-                        theme::regular(12.0),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.secondary,
                     );
                 }
@@ -359,7 +364,7 @@ fn note(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     let line = widgets::line(
         ui,
         text,
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
         width,
         usize::MAX,

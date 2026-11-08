@@ -903,6 +903,24 @@ pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
 
+// The type scale, as DESIGN.md's Typography lists it. Views pass one of
+// these to `regular`, `medium`, `semibold` or `bold`; a size outside it
+// (an emoji glyph, a pairing code) says why where it is used.
+/// Badges, counts and the smallest labels.
+pub const TEXT_MICRO: f32 = 11.0;
+/// Timestamps and secondary metadata.
+pub const TEXT_CAPTION: f32 = 12.0;
+/// Controls, list previews and compact labels.
+pub const TEXT_CONTROL: f32 = 13.0;
+/// Messages, names in rows, and explanations.
+pub const TEXT_BODY: f32 = 14.0;
+/// Section headings and the open chat's name.
+pub const TEXT_SECTION: f32 = 16.0;
+/// A screen's or dialog's one title.
+pub const TEXT_TITLE: f32 = 20.0;
+/// The largest text: a call's name, the link screen's title.
+pub const TEXT_DISPLAY: f32 = 24.0;
+
 pub fn regular(size: f32) -> egui::FontId {
     fastframe_fonts::Weight::Regular.font_id(size)
 }
@@ -1014,10 +1032,10 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     use egui::FontFamily::{Monospace, Proportional};
     use egui::{FontId, TextStyle};
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.5, Proportional)),
-        (TextStyle::Body, FontId::new(14.0, Proportional)),
-        (TextStyle::Button, FontId::new(14.0, Proportional)),
-        (TextStyle::Heading, FontId::new(22.0, Proportional)),
+        (TextStyle::Small, FontId::new(TEXT_CAPTION, Proportional)),
+        (TextStyle::Body, FontId::new(TEXT_BODY, Proportional)),
+        (TextStyle::Button, FontId::new(TEXT_BODY, Proportional)),
+        (TextStyle::Heading, FontId::new(TEXT_TITLE, Proportional)),
         (TextStyle::Monospace, FontId::new(13.0, Monospace)),
     ]
     .into();

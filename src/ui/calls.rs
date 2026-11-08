@@ -255,7 +255,7 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                         theme::text(
                             ui,
                             gettext(app.locale, "No matching calls"),
-                            theme::regular(13.0),
+                            theme::regular(theme::TEXT_CONTROL),
                             palette.secondary,
                         );
                     });
@@ -428,9 +428,9 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     }
     let left = rect.left() + widgets::ROW_SIDE + 62.0;
     let right = button_rect.left() - 6.0;
-    let stamp_galley = ui
-        .painter()
-        .layout_no_wrap(stamp, theme::regular(11.5), palette.dim);
+    let stamp_galley =
+        ui.painter()
+            .layout_no_wrap(stamp, theme::regular(theme::TEXT_CAPTION), palette.dim);
     let name_top = rect.top() + 14.0;
     ui.painter().galley(
         pos2(right - stamp_galley.size().x, name_top + 2.0),
@@ -446,7 +446,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     let name_line = widgets::line(
         ui,
         &label,
-        theme::medium(14.5),
+        theme::medium(theme::TEXT_BODY),
         name_color,
         (right - stamp_galley.size().x - 8.0 - left).max(0.0),
         1,
@@ -467,7 +467,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     let detail = widgets::line(
         ui,
         &summary,
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
         (right - left - 21.0).max(0.0),
         1,
@@ -553,7 +553,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                         theme::text(
                             ui,
                             gettext(app.locale, "No matching contacts"),
-                            theme::regular(13.0),
+                            theme::regular(theme::TEXT_CONTROL),
                             palette.secondary,
                         );
                     });
@@ -584,7 +584,12 @@ fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
             bottom: 6,
         })
         .show(ui, |ui| {
-            theme::text(ui, label, theme::medium(13.0), palette.accent);
+            theme::text(
+                ui,
+                label,
+                theme::medium(theme::TEXT_CONTROL),
+                palette.accent,
+            );
         });
 }
 
@@ -613,10 +618,24 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
         let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let width = (buttons.left() - 8.0 - left).max(0.0);
-        let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
+        let name_line = widgets::line(
+            ui,
+            &name,
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+            width,
+            1,
+        );
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
         if let Some(phone) = crate::model::phone_of(id).map(crate::util::phone) {
-            let phone_line = widgets::line(ui, &phone, theme::regular(13.0), palette.dim, width, 1);
+            let phone_line = widgets::line(
+                ui,
+                &phone,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.dim,
+                width,
+                1,
+            );
             phone_line.paint(ui, pos2(left, rect.top() + 38.0), palette.dim);
         }
     }
@@ -683,7 +702,12 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
             app.actions.push(Action::ShowNewCall(true));
         }
         ui.add_space(10.0);
-        theme::text(ui, label.as_ref(), theme::semibold(15.0), palette.text);
+        theme::text(
+            ui,
+            label.as_ref(),
+            theme::semibold(theme::TEXT_SECTION),
+            palette.text,
+        );
         ui.add_space(18.0);
         ui.set_max_width(360.0);
         ui.add(
@@ -692,7 +716,7 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
                     locale,
                     "Call one person by voice or video, or choose a call in the list to see it.",
                 ))
-                .font(theme::regular(13.5))
+                .font(theme::regular(theme::TEXT_BODY))
                 .color(palette.secondary),
             )
             .wrap()

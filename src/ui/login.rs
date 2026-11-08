@@ -38,13 +38,17 @@ fn splash(app: &App, ui: &mut egui::Ui, label: &str) {
                     let width = 12.0
                         + 6.0
                         + ui.painter()
-                            .layout_no_wrap(label.to_owned(), theme::regular(12.5), palette.dim)
+                            .layout_no_wrap(
+                                label.to_owned(),
+                                theme::regular(theme::TEXT_CAPTION),
+                                palette.dim,
+                            )
                             .size()
                             .x;
                     ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
                     ui.spacing_mut().item_spacing.x = 6.0;
                     theme::spinner(ui, 12.0, palette.secondary);
-                    theme::text(ui, label, theme::regular(12.5), palette.dim);
+                    theme::text(ui, label, theme::regular(theme::TEXT_CAPTION), palette.dim);
                 });
             });
         });
@@ -99,8 +103,13 @@ pub(super) fn card(
                     let (logo, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
                     theme::mark(ui, logo.center(), 64.0);
                     ui.add_space(4.0);
-                    theme::text(ui, "Zeus", theme::bold(28.0), palette.text);
-                    theme::text(ui, tagline, theme::regular(14.5), palette.secondary);
+                    theme::text(ui, "Zeus", theme::bold(theme::TEXT_DISPLAY), palette.text);
+                    theme::text(
+                        ui,
+                        tagline,
+                        theme::regular(theme::TEXT_BODY),
+                        palette.secondary,
+                    );
                     ui.add_space(16.0);
                     body(app, ui);
                 });
@@ -139,7 +148,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                     locale,
                     "This computer was unlinked from your phone. Requesting a new code.",
                 ),
-                theme::regular(14.0),
+                theme::regular(theme::TEXT_BODY),
                 palette.text,
             );
             ui.add_space(8.0);
@@ -155,7 +164,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(message)
-                        .font(theme::regular(13.5))
+                        .font(theme::regular(theme::TEXT_BODY))
                         .color(palette.danger),
                 )
                 .wrap(),
@@ -216,7 +225,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
             locale,
             "Unofficial client. Using it may be against WhatsApp's terms of service.",
         ),
-        theme::regular(11.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.dim,
     );
 }
@@ -226,12 +235,17 @@ pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
         let width = 24.0
             + 8.0
             + ui.painter()
-                .layout_no_wrap(label.to_owned(), theme::medium(14.0), color)
+                .layout_no_wrap(label.to_owned(), theme::medium(theme::TEXT_BODY), color)
                 .size()
                 .x;
         ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
         theme::spinner(ui, 18.0, color);
-        theme::text(ui, label, theme::medium(14.0), ui.visuals().text_color());
+        theme::text(
+            ui,
+            label,
+            theme::medium(theme::TEXT_BODY),
+            ui.visuals().text_color(),
+        );
     });
 }
 
@@ -241,7 +255,7 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
     theme::text(
         ui,
         crate::i18n::gettext(locale, "Link this computer"),
-        theme::semibold(16.0),
+        theme::semibold(theme::TEXT_SECTION),
         palette.text,
     );
     let side = 260.0;
@@ -265,17 +279,22 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
             theme::text(
                 ui,
                 format!("{}.", index + 1),
-                theme::semibold(13.0),
+                theme::semibold(theme::TEXT_CONTROL),
                 palette.accent,
             );
-            theme::text(ui, step.as_ref(), theme::regular(13.0), palette.secondary);
+            theme::text(
+                ui,
+                step.as_ref(),
+                theme::regular(theme::TEXT_CONTROL),
+                palette.secondary,
+            );
         });
     }
     ui.add_space(10.0);
     if theme::link(
         ui,
         crate::i18n::gettext(locale, "Link with phone number instead"),
-        theme::medium(13.0),
+        theme::medium(theme::TEXT_CONTROL),
         palette.link,
     )
     .clicked()
@@ -290,12 +309,17 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
     theme::text(
         ui,
         crate::i18n::gettext(locale, "Enter this code on your phone"),
-        theme::semibold(16.0),
+        theme::semibold(theme::TEXT_SECTION),
         palette.text,
     );
     if let Some(phone) = phone {
         let for_phone = crate::i18n::gettext(locale, "for +{phone}").replace("{phone}", phone);
-        theme::text(ui, for_phone, theme::regular(13.0), palette.secondary);
+        theme::text(
+            ui,
+            for_phone,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.secondary,
+        );
     }
     ui.add_space(8.0);
     let shown = if code.len() == 8 && !code.contains('-') {
@@ -308,6 +332,8 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
         .corner_radius(CornerRadius::same(theme::RADIUS))
         .inner_margin(Margin::symmetric(22, 12))
         .show(ui, |ui| {
+            // The pairing code is read off the screen and typed on a phone,
+            // so it stands above the type scale.
             theme::text(ui, &shown, theme::bold(30.0), palette.text);
         });
     ui.add_space(8.0);
@@ -324,10 +350,15 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             theme::text(
                 ui,
                 format!("{}.", index + 1),
-                theme::semibold(13.0),
+                theme::semibold(theme::TEXT_CONTROL),
                 palette.accent,
             );
-            theme::text(ui, step.as_ref(), theme::regular(13.0), palette.secondary);
+            theme::text(
+                ui,
+                step.as_ref(),
+                theme::regular(theme::TEXT_CONTROL),
+                palette.secondary,
+            );
         });
     }
     ui.add_space(10.0);

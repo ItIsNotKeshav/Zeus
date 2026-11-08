@@ -763,7 +763,7 @@ fn paint(
             badge,
             Align2::CENTER_CENTER,
             count.to_string(),
-            theme::bold(12.0),
+            theme::bold(theme::TEXT_CAPTION),
             palette.on_accent,
         );
     }
@@ -788,7 +788,7 @@ fn label(ui: &egui::Ui, palette: &Palette, card: Rect, target: &Target) {
             palette.secondary,
         )
     };
-    let galley = painter.layout(text, theme::semibold(13.0), colour, 260.0);
+    let galley = painter.layout(text, theme::semibold(theme::TEXT_CONTROL), colour, 260.0);
     let height = 30.0;
     let width = 14.0 + 16.0 + 6.0 + galley.size().x + 14.0;
     let screen = ui.ctx().content_rect();

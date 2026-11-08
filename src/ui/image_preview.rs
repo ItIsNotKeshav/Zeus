@@ -790,7 +790,7 @@ fn header(
                     crate::ui::widgets::scrolling_text(
                         ui,
                         &title,
-                        theme::semibold(14.0),
+                        theme::semibold(theme::TEXT_BODY),
                         palette.text,
                         palette.overlay,
                     );
@@ -1120,7 +1120,7 @@ fn pending(
             pos2(stage.center().x, disc.bottom() + 12.0),
             egui::Align2::CENTER_CENTER,
             error,
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.danger,
         );
     }
@@ -1137,7 +1137,7 @@ fn pending(
         button.center(),
         egui::Align2::CENTER_CENTER,
         crate::i18n::gettext(app.locale, "Download"),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
     );
     response.widget_info(|| {
@@ -1364,7 +1364,7 @@ fn video(
                 pos2(media.center().x, media.bottom() - 18.0),
                 egui::Align2::CENTER_CENTER,
                 error,
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.danger,
             );
         }

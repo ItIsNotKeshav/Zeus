@@ -70,7 +70,7 @@ pub fn dropdown(
         let line = widgets::line(
             ui,
             selected,
-            theme::regular(14.0),
+            theme::regular(theme::TEXT_BODY),
             palette.text,
             rect.width() - PAD - CHEVRON,
             1,
@@ -145,7 +145,7 @@ pub fn option(ui: &mut Ui, palette: &Palette, text: &str, selected: bool) -> boo
         let line = widgets::line(
             ui,
             text,
-            theme::regular(14.0),
+            theme::regular(theme::TEXT_BODY),
             palette.text,
             rect.width() - 14.0 - right,
             1,
@@ -241,7 +241,7 @@ impl<'a> Field<'a> {
                 .max_rect(inner)
                 .layout(Layout::left_to_right(Align::Center)),
         );
-        let format = egui::TextFormat::simple(theme::regular(14.0), palette.text);
+        let format = egui::TextFormat::simple(theme::regular(theme::TEXT_BODY), palette.text);
         let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
             crate::bidi::layout_field(ui, buffer.as_str(), &format, wrap)
         };
@@ -252,7 +252,7 @@ impl<'a> Field<'a> {
         };
         let mut edit = egui::TextEdit::singleline(self.text)
             .id(id)
-            .font(theme::regular(14.0))
+            .font(theme::regular(theme::TEXT_BODY))
             .text_color(palette.text)
             .frame(egui::Frame::NONE)
             .margin(egui::Margin::ZERO)
@@ -266,7 +266,7 @@ impl<'a> Field<'a> {
         if let Some(hint) = self.hint {
             edit = edit.hint_text(
                 egui::RichText::new(hint)
-                    .font(theme::regular(14.0))
+                    .font(theme::regular(theme::TEXT_BODY))
                     .color(palette.dim),
             );
         }
