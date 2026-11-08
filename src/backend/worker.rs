@@ -7430,6 +7430,9 @@ impl Worker {
                 });
             }
             Command::SetGroupName { chat, name } => self.set_group_name(chat, name),
+            Command::SetGroupDescription { chat, description } => {
+                self.set_group_description(chat, description)
+            }
             Command::GroupInviteLink { chat, reset } => self.group_invite_link(chat, reset),
             Command::AddGroupMembers { chat, members } => self.add_group_members(chat, members),
             Command::SetGroupPermission {
@@ -8652,6 +8655,57 @@ impl Worker {
         allowed
     }
 
+    /// Changes the group's description, or removes it when `description` is
+    /// empty, once WhatsApp accepts.
+    fn set_group_description(&mut self, chat: ChatId, description: String) {
+        let description = description.trim().to_owned();
+        let Ok(Some(row)) = self.archive.chat(&chat) else {
+            return;
+        };
+        if description == row.group_description.as_deref().unwrap_or_default().trim() {
+            return;
+        }
+        if !self.may_edit_group(&chat) {
+            return;
+        }
+        let text = if description.is_empty() {
+            None
+        } else if let Ok(text) = whatsapp_rust::GroupDescription::new(description.clone()) {
+            Some(text)
+        } else {
+            self.emit(Event::Error(format!(
+                "A group description can have at most {} characters.",
+                crate::model::GROUP_DESCRIPTION_LIMIT
+            )));
+            return;
+        };
+        let (Some(client), Some(jid)) = (self.client.clone(), Self::jid_of(&chat)) else {
+            self.emit(Event::Error(
+                "Connect to WhatsApp to change the group's description.".to_owned(),
+            ));
+            return;
+        };
+        self.emit(Event::GroupSaving {
+            chat: chat.clone(),
+            saving: true,
+        });
+        let commands = self.commands.clone();
+        let waker = self.waker.clone();
+        tokio::spawn(async move {
+            let result = client
+                .groups()
+                .set_description(jid, text, whatsapp_rust::PreviousDescription::Resolve)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = commands.send(Command::GroupEdited {
+                chat,
+                edit: GroupEdit::Description(description),
+                result,
+            });
+            waker.wake();
+        });
+    }
+
     /// Renames a group on WhatsApp. An empty or unchanged name does nothing.
     ///
     /// The name changes here only once WhatsApp accepts it
@@ -8749,20 +8803,27 @@ impl Worker {
             // A timer has its own saving state, so a rename in flight and a
             // timer change no longer clear each other.
             GroupEdit::Timer(_) => self.timer_saving(&chat, false),
-            GroupEdit::Name(_) | GroupEdit::Picture { .. } => self.emit(Event::GroupSaving {
-                chat: chat.clone(),
-                saving: false,
-            }),
+            GroupEdit::Name(_) | GroupEdit::Description(_) | GroupEdit::Picture { .. } => self
+                .emit(Event::GroupSaving {
+                    chat: chat.clone(),
+                    saving: false,
+                }),
         }
         let sent_picture = match edit {
             GroupEdit::Picture { .. } => self.group_pictures_sent.remove(&chat),
-            GroupEdit::Name(_) | GroupEdit::Timer(_) => None,
+            GroupEdit::Name(_) | GroupEdit::Description(_) | GroupEdit::Timer(_) => None,
         };
         match (result, edit) {
             (Ok(()), GroupEdit::Name(name)) => {
                 // Metadata asked for before now may still name the old subject.
                 *self.subject_generation.entry(chat.clone()).or_default() += 1;
                 let _ = self.archive.rename_chat(&chat, &name);
+                self.emit_chat(&chat);
+            }
+            (Ok(()), GroupEdit::Description(description)) => {
+                // Metadata asked for before now may still hold the old text.
+                *self.description_generation.entry(chat.clone()).or_default() += 1;
+                let _ = self.archive.set_group_description(&chat, &description);
                 self.emit_chat(&chat);
             }
             (Ok(()), GroupEdit::Picture { removed: false }) if sent_picture.is_some() => {
@@ -8790,6 +8851,7 @@ impl Worker {
                     .to_owned()
                 } else {
                     match edit {
+                        GroupEdit::Description(_) => "Could not change the group's description.",
                         GroupEdit::Timer(_) => "Could not change disappearing messages.",
                         GroupEdit::Name(_) => "Could not rename the group.",
                         GroupEdit::Picture { removed: false } => {

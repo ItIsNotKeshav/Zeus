@@ -1115,14 +1115,50 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
     ui.add_space(18.0);
     actions(app, ui, shown);
-    if let Some(description) = shown.description.as_deref() {
+    let describing = app.group_description_edit.take().filter(|_| group_editable);
+    if let Some(mut draft) = describing {
         ui.add_space(SECTION_GAP);
-        section_title(
-            ui,
-            &palette,
-            &crate::i18n::gettext(app.locale, "Description"),
-            None,
-        );
+        match group_description_field(app, ui, &mut draft) {
+            Some(true) => app.actions.push(Action::SetGroupDescription {
+                chat: id.to_owned(),
+                description: draft,
+            }),
+            Some(false) => app.actions.push(Action::CloseGroupDescription),
+            None => app.group_description_edit = Some(draft),
+        }
+    } else if group_editable && shown.description.is_none() && shown.group {
+        ui.add_space(SECTION_GAP);
+        let add = crate::i18n::gettext(app.locale, "Add group description");
+        if widgets::menu_item(ui, &palette, Some(Icon::Pencil), add.as_ref()) {
+            app.actions
+                .push(Action::EditGroupDescription(String::new()));
+        }
+    } else if let Some(description) = shown.description.as_deref() {
+        ui.add_space(SECTION_GAP);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            theme::text(
+                ui,
+                crate::i18n::gettext(app.locale, "Description"),
+                theme::semibold(14.5),
+                palette.text,
+            );
+            if group_editable
+                && theme::icon_button(
+                    ui,
+                    Icon::Pencil,
+                    15.0,
+                    palette.secondary,
+                    palette.text,
+                    &crate::i18n::gettext(app.locale, "Edit group description"),
+                )
+                .clicked()
+            {
+                app.actions
+                    .push(Action::EditGroupDescription(description.to_owned()));
+            }
+        });
+        ui.add_space(10.0);
         // A long description scrolls in place, so the media and the members
         // stay close under it.
         egui::ScrollArea::vertical()
@@ -2818,6 +2854,75 @@ fn group_photo(
 
 /// The group name being typed. Returns `Some(true)` when Enter or the check
 /// submits it, `Some(false)` when the cross cancels it.
+/// The group description editor: a multi-line field with save and cancel.
+/// Gives `Some(true)` to save, `Some(false)` to cancel, `None` while open.
+fn group_description_field(app: &App, ui: &mut egui::Ui, draft: &mut String) -> Option<bool> {
+    let palette = app.palette;
+    let hint = crate::i18n::gettext(app.locale, "Group description");
+    let field = Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(draft)
+                    .id(group_description_field_id())
+                    .hint_text(
+                        egui::RichText::new(hint.as_ref())
+                            .color(palette.dim)
+                            .font(theme::regular(13.5)),
+                    )
+                    .font(theme::regular(13.5))
+                    .text_color(palette.text)
+                    .frame(Frame::NONE)
+                    .char_limit(crate::model::GROUP_DESCRIPTION_LIMIT)
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY),
+            )
+        });
+    theme::focus_outline(
+        ui,
+        field.inner.id,
+        field.response.rect,
+        f32::from(theme::RADIUS),
+    );
+    if ui.memory(|memory| memory.focused().is_none()) {
+        field.inner.request_focus();
+    }
+    let mut outcome = None;
+    ui.horizontal(|ui| {
+        if theme::icon_button(
+            ui,
+            Icon::Check,
+            18.0,
+            palette.secondary,
+            palette.accent,
+            &crate::i18n::gettext(app.locale, "Save description"),
+        )
+        .clicked()
+        {
+            outcome = Some(true);
+        }
+        if theme::icon_button(
+            ui,
+            Icon::X,
+            18.0,
+            palette.secondary,
+            palette.text,
+            &crate::i18n::gettext(app.locale, "Cancel"),
+        )
+        .clicked()
+        {
+            outcome = Some(false);
+        }
+    });
+    outcome
+}
+
+fn group_description_field_id() -> egui::Id {
+    egui::Id::new("group-description-field")
+}
+
 fn group_name_field(app: &App, ui: &mut egui::Ui, draft: &mut String) -> Option<bool> {
     let palette = app.palette;
     let mut outcome = None;

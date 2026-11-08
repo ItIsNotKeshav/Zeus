@@ -1209,6 +1209,9 @@ impl PollDraft {
 
 /// The longest group name WhatsApp accepts, in characters.
 pub const GROUP_NAME_LIMIT: usize = whatsapp_rust::wacore::iq::groups::GROUP_SUBJECT_MAX_LENGTH;
+/// The longest group description WhatsApp takes.
+pub const GROUP_DESCRIPTION_LIMIT: usize =
+    whatsapp_rust::wacore::iq::groups::GROUP_DESCRIPTION_MAX_LENGTH;
 
 /// WhatsApp's longest live location share, in seconds.
 pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
@@ -3391,6 +3394,16 @@ pub enum Action {
     EditGroupName(String),
     /// Closes the group name editor without renaming.
     CloseGroupName,
+    /// Opens the group description editor, holding the current text.
+    EditGroupDescription(String),
+    /// Closes the group description editor without changing it.
+    CloseGroupDescription,
+    /// Changes a group's description on WhatsApp; the editor closes. Empty
+    /// text removes it.
+    SetGroupDescription {
+        chat: ChatId,
+        description: String,
+    },
     /// Renames a group on WhatsApp; the editor closes.
     SetGroupName {
         chat: ChatId,

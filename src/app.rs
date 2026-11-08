@@ -777,6 +777,8 @@ pub struct App {
     pub forward_limit: usize,
     /// The group name being typed in the group info dialog.
     pub group_name_edit: Option<String>,
+    /// The group description being edited in the info panel.
+    pub group_description_edit: Option<String>,
     /// The new-contact dialog's "Save to phone" box.
     pub new_contact_to_phone: bool,
     pub sidebar_visible: bool,
@@ -1617,6 +1619,7 @@ impl App {
             forward_reviewing: false,
             forward_limit: crate::model::FORWARD_LIMIT,
             group_name_edit: None,
+            group_description_edit: None,
             new_contact_to_phone: true,
             sidebar_visible: true,
             #[cfg(any(test, feature = "demo"))]
@@ -5057,6 +5060,7 @@ impl App {
         self.close_chat_search();
         self.contact_edit = None;
         self.group_name_edit = None;
+        self.group_description_edit = None;
         self.emoji_start = None;
         self.mention_start = None;
         if self.info.as_ref().is_none_or(|info| info.chat != chat) {
@@ -5099,6 +5103,7 @@ impl App {
         self.info_focus = None;
         self.contact_edit = None;
         self.group_name_edit = None;
+        self.group_description_edit = None;
     }
 
     /// Drops the listing and invalidates the request still out for it: an
@@ -8743,6 +8748,8 @@ impl App {
                 }
                 self.contact_edit = None;
                 self.group_name_edit = None;
+                self.group_description_edit = None;
+                self.group_description_edit = None;
                 self.dialog = Some(dialog);
             }
             Action::CloseDialog => {
@@ -8755,6 +8762,8 @@ impl App {
                 self.forward_reviewing = false;
                 self.contact_edit = None;
                 self.group_name_edit = None;
+                self.group_description_edit = None;
+                self.group_description_edit = None;
                 // A group on its way still opens once WhatsApp makes it.
                 self.new_group = None;
                 self.refocus_composer(ctx);
@@ -9298,8 +9307,17 @@ impl App {
             Action::PickProfilePicture => self.backend.send(Command::PickProfilePicture),
             Action::EditGroupName(name) => self.group_name_edit = Some(name),
             Action::CloseGroupName => self.group_name_edit = None,
+            Action::EditGroupDescription(text) => self.group_description_edit = Some(text),
+            Action::CloseGroupDescription => self.group_description_edit = None,
+            Action::SetGroupDescription { chat, description } => {
+                self.group_description_edit = None;
+                self.backend
+                    .send(Command::SetGroupDescription { chat, description });
+            }
             Action::SetGroupName { chat, name } => {
                 self.group_name_edit = None;
+                self.group_description_edit = None;
+                self.group_description_edit = None;
                 self.backend.send(Command::SetGroupName { chat, name });
             }
             Action::StartNewGroup => {

@@ -619,6 +619,11 @@ pub enum Command {
     PickProfilePicture,
     /// Internal: a picked picture, cropped and encoded as JPEG.
     SetProfilePicture(Vec<u8>),
+    /// Changes a group's description on WhatsApp; empty removes it.
+    SetGroupDescription {
+        chat: ChatId,
+        description: String,
+    },
     /// Renames a group on WhatsApp, for everyone in it.
     SetGroupName {
         chat: ChatId,
@@ -1517,6 +1522,8 @@ pub enum GroupEdit {
     Name(String),
     /// A new photo, or none.
     Picture { removed: bool },
+    /// A new description; empty removes it.
+    Description(String),
     /// A new disappearing-message timer, in seconds; `0` turns it off.
     Timer(u32),
 }
