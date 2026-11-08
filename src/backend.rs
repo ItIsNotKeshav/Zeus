@@ -128,6 +128,21 @@ pub struct CreatedPoll {
 
 #[derive(Debug)]
 pub enum Command {
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
+    /// Internal: a disappearing-timer change went out. `Ok` carries the sent
+    /// message's id and setting time, whose server ack decides whether the
+    /// timer is written. `session` identifies the account this completion
+    /// belongs to.
+    TimerSet {
+        chat: ChatId,
+        session: u64,
+        seconds: u32,
+        result: Result<(String, i64), String>,
+    },
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,
@@ -1097,6 +1112,13 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    /// A disappearing-timer change went to WhatsApp (`saving`), or WhatsApp
+    /// answered it, for a direct chat or a group. The chat keeps its current
+    /// timer until the answer.
+    TimerSaving {
+        chat: ChatId,
+        saving: bool,
+    },
     Blocklist {
         state: crate::blocking::Blocklist,
         error: Option<crate::blocking::Failure>,
@@ -1481,6 +1503,8 @@ pub enum GroupEdit {
     Name(String),
     /// A new photo, or none.
     Picture { removed: bool },
+    /// A new disappearing-message timer, in seconds; `0` turns it off.
+    Timer(u32),
 }
 
 /// WhatsApp's answer to a group management command, read on the runtime and

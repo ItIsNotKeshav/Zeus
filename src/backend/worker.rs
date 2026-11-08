@@ -43,6 +43,7 @@ mod calls;
 mod channel_pictures;
 mod contact_names;
 mod device_store;
+mod disappearing;
 mod early_events;
 use early_events::WaitingReaction;
 mod favorite_chats;
@@ -875,6 +876,8 @@ pub async fn run(
         older_ids_match: false,
         interactive_sending: HashMap::new(),
         awaiting_ack: HashMap::new(),
+        early_acks: HashMap::new(),
+        account_session: 0,
         receipts_watch: None,
         receipts_pruned: Instant::now(),
         early: Default::default(),
@@ -979,6 +982,7 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.expire_timer_acks();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
                 worker.release_idle_archive();
@@ -1171,6 +1175,15 @@ struct FileSendOptions {
     view_once: bool,
 }
 
+/// What a server ack settles.
+#[derive(Clone)]
+enum AwaitingAck {
+    /// One of our sent messages, not yet placed at the server's time.
+    Message(ChatId),
+    /// A direct disappearing-timer change, not yet accepted.
+    Timer(disappearing::TimerAck),
+}
+
 struct Worker {
     /// Private content may reach the UI.
     privacy_ready: bool,
@@ -1215,7 +1228,11 @@ struct Worker {
     interactive_sending: HashMap<(ChatId, String), String>,
     /// Messages we sent that WhatsApp has not acknowledged yet, by id, with
     /// their chat: the first ack's server time replaces their local stamp.
-    awaiting_ack: HashMap<String, ChatId>,
+    awaiting_ack: HashMap<String, AwaitingAck>,
+    /// A server ack that arrived before the send naming it, held briefly.
+    early_acks: HashMap<String, disappearing::EarlyAck>,
+    /// Bumped when the account stops, so late completions are discarded.
+    account_session: u64,
     /// The group message whose "Message info" is open.
     receipts_watch: Option<(ChatId, String)>,
     /// When receipts that never found their message were last dropped.
@@ -2112,10 +2129,20 @@ impl Worker {
         if ack.class.as_deref() != Some("message") {
             return;
         }
+        match self.awaiting_ack.get(&ack.id).cloned() {
+            Some(AwaitingAck::Message(chat)) => self.place_sent_message(chat, ack),
+            Some(AwaitingAck::Timer(_)) => self.settle_timer_ack(ack),
+            // An ack can outrun the completion that names the timer change it
+            // belongs to; hold it briefly, bounded in time and count.
+            None => self.hold_early_ack(ack),
+        }
+    }
+
+    /// Moves a message we sent to the time WhatsApp's server acknowledged it.
+    /// Only the first ack with a time counts: a resend after a retry receipt
+    /// is acked again, later, and must not move the message down the chat.
+    fn place_sent_message(&mut self, chat: ChatId, ack: &wa_events::ServerAck) {
         let Some(at) = ack.timestamp.filter(|_| ack.error.is_none()) else {
-            return;
-        };
-        let Some(chat) = self.awaiting_ack.get(&ack.id).cloned() else {
             return;
         };
         match self.archive.restamp_sent(&chat, &ack.id, at.timestamp()) {
@@ -3258,7 +3285,11 @@ impl Worker {
         // can never match a job queued after the stop.
         self.abandon_forwards();
         // Acks belong to the session that sent; the next one never answers.
+        self.clear_timer_saving();
         self.awaiting_ack.clear();
+        self.early_acks.clear();
+        // A change or ack sent under the old account belongs to that account.
+        self.account_session = self.account_session.wrapping_add(1);
         if let Some(handle) = self.handle.take()
             && tokio::time::timeout(Duration::from_secs(5), handle.shutdown())
                 .await
@@ -4046,6 +4077,49 @@ impl Worker {
                         "group timer update: duration={expiration}s timestamp={timestamp} accepted={accepted}"
                     );
                     if accepted {
+                        // A notice may name the actor only by a privacy id.
+                        // The notification carries the phone number beside
+                        // it, so learn the pair and name the contact.
+                        if let (Some(lid), Some(pn)) = (&update.participant, &update.participant_pn)
+                        {
+                            self.learn_pair(lid, pn);
+                        }
+                        let raw_actor = update
+                            .participant_pn
+                            .as_ref()
+                            .or(update.participant.as_ref());
+                        let actor = raw_actor.map(|jid| self.canonical(jid)).unwrap_or_default();
+                        let from_me = !actor.is_empty() && actor == self.me();
+                        // The key uses the server's own actor id, so learning
+                        // a privacy-id mapping cannot duplicate the notice.
+                        let key_actor = raw_actor
+                            .map(|jid| jid.to_string())
+                            .unwrap_or_else(|| "unknown".to_owned());
+                        let id = match update.notification_id.as_deref() {
+                            Some(notification) => format!(
+                                "{}{}-{}",
+                                crate::model::TIMER_NOTICE_PREFIX,
+                                notification,
+                                update.action_index
+                            ),
+                            None => format!(
+                                "{}{}-{}-{}-{}",
+                                crate::model::TIMER_NOTICE_PREFIX,
+                                timestamp,
+                                update.action_index,
+                                key_actor,
+                                expiration
+                            ),
+                        };
+                        self.file_timer_notice(
+                            &chat,
+                            &id,
+                            actor,
+                            from_me,
+                            timestamp,
+                            *expiration,
+                            update.notify.as_deref(),
+                        );
                         self.emit_chat(&chat);
                     }
                 }
@@ -4752,6 +4826,15 @@ impl Worker {
                         "protocol timer update: duration={expiration}s timestamp={timestamp} fallback_timestamp={used_fallback} accepted={accepted}"
                     );
                     if accepted {
+                        self.file_timer_notice(
+                            &chat,
+                            &format!("{}{}", crate::model::TIMER_NOTICE_PREFIX, info.id),
+                            sender.clone(),
+                            from_me,
+                            timestamp,
+                            expiration,
+                            push_name.as_deref(),
+                        );
                         self.emit_chat(&chat);
                     }
                 } else {
@@ -5466,8 +5549,10 @@ impl Worker {
         }
         // Only a stored message can be moved to the server's time.
         if message.from_me && message.status == Delivery::Pending {
-            self.awaiting_ack
-                .insert(message.id.clone(), message.chat.clone());
+            self.awaiting_ack.insert(
+                message.id.clone(),
+                AwaitingAck::Message(message.chat.clone()),
+            );
         }
         self.retire_local_call_twins(&message);
         if existing
@@ -6722,6 +6807,15 @@ impl Worker {
             return;
         }
         match command {
+            Command::SetDisappearingTimer { chat, seconds } => {
+                self.set_disappearing_timer(chat, seconds)
+            }
+            Command::TimerSet {
+                chat,
+                session,
+                seconds,
+                result,
+            } => self.timer_set(chat, session, seconds, result),
             Command::FetchBlocklist => self.fetch_blocklist(),
             Command::SetBlocked { chat, blocked } => self.set_blocked(chat, blocked),
             Command::BlocklistFetched { generation, result } => {
@@ -8600,13 +8694,18 @@ impl Worker {
 
     /// Applies WhatsApp's answer to a group name or photo change.
     fn group_edited(&mut self, chat: ChatId, edit: GroupEdit, result: Result<(), String>) {
-        self.emit(Event::GroupSaving {
-            chat: chat.clone(),
-            saving: false,
-        });
+        match &edit {
+            // A timer has its own saving state, so a rename in flight and a
+            // timer change no longer clear each other.
+            GroupEdit::Timer(_) => self.timer_saving(&chat, false),
+            GroupEdit::Name(_) | GroupEdit::Picture { .. } => self.emit(Event::GroupSaving {
+                chat: chat.clone(),
+                saving: false,
+            }),
+        }
         let sent_picture = match edit {
             GroupEdit::Picture { .. } => self.group_pictures_sent.remove(&chat),
-            GroupEdit::Name(_) => None,
+            GroupEdit::Name(_) | GroupEdit::Timer(_) => None,
         };
         match (result, edit) {
             (Ok(()), GroupEdit::Name(name)) => {
@@ -8619,16 +8718,28 @@ impl Worker {
                 self.show_sent_picture(chat, sent_picture.unwrap_or_default());
             }
             (Ok(()), GroupEdit::Picture { removed }) => self.refresh_avatar(chat, removed),
+            // A group's timer is applied from the server's own group
+            // notification, which carries the change's timestamp and actor,
+            // and files the notice. The accepted IQ only refreshes the
+            // metadata, so a newer change is never overwritten.
+            (Ok(()), GroupEdit::Timer(_)) => self.request_group_info(&chat, true),
             (Err(error), edit) => {
                 let refused = group_edit_refused(&error);
                 log::warn!(
                     "could not change group info ({})",
                     if refused { "refused" } else { "failed" }
                 );
+                let timer = matches!(&edit, GroupEdit::Timer(_));
                 self.emit(Event::Error(if refused {
-                    GROUP_EDIT_REFUSED.to_owned()
+                    if timer {
+                        "Only admins can change disappearing messages."
+                    } else {
+                        GROUP_EDIT_REFUSED
+                    }
+                    .to_owned()
                 } else {
                     match edit {
+                        GroupEdit::Timer(_) => "Could not change disappearing messages.",
                         GroupEdit::Name(_) => "Could not rename the group.",
                         GroupEdit::Picture { removed: false } => {
                             "Could not change the group's photo."
@@ -9189,6 +9300,7 @@ impl Worker {
                 | Content::PhoneOnly { .. }
                 | Content::Poll { .. }
                 | Content::Interactive { .. }
+                | Content::DisappearingTimer { .. }
         ) {
             self.emit(Event::Error("This message cannot be forwarded".to_owned()));
             return None;

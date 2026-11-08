@@ -387,6 +387,7 @@ pub(crate) fn can_select(content: &Content) -> bool {
             | Content::Poll { .. }
             | Content::Interactive { .. }
             | Content::Call { .. }
+            | Content::DisappearingTimer { .. }
     )
 }
 
@@ -3400,6 +3401,13 @@ impl App {
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
+            Event::TimerSaving { chat, saving } => {
+                if saving {
+                    self.timer_saving.insert(chat);
+                } else {
+                    self.timer_saving.remove(&chat);
+                }
+            }
             Event::Blocklist { state, error } => {
                 self.blocklist = state;
                 if !self.events_hidden
@@ -4682,6 +4690,7 @@ impl App {
                 self.chat_pins.clear();
                 self.account_privacy = crate::privacy::Snapshot::default();
                 self.blocklist = Default::default();
+                self.timer_saving.clear();
                 self.account_receipts_off = false;
                 self.open_chat = None;
                 // Every recorded place named a chat of the account that just
@@ -6786,6 +6795,10 @@ impl App {
             return;
         }
         match action {
+            Action::SetDisappearingTimer { chat, seconds } => {
+                self.backend
+                    .send(Command::SetDisappearingTimer { chat, seconds });
+            }
             Action::FetchBlocklist => self.backend.send(Command::FetchBlocklist),
             Action::SetBlocked { chat, blocked } => {
                 if self.is_connected() && self.blocklist.editable() {

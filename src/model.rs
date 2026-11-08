@@ -955,6 +955,14 @@ pub enum Content {
     },
     /// "This message was deleted."
     Revoked,
+    /// A disappearing-message timer change, drawn as a centred system row
+    /// rather than a bubble. The message's `from_me` and `sender` say who
+    /// changed it.
+    #[serde(rename = "disappearing_timer")]
+    DisappearingTimer {
+        /// The new duration in seconds; `0` means the timer was turned off.
+        seconds: u32,
+    },
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
@@ -996,6 +1004,21 @@ pub const CALL_ENTRY_PREFIX: &str = "zapfast-call-";
 /// under. No chat has it: such a call belongs to none, so its entries show on
 /// the Calls page alone, never in the chat list.
 pub const CALL_LINK_CHAT: &str = "zapfast-call-link";
+
+/// The id prefix of the disappearing-timer notices Zeus files from live
+/// setting changes. They are local system rows, never sent anywhere.
+pub const TIMER_NOTICE_PREFIX: &str = "zapfast-timer-";
+
+/// Whether `id` is one Zeus made up for a row of its own, which no server
+/// ever issued: a call entry, or a disappearing-timer notice.
+pub fn local_message_id(id: &str) -> bool {
+    id.starts_with(CALL_ENTRY_PREFIX) || timer_notice_id(id)
+}
+
+/// Whether `id` names a disappearing-timer notice.
+pub fn timer_notice_id(id: &str) -> bool {
+    id.starts_with(TIMER_NOTICE_PREFIX)
+}
 
 /// How far apart, in seconds, two entries for one call may be: the phone's
 /// call-log message and the call's record are stamped by different clocks.
@@ -1405,6 +1428,11 @@ impl Content {
 
     /// [`Self::summary`] with its content label in `locale`.
     pub fn summary_in(&self, locale: crate::i18n::Locale) -> String {
+        if let Self::DisappearingTimer { seconds } = self {
+            return crate::util::disappearing_line(locale, Some(*seconds)).unwrap_or_else(|| {
+                crate::i18n::gettext(locale, "Disappearing messages").into_owned()
+            });
+        }
         let summary = self.summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1415,6 +1443,9 @@ impl Content {
 
     /// [`Self::full_summary`] with its content label in `locale`.
     pub fn full_summary_in(&self, locale: crate::i18n::Locale) -> String {
+        if matches!(self, Self::DisappearingTimer { .. }) {
+            return self.summary_in(locale);
+        }
         let summary = self.full_summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1463,6 +1494,10 @@ impl Content {
             }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
+            Self::DisappearingTimer { seconds } => {
+                crate::util::disappearing_line(crate::i18n::Locale::English, Some(*seconds))
+                    .unwrap_or_else(|| "Disappearing messages changed".to_owned())
+            }
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
             Self::PhoneOnly {
@@ -2701,6 +2736,11 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,

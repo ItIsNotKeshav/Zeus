@@ -2784,6 +2784,7 @@ fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize
         Content::Document { caption, .. } => 70.0 + caption_rows(caption),
         Content::Sticker { .. } => 140.0,
         Content::Audio { .. } => 60.0,
+        Content::DisappearingTimer { .. } => 0.0,
         _ => 40.0,
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
@@ -3593,7 +3594,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
                     let last_outgoing = conversation.messages.iter().rposition(|message| {
-                        message.from_me && !matches!(message.content, Content::Revoked)
+                        message.from_me
+                            && !matches!(
+                                message.content,
+                                Content::Revoked | Content::DisappearingTimer { .. }
+                            )
                     });
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
@@ -5364,6 +5369,25 @@ fn spring_unit(t_ms: f64, stiffness: f64, damping: f64) -> f64 {
             + initial_delta * (angular * t_ms).cos())
 }
 
+/// The system row a disappearing-message timer change leaves in the
+/// transcript: a centred chip naming who changed it and to what, as the
+/// phone shows it. It is not a message, so nothing selects or copies it.
+fn timer_notice(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    seconds: u32,
+) -> egui::Response {
+    let name = if message.from_me {
+        crate::i18n::gettext(view.locale, "You").into_owned()
+    } else {
+        (view.names_or)(&message.sender, message.sender_name.as_deref())
+    };
+    let text = crate::util::disappearing_change(view.locale, &name, seconds);
+    ui.vertical_centered(|ui| widgets::chip(ui, &view.palette, &text))
+        .inner
+}
+
 /// Draws a message row and returns its bubble response for scrolling. A
 /// bubble whose card is being carried to another chat stays behind faintly,
 /// and a press on one may pick it up (`carry`).
@@ -5376,6 +5400,11 @@ fn bubble(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    // A timer change is a system row, not a message: a centred chip naming
+    // who changed it and to what, with no bubble, avatar, or selection.
+    if let Content::DisappearingTimer { seconds } = &message.content {
+        return Some(timer_notice(ui, view, message, *seconds));
+    }
     let layer = ui.layer_id();
     let start = ui.ctx().graphics(|graphics| {
         graphics
@@ -7089,7 +7118,10 @@ fn last_bubble_of_run(palette: &Palette, messages: &[Message], index: usize) -> 
 /// Whether `next` continues the run `message` belongs to: the same side,
 /// and in a group the same sender.
 fn same_run(message: &Message, next: &Message) -> bool {
-    message.from_me == next.from_me && (message.from_me || message.sender == next.sender)
+    !matches!(message.content, Content::DisappearingTimer { .. })
+        && !matches!(next.content, Content::DisappearingTimer { .. })
+        && message.from_me == next.from_me
+        && (message.from_me || message.sender == next.sender)
 }
 
 /// A Nothing bubble's room around its text.
@@ -10332,6 +10364,11 @@ fn content(
                 can_call,
                 actions,
             )
+        }
+        Content::DisappearingTimer { .. } => {
+            // Drawn as a centred system row by `bubble`, which returns before
+            // the bubble is built. This arm only keeps the match exhaustive.
+            None
         }
         Content::Revoked => {
             mirrored_row(
