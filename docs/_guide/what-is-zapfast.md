@@ -1,14 +1,14 @@
 ---
-title: What is ZapFast?
-description: Why ZapFast exists, what it supports, and its current limitations.
+title: What is Zeus?
+description: Why Zeus exists, what it supports, and its current limitations.
 redirect_from:
   - /what-is-fastsapp/
 nav_order: 0
 ---
 
-## Why ZapFast
+## Why Zeus
 
-WhatsApp has no official Linux app. ZapFast is a native WhatsApp client
+WhatsApp has no official Linux app. Zeus is a native WhatsApp client
 written in Rust with [egui](https://www.egui.rs) and
 [fastframe](https://fastframe.dev), the framework behind a family of native
 desktop apps. It connects through
@@ -18,12 +18,12 @@ In our Linux test, it opens in under a second and uses about 200 MB of idle
 RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
 [See the measurements](/benchmarks/).
 
-<img class="VPImage dark" src="{{ '/screenshot.png' | relative_url }}" alt="ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview" width="1800" height="1360">
-<img class="VPImage light" src="{{ '/screenshot-light.png' | relative_url }}" alt="ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview" width="1800" height="1360">
+<img class="VPImage dark" src="{{ '/screenshot.png' | relative_url }}" alt="Zeus showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview" width="1800" height="1360">
+<img class="VPImage light" src="{{ '/screenshot-light.png' | relative_url }}" alt="Zeus showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview" width="1800" height="1360">
 
 ## What it does
 
-- **Stores your chats.** ZapFast links as a companion device and stores
+- **Stores your chats.** Zeus links as a companion device and stores
   messages in an encrypted SQLite file per account. History remains after
   restart, and older messages are fetched from your phone as you scroll.
 - **Sends common message types.** Send formatted text, replies, edits,
@@ -43,7 +43,7 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   a quote, web links open in your browser, and copy-code buttons use the clipboard. [See examples and limitations](/using-zapfast/#interactive-messages).
 - **Uses consistent names.** Address-book names take priority over public
   WhatsApp profile names for chats, mentions, replies, and notifications.
-- **Runs in the background.** Closing the window keeps ZapFast in the system
+- **Runs in the background.** Closing the window keeps Zeus in the system
   tray. Notifications can show the chat picture and open the chat at the
   message they announced. Supported desktops show the unread count on the app
   icon in the taskbar or the macOS Dock; on Windows, the count appears while the window
@@ -61,7 +61,7 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
 These are current implementation limits, not permanent product exclusions.
 Feature requests can be discussed within the project's
 [product boundaries](https://github.com/crmne/zapfast/blob/main/CONTRIBUTING.md#before-opening-an-issue).
-ZapFast does not currently support:
+Zeus does not currently support:
 
 - Creating call links and screen sharing; status posts, communities and
   publishing to channels. Group calls work, as an experiment (see the guide).
@@ -84,7 +84,7 @@ problem to the log in the state directory.
 
 ## Account safety
 
-ZapFast is an **unofficial** client. Using it may be against WhatsApp's terms
+Zeus is an **unofficial** client. Using it may be against WhatsApp's terms
 of service. It uses WhatsApp's companion-device protocol, sends normal
 receipts, and does not automate or send messages in bulk. WhatsApp may still
 restrict accounts that use unofficial clients. Use an official client if you
@@ -92,13 +92,13 @@ cannot accept that risk.
 
 ## Prior art
 
-ZapFast connects through
+Zeus connects through
 [whatsapp-rust](https://github.com/oxidezap/whatsapp-rust), which grew out
 of the [whatsmeow](https://github.com/tulir/whatsmeow) lineage. WhatsApp
-Web defines the companion-device model. ZapFast is a sibling of
+Web defines the companion-device model. Zeus is a sibling of
 [Spotifast](https://spotifast.rocks), a native client for Spotify. Both are
 built on [fastframe](https://fastframe.dev), the shared foundation for native
 Rust apps built with [egui](https://www.egui.rs).
 
-ZapFast is an independent project, not affiliated with or endorsed by
+Zeus is an independent project, not affiliated with or endorsed by
 WhatsApp LLC or Meta. WhatsApp is a trademark of WhatsApp LLC.

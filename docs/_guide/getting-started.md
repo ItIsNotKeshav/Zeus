@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Install ZapFast, link your phone, and load chat history.
+description: Install Zeus, link your phone, and load chat history.
 nav_order: 2
 ---
 
@@ -19,7 +19,7 @@ zapfast
 ```
 
 On Linux, `cargo install` puts the binary on your `PATH` but does not add a
-launcher entry. To get one (ZapFast under your application launcher, with its
+launcher entry. To get one (Zeus under your application launcher, with its
 own icon and no terminal), install a release build instead:
 
 ```sh
@@ -57,7 +57,7 @@ The packaged desktop entry is `packaging/applications/zapfast.desktop`;
 
 ## Link with your phone
 
-ZapFast links as a companion device, like WhatsApp Web. Start it and either:
+Zeus links as a companion device, like WhatsApp Web. Start it and either:
 
 - scan the QR code with your phone (WhatsApp, **Settings**, **Linked
   devices**, **Link a device**). The phone's camera app also reads the code
@@ -66,7 +66,7 @@ ZapFast links as a companion device, like WhatsApp Web. Start it and either:
   phone.
 
 The link survives restarts. Your phone does not need to stay on the same
-network or be online to read messages already stored in ZapFast.
+network or be online to read messages already stored in Zeus.
 
 Several numbers can stay linked in one window. Click your own picture at the
 bottom of the rail beside the chat list to switch between them or to add
@@ -79,9 +79,9 @@ notification, receipt, download, and wallpaper settings.
 ## Message history
 
 After linking, the phone sends recent history. The chat list appears within
-seconds, and messages can take a few minutes to finish loading. ZapFast stores
+seconds, and messages can take a few minutes to finish loading. Zeus stores
 new messages in its own archive. When you scroll past the stored history,
-ZapFast asks your phone for older messages. The phone must be online.
+Zeus asks your phone for older messages. The phone must be online.
 
 ## Try it in your own chat
 
