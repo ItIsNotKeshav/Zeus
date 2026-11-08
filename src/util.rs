@@ -244,6 +244,7 @@ fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> S
         0 => hour_minute(when),
         1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
         2..=6 => weekday_name(locale, date.weekday()),
+        _ if date.year() == today.year() => day_and_month(locale, date),
         _ => short_date(locale, date),
     }
 }
@@ -450,8 +451,13 @@ pub fn weekday_headings(locale: Locale) -> [String; 7] {
 
 /// A date as "23 Sep 2026".
 pub fn short_date(locale: Locale, date: Date) -> String {
+    format!("{} {}", day_and_month(locale, date), date.year())
+}
+
+/// A date as "23 Sep", for a list where the year goes without saying.
+fn day_and_month(locale: Locale, date: Date) -> String {
     let month: String = month_name(locale, date.month()).chars().take(3).collect();
-    format!("{} {month} {}", date.day(), date.year())
+    format!("{} {month}", date.day())
 }
 
 /// A date with its weekday, as "Wednesday, 23 September 2026".
@@ -1221,6 +1227,15 @@ mod tests {
                 Locale::English,
                 date,
                 date.checked_add(jiff::Span::new().days(30)).expect("date"),
+                &when
+            ),
+            "14 Nov"
+        );
+        assert_eq!(
+            stamp_relative_to(
+                Locale::English,
+                date,
+                date.checked_add(jiff::Span::new().days(60)).expect("date"),
                 &when
             ),
             "14 Nov 2023"
