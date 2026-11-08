@@ -940,6 +940,8 @@ pub struct App {
     /// Whether the tray menu offers "Lock Zeus": whether an app lock
     /// password was set when it last changed.
     tray_lockable: bool,
+    /// The unread level the tray icon shows (`util::tray_badge_level`).
+    tray_badge: u32,
     /// Whether the app is running without a window.
     pub window_hidden: bool,
     /// Whether window close should keep the process running.
@@ -1266,9 +1268,9 @@ fn tray_config(lockable: bool) -> fastframe_tray::Config {
         title: "Zeus".into(),
         icon: crate::util::app_icon_rgba,
         template_icon: Some(crate::util::tray_template_rgba),
-        // The tray icon is the app icon, so hosts that draw only named icons
-        // may use the installed one.
-        themed_icon: true,
+        // The icon changes with the unread count, which a host that has the
+        // installed icon's name would draw instead.
+        themed_icon: false,
         menu: vec![
             MenuItem::action(TRAY_SHOW, "Show or hide Zeus"),
             MenuItem::action(TRAY_LOCK, "Lock Zeus").visible(lockable),
@@ -1696,6 +1698,7 @@ impl App {
             #[cfg(test)]
             test_raised: false,
             tray_lockable,
+            tray_badge: 0,
             window_hidden: false,
             hide_intent: false,
             wants_show: false,
@@ -2164,12 +2167,21 @@ impl App {
     /// is set, so setting or removing one changes the menu at once.
     fn sync_tray(&mut self) {
         let lockable = self.settings.app_lock_hash.is_some();
-        if lockable == self.tray_lockable {
-            return;
+        if lockable != self.tray_lockable {
+            self.tray_lockable = lockable;
+            if let Some(tray) = &mut self.tray {
+                tray.set_visible(TRAY_LOCK, lockable);
+            }
         }
-        self.tray_lockable = lockable;
-        if let Some(tray) = &mut self.tray {
-            tray.set_visible(TRAY_LOCK, lockable);
+        // The same count as the taskbar's; a new icon only when it shows.
+        let count = self.unread_chat_count_everywhere();
+        let level = crate::util::tray_badge_level(count);
+        if level != self.tray_badge
+            && let Some(tray) = &mut self.tray
+        {
+            let (icon, template) = crate::util::tray_icons(count);
+            tray.set_icon(icon, Some(template));
+            self.tray_badge = level;
         }
     }
 

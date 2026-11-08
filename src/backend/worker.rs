@@ -45,6 +45,7 @@ mod chat_export;
 mod contact_names;
 mod device_store;
 mod disappearing;
+mod download_folders;
 mod early_events;
 use early_events::WaitingReaction;
 mod favorite_chats;
@@ -847,6 +848,7 @@ pub async fn run(
         group_info_retry: Vec::new(),
         presence_subscribed: HashSet::new(),
         download_folder: None,
+        cleaned_download_folders: HashSet::new(),
         keep_chats_archived: true,
         phone_unarchive_chats,
         phone_unarchive_unread,
@@ -1350,6 +1352,8 @@ struct Worker {
     presence_subscribed: HashSet<String>,
     /// Chosen folder for new downloads, when not the cache.
     download_folder: Option<PathBuf>,
+    /// Download folders already swept for staging files this run.
+    cleaned_download_folders: HashSet<PathBuf>,
     /// Settings' "Keep chats archived", for an account whose phone has not
     /// sent its own. Off, a new message unarchives its chat here, as the
     /// phone does; WhatsApp sends no mutation for it.
@@ -3084,17 +3088,28 @@ impl Worker {
     /// Where a new download goes: the chosen folder while it can be
     /// created, otherwise the cache, so an unplugged drive does not stop
     /// downloads.
-    fn download_dir(&self) -> PathBuf {
-        match &self.download_folder {
-            Some(folder) if std::fs::create_dir_all(folder).is_ok() && folder.is_dir() => {
-                folder.clone()
+    fn download_dir(&self, chat: &str) -> PathBuf {
+        if let Some(root) = &self.download_folder {
+            let chat = self.canonical_str(chat);
+            let name = self
+                .contact_name(&chat)
+                .or_else(|| {
+                    self.archive
+                        .chat(&chat)
+                        .ok()
+                        .flatten()
+                        .map(|chat| chat.name)
+                })
+                .unwrap_or_else(|| self.chat_name(&chat, None));
+            let account =
+                download_folders::account_folder(root, &self.dirs.id, self.me_pn.as_deref());
+            let folder = download_folders::chat_folder(&self.archive, &account, &chat, &name);
+            if download_folders::create_folder(root, &folder).is_ok() {
+                return folder;
             }
-            Some(_) => {
-                log::warn!("the download folder is unavailable; using the cache");
-                self.dirs.media_cache_dir()
-            }
-            None => self.dirs.media_cache_dir(),
+            log::warn!("the download folder is unavailable; using the cache");
         }
+        self.dirs.media_cache_dir()
     }
 
     fn set_online(&mut self, online: bool) {
@@ -7370,8 +7385,11 @@ impl Worker {
             }
             Command::SetDownloadFolder(folder) => {
                 // Interrupted downloads leave hidden staging files behind.
-                if let Some(folder) = &folder {
+                if let Some(folder) = &folder
+                    && self.cleaned_download_folders.insert(folder.clone())
+                {
                     discard_attachment_staging(folder);
+                    download_folders::discard_staging(folder, &self.dirs.id, self.me_pn.as_deref());
                 }
                 self.download_folder = folder;
             }
@@ -9930,7 +9948,7 @@ impl Worker {
             }
             None
         };
-        let dir = self.download_dir();
+        let dir = self.download_dir(&chat);
         // In the reader's own folder a document keeps the name it was sent
         // with (#363); the cache keeps names unique by message.
         let own_folder = dir != self.dirs.media_cache_dir();
@@ -16727,14 +16745,24 @@ mod tests {
         worker
             .handle_command(Command::SetDownloadFolder(Some(chosen.clone())))
             .await;
-        assert_eq!(worker.download_dir(), chosen);
-        assert!(chosen.is_dir(), "the folder is created when needed");
+        let folder = worker.download_dir("15550002222@s.whatsapp.net");
+        assert!(
+            folder.starts_with(&chosen),
+            "downloads go inside the folder"
+        );
+        assert!(folder.is_dir(), "the folder is created when needed");
         // A folder that cannot exist, such as one below a file, falls back.
         std::fs::write(root.join("file"), b"").unwrap();
         worker.download_folder = Some(root.join("file/inside"));
-        assert_eq!(worker.download_dir(), worker.dirs.media_cache_dir());
+        assert_eq!(
+            worker.download_dir("15550002222@s.whatsapp.net"),
+            worker.dirs.media_cache_dir()
+        );
         worker.download_folder = None;
-        assert_eq!(worker.download_dir(), worker.dirs.media_cache_dir());
+        assert_eq!(
+            worker.download_dir("15550002222@s.whatsapp.net"),
+            worker.dirs.media_cache_dir()
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -19121,6 +19149,7 @@ mod receipt_tests {
             group_info_retry: Vec::new(),
             presence_subscribed: HashSet::new(),
             download_folder: None,
+            cleaned_download_folders: HashSet::new(),
             keep_chats_archived: true,
             phone_unarchive_chats: None,
             phone_unarchive_unread: false,
