@@ -18915,6 +18915,8 @@ mod receipt_tests {
             older_ids_match: false,
             interactive_sending: HashMap::new(),
             awaiting_ack: HashMap::new(),
+            early_acks: HashMap::new(),
+            account_session: 0,
             receipts_watch: None,
             receipts_pruned: Instant::now(),
             early: Default::default(),
