@@ -57,6 +57,7 @@ mod new_group;
 mod poll_history;
 mod polls;
 mod prefetch;
+mod star_recovery;
 mod sticker_pace;
 mod stickers;
 
@@ -776,6 +777,17 @@ pub async fn run(
             && archive
                 .set_meta(contact_names::FIRST_NAMES_RECOVERED, "complete")
                 .is_ok());
+    // Only stars synced before Zeus followed them were consumed unseen.
+    let stars_recovered = archive
+        .meta(star_recovery::STARS_RECOVERED)
+        .ok()
+        .flatten()
+        .as_deref()
+        == Some("complete")
+        || (archive.chats().is_ok_and(|chats| chats.is_empty())
+            && archive
+                .set_meta(star_recovery::STARS_RECOVERED, "complete")
+                .is_ok());
     let mut worker = Worker {
         privacy_ready: privacy_confirmed,
         privacy_confirmed,
@@ -867,6 +879,8 @@ pub async fn run(
         favorites_recovering: false,
         first_names_recovered,
         first_names_recovering: false,
+        stars_recovered,
+        stars_recovering: false,
         link_previews_disabled,
         link_previews_unknown,
         link_previews_reading: false,
@@ -1419,6 +1433,10 @@ struct Worker {
     first_names_recovered: bool,
     /// That replay is running.
     first_names_recovering: bool,
+    /// The phone's stars from before they were followed were replayed.
+    stars_recovered: bool,
+    /// That replay is running.
+    stars_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
     /// Lets only a few automatic attachment downloads run at once.
@@ -3927,6 +3945,7 @@ impl Worker {
                 self.fetch_missing_favorites();
                 self.recover_favorites();
                 self.recover_first_names();
+                self.recover_stars();
                 self.recover_link_previews();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
@@ -7332,6 +7351,7 @@ impl Worker {
             Command::FavoriteFetched { hash, result } => self.favorite_fetched(&hash, result),
             Command::FavoritesRecovered { complete } => self.favorites_recovered(complete),
             Command::FirstNamesRecovered { complete } => self.first_names_recovered(complete),
+            Command::StarsRecovered { complete } => self.stars_recovered(complete),
             Command::ImportStickerUrl { url } => {
                 let commands = self.commands.clone();
                 let packs = self.packs_dir();
@@ -19132,6 +19152,8 @@ mod receipt_tests {
             favorites_recovered: true,
             favorites_recovering: false,
             first_names_recovered: true,
+            stars_recovered: true,
+            stars_recovering: false,
             first_names_recovering: false,
             downloads: HashSet::new(),
             download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
