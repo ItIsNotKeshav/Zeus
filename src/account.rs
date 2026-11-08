@@ -49,6 +49,10 @@ pub struct Account {
     pub open_chat: Option<ChatId>,
     /// The server's blocklist for this account, read and changed through the worker.
     pub blocklist: crate::blocking::Blocklist,
+    /// The chat export in progress, with its request number and counts.
+    pub chat_export: Option<(u64, crate::archive::chat_export::Counts)>,
+    pub(crate) chat_export_sequence: u64,
+    pub(crate) chat_export_allowed_sent: Option<bool>,
     /// The phone's "Disable link previews"; also on until the phone has said.
     pub link_previews_disabled: bool,
     /// The background-history state last sent to this account's worker: the
@@ -181,6 +185,9 @@ impl Account {
             settings,
             settings_dirty: false,
             blocklist: Default::default(),
+            chat_export: None,
+            chat_export_sequence: 0,
+            chat_export_allowed_sent: None,
             link_previews_disabled: false,
             backend,
             link: LinkStatus::Starting,

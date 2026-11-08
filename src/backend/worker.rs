@@ -41,6 +41,7 @@ mod blocking;
 mod bot_replies;
 mod calls;
 mod channel_pictures;
+mod chat_export;
 mod contact_names;
 mod device_store;
 mod disappearing;
@@ -807,6 +808,7 @@ pub async fn run(
         me_pn: None,
         me_lid: None,
         blocklist: Default::default(),
+        chat_export: chat_export::State::default(),
         me_name: None,
         me_about: None,
         lid_to_pn: HashMap::new(),
@@ -1005,6 +1007,7 @@ pub async fn run(
             worker.archive_released = false;
         }
     }
+    worker.stop_chat_export().await;
     worker.shutdown_call().await;
     worker.stop_bot().await;
 }
@@ -1281,6 +1284,7 @@ struct Worker {
     me_pn: Option<String>,
     me_lid: Option<String>,
     blocklist: crate::blocking::Blocklist,
+    chat_export: chat_export::State,
     me_name: Option<String>,
     me_about: Option<String>,
     /// Privacy-id user part to phone-number user part.
@@ -1944,6 +1948,7 @@ impl Worker {
         self.group_info_retry.retain(|(_, id)| id != chat);
         self.group_info_requested.remove(chat);
         self.group_info_tries.remove(chat);
+        self.cancel_chat_export_for(chat);
         match self.archive.remove_chat_through(chat, through, true) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
@@ -1981,6 +1986,7 @@ impl Worker {
     /// Empties a chat while keeping it listed.
     /// Empties a chat through `through`; false when the archive could not.
     fn empty_chat(&mut self, chat: &str, through: i64, delete_media: bool) -> bool {
+        self.cancel_chat_export_for(chat);
         match self.archive.remove_chat_through(chat, through, false) {
             Ok(removed) => {
                 self.pending_older.remove(chat);
@@ -2092,9 +2098,15 @@ impl Worker {
     }
 
     fn emit_chat(&self, id: &str) {
-        if let Ok(Some(mut chat)) = self.archive.chat(id) {
-            self.polish_chat(&mut chat);
-            self.emit(Event::ChatUpdated(Box::new(chat)));
+        match self.archive.chat(id) {
+            Ok(Some(mut chat)) => {
+                if chat.locked {
+                    self.cancel_chat_export_for(id);
+                }
+                self.polish_chat(&mut chat);
+                self.emit(Event::ChatUpdated(Box::new(chat)));
+            }
+            _ => self.cancel_chat_export_for(id),
         }
     }
 
@@ -4439,6 +4451,7 @@ impl Worker {
     }
 
     async fn on_logged_out(&mut self) {
+        self.stop_chat_export().await;
         self.contact_generation = self.contact_generation.wrapping_add(1);
         self.privacy_generation = self.privacy_generation.wrapping_add(1);
         self.message_removals_in_flight.clear();
@@ -7045,6 +7058,29 @@ impl Worker {
                 }
             }
             Command::LoadChat { chat, before } => self.load_chat(chat, before),
+            Command::SetChatExportAllowed(allowed) => {
+                self.chat_export.allowed = allowed;
+                if !allowed {
+                    self.stop_chat_export().await;
+                }
+            }
+            Command::ExportChat {
+                request,
+                chat,
+                include_media,
+            } => self.begin_chat_export(request, chat, include_media).await,
+            Command::CancelChatExport => self.stop_chat_export().await,
+            Command::ChatExportTarget {
+                request,
+                include_media,
+                target,
+            } => self.chat_export_target(request, include_media, target),
+            Command::ChatExportProgress { request, counts } => {
+                self.chat_export_progress(request, counts)
+            }
+            Command::ChatExportFinished { request, result } => {
+                self.chat_export_finished(request, result)
+            }
             Command::LoadPins(chat) => self.emit_pins(&chat),
             Command::FetchOlder { chat, explicit } => {
                 let _ = self.fetch_older(chat, explicit, false);
@@ -19118,6 +19154,7 @@ mod receipt_tests {
             link_previews_unknown: false,
             link_previews_reading: false,
             preview_fetch: None,
+            chat_export: chat_export::State::default(),
             receipts_watch: None,
             receipts_pruned: Instant::now(),
             early: Default::default(),

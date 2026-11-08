@@ -128,6 +128,26 @@ pub struct CreatedPoll {
 
 #[derive(Debug)]
 pub enum Command {
+    SetChatExportAllowed(bool),
+    ExportChat {
+        request: u64,
+        chat: ChatId,
+        include_media: bool,
+    },
+    CancelChatExport,
+    ChatExportTarget {
+        request: u64,
+        include_media: bool,
+        target: Option<PathBuf>,
+    },
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
     /// Changes a chat's disappearing-message timer; `0` turns it off.
     SetDisappearingTimer {
         chat: ChatId,
@@ -1124,6 +1144,14 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
     /// The phone's "Disable link previews", sent at start and on every change.
     LinkPreviewsDisabled(bool),
     /// What the page at `url` says about itself, or `None` when it said nothing.

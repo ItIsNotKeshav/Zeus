@@ -6,6 +6,7 @@ mod blocking;
 pub mod call;
 pub mod calls;
 pub(crate) mod carry;
+mod chat_export;
 pub mod chats;
 pub mod closing;
 pub mod controls;

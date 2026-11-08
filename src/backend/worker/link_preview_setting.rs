@@ -2,7 +2,7 @@
 //!
 //! The setting lives in the phone's `regular` app-state collection, and an
 //! incremental sync brings only what changed since the last one. A choice made
-//! before ZapFast followed it was consumed by earlier syncs and never comes
+//! before Zeus followed it was consumed by earlier syncs and never comes
 //! again, and a phone that never touched the setting says nothing at all, so
 //! silence alone cannot mean previews are allowed. Until the phone has said,
 //! they stay off, and `regular` is rebuilt once from a snapshot, which replays
