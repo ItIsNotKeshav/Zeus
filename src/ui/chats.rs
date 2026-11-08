@@ -746,7 +746,7 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
 }
 
 /// Width of the fade over the filter chips' right edge.
-pub(super) const CHIP_FADE: f32 = 16.0;
+pub(super) const CHIP_FADE: f32 = 32.0;
 
 /// Filter chips under the search field. Search lists every match, so the
 /// chips hide there.
@@ -828,7 +828,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         // A translucent sidebar would show the fade as a band; the chips
         // are only cut there.
         if !palette.vibrant() {
-            widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.rail());
+            widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.sidebar());
         }
     }
     labels::chip_row(app, ui, &palette);

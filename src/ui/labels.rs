@@ -108,8 +108,13 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         });
     });
     let hidden = row.content_size.x - row.state.offset.x - row.inner_rect.width();
-    if hidden > 0.5 {
-        widgets::fade_right(ui, row.inner_rect, super::chats::CHIP_FADE, palette.panel);
+    if hidden > 0.5 && !palette.vibrant() {
+        widgets::fade_right(
+            ui,
+            row.inner_rect,
+            super::chats::CHIP_FADE,
+            palette.sidebar(),
+        );
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(chip_row_id(), row.inner_rect));
