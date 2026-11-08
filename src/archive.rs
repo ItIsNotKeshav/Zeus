@@ -67,6 +67,8 @@ pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
 /// Marks an archived photo whose clip is known as a motion photo. Only the
 /// photo's own sender can give it a clip.
+const LINK_PREVIEWS_DISABLED: &str = "link_previews_disabled";
+const LINK_PREVIEWS_DISABLED_AT: &str = "link_previews_disabled_at";
 const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
     WHERE chat = ?1 AND id = ?2 AND json_valid(content)
       AND json_extract(content, '$.kind') = 'image'
@@ -2627,6 +2629,36 @@ impl Archive {
             ],
         )?;
         Ok(unarchive)
+    }
+
+    /// The phone's "Disable link previews": `Some(true)` when it is on.
+    /// `None` until the phone has said.
+    pub fn link_previews_disabled(&self) -> Result<Option<bool>> {
+        Ok(self.meta(LINK_PREVIEWS_DISABLED)?.map(|value| value == "1"))
+    }
+
+    /// Records the phone's "Disable link previews" changed at `timestamp`
+    /// milliseconds, unless a newer change is stored, so a replayed snapshot
+    /// cannot undo it. Returns the setting in force.
+    pub fn set_link_previews_disabled_at(&self, disabled: bool, timestamp: i64) -> Result<bool> {
+        let stored = self
+            .meta(LINK_PREVIEWS_DISABLED_AT)?
+            .and_then(|value| value.parse::<i64>().ok());
+        if stored.is_some_and(|stored| stored > timestamp) {
+            return Ok(self.link_previews_disabled()?.unwrap_or(disabled));
+        }
+        // One statement, so a failed write leaves the previous pair intact.
+        self.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2), (?3, ?4)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![
+                LINK_PREVIEWS_DISABLED,
+                if disabled { "1" } else { "0" },
+                LINK_PREVIEWS_DISABLED_AT,
+                timestamp.to_string()
+            ],
+        )?;
+        Ok(disabled)
     }
 
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {

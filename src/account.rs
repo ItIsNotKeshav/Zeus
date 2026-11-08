@@ -49,6 +49,8 @@ pub struct Account {
     pub open_chat: Option<ChatId>,
     /// The server's blocklist for this account, read and changed through the worker.
     pub blocklist: crate::blocking::Blocklist,
+    /// The phone's "Disable link previews"; also on until the phone has said.
+    pub link_previews_disabled: bool,
     /// The background-history state last sent to this account's worker: the
     /// switch and the chat on screen.
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
@@ -179,6 +181,7 @@ impl Account {
             settings,
             settings_dirty: false,
             blocklist: Default::default(),
+            link_previews_disabled: false,
             backend,
             link: LinkStatus::Starting,
             syncing: false,

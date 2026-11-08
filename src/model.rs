@@ -695,6 +695,13 @@ pub struct LinkPreview {
     pub description: Option<String>,
 }
 
+/// A link preview made here for an outgoing message, with its picture as JPEG.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ComposedPreview {
+    pub preview: LinkPreview,
+    pub thumbnail: Option<Vec<u8>>,
+}
+
 impl Message {
     /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
@@ -2736,6 +2743,8 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    /// Sends the message being written without its link preview.
+    DismissLinkPreview,
     /// Changes a chat's disappearing-message timer; `0` turns it off.
     SetDisappearingTimer {
         chat: ChatId,

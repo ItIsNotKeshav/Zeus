@@ -431,6 +431,46 @@ pub struct UnreadDivider {
     pub first: Option<String>,
 }
 
+/// How long the composer's text rests before its link is previewed.
+const PREVIEW_PAUSE: f64 = 0.5;
+
+/// The link preview for the message being written, with the account, chat
+/// and link it was asked for. It shows only while all three are still the
+/// ones on screen.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComposerPreview {
+    pub account: AccountId,
+    pub chat: ChatId,
+    pub url: String,
+    pub state: LinkPreviewState,
+}
+
+impl ComposerPreview {
+    /// The preview, once it has come and was not dismissed.
+    pub fn ready(&self) -> Option<&crate::model::ComposedPreview> {
+        match &self.state {
+            LinkPreviewState::Ready(preview) => Some(preview),
+            LinkPreviewState::Loading | LinkPreviewState::Dismissed => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum LinkPreviewState {
+    /// Asked for; the card says it is loading.
+    Loading,
+    /// Shown above the composer, and sent with the message.
+    Ready(crate::model::ComposedPreview),
+    /// Taken away with its X, or nothing usable came back: no card, and
+    /// this link is not asked for again.
+    Dismissed,
+}
+
+/// The composer's link that a preview would be made for.
+fn composer_link(text: &str) -> Option<String> {
+    crate::safety::first_link(text).filter(|url| crate::safety::preview_url(url).is_some())
+}
+
 pub struct App {
     pub dirs: AppDirs,
     pub settings: Settings,
@@ -475,6 +515,16 @@ pub struct App {
     /// another or closes ([`App::release_viewer_picture`]).
     viewer_picture: Option<PathBuf>,
     pub composer: String,
+    /// The link preview above the composer.
+    pub composer_preview: Option<ComposerPreview>,
+    /// egui time of the last composer change, while its pause runs.
+    preview_typed_at: Option<f64>,
+    /// The account, chat and composer text the preview watch saw last, to
+    /// tell when it changes.
+    preview_seen: Option<(AccountId, Option<ChatId>, String)>,
+    /// Whether attachments were staged when the watch last saw a change, so
+    /// staging or removing them makes it look again.
+    preview_staged: bool,
     composer_mentions: Vec<ComposerMention>,
     /// Byte offset of the `:` starting the active emoji query.
     pub emoji_start: Option<usize>,
@@ -1445,6 +1495,10 @@ impl App {
             stale_images: Vec::new(),
             viewer_picture: None,
             composer: String::new(),
+            composer_preview: None,
+            preview_typed_at: None,
+            preview_seen: None,
+            preview_staged: false,
             composer_mentions: Vec::new(),
             emoji_start: None,
             emoji_selected: 0,
@@ -3401,6 +3455,32 @@ impl App {
 
     fn apply_backend_event(&mut self, event: Event, live: bool) {
         match event {
+            Event::LinkPreviewsDisabled(disabled) => {
+                self.link_previews_disabled = disabled;
+                // Only this event's own account is touched: the composer
+                // state is the window's, and may belong to another account.
+                let origin = self.account().id.clone();
+                // Turned back on, the text is asked about afresh.
+                if !disabled
+                    && self
+                        .preview_seen
+                        .as_ref()
+                        .is_some_and(|seen| seen.0 == origin)
+                {
+                    self.preview_seen = None;
+                }
+                // A card already above the composer goes with the setting,
+                // and a hidden account's loading one, whose answer is lost.
+                if disabled
+                    && self.composer_preview.as_ref().is_some_and(|preview| {
+                        preview.account == origin
+                            && (!self.events_hidden || preview.state == LinkPreviewState::Loading)
+                    })
+                {
+                    self.composer_preview = None;
+                }
+            }
+            Event::LinkPreview { url, preview } => self.link_preview_arrived(url, preview),
             Event::TimerSaving { chat, saving } => {
                 if saving {
                     self.timer_saving.insert(chat);
@@ -5909,6 +5989,143 @@ impl App {
             .map(|message| message.id.clone())
     }
 
+    /// Asks for a preview of the composer's link once its text has rested
+    /// for [`PREVIEW_PAUSE`] at egui time `now`, and drops the card when the
+    /// link is gone. Returns how long until the pause ends, for a repaint
+    /// then, while one is running.
+    pub(crate) fn watch_link_preview(&mut self, now: f64) -> Option<Duration> {
+        let unchanged = self
+            .preview_seen
+            .as_ref()
+            .is_some_and(|(account, chat, text)| {
+                *account == self.account().id && *chat == self.open_chat && *text == self.composer
+            })
+            && self.preview_staged == !self.pending.is_empty();
+        if !unchanged {
+            self.preview_staged = !self.pending.is_empty();
+            self.preview_seen = Some((
+                self.account().id.clone(),
+                self.open_chat.clone(),
+                self.composer.clone(),
+            ));
+            self.preview_typed_at = Some(now);
+        }
+        let waited = now - self.preview_typed_at?;
+        if waited < PREVIEW_PAUSE {
+            return Some(Duration::from_secs_f64(PREVIEW_PAUSE - waited));
+        }
+        self.preview_typed_at = None;
+        let link = self
+            .open_chat
+            .clone()
+            .filter(|chat| {
+                self.editing.is_none()
+                    && !self.link_previews_disabled
+                    && self.chat(chat).is_some_and(Chat::can_send)
+            })
+            .zip(composer_link(&self.composer));
+        let Some((chat, url)) = link else {
+            // No link, or none to preview: no card, and a dismissed one is
+            // forgotten with its text.
+            self.composer_preview = None;
+            return None;
+        };
+        if !self.pending.is_empty() {
+            // A caption never gets a card, but a dismissed or finished one
+            // is kept for its link; only a fetch still running is dropped,
+            // to be asked for again once the attachments are gone.
+            if self
+                .composer_preview
+                .as_ref()
+                .is_some_and(|preview| preview.state == LinkPreviewState::Loading)
+            {
+                self.composer_preview = None;
+            }
+            return None;
+        }
+        let account = self.account().id.clone();
+        if self.composer_preview.as_ref().is_some_and(|preview| {
+            preview.account == account && preview.chat == chat && preview.url == url
+        }) {
+            return None;
+        }
+        self.composer_preview = Some(ComposerPreview {
+            account,
+            chat,
+            url: url.clone(),
+            state: LinkPreviewState::Loading,
+        });
+        self.backend.send(Command::FetchLinkPreview { url });
+        None
+    }
+
+    /// The composer's preview while it belongs to `text` in `chat` of the
+    /// account on screen, and previews may be shown.
+    fn preview_for(&self, chat: &str, text: &str) -> Option<&ComposerPreview> {
+        if self.link_previews_disabled || self.editing.is_some() || !self.pending.is_empty() {
+            return None;
+        }
+        let url = composer_link(text)?;
+        self.composer_preview.as_ref().filter(|preview| {
+            preview.account == self.account().id && preview.chat == chat && preview.url == url
+        })
+    }
+
+    /// The card above the open chat's composer, whatever its state.
+    pub(crate) fn shown_preview(&self) -> Option<&ComposerPreview> {
+        self.preview_for(self.open_chat.as_deref()?, &self.composer)
+    }
+
+    /// The preview a message sent from the composer now would carry.
+    pub fn current_preview(&self) -> Option<&crate::model::ComposedPreview> {
+        self.shown_preview()?.ready()
+    }
+
+    /// Files a fetched preview with the request it answers. A hidden
+    /// account's answer is not for the window's composer, and a phone that
+    /// turned previews off since gets none.
+    pub(crate) fn link_preview_arrived(
+        &mut self,
+        url: String,
+        preview: Option<crate::model::ComposedPreview>,
+    ) {
+        if self.events_hidden || self.link_previews_disabled {
+            // An answer dropped for being hidden must not leave its card
+            // loading: forget it and the text seen, so the pause runs and
+            // asks again on return.
+            if self.events_hidden {
+                // `account()` is the answer's own account while hidden; the
+                // composer state may be another account's.
+                let origin = self.account().id.clone();
+                if self.composer_preview.as_ref().is_some_and(|asked| {
+                    asked.account == origin
+                        && asked.url == url
+                        && asked.state == LinkPreviewState::Loading
+                }) {
+                    self.composer_preview = None;
+                }
+                if self
+                    .preview_seen
+                    .as_ref()
+                    .is_some_and(|seen| seen.0 == origin)
+                {
+                    self.preview_seen = None;
+                }
+            }
+            return;
+        }
+        let account = self.account().id.clone();
+        if let Some(asked) = self.composer_preview.as_mut().filter(|asked| {
+            asked.account == account && asked.url == url && asked.state == LinkPreviewState::Loading
+        }) {
+            asked.state = match preview {
+                Some(preview) => LinkPreviewState::Ready(preview),
+                // Nothing usable: no card, and no asking again.
+                None => LinkPreviewState::Dismissed,
+            };
+        }
+    }
+
     /// Updates typing state after composer changes.
     pub fn note_keystroke(&mut self) {
         self.last_keystroke = Some(Instant::now());
@@ -6005,6 +6222,15 @@ impl App {
         if text.is_empty() {
             return;
         }
+        // Only a preview ready for this very text goes with it; one still
+        // loading is not waited for.
+        let preview = self
+            .preview_for(&chat, &text)
+            .and_then(ComposerPreview::ready)
+            .cloned();
+        // Whatever is typed next is watched afresh, the same link included.
+        self.composer_preview = None;
+        self.preview_seen = None;
         let (text, mentions) = self.encode_composer_mentions(&chat, text);
         let mention_everyone = self.chat(&chat).is_some_and(Chat::can_mention_everyone)
             && crate::mentions::has_everyone_token(&text);
@@ -6040,6 +6266,7 @@ impl App {
             text,
             quoting,
             mentions,
+            preview,
         });
         self.follow_outgoing(quoted.as_ref());
     }
@@ -6798,6 +7025,14 @@ impl App {
             Action::SetDisappearingTimer { chat, seconds } => {
                 self.backend
                     .send(Command::SetDisappearingTimer { chat, seconds });
+            }
+            Action::DismissLinkPreview => {
+                if let Some(chat) = self.open_chat.clone()
+                    && self.preview_for(&chat, &self.composer).is_some()
+                    && let Some(shown) = self.composer_preview.as_mut()
+                {
+                    shown.state = LinkPreviewState::Dismissed;
+                }
             }
             Action::FetchBlocklist => self.backend.send(Command::FetchBlocklist),
             Action::SetBlocked { chat, blocked } => {
@@ -10638,6 +10873,13 @@ impl App {
         }
         crate::ui::show(self, ui);
         self.apply_actions(ctx);
+        // After the view and its actions, so a change this frame starts the
+        // pause from now. Nobody types behind the lock screen.
+        if !self.app_lock.is_locked()
+            && let Some(wait) = self.watch_link_preview(ctx.input(|input| input.time))
+        {
+            ctx.request_repaint_after(wait);
+        }
         // The key went down or up this frame: the call hears it now, not on
         // the next event.
         self.sync_push_to_talk();

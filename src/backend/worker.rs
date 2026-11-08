@@ -49,6 +49,8 @@ use early_events::WaitingReaction;
 mod favorite_chats;
 mod group_admin;
 mod interactive;
+mod link_preview;
+mod link_preview_setting;
 mod link_watch;
 mod new_group;
 mod poll_history;
@@ -753,6 +755,8 @@ pub async fn run(
             recorded
         });
     // The phone's own setting, read before the archive moves into the worker.
+    let (link_previews_disabled, link_previews_unknown) =
+        link_preview_setting::link_previews_at_start(archive.link_previews_disabled());
     let (phone_unarchive_chats, phone_unarchive_unread) = match archive.unarchive_chats() {
         Ok(setting) => (setting, false),
         Err(error) => {
@@ -861,6 +865,10 @@ pub async fn run(
         favorites_recovering: false,
         first_names_recovered,
         first_names_recovering: false,
+        link_previews_disabled,
+        link_previews_unknown,
+        link_previews_reading: false,
+        preview_fetch: None,
         downloads: HashSet::new(),
         download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
         download_turns: HashMap::new(),
@@ -934,6 +942,9 @@ pub async fn run(
                     complete,
                 } => {
                     worker.preferences_recovered(generation, locks, complete);
+                }
+                RuntimeEvent::LinkPreviewsRead { generation, complete } => {
+                    worker.link_previews_read(generation, complete);
                 }
                 RuntimeEvent::FavoriteChatsRead { generation, complete } => {
                     worker.favorite_chats_read(generation, complete);
@@ -1016,6 +1027,11 @@ enum RuntimeEvent {
     },
     /// The one-time read of the phone's favorite chats finished.
     FavoriteChatsRead {
+        generation: u64,
+        complete: bool,
+    },
+    /// The one-time read of the phone's link preview setting finished.
+    LinkPreviewsRead {
         generation: u64,
         complete: bool,
     },
@@ -1323,6 +1339,15 @@ struct Worker {
     /// The phone's own "Keep chats archived", inverted as WhatsApp sends it
     /// (`Some(true)`: a new message unarchives). It wins over Settings'.
     phone_unarchive_chats: Option<bool>,
+    /// The phone's own "Disable link previews": while on, nothing is fetched
+    /// for a link we send. Also on until the phone has said.
+    link_previews_disabled: bool,
+    /// The phone has not said yet, so its setting is read from a snapshot.
+    link_previews_unknown: bool,
+    /// That read is running.
+    link_previews_reading: bool,
+    /// The composer's page fetch in flight; a newer request aborts it.
+    preview_fetch: Option<tokio::task::JoinHandle<()>>,
     /// The stored phone setting could not be read at startup; it is read
     /// again when needed, and chats stay archived until it is.
     phone_unarchive_unread: bool,
@@ -2300,6 +2325,7 @@ impl Worker {
         if self.me_pn.is_some() || self.me_lid.is_some() {
             self.emit(self.me_event());
         }
+        self.emit(Event::LinkPreviewsDisabled(self.link_previews_disabled));
         self.emit(Event::Contacts(self.contacts.shared()));
         self.emit_chats();
     }
@@ -3889,6 +3915,7 @@ impl Worker {
                 self.fetch_missing_favorites();
                 self.recover_favorites();
                 self.recover_first_names();
+                self.recover_link_previews();
                 let _ = self.archive.retry_poll_votes();
                 self.pump_poll_votes();
                 if let Some(client) = self.client.clone() {
@@ -4309,6 +4336,23 @@ impl Worker {
                     }
                 }
             }
+            E::DisableLinkPreviewsUpdate(update) => {
+                // The phone has spoken, stored or not, so the end of a
+                // snapshot must not take its silence for the default.
+                self.link_previews_unknown = false;
+                match self.archive.set_link_previews_disabled_at(
+                    update.previews_disabled,
+                    update.timestamp.timestamp_millis(),
+                ) {
+                    Ok(disabled) => {
+                        self.link_previews_disabled = disabled;
+                        self.emit(Event::LinkPreviewsDisabled(disabled));
+                    }
+                    Err(error) => {
+                        log::warn!("could not store the phone's link preview setting: {error}")
+                    }
+                }
+            }
             E::SelfPushNameUpdated(update) => {
                 self.me_name = Some(update.new_name.clone());
                 let _ = self.archive.set_meta("me_name", &update.new_name);
@@ -4460,6 +4504,11 @@ impl Worker {
         self.privacy_snapshot = false;
         self.phone_unarchive_chats = None;
         self.phone_unarchive_unread = false;
+        // The next account's phone has said nothing yet.
+        self.link_previews_disabled = true;
+        self.link_previews_unknown = true;
+        self.link_previews_reading = false;
+        self.emit(Event::LinkPreviewsDisabled(true));
         // Reads for the unlinked account must not be answered for the next.
         self.withheld_pages.clear();
         self.early.clear();
@@ -6891,7 +6940,9 @@ impl Worker {
                 text,
                 quoting,
                 mentions,
-            } => self.send_text(chat, text, quoting, mentions),
+                preview,
+            } => self.send_text(chat, text, quoting, mentions, preview),
+            Command::FetchLinkPreview { url } => self.fetch_link_preview(url),
             Command::SendLocation {
                 chat,
                 latitude,
@@ -8967,6 +9018,7 @@ impl Worker {
         text: String,
         quoting: Option<crate::model::ReplyTarget>,
         mentions: Vec<String>,
+        preview: Option<crate::model::ComposedPreview>,
     ) {
         let (context, shown) = match self.quote_target(&chat, quoting.as_ref()) {
             Ok(Some((context, shown))) => (Some(context), Some(shown)),
@@ -8984,7 +9036,8 @@ impl Worker {
         if self.wants_mention_all(&chat, &text) {
             crate::mentions::push_everyone_id(&mut mentions);
         }
-        let mut message = outgoing_text(text.clone(), context, &mentions);
+        let (mut message, content, thumbnail) =
+            self.compose_text(text, context, &mentions, preview);
         let expiration = self.apply_ephemeral(&chat, &mut message);
         let mentions = self.mentions_of(&mentions);
         let id = client.generate_message_id().into_string();
@@ -8995,7 +9048,7 @@ impl Worker {
             sender_name: None,
             from_me: true,
             timestamp: crate::util::now(),
-            content: Content::text(text),
+            content,
             status: Delivery::Pending,
             delivered_at: None,
             read_at: None,
@@ -9005,7 +9058,7 @@ impl Worker {
             edited: false,
             mentions,
             forwarded: false,
-            thumbnail: None,
+            thumbnail,
         };
         self.store_message(row, Some(message.encode_to_vec()), None);
         tokio::spawn(send_outgoing(
@@ -9017,6 +9070,59 @@ impl Worker {
             message,
             expiration,
         ));
+    }
+
+    /// Builds the outgoing body, its stored content and thumbnail. A preview
+    /// goes along only when the phone setting allows it and it describes the
+    /// first link of the text, so an edited text never carries a stale card.
+    fn compose_text(
+        &self,
+        text: String,
+        context: Option<wa::ContextInfo>,
+        mentions: &[String],
+        preview: Option<crate::model::ComposedPreview>,
+    ) -> (wa::Message, Content, Option<Vec<u8>>) {
+        let mut message = outgoing_text(text.clone(), context, mentions);
+        let matched = preview
+            .filter(|_| !self.link_previews_disabled)
+            .and_then(|preview| {
+                let link = crate::safety::first_link(&text)?;
+                (crate::safety::preview_url(&link).as_deref()
+                    == crate::safety::preview_url(&preview.preview.url).as_deref())
+                .then_some((link, preview))
+            });
+        let Some((link, preview)) = matched else {
+            return (message, Content::text(text), None);
+        };
+        attach_preview(&mut message, &link, &preview);
+        let crate::model::ComposedPreview { preview, thumbnail } = preview;
+        (
+            message,
+            Content::Text {
+                text,
+                preview: Some(preview),
+            },
+            thumbnail,
+        )
+    }
+
+    /// Reads the page behind a link for the composer, replacing a fetch still
+    /// running. Nothing is fetched while the phone has previews disabled.
+    fn fetch_link_preview(&mut self, url: String) {
+        if let Some(previous) = self.preview_fetch.take() {
+            previous.abort();
+        }
+        if self.link_previews_disabled {
+            self.emit(Event::LinkPreview { url, preview: None });
+            return;
+        }
+        let events = self.events.clone();
+        let waker = self.waker.clone();
+        self.preview_fetch = Some(tokio::spawn(async move {
+            let preview = link_preview::fetch(url.clone()).await;
+            let _ = events.send(Event::LinkPreview { url, preview });
+            waker.wake();
+        }));
     }
 
     /// Sends a spot as a location, keeping the row locally the way a phone
@@ -11760,6 +11866,34 @@ fn outgoing_text(
         Some(context) => wa::Message::text_with_context(text, context),
         None => wa::Message::text(text),
     }
+}
+
+/// Puts a link preview on an outgoing text, keeping its quote and mentions.
+/// `matched` is the link as it appears in the text.
+fn attach_preview(
+    message: &mut wa::Message,
+    matched: &str,
+    preview: &crate::model::ComposedPreview,
+) {
+    use wa::message::extended_text_message::PreviewType;
+    let mut extended = message.extended_text_message.take().unwrap_or_default();
+    if let Some(text) = message.conversation.take() {
+        extended.text = Some(text);
+    }
+    extended.matched_text = Some(matched.to_owned());
+    extended.title = preview.preview.title.clone();
+    extended.description = preview.preview.description.clone();
+    if let Some(bytes) = &preview.thumbnail {
+        let size = image::ImageReader::new(std::io::Cursor::new(bytes))
+            .with_guessed_format()
+            .ok()
+            .and_then(|reader| reader.into_dimensions().ok());
+        extended.jpeg_thumbnail = Some(bytes.clone());
+        extended.thumbnail_width = size.map(|(width, _)| width);
+        extended.thumbnail_height = size.map(|(_, height)| height);
+    }
+    extended.preview_type = Some(PreviewType::NONE);
+    message.extended_text_message = MessageField::some(extended);
 }
 
 /// JIDs to put in `mentioned_jid`, and whether everyone should be notified.
@@ -15921,6 +16055,7 @@ mod tests {
                 text: "Fixture".into(),
                 quoting: None,
                 mentions: Vec::new(),
+                preview: None,
             })
             .await;
         assert!(matches!(events.try_recv().unwrap(), Event::Error(_)));
@@ -18917,6 +19052,10 @@ mod receipt_tests {
             awaiting_ack: HashMap::new(),
             early_acks: HashMap::new(),
             account_session: 0,
+            link_previews_disabled: false,
+            link_previews_unknown: false,
+            link_previews_reading: false,
+            preview_fetch: None,
             receipts_watch: None,
             receipts_pruned: Instant::now(),
             early: Default::default(),
@@ -22545,6 +22684,7 @@ mod receipt_tests {
                     text: "Reply fixture".into(),
                     quoting: quoting.clone(),
                     mentions: Vec::new(),
+                    preview: None,
                 },
                 Unsent::Text("Reply fixture".into()),
             ),
