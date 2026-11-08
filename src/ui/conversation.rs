@@ -173,7 +173,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let list = area.with_min_y(bar.top());
         // A strip opening over the field slides the messages up with it, so
         // the last one is never left behind it.
-        let over = ui.ctx().animate_value_with_time(
+        let over = theme::animate_value(
+            ui.ctx(),
             ui.id().with("composer-over"),
             foot.height(),
             theme::MOTION_QUICK,
@@ -1753,12 +1754,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
                     };
                     // The icon fades in when the mode changes.
-                    let mode_fade = ui.ctx().animate_bool_with_time_and_easing(
-                        egui::Id::new(("picker-mode", app.settings.picker_mode as u8)),
-                        true,
-                        theme::MOTION_QUICK,
-                        theme::ease_out,
-                    );
+                    let mode_fade = theme::animate(ui.ctx(), egui::Id::new(("picker-mode", app.settings.picker_mode as u8)), true, theme::MOTION_QUICK);
                     let smile = last_line(ui, line, |ui| ui.scope(|ui| {
                         ui.multiply_opacity(mode_fade);
                         theme::icon_button(
@@ -2885,7 +2881,7 @@ fn sticky_date<R>(
     }
     // It appears at once when scrolling starts and fades only on the way out.
     let fade = if scrolling { 0.0 } else { STICKY_DATE_FADE };
-    let opacity = ctx.animate_bool_with_time(id, scrolling, fade);
+    let opacity = ctx.animate_bool_with_time(id, scrolling, theme::motion_time(&ctx, fade));
     let Some((timestamp, separator_top)) = visible_day else {
         return;
     };
@@ -4570,15 +4566,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     }
     // Show a return-to-bottom button while reading older messages.
     // It scales and fades in and out, as the other floating controls do.
-    let appear = ui.ctx().animate_bool_with_time_and_easing(
+    let appear = theme::animate(
+        ui.ctx(),
         ui.id().with("to-bottom"),
         !at_bottom,
-        if reduce_motion {
-            0.0
-        } else {
-            theme::MOTION_QUICK
-        },
-        theme::ease_out,
+        theme::MOTION_QUICK,
     );
     if appear > 0.0 {
         let rect = output.inner_rect;
@@ -10844,17 +10836,7 @@ fn album_download_button(
                 .is_some_and(|media| matches!(media.state, MediaState::Downloading))
         });
     let id = bubble_id(&view.chat.id, &messages[0].id).with("album-download");
-    let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
-    let appear = ui.ctx().animate_bool_with_time_and_easing(
-        id,
-        !missing.is_empty(),
-        if reduce_motion {
-            0.0
-        } else {
-            theme::MOTION_QUICK
-        },
-        theme::ease_out,
-    );
+    let appear = theme::animate(ui.ctx(), id, !missing.is_empty(), theme::MOTION_QUICK);
     if appear <= 0.0 {
         return;
     }
@@ -10873,15 +10855,11 @@ fn album_download_button(
         )
     });
     theme::reveal_focus(&response);
-    let hover = ui.ctx().animate_bool_with_time_and_easing(
+    let hover = theme::animate(
+        ui.ctx(),
         id.with("hover"),
         response.hovered() && !downloading,
-        if reduce_motion {
-            0.0
-        } else {
-            theme::MOTION_QUICK
-        },
-        theme::ease_out,
+        theme::MOTION_QUICK,
     );
     let scale = (0.7 + 0.3 * appear) * (1.0 + 0.06 * hover);
     let disc = Rect::from_center_size(button.center(), button.size() * scale);
@@ -14154,12 +14132,15 @@ fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate::model::Up
     let cap = (ui.available_width() * WHATSAPP_WIDTH_SHARE).min(CARD_WIDTH);
     for upload in uploads {
         let id = ui.id().with(("upload", upload.id));
-        let shown = ui.ctx().animate_bool_with_time(id, true, UPLOAD_ENTRANCE);
+        let shown = ui.ctx().animate_bool_with_time(
+            id,
+            true,
+            theme::motion_time(ui.ctx(), UPLOAD_ENTRANCE),
+        );
         // Eased out, so it settles softly.
         let eased = theme::ease_out(shown);
         let fraction = upload.fraction().map(|fraction| {
-            ui.ctx()
-                .animate_value_with_time(id.with("progress"), fraction, theme::MOTION_PANEL)
+            theme::animate_value(ui.ctx(), id.with("progress"), fraction, theme::MOTION_PANEL)
         });
         let picture = upload.preview.as_ref().filter(|_| {
             matches!(

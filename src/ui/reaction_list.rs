@@ -112,11 +112,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
                 let own = reaction.from_me;
-                let hover = ui.ctx().animate_bool_with_time_and_easing(
+                let hover = theme::animate(
+                    ui.ctx(),
                     response.id,
                     own && response.hovered(),
                     theme::MOTION_QUICK,
-                    theme::ease_out,
                 );
                 if hover > 0.0 {
                     ui.painter().rect_filled(
@@ -320,16 +320,7 @@ pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
     let shown = ctx
         .data(|data| data.get_temp::<bool>(area_id.with("shown")))
         .unwrap_or(false);
-    let appear = ctx.animate_bool_with_time_and_easing(
-        area_id.with("appear"),
-        true,
-        if crate::motion::screen_reader_attached(ctx) {
-            0.0
-        } else {
-            theme::MOTION_QUICK
-        },
-        theme::ease_out,
-    );
+    let appear = theme::animate(ctx, area_id.with("appear"), true, theme::MOTION_QUICK);
     let frost = super::widgets::Frost::reserve(
         ctx,
         egui::LayerId::new(egui::Order::Foreground, area_id),

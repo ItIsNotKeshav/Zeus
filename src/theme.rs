@@ -752,15 +752,25 @@ pub fn ease_out(t: f32) -> f32 {
     egui::emath::easing::cubic_out(t.clamp(0.0, 1.0))
 }
 
-/// `ctx.animate_bool_with_time_and_easing` on [`ease_out`], at once while a
-/// screen reader is attached (see [`crate::motion`]).
-pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32 {
-    let seconds = if crate::motion::screen_reader_attached(ctx) {
+/// `seconds`, or none at all while a screen reader is attached (see
+/// [`crate::motion`]): every animation takes its time through here.
+pub fn motion_time(ctx: &egui::Context, seconds: f32) -> f32 {
+    if crate::motion::screen_reader_attached(ctx) {
         0.0
     } else {
         seconds
-    };
-    ctx.animate_bool_with_time_and_easing(id, on, seconds, ease_out)
+    }
+}
+
+/// `ctx.animate_bool_with_time_and_easing` on [`ease_out`], over
+/// [`motion_time`].
+pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32 {
+    ctx.animate_bool_with_time_and_easing(id, on, motion_time(ctx, seconds), ease_out)
+}
+
+/// `ctx.animate_value_with_time` over [`motion_time`].
+pub fn animate_value(ctx: &egui::Context, id: egui::Id, value: f32, seconds: f32) -> f32 {
+    ctx.animate_value_with_time(id, value, motion_time(ctx, seconds))
 }
 
 /// The starred mark's gold, the same in every theme so a star reads as one.

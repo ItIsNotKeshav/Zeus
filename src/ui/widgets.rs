@@ -1153,12 +1153,7 @@ fn show_over_glass<R>(
     // Only an open popup runs its animation: a closed one asking for it
     // each frame would start it anew and keep the window repainting.
     let appear = if popup.is_open() {
-        ctx.animate_bool_with_time_and_easing(
-            id.with("appear"),
-            true,
-            theme::MOTION_QUICK,
-            theme::ease_out,
-        )
+        theme::animate(ctx, id.with("appear"), true, theme::MOTION_QUICK)
     } else {
         0.0
     };

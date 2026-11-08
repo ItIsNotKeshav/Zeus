@@ -573,12 +573,7 @@ fn fade_glow(app: &App, ctx: &egui::Context, lit: Option<&Target>) {
         accepts: target.accepts,
     });
     let previous = ctx.data(|data| data.get_temp::<Glow>(glow_id()));
-    let strength = ctx.animate_bool_with_time_and_easing(
-        glow_id(),
-        now.is_some(),
-        theme::MOTION_QUICK,
-        theme::ease_out,
-    );
+    let strength = theme::animate(ctx, glow_id(), now.is_some(), theme::MOTION_QUICK);
     let Some(target) = now.or(previous) else {
         return;
     };
@@ -639,11 +634,11 @@ fn paint(
     let size = carry.origin.size();
     let rest = (CARD.x / size.x).min(CARD.y / size.y).clamp(SMALLEST, 1.0) * 0.94;
     let accepting = over.is_some_and(|target| target.accepts);
-    let shrink = ctx.animate_bool_with_time_and_easing(
+    let shrink = theme::animate(
+        ctx,
         carry_id().with("over"),
         accepting && matches!(carry.phase, Phase::Lifted { .. }),
         theme::MOTION_QUICK,
-        theme::ease_out,
     );
     let mut opacity = 1.0;
     let (at, scale) = match carry.phase {

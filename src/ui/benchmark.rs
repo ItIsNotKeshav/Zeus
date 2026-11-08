@@ -122,7 +122,8 @@ fn progress(
         let length = benchmark::LENGTH.as_secs_f32();
         let target = (elapsed / length).clamp(0.0, 0.99);
         // Glides between redraws instead of stepping a quarter second at a time.
-        let fraction = ui.ctx().animate_value_with_time(
+        let fraction = theme::animate_value(
+            ui.ctx(),
             egui::Id::new("benchmark-progress"),
             target,
             theme::MOTION_PANEL,
