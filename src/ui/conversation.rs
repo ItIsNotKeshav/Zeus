@@ -4372,7 +4372,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     // The reader's own scroll this frame pushes the rows when the next frame
     // draws them at the new offset, against the scroll and more the further
     // they are from the pointer. A redone pass already had this frame's.
-    if springs_calm.allows_springs() {
+    // Off (`RIPPLE_ON_SCROLL`): messages stay put while scrolling, and only
+    // the list's bottom-out stretch moves them (`overscroll`).
+    if super::scroll_springs::RIPPLE_ON_SCROLL && springs_calm.allows_springs() {
         let moved = super::scroll_springs::Moved {
             by_reader: reader_scrolled || carried != 0.0,
             by_app: pinned

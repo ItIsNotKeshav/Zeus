@@ -14,10 +14,10 @@ use egui::Rect;
 
 /// The release: a shade over a third of a second, bouncing a little, in
 /// step with the app's other springs.
-pub(crate) const SPRING: Spring = Spring::new(0.45, 0.2);
+pub(crate) const SPRING: Spring = Spring::new(0.3, 0.2);
 
 /// The furthest the rows stretch, in points.
-pub(crate) const MAX: f32 = 96.0;
+pub(crate) const MAX: f32 = 56.0;
 
 /// How much of a swipe the first stretch takes; it falls to nothing at
 /// [`MAX`].
