@@ -4717,10 +4717,22 @@ mod tests {
                 })
                 .fold(f32::NEG_INFINITY, f32::max);
             let body_bottom = pos.y + body.rows.last().expect("rows").rect().max.y;
+            // Our own messages say their state ("Read") in place of the clock
+            // and ticks, adding the time only when it came more than five
+            // minutes after the message was sent. The words repeat, so take
+            // the one nearest under this body.
             let (time_pos, time) = texts
                 .iter()
-                .find(|(_, galley)| galley.text() == clock.as_str())
-                .unwrap_or_else(|| panic!("painted time {clock}"));
+                .filter(|(pos, galley)| {
+                    let text = galley.text();
+                    pos.y >= body_bottom - 0.5
+                        && (text == clock.as_str()
+                            || ["Sent", "Delivered", "Read", "Played"].iter().any(|word| {
+                                text == *word || text.starts_with(&format!("{word} • "))
+                            }))
+                })
+                .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+                .unwrap_or_else(|| panic!("painted time or status for {clock}"));
             assert!(
                 time_pos.y >= body_bottom - 0.5,
                 "time at {} overlaps the last row ending at {body_bottom}",
@@ -4728,7 +4740,9 @@ mod tests {
             );
             let gap = body_right - (time_pos.x + time.size().x);
             assert!(
-                (0.0..40.0).contains(&gap),
+                // A state word ends at the right edge itself, a glyph's own
+                // padding past the text.
+                (-4.0..40.0).contains(&gap),
                 "time should end beside the ticks at the right edge, {gap} short of it"
             );
             let body_rect = body
