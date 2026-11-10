@@ -899,7 +899,7 @@ pub async fn run(
     worker.archive.release_memory();
     worker.start_bot().await;
     let mut wa_events = wa_events;
-    let mut tick = tokio::time::interval(Duration::from_secs(5));
+    let mut tick = tokio::time::interval(link_watch::CHECK_INTERVAL);
     loop {
         let deadline = worker.sync_deadline;
         // Cloned before the select so its branches never borrow the worker: a live call is the only
@@ -2166,16 +2166,22 @@ impl Worker {
 
     /// Reconnects a link that the machine slept under (macOS, where the
     /// system does not report the wake yet), or that has received nothing
-    /// for longer than a working one can. See `link_watch`.
+    /// for longer than a working one can, or whose socket was lost without a
+    /// matching disconnect event. See `link_watch`.
     fn watch_link(&mut self) {
         let client = self
             .client
             .clone()
             .filter(|_| matches!(self.status, LinkStatus::Connected));
         let frames = client.as_ref().map(|client| client.stats().frames_received);
-        let verdict = self
-            .link_watch
-            .check(Instant::now(), std::time::SystemTime::now(), frames);
+        let verdict = self.link_watch.check(
+            Instant::now(),
+            std::time::SystemTime::now(),
+            frames,
+            client
+                .as_ref()
+                .is_some_and(|client| client.is_socket_connected()),
+        );
         let Some(client) = client else {
             return;
         };
@@ -2192,6 +2198,9 @@ impl Worker {
                     "link: nothing received for {} s, reconnecting",
                     quiet.as_secs()
                 );
+            }
+            link_watch::Verdict::SocketLost => {
+                log::warn!("link: socket disconnected while reported connected, reconnecting");
             }
         }
         self.set_status(LinkStatus::Connecting);
@@ -7949,10 +7958,11 @@ impl Worker {
                 tokio::spawn(async move {
                     let cleared = client
                         .chat_actions()
-                        .clear_chat(
+                        .clear_chat_with_options(
                             &jid,
-                            true,
-                            true,
+                            whatsapp_rust::ClearChatOptions::default()
+                                .with_starred_messages(whatsapp_rust::StarredMessages::Delete)
+                                .with_media(whatsapp_rust::MediaDeletion::Delete),
                             Some(whatsapp_rust::message_range(through, None, Vec::new())),
                         )
                         .await
@@ -8179,7 +8189,14 @@ impl Worker {
             },
             Command::Unlink => {
                 if let Some(client) = self.client.clone() {
-                    client.logout().await;
+                    // The logged-out event clears this side either way; a
+                    // phone that never confirmed may still list the device.
+                    let report = client.logout().await;
+                    if let whatsapp_rust::DeregistrationOutcome::Failed { source } =
+                        &report.deregistration
+                    {
+                        log::warn!("the phone did not confirm the unlink: {source}");
+                    }
                 } else {
                     self.on_logged_out().await;
                 }
@@ -13609,6 +13626,31 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_lost_socket_without_a_disconnect_event_starts_reconnecting() {
+        let (mut worker, events, _commands, _wa) = super::receipt_tests::worker();
+        let directory = tempfile::tempdir().unwrap();
+        let store = whatsapp_rust::store::SqliteStore::open(
+            directory.path().join("session.db").to_str().unwrap(),
+        )
+        .await
+        .unwrap();
+        let bot = Bot::builder().with_backend(store).build().await.unwrap();
+        let client = bot.client();
+        assert!(!client.is_socket_connected());
+        worker.client = Some(client);
+        worker.status = LinkStatus::Connected;
+
+        worker.watch_link();
+        assert!(matches!(worker.status, LinkStatus::Connecting));
+        assert!(matches!(
+            events.try_recv().unwrap(),
+            Event::Link(LinkStatus::Connecting)
+        ));
+        worker.watch_link();
+        assert!(events.try_recv().is_err(), "only one recovery is requested");
+    }
+
     /// A failed number check leaves contacts and conversation state unchanged.
     #[tokio::test]
     async fn failed_number_check_never_saves_a_contact_or_opens_a_chat() {
@@ -17428,10 +17470,7 @@ mod receipt_tests {
             .set_group_rights(group, false, false)
             .unwrap();
         for (action, expected) in [
-            (
-                GroupNotificationAction::Locked { threshold: None },
-                Some(true),
-            ),
+            (GroupNotificationAction::locked().build(), Some(true)),
             (GroupNotificationAction::Unlocked, Some(false)),
         ] {
             let update = wa_events::GroupUpdate::builder()
@@ -17504,9 +17543,11 @@ mod receipt_tests {
             .group_jid(group.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Create {
-                raw: Node::default(),
-            }))
+            .action(Box::new(
+                GroupNotificationAction::create()
+                    .raw(Node::default())
+                    .build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -17531,9 +17572,11 @@ mod receipt_tests {
                     .group_jid(group.parse().unwrap())
                     .timestamp(whatsapp_rust::wacore::time::from_secs(at).unwrap())
                     .is_lid_addressing_mode(false)
-                    .action(Box::new(GroupNotificationAction::Create {
-                        raw: Node::default(),
-                    }))
+                    .action(Box::new(
+                        GroupNotificationAction::create()
+                            .raw(Node::default())
+                            .build(),
+                    ))
                     .build(),
             )
         };
@@ -17636,10 +17679,12 @@ mod receipt_tests {
                 .group_jid(group.parse().unwrap())
                 .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
                 .is_lid_addressing_mode(false)
-                .action(Box::new(GroupNotificationAction::Description {
-                    id: "fixture-description".into(),
-                    description: description.map(str::to_owned),
-                }))
+                .action(Box::new(
+                    GroupNotificationAction::description()
+                        .id("fixture-description".into())
+                        .maybe_description(description.map(str::to_owned))
+                        .build(),
+                ))
                 .build();
             worker
                 .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -17675,10 +17720,12 @@ mod receipt_tests {
             .group_jid(group.parse().unwrap())
             .timestamp(whatsapp_rust::wacore::time::from_secs(100).unwrap())
             .is_lid_addressing_mode(false)
-            .action(Box::new(GroupNotificationAction::Description {
-                id: "fixture-description".into(),
-                description: Some("New description".into()),
-            }))
+            .action(Box::new(
+                GroupNotificationAction::description()
+                    .id("fixture-description".into())
+                    .maybe_description(Some("New description".into()))
+                    .build(),
+            ))
             .build();
         worker
             .handle_wa_event(Arc::new(wa_events::Event::GroupUpdate(update)))
@@ -20459,10 +20506,9 @@ mod receipt_tests {
                 .timestamp(whatsapp_rust::wacore::time::from_secs(timestamp).unwrap())
                 .is_lid_addressing_mode(false)
                 .action(Box::new(
-                    whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::Ephemeral {
-                        expiration,
-                        trigger: None,
-                    },
+                    whatsapp_rust::wacore::stanza::groups::GroupNotificationAction::ephemeral()
+                        .expiration(expiration)
+                        .build(),
                 ))
                 .build();
             worker
