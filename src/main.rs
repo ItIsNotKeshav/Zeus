@@ -51,8 +51,9 @@ struct Cli {
     demo_tour_events: Option<std::path::PathBuf>,
 
     /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
-    /// added, 86 seconds), or `bench` (the benchmark's timed phases,
-    /// about 2 minutes, started at once; see scripts/bench).
+    /// added, 86 seconds), `bench` (the benchmark's timed phases, about 2
+    /// minutes, started at once; see scripts/bench), or `setup` (the
+    /// first-run setup, 24 seconds).
     #[cfg(feature = "demo")]
     #[arg(
         long,

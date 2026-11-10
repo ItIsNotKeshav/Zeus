@@ -1,26 +1,39 @@
-//! Phone linking with a QR code or pairing code.
+//! The unlinked window: the window's outline while Zeus starts, then the first-run
+//! setup and the phone link (`super::setup`). The centred card here is the
+//! lock screen's.
 
 use egui::{Align, CornerRadius, Frame, Layout, Margin, Stroke, Vec2};
 
 use crate::app::App;
 use crate::backend::LinkStatus;
-use crate::model::{Action, Dialog};
-use crate::qr::Qr;
-use crate::theme::{self, Icon};
+use crate::theme;
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
-    if matches!(app.link, LinkStatus::Starting | LinkStatus::Connecting) {
+    // Someone already in the setup stays in it while the link restarts; the
+    // link step says what it is waiting for.
+    let mid_setup = !app.settings.setup_done && app.setup_step != super::setup::Step::Welcome;
+    if matches!(app.link, LinkStatus::Starting | LinkStatus::Connecting) && !mid_setup {
         let label = crate::i18n::gettext(app.locale, "Connecting…");
         super::skeleton::window(app, ui, label.as_ref());
     } else {
         super::skeleton::fade_out(app, ui.ctx());
-        let tagline = crate::i18n::gettext(app.locale, "A native WhatsApp client.");
-        card(app, ui, "login", tagline.as_ref(), body);
+        super::setup::show(app, ui);
     }
 }
 
-/// The centred card of the linking and lock screens: the logo, the name,
-/// a line under it, and `body`.
+/// How far a surface has come in since it appeared, eased: 0 on the frame
+/// it first shows (again), 1 once [`theme::MOTION_SCREEN`] has passed.
+fn appearance(ctx: &egui::Context, id: egui::Id) -> f32 {
+    let progress = (super::arrive::shown_for(ctx, id) / theme::MOTION_SCREEN).clamp(0.0, 1.0);
+    if progress < 1.0 {
+        ctx.request_repaint();
+    }
+    theme::ease_out(progress)
+}
+
+/// The centred card of the lock screen: the mark, `tagline` as its title,
+/// and `body`, over the setup's soft light. It rises into place as it
+/// appears.
 pub(super) fn card(
     app: &mut App,
     ui: &mut egui::Ui,
@@ -33,51 +46,61 @@ pub(super) fn card(
         .frame(Frame::new().fill(palette.window))
         .show(ui, |ui| {
             let rect = ui.max_rect();
-            let top = theme::blend(palette.window, palette.accent, 0.10);
-            super::widgets::paint_vertical_gradient(ui, rect, top, palette.window);
-            let card_width = (460.0_f32.min(rect.width() - 24.0)).max(0.0);
+            super::setup::backdrop(ui, &palette, rect, false);
+            let appearance_id = ui.id().with((salt, "card-appearance"));
+            let shown = appearance(ui.ctx(), appearance_id);
+            let opened = super::arrive::shown_for(ui.ctx(), appearance_id);
+            let card_width = (440.0_f32.min(rect.width() - 24.0)).max(0.0);
             // Center the card using its previous height. Its content determines
             // the next frame's height.
             let height_id = ui.id().with(format!("{salt}-card-height"));
             let known_height = ui
                 .ctx()
                 .data(|data| data.get_temp::<f32>(height_id))
-                .unwrap_or(560.0);
+                .unwrap_or(420.0);
             let card_height = (known_height.min(rect.height() - 24.0)).max(0.0);
-            let card =
-                egui::Rect::from_center_size(rect.center(), Vec2::new(card_width, card_height));
+            let card = egui::Rect::from_center_size(
+                rect.center() + Vec2::new(0.0, 12.0 * (1.0 - shown)),
+                Vec2::new(card_width, card_height),
+            );
             let mut card_ui = ui.new_child(
                 egui::UiBuilder::new()
                     .max_rect(card)
                     .layout(Layout::top_down(Align::Center)),
             );
+            card_ui.multiply_opacity(shown);
+            // The card's own fill is the first shape; what is on it follows
+            // the card up, top to bottom.
+            let first = super::arrive::painted(&card_ui);
             let shown = Frame::new()
                 .fill(palette.panel)
                 .stroke(Stroke::new(1.0, palette.outline))
                 .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
-                .inner_margin(Margin::same(32))
-                .shadow(egui::epaint::Shadow {
-                    offset: [0, 16],
-                    blur: 48,
-                    spread: 0,
-                    color: palette.shadow,
-                })
+                .inner_margin(Margin::same(36))
+                .shadow(palette.modal_shadow())
                 .show(&mut card_ui, |ui| {
-                    ui.set_width((card_width - 64.0).max(0.0));
+                    ui.set_width((card_width - 72.0).max(0.0));
                     ui.spacing_mut().item_spacing.y = 8.0;
-                    let (logo, _) = ui.allocate_exact_size(Vec2::splat(64.0), egui::Sense::hover());
-                    theme::mark(ui, logo.center(), 64.0);
-                    ui.add_space(4.0);
-                    theme::text(ui, "Zeus", theme::bold(theme::TEXT_DISPLAY), palette.text);
-                    theme::text(
-                        ui,
-                        tagline,
-                        theme::regular(theme::TEXT_BODY),
-                        palette.secondary,
-                    );
-                    ui.add_space(16.0);
+                    let (logo, _) = ui.allocate_exact_size(Vec2::splat(60.0), egui::Sense::hover());
+                    theme::mark(ui, logo.center(), 60.0);
+                    ui.add_space(12.0);
+                    theme::text(ui, tagline, theme::display(28.0), palette.text);
+                    ui.add_space(10.0);
                     body(app, ui);
                 });
+            super::arrive::cascade(
+                &card_ui,
+                egui::layers::ShapeIdx(first.0 + 1),
+                shown.response.rect,
+                opened,
+                super::arrive::Cascade {
+                    delay: 0.06,
+                    spread: 0.22,
+                    duration: theme::MOTION_SCREEN,
+                    offset: Vec2::new(0.0, 10.0),
+                    from_opacity: 0.0,
+                },
+            );
             let height = shown.response.rect.height();
             if (height - known_height).abs() > 2.0 {
                 ui.ctx()
@@ -87,265 +110,23 @@ pub(super) fn card(
         });
 }
 
-fn body(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    let locale = app.locale;
-    match app.link.clone() {
-        LinkStatus::Starting | LinkStatus::Connecting => {
-            busy(
-                ui,
-                palette.accent,
-                &crate::i18n::gettext(locale, "Connecting to WhatsApp…"),
-            );
-        }
-        LinkStatus::Connected | LinkStatus::Disconnected { .. } => {
-            busy(
-                ui,
-                palette.accent,
-                &crate::i18n::gettext(locale, "Linked. Waiting for your chats…"),
-            );
-        }
-        LinkStatus::LoggedOut => {
-            theme::icon(ui, Icon::Smartphone, 28.0, palette.warning);
-            theme::paragraph(
-                ui,
-                crate::i18n::gettext(
-                    locale,
-                    "This computer was unlinked from your phone. Requesting a new code.",
-                ),
-                theme::regular(theme::TEXT_BODY),
-                palette.text,
-            );
-            ui.add_space(crate::theme::SPACE_S);
-            busy(
-                ui,
-                palette.accent,
-                &crate::i18n::gettext(locale, "Requesting a new code…"),
-            );
-        }
-        LinkStatus::Failed(message) => {
-            let key_lost = archive_key_lost(&message);
-            theme::icon(ui, Icon::CircleAlert, 28.0, palette.danger);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(message)
-                        .font(theme::regular(theme::TEXT_BODY))
-                        .color(palette.danger),
-                )
-                .wrap(),
-            );
-            ui.add_space(crate::theme::SPACE_M);
-            ui.horizontal(|ui| {
-                if theme::pill_button(
-                    ui,
-                    &palette,
-                    &crate::i18n::gettext(locale, "Try again"),
-                    true,
-                )
-                .clicked()
-                {
-                    app.actions.push(Action::Reconnect);
-                }
-                if key_lost
-                    && theme::pill_button(
-                        ui,
-                        &palette,
-                        &crate::i18n::gettext(locale, "Start over…"),
-                        false,
-                    )
-                    .clicked()
-                {
-                    app.actions
-                        .push(Action::ShowDialog(crate::model::Dialog::ConfirmStartOver));
-                }
-            });
-        }
-        LinkStatus::Unlinked {
-            qr,
-            pair_code,
-            pairing_phone,
-        } => {
-            if let Some(code) = pair_code {
-                pair_code_view(app, ui, &code, pairing_phone.as_deref());
-            } else if let Some(phone) = pairing_phone {
-                let requesting = crate::i18n::gettext(locale, "Requesting a code for +{phone}…")
-                    .replace("{phone}", &phone);
-                busy(ui, palette.accent, &requesting);
-            } else if let Some(qr) = qr {
-                qr_view(app, ui, &qr);
-            } else {
-                busy(
-                    ui,
-                    palette.accent,
-                    &crate::i18n::gettext(locale, "Waiting for a code from WhatsApp…"),
-                );
-            }
-        }
-    }
-    super::accounts::login_choices(app, ui);
-    ui.add_space(16.0);
-    theme::paragraph(
-        ui,
-        crate::i18n::gettext(
-            locale,
-            "Unofficial client. Using it may be against WhatsApp's terms of service.",
-        ),
-        theme::regular(theme::TEXT_CAPTION),
-        palette.dim,
-    );
-}
-
 pub(super) fn busy(ui: &mut egui::Ui, color: egui::Color32, label: &str) {
     ui.horizontal(|ui| {
         let width = 24.0
             + 8.0
             + ui.painter()
-                .layout_no_wrap(label.to_owned(), theme::medium(theme::TEXT_BODY), color)
+                .layout_no_wrap(label.to_owned(), theme::medium(14.0), color)
                 .size()
                 .x;
         ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
         theme::spinner(ui, 18.0, color);
-        theme::text(
-            ui,
-            label,
-            theme::medium(theme::TEXT_BODY),
-            ui.visuals().text_color(),
-        );
-    });
-}
-
-fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
-    let palette = app.palette;
-    let locale = app.locale;
-    theme::text(
-        ui,
-        crate::i18n::gettext(locale, "Link this computer"),
-        theme::semibold(theme::TEXT_SECTION),
-        palette.text,
-    );
-    let side = 260.0;
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), egui::Sense::hover());
-    match Qr::encode(code) {
-        Some(qr) => qr.paint(ui, rect, egui::Color32::BLACK, egui::Color32::WHITE),
-        None => {
-            ui.painter()
-                .rect_filled(rect, theme::RADIUS, palette.surface);
-            theme::paint_icon(ui, Icon::CircleAlert, rect, 32.0, palette.danger);
-        }
-    }
-    ui.add_space(crate::theme::SPACE_XS);
-    let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
-    let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
-    let step3 = crate::i18n::gettext(locale, "Tap Link a device and point the phone at this code");
-    let steps = [&step1, &step2, &step3];
-    for (index, step) in steps.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.add_space(crate::theme::SPACE_M);
-            theme::text(
-                ui,
-                format!("{}.", index + 1),
-                theme::semibold(theme::TEXT_CONTROL),
-                palette.accent,
-            );
-            theme::text(
-                ui,
-                step.as_ref(),
-                theme::regular(theme::TEXT_CONTROL),
-                palette.secondary,
-            );
-        });
-    }
-    ui.add_space(8.0);
-    if theme::link(
-        ui,
-        crate::i18n::gettext(locale, "Link with phone number instead"),
-        theme::medium(theme::TEXT_CONTROL),
-        palette.link,
-    )
-    .clicked()
-    {
-        app.actions.push(Action::ShowDialog(Dialog::PairWithPhone));
-    }
-}
-
-fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&str>) {
-    let palette = app.palette;
-    let locale = app.locale;
-    theme::text(
-        ui,
-        crate::i18n::gettext(locale, "Enter this code on your phone"),
-        theme::semibold(theme::TEXT_SECTION),
-        palette.text,
-    );
-    if let Some(phone) = phone {
-        let for_phone = crate::i18n::gettext(locale, "for +{phone}").replace("{phone}", phone);
-        theme::text(
-            ui,
-            for_phone,
-            theme::regular(theme::TEXT_CONTROL),
-            palette.secondary,
-        );
-    }
-    ui.add_space(crate::theme::SPACE_S);
-    let shown = if code.len() == 8 && !code.contains('-') {
-        format!("{}-{}", &code[..4], &code[4..])
-    } else {
-        code.to_owned()
-    };
-    Frame::new()
-        .fill(palette.surface)
-        .corner_radius(CornerRadius::same(theme::RADIUS))
-        .inner_margin(Margin::symmetric(22, 12))
-        .show(ui, |ui| {
-            // The pairing code is read off the screen and typed on a phone,
-            // so it stands above the type scale.
-            theme::text(ui, &shown, theme::bold(30.0), palette.text);
-        });
-    ui.add_space(crate::theme::SPACE_S);
-    let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
-    let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
-    let step3 = crate::i18n::gettext(
-        locale,
-        "Tap Link a device, then Link with phone number instead",
-    );
-    let steps = [&step1, &step2, &step3];
-    for (index, step) in steps.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.add_space(crate::theme::SPACE_M);
-            theme::text(
-                ui,
-                format!("{}.", index + 1),
-                theme::semibold(theme::TEXT_CONTROL),
-                palette.accent,
-            );
-            theme::text(
-                ui,
-                step.as_ref(),
-                theme::regular(theme::TEXT_CONTROL),
-                palette.secondary,
-            );
-        });
-    }
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.add_space((ui.available_width() - 200.0).max(0.0) / 2.0);
-        if theme::soft_button(
-            ui,
-            &palette,
-            Some(Icon::Copy),
-            &crate::i18n::gettext(locale, "Copy code"),
-            false,
-        )
-        .clicked()
-        {
-            app.actions.push(Action::CopyText(code.to_owned()));
-        }
+        theme::text(ui, label, theme::medium(14.0), ui.visuals().text_color());
     });
 }
 
 /// Whether the archive's key is gone for good, rather than the keyring being
 /// locked or unavailable, which "Try again" can fix.
-fn archive_key_lost(message: &str) -> bool {
+pub(super) fn archive_key_lost(message: &str) -> bool {
     message.contains("OS keyring key is missing")
         || message.contains("archive key in the OS keyring is invalid")
         || message.contains("could not be unlocked with its OS keyring key")

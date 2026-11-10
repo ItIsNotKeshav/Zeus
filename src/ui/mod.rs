@@ -1,6 +1,7 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
+mod arrive;
 pub mod benchmark;
 mod blocking;
 pub mod bubbles;
@@ -37,6 +38,7 @@ pub(crate) mod scroll_springs;
 pub mod settings;
 pub mod skeleton;
 pub mod split;
+pub mod setup;
 pub(crate) mod swipe;
 pub mod update;
 pub mod widgets;
