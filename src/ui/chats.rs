@@ -1666,7 +1666,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
                     let Some(chat) = app.chats.get(index).cloned() else {
                         continue;
                     };
-                    ui.push_id(("chat", &chat.id), |ui| row(app, ui, &chat));
+                    ui.push_id(("chat", &chat.id), |ui| self::row(app, ui, &chat));
                 }
             },
         );
@@ -1692,21 +1692,142 @@ fn row_scroll_offset(
     }
 }
 
-/// Search results grouped into chats, messages, and contacts.
-fn results(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    // Chats and hits are positions: each row copies its own while it draws,
-    // so no frame holds a second copy of every result.
+/// One row of the search results' flat list.
+#[derive(Clone, Copy)]
+enum ResultRow {
+    Section(&'static str),
+    Chat(usize),
+    Hit(usize),
+    Myself,
+    Contact(usize),
+}
+
+/// How tall a section title's row is: the space above, the label, the space
+/// below.
+const SECTION_HEIGHT: f32 = 38.0;
+
+/// The search results laid out as one flat list, built when the query or the
+/// data it reads changes and reused by every frame between, so scrolling
+/// costs the visible rows alone: no matching, sorting or cloning per frame.
+struct ResultView {
+    key: u64,
+    rows: Vec<ResultRow>,
+    /// The top of each row; one more entry ends the last.
+    tops: Vec<f32>,
+    contacts: Vec<String>,
+}
+
+impl ResultView {
+    fn height(row: ResultRow) -> f32 {
+        match row {
+            ResultRow::Section(_) => SECTION_HEIGHT,
+            _ => theme::ROW_HEIGHT,
+        }
+    }
+
+    /// The rows from the first lying below `top` to the last above `bottom`.
+    fn visible(&self, top: f32, bottom: f32) -> std::ops::Range<usize> {
+        let count = self.rows.len();
+        let first = self
+            .tops
+            .partition_point(|&edge| edge <= top)
+            .saturating_sub(1)
+            .min(count);
+        let last = self.tops.partition_point(|&edge| edge < bottom).min(count);
+        first..last.max(first)
+    }
+}
+
+/// What the results depend on, cheap to compute every frame: the query, the
+/// filters, and the fields of each chat the list reads. A change anywhere
+/// else (a new message in a chat, a rename) changes one of these.
+fn result_key(app: &App) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    app.search.trim().hash(&mut hasher);
+    app.open_chat.hash(&mut hasher);
+    app.show_archived.hash(&mut hasher);
+    app.locked_folder_open().hash(&mut hasher);
+    app.chats.len().hash(&mut hasher);
+    app.contacts.values().count().hash(&mut hasher);
+    app.me.hash(&mut hasher);
+    for chat in &app.chats {
+        (
+            chat.last_activity,
+            chat.pinned,
+            chat.archived,
+            chat.locked,
+            chat.name.len(),
+            chat.last.as_ref().map(|last| last.summary.len()),
+        )
+            .hash(&mut hasher);
+    }
+    app.search_hits.len().hash(&mut hasher);
+    if let (Some(first), Some(last)) = (app.search_hits.first(), app.search_hits.last()) {
+        (&first.id, &last.id).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn result_view(app: &App, ctx: &egui::Context) -> std::sync::Arc<ResultView> {
+    let key = result_key(app);
+    let id = egui::Id::new("search-result-view");
+    if let Some(view) = ctx.data(|data| data.get_temp::<std::sync::Arc<ResultView>>(id))
+        && view.key == key
+    {
+        return view;
+    }
     let chats = app.visible_chat_indices();
-    let hits = app.search_hits.len();
-    let contacts: Vec<Contact> = app.matching_contacts().into_iter().cloned().collect();
+    let contacts: Vec<String> = app
+        .matching_contacts()
+        .into_iter()
+        .map(|contact| contact.id.clone())
+        .collect();
     let needle = crate::util::search_key(app.search.trim());
     let offer_self = !needle.is_empty()
         && app.offers_self(&needle)
         && !chats
             .iter()
             .any(|&index| app.me.as_deref() == Some(app.chats[index].id.as_str()));
-    if chats.is_empty() && hits == 0 && contacts.is_empty() && !offer_self {
+    let mut rows = Vec::with_capacity(chats.len() + app.search_hits.len() + contacts.len() + 4);
+    if !chats.is_empty() {
+        rows.push(ResultRow::Section("Chats"));
+        rows.extend(chats.into_iter().map(ResultRow::Chat));
+    }
+    if !app.search_hits.is_empty() {
+        rows.push(ResultRow::Section("Messages"));
+        rows.extend((0..app.search_hits.len()).map(ResultRow::Hit));
+    }
+    if !contacts.is_empty() || offer_self {
+        rows.push(ResultRow::Section("Contacts"));
+        if offer_self {
+            rows.push(ResultRow::Myself);
+        }
+        rows.extend((0..contacts.len()).map(ResultRow::Contact));
+    }
+    let mut tops = Vec::with_capacity(rows.len() + 1);
+    let mut y = 0.0;
+    for &row in &rows {
+        tops.push(y);
+        y += ResultView::height(row);
+    }
+    tops.push(y);
+    let view = std::sync::Arc::new(ResultView {
+        key,
+        rows,
+        tops,
+        contacts,
+    });
+    ctx.data_mut(|data| data.insert_temp(id, view.clone()));
+    view
+}
+
+/// Search results grouped into chats, messages, and contacts. The rows are
+/// one flat list of which only the visible ones are laid out and drawn.
+fn results(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let view = result_view(app, ui.ctx());
+    if view.rows.is_empty() {
         widgets::empty_state(
             ui,
             &palette,
@@ -1718,48 +1839,82 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.spacing_mut().item_spacing.y = 0.0;
     under_header(ui, |ui, inset| {
-        scroll_area(ui, inset)
-            .id_salt("search-results")
-            .show(ui, |ui| {
-                plain_rows(ui);
-                ui.add_space(inset);
-                if !chats.is_empty() {
-                    section(ui, &palette, "Chats");
-                    for &index in &chats {
-                        let Some(chat) = app.chats.get(index).cloned() else {
-                            continue;
-                        };
-                        let reveal = ui.is_enabled()
-                            && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
-                        let response = ui
-                            .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
-                            .inner;
-                        if reveal {
-                            response.scroll_to_me(None);
-                            app.scroll_chat_into_view = None;
+        let mut area = scroll_area(ui, inset).id_salt("search-results");
+        // Arrow keys reveal the reached chat: its row's place is known
+        // without laying out the rows above it.
+        let target = app.scroll_chat_into_view.as_ref().and_then(|target| {
+            view.rows.iter().position(|row| {
+                matches!(row, ResultRow::Chat(index)
+                    if app.chats.get(*index).is_some_and(|chat| chat.id == *target))
+            })
+        });
+        if let Some(position) = target.filter(|_| ui.is_enabled()) {
+            let id = ui.make_persistent_id(egui::IdSalt::new("search-results"));
+            let current = egui::scroll_area::State::load(ui.ctx(), id)
+                .unwrap_or_default()
+                .offset
+                .y;
+            let height = ui.available_height() - inset;
+            let (top, bottom) = (view.tops[position], view.tops[position + 1]);
+            let offset = if top < current {
+                top
+            } else if bottom > current + height {
+                (bottom - height).max(0.0)
+            } else {
+                current
+            };
+            area = area.vertical_scroll_offset(offset);
+            app.scroll_chat_into_view = None;
+        }
+        area.show_viewport(ui, |ui, viewport| {
+            let total = view.tops.last().copied().unwrap_or(0.0) + 8.0;
+            ui.set_height(inset + total);
+            let range = view.visible(viewport.min.y - inset, viewport.max.y - inset);
+            let origin = ui.max_rect().top() + inset;
+            let x_range = ui.max_rect().x_range();
+            for index in range {
+                let row = view.rows[index];
+                let rect = Rect::from_x_y_ranges(
+                    x_range,
+                    origin + view.tops[index]..=origin + view.tops[index + 1],
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    plain_rows(ui);
+                    ui.skip_ahead_auto_ids(index);
+                    match row {
+                        ResultRow::Section(label) => section(ui, &palette, label),
+                        ResultRow::Chat(position) => {
+                            let Some(chat) = app.chats.get(position).cloned() else {
+                                return;
+                            };
+                            ui.push_id(("chat", &chat.id), |ui| self::row(app, ui, &chat));
+                        }
+                        ResultRow::Hit(position) => {
+                            let Some(hit) = app.search_hits.get(position).cloned() else {
+                                return;
+                            };
+                            ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, &hit));
+                        }
+                        ResultRow::Myself => {
+                            ui.push_id("self", |ui| self_row(app, ui));
+                        }
+                        ResultRow::Contact(position) => {
+                            let Some(contact) = view
+                                .contacts
+                                .get(position)
+                                .and_then(|id| app.contacts.get(id))
+                                .cloned()
+                            else {
+                                return;
+                            };
+                            ui.push_id(("contact", &contact.id), |ui| {
+                                contact_row(app, ui, &contact)
+                            });
                         }
                     }
-                }
-                if hits > 0 {
-                    section(ui, &palette, "Messages");
-                    for index in 0..hits {
-                        let Some(hit) = app.search_hits.get(index).cloned() else {
-                            continue;
-                        };
-                        ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, &hit));
-                    }
-                }
-                if !contacts.is_empty() || offer_self {
-                    section(ui, &palette, "Contacts");
-                    if offer_self {
-                        ui.push_id("self", |ui| self_row(app, ui));
-                    }
-                    for contact in &contacts {
-                        ui.push_id(("contact", &contact.id), |ui| contact_row(app, ui, contact));
-                    }
-                }
-                ui.add_space(8.0);
-            });
+                });
+            }
+        });
     });
 }
 
