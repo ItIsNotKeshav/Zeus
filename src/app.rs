@@ -8722,6 +8722,9 @@ impl App {
                     self.refocus_composer(ctx);
                 }
             }
+            Action::FormatComposer { format, start, end } => {
+                self.format_composer(ctx, format, start, end);
+            }
             Action::SearchGifs(query) => {
                 self.gif_query = query.clone();
                 self.gif_pending = true;
@@ -11121,6 +11124,70 @@ impl App {
         }
     }
 
+    fn format_composer(
+        &mut self,
+        ctx: &egui::Context,
+        format: crate::model::ComposerFormat,
+        start: usize,
+        end: usize,
+    ) {
+        if self.open_chat.is_none()
+            || self.current_chat().is_some_and(|chat| !chat.can_send())
+            || start >= end
+            || end > self.composer.chars().count()
+        {
+            return;
+        }
+        let spans = composer_format_spans(&self.composer, start, end, format);
+        let (Some(first), Some(last)) = (spans.first(), spans.last()) else {
+            return;
+        };
+        let marker = format.marker();
+        let selected = (
+            first.0 + marker.len(),
+            last.1 + marker.len() * (2 * spans.len() - 1),
+        );
+        let byte = |at| {
+            self.composer
+                .char_indices()
+                .nth(at)
+                .map_or(self.composer.len(), |(byte, _)| byte)
+        };
+        let bytes: Vec<(usize, usize)> = spans
+            .iter()
+            .map(|&(from, to)| (byte(from), byte(to)))
+            .collect();
+        let id = egui::Id::new("composer-text");
+        let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+        let original = egui::text::CCursorRange::two(
+            egui::text::CCursor::new(start),
+            egui::text::CCursor::new(end),
+        );
+        let mut undo = state.undoer();
+        undo.add_undo(&(original, self.composer.clone()));
+        // From the end, so each insertion leaves the offsets before it valid.
+        for &(from, to) in bytes.iter().rev() {
+            self.composer.insert_str(to, marker);
+            self.composer.insert_str(from, marker);
+        }
+        let range = egui::text::CCursorRange::two(
+            egui::text::CCursor::new(selected.0),
+            egui::text::CCursor::new(selected.1),
+        );
+        // Feeding the edited state clears redos left by an earlier Undo.
+        undo.feed_state(
+            ctx.input(|input| input.time),
+            &(range, self.composer.clone()),
+        );
+        state.set_undoer(undo);
+        state.cursor.set_char_range(Some(range));
+        egui::TextEdit::store_state(ctx, id, state);
+        ctx.memory_mut(|memory| memory.request_focus(id));
+        self.emoji_start = None;
+        self.mention_start = None;
+        self.focus_composer = true;
+    }
+
     /// Inserts text at the composer cursor or end.
     fn insert_in_composer(&mut self, ctx: &egui::Context, text: &str) {
         let id = egui::Id::new("composer-text");
@@ -11544,16 +11611,23 @@ struct PasteKeys {
     command: bool,
     /// When Ctrl/Cmd was last seen down.
     command_at: Option<f64>,
+    /// Shift is down, as of the last modifier event.
+    shift: bool,
+    /// When Ctrl/Cmd+Shift was last held, for an image-only clipboard's
+    /// swallowed press whose modifiers may be released before V.
+    plain_at: Option<f64>,
     /// A V press reached us since the last V release: typing, not a paste.
     typed_v: bool,
-    /// This shortcut's `Paste` event already took the clipboard, so its
-    /// release must not read it again.
+    /// This shortcut's `Paste` event was handled, so its release must not
+    /// read the clipboard again, including after a plain-text paste.
     handled: bool,
 }
 
 impl PasteKeys {
-    /// Reads one frame's events, in order, and says whether they ask for a
-    /// paste: a `Paste` event, or the release of a swallowed Ctrl/Cmd+V.
+    /// Reads one frame's events, in order, and says whether they ask for an
+    /// attachment paste: an unshifted `Paste` event, or the release of a
+    /// swallowed Ctrl/Cmd+V. Ctrl/Cmd+Shift+V leaves text for its field,
+    /// including the native macOS Option+Shift+Cmd+V combination.
     fn read(&mut self, input: &egui::InputState) -> bool {
         let now = input.time;
         if !input.focused {
@@ -11563,17 +11637,20 @@ impl PasteKeys {
         if self.command {
             // Still held when this frame's events arrived.
             self.command_at = Some(now);
+            if self.shift {
+                self.plain_at = Some(now);
+            }
         }
         let recent = |at: Option<f64>| at.is_some_and(|at| now - at <= PASTE_RELEASE_GRACE);
         let mut requested = false;
         for event in &input.events {
             match event {
                 egui::Event::WindowFocused(_) => *self = Self::default(),
-                egui::Event::ModifiersChanged(modifiers) => {
-                    self.set_command(modifiers.command, now)
-                }
+                egui::Event::ModifiersChanged(modifiers) => self.set_modifiers(*modifiers, now),
                 egui::Event::Paste(_) => {
-                    requested = true;
+                    // egui-winit supplies text for Ctrl/Cmd+Shift+V too.
+                    // Leave it for the text field instead of staging pixels.
+                    requested |= !(self.command && self.shift);
                     // A menu paste has no key release to wait for. The Edit
                     // menu's Cmd+V may arrive after Cmd is already up.
                     self.handled = recent(self.command_at);
@@ -11584,7 +11661,7 @@ impl PasteKeys {
                     modifiers,
                     ..
                 } => {
-                    self.set_command(modifiers.command, now);
+                    self.set_modifiers(*modifiers, now);
                     if *key != egui::Key::V {
                         continue;
                     }
@@ -11592,9 +11669,13 @@ impl PasteKeys {
                         self.typed_v = true;
                         continue;
                     }
-                    requested |= !self.typed_v && !self.handled && recent(self.command_at);
+                    requested |= !self.typed_v
+                        && !self.handled
+                        && recent(self.command_at)
+                        && !recent(self.plain_at);
                     self.typed_v = false;
                     self.handled = false;
+                    self.plain_at = None;
                     if !self.command {
                         // The next release needs a Ctrl/Cmd of its own.
                         self.command_at = None;
@@ -11606,16 +11687,22 @@ impl PasteKeys {
         requested
     }
 
-    fn set_command(&mut self, down: bool, now: f64) {
+    fn set_modifiers(&mut self, modifiers: egui::Modifiers, now: f64) {
+        let down = modifiers.command;
         if down {
             if !self.command {
                 // A new press starts another shortcut, including after a
                 // menu paste that had no V release.
                 self.handled = false;
+                self.plain_at = None;
             }
             self.command_at = Some(now);
+            if modifiers.shift {
+                self.plain_at = Some(now);
+            }
         }
         self.command = down;
+        self.shift = modifiers.shift;
     }
 }
 
@@ -11835,6 +11922,35 @@ pub(crate) use conversations::PhoneHistory;
 mod voice_input;
 #[cfg(any(test, feature = "demo"))]
 pub(crate) use voice_input::demo_microphones;
+
+/// The character ranges of `text` to wrap in `format`'s markers for a
+/// selection. Markup does not close a marker after a space and reads one line
+/// at a time, so each range stops short of the whitespace at its edges, and a
+/// selection over several lines gets a range per line that has text. Monospace
+/// is one range, since its marker is not limited to a line on the phone.
+fn composer_format_spans(
+    text: &str,
+    start: usize,
+    end: usize,
+    format: crate::model::ComposerFormat,
+) -> Vec<(usize, usize)> {
+    let chars: Vec<char> = text.chars().collect();
+    let trim = |from: usize, to: usize| {
+        let lead = chars[from..to].iter().position(|c| !c.is_whitespace())?;
+        let trail = chars[from..to].iter().rposition(|c| !c.is_whitespace())?;
+        Some((from + lead, from + trail + 1))
+    };
+    if matches!(format, crate::model::ComposerFormat::Monospace) {
+        return trim(start, end).into_iter().collect();
+    }
+    let mut from = start;
+    let mut spans = Vec::new();
+    for line in chars[start..end].split(|c| *c == '\n') {
+        spans.extend(trim(from, from + line.len()));
+        from += line.len() + 1;
+    }
+    spans
+}
 
 #[cfg(test)]
 mod tests {
@@ -12192,6 +12308,101 @@ mod tests {
         // A pause from someone not shown typing shows nothing.
         typing(&mut app, false);
         assert!(app.typing_in(chat).is_empty());
+    }
+
+    /// Markup never closes after a space and is read line by line, so a
+    /// marker beside a selected space or across a line stays literal.
+    #[test]
+    fn composer_formatting_stops_at_edge_spaces_and_wraps_each_line() {
+        use crate::model::ComposerFormat::{self, Bold, Italic, Monospace, Strikethrough};
+        let format = |text: &str, start, end, format: ComposerFormat| {
+            let mut app = app();
+            app.open_chat("first".into());
+            app.composer = text.into();
+            let ctx = egui::Context::default();
+            app.format_composer(&ctx, format, start, end);
+            let range = egui::TextEdit::load_state(&ctx, egui::Id::new("composer-text"))
+                .and_then(|state| state.cursor.char_range())
+                .map(|range| {
+                    let sorted = range.as_sorted_char_range();
+                    sorted.start.0..sorted.end.0
+                });
+            (app.composer, range)
+        };
+        assert_eq!(
+            format("say hello there", 3, 10, Bold),
+            ("say *hello* there".into(), Some(5..10))
+        );
+        assert_eq!(
+            format("one \n\n  two é\n", 0, 14, Italic),
+            ("_one_ \n\n  _two é_\n".into(), Some(1..16))
+        );
+        assert_eq!(
+            format("👋 a\nb 👋", 2, 5, Strikethrough),
+            ("👋 ~a~\n~b~ 👋".into(), Some(3..8))
+        );
+        // A selected run of spaces has nothing to format.
+        assert_eq!(format("a  \n b", 1, 5, Bold).0, "a  \n b");
+        // Monospace spans lines, as one ``` pair.
+        assert_eq!(
+            format(" a\nb ", 0, 5, Monospace),
+            (" ```a\nb``` ".into(), Some(4..7))
+        );
+        // The same selections read back with no marker left literal.
+        for (text, start, end) in [("say hello there", 3, 10), ("one \n\n  two é", 0, 13)] {
+            let (formatted, _) = format(text, start, end, Bold);
+            assert_eq!(crate::markup::plain(&formatted, &[]), text);
+        }
+    }
+
+    #[test]
+    fn composer_formatting_wraps_unicode_selection_and_can_be_undone() {
+        use crate::model::ComposerFormat;
+        for format in [
+            ComposerFormat::Bold,
+            ComposerFormat::Italic,
+            ComposerFormat::Strikethrough,
+            ComposerFormat::Monospace,
+        ] {
+            let mut app = app();
+            app.open_chat("first".into());
+            app.composer = "Hi 👋 café!".into();
+            let ctx = egui::Context::default();
+            app.format_composer(&ctx, format, 3, 9);
+            let marker = format.marker();
+            assert_eq!(app.composer, format!("Hi {marker}👋 café{marker}!"));
+            let state = egui::TextEdit::load_state(&ctx, egui::Id::new("composer-text")).unwrap();
+            let range = state.cursor.char_range().unwrap();
+            assert_eq!(
+                range.as_sorted_char_range().start.0..range.as_sorted_char_range().end.0,
+                3 + marker.len()..9 + marker.len()
+            );
+            let mut undo = state.undoer();
+            let before = undo.undo(&(range, app.composer.clone())).unwrap().clone();
+            assert_eq!(before.1, "Hi 👋 café!");
+            assert_eq!(undo.redo(&before).unwrap().1, app.composer);
+            let unchanged = app.composer.clone();
+            app.format_composer(&ctx, format, 4, 4);
+            app.format_composer(&ctx, format, 0, 1000);
+            assert_eq!(app.composer, unchanged);
+            // A different format after Undo starts a new edit, not a redo branch.
+            let mut state =
+                egui::TextEdit::load_state(&ctx, egui::Id::new("composer-text")).unwrap();
+            let range = state.cursor.char_range().unwrap();
+            let mut undo = state.undoer();
+            let before = undo.undo(&(range, app.composer.clone())).unwrap().clone();
+            app.composer = before.1;
+            state.cursor.set_char_range(Some(before.0));
+            state.set_undoer(undo);
+            egui::TextEdit::store_state(&ctx, egui::Id::new("composer-text"), state);
+            app.format_composer(&ctx, ComposerFormat::Italic, 3, 9);
+            let state = egui::TextEdit::load_state(&ctx, egui::Id::new("composer-text")).unwrap();
+            assert!(
+                !state
+                    .undoer()
+                    .has_redo(&(state.cursor.char_range().unwrap(), app.composer.clone()))
+            );
+        }
     }
 
     /// While recording, the light, the timer and the waveform ask for a
@@ -14932,6 +15143,111 @@ mod tests {
             1
         );
         assert_eq!(app.pending.len(), 2, "a later image-only paste still works");
+    }
+
+    #[test]
+    fn plain_text_paste_does_not_read_attachments() {
+        for modifiers in [
+            egui::Modifiers {
+                ctrl: true,
+                command: true,
+                shift: true,
+                ..egui::Modifiers::NONE
+            },
+            egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                shift: true,
+                ..egui::Modifiers::NONE
+            },
+            egui::Modifiers {
+                mac_cmd: true,
+                command: true,
+                shift: true,
+                alt: true,
+                ..egui::Modifiers::NONE
+            },
+        ] {
+            let (mut app, ctx) = clipboard_app();
+            assert_eq!(
+                clipboard_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(modifiers),
+                        egui::Event::Paste("plain ✓".into()),
+                    ],
+                    true
+                ),
+                0
+            );
+            assert_eq!(app.composer, "captionplain ✓");
+            assert!(app.pending.is_empty());
+            let mut release = paste_release();
+            if let egui::Event::Key { modifiers, .. } = &mut release {
+                *modifiers = egui::Modifiers::NONE;
+            }
+            assert_eq!(
+                clipboard_frame(
+                    &mut app,
+                    &ctx,
+                    vec![
+                        egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                        release,
+                    ],
+                    true
+                ),
+                0
+            );
+            assert!(app.pending.is_empty());
+            assert_eq!(
+                clipboard_frame(
+                    &mut app,
+                    &ctx,
+                    vec![egui::Event::Paste("image URL".into()),],
+                    true
+                ),
+                1
+            );
+            assert_eq!(
+                app.pending.len(),
+                1,
+                "a subsequent ordinary paste still stages images"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_text_paste_without_text_does_not_attach_on_release() {
+        let (mut app, ctx) = clipboard_app();
+        let modifiers = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::ModifiersChanged(modifiers),],
+                true
+            ),
+            0
+        );
+        let mut release = paste_release();
+        if let egui::Event::Key { modifiers, .. } = &mut release {
+            *modifiers = egui::Modifiers::NONE;
+        }
+        assert_eq!(
+            clipboard_frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::ModifiersChanged(egui::Modifiers::NONE),
+                    release,
+                ],
+                true
+            ),
+            0
+        );
+        assert_eq!(app.composer, "caption");
+        assert!(app.pending.is_empty());
     }
 
     #[test]
