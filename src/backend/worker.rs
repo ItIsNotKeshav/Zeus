@@ -75,6 +75,8 @@ const SYNC_QUIET: Duration = Duration::from_secs(20);
 const HISTORY_STREAM_ABOVE: usize = 2 * 1024 * 1024;
 /// Quiet time after which the archive hands its page cache back.
 const ARCHIVE_IDLE_RELEASE: Duration = Duration::from_secs(60);
+/// Messages added to the search index on each tick.
+const SEARCH_INDEX_BATCH: i64 = 5_000;
 /// Profile-picture cache lifetime.
 const AVATAR_FRESH: Duration = Duration::from_secs(24 * 60 * 60);
 /// Profile pictures downloading at once.
@@ -866,6 +868,7 @@ pub async fn run(
         favorite_chats: Default::default(),
         poll_decrypting: 0,
         poll_history: Default::default(),
+        search_index_filled: false,
         poll_sending: HashSet::new(),
         prefetch: prefetch::State::default(),
         older_serial: 0,
@@ -976,6 +979,7 @@ pub async fn run(
                 worker.pump_poll_votes();
                 worker.pump_poll_history();
                 worker.pump_prefetch();
+                worker.fill_search_index();
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
                 worker.release_idle_archive();
@@ -1208,6 +1212,8 @@ struct Worker {
     favorite_chats: favorite_chats::FavoriteChats,
     poll_decrypting: usize,
     poll_history: poll_history::Requests,
+    /// Whether the search index holds every message archived before it.
+    search_index_filled: bool,
     poll_sending: HashSet<(ChatId, String)>,
     interactive_sending: HashMap<(ChatId, String), String>,
     /// Messages we sent that WhatsApp has not acknowledged yet, by id, with
@@ -1978,6 +1984,24 @@ impl Worker {
                 true
             }
         }
+    }
+
+    /// Adds a batch of the messages archived before the search index to it.
+    /// Rides the tick, so a large archive is indexed over a few minutes
+    /// without holding up anything else.
+    fn fill_search_index(&mut self) {
+        if self.search_index_filled {
+            return;
+        }
+        match self.archive.fill_search_index(SEARCH_INDEX_BATCH) {
+            Ok(filled) => self.search_index_filled = filled,
+            Err(error) => {
+                // A search scans as before; the next tick tries again.
+                log::warn!("could not fill the search index: {error}");
+            }
+        }
+        // Each batch reads its pages through the cache, which nothing reads again.
+        self.archive.release_memory();
     }
 
     /// Lets the archive drop its page cache once the worker has done nothing
@@ -4258,6 +4282,8 @@ impl Worker {
         self.poll_sending.clear();
         self.interactive_sending.clear();
         self.poll_history = Default::default();
+        // The clear took the index's progress with it; it starts over.
+        self.search_index_filled = false;
         self.prefetch.reset_session();
         self.late_older.clear();
         self.older_ids_match = false;
@@ -18659,6 +18685,7 @@ mod receipt_tests {
             favorite_chats: Default::default(),
             poll_decrypting: 0,
             poll_history: Default::default(),
+            search_index_filled: false,
             poll_sending: HashSet::new(),
             prefetch: prefetch::State::default(),
             older_serial: 0,
