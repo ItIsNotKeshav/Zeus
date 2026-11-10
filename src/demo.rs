@@ -11439,14 +11439,11 @@ mod tests {
             render(&mut app, &ctx);
             let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
             assert!(nodes.iter().any(|(label, _, _)| label == "Delete"));
-            // Selecting and forwarding start from a Ctrl-click and the
-            // selection bar, never from the menu.
-            for action in ["Select", "Forward"] {
-                assert!(
-                    nodes.iter().all(|(label, _, _)| label != action),
-                    "no message's menu offers {action}"
-                );
-            }
+            // Forwarding starts from the selection bar, never from the menu.
+            assert!(
+                nodes.iter().all(|(label, _, _)| label != "Forward"),
+                "no message's menu offers Forward"
+            );
         }
     }
 
@@ -11912,15 +11909,21 @@ mod tests {
                 "the menu has no {status}row"
             );
         }
-        for present in [
-            "Reply",
+        for present in ["Select", "Message info", "Copy text", "Star", "Pin message"] {
+            find(present);
+        }
+        // Reply, Forward and the developer rows are not in the menu.
+        for gone in [
             "Forward",
-            "Select",
-            "Message info",
             "Reload earlier messages",
             "Copy message ID",
+            "Open file",
+            "Open in the viewer",
         ] {
-            find(present);
+            assert!(
+                nodes.iter().all(|(label, _, _)| label != gone),
+                "the menu has no {gone} row"
+            );
         }
         for gone in ["Delete for me", "Delete for everyone"] {
             assert!(

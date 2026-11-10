@@ -8947,24 +8947,17 @@ fn message_menu_labels(locale: crate::i18n::Locale) -> Vec<String> {
     use crate::i18n::gettext;
     // Delete's two choices are a submenu's, which is as wide as they are.
     [
-        gettext(locale, "Reply"),
         gettext(locale, "Reply privately"),
         gettext(locale, "Star"),
         gettext(locale, "Unstar"),
         gettext(locale, "Pin message"),
         gettext(locale, "Unpin message"),
-        gettext(locale, "Forward"),
-        gettext(locale, "Open in the viewer"),
         gettext(locale, "Select"),
         gettext(locale, "Copy text"),
         gettext(locale, "Edit"),
         gettext(locale, "Delete"),
         gettext(locale, "Message info"),
-        gettext(locale, "Reload earlier messages"),
-        gettext(locale, "Copy message ID"),
         gettext(locale, "Add to favorites"),
-        gettext(locale, "Open in system player"),
-        gettext(locale, "Open file"),
         gettext(locale, "Copy image"),
         gettext(locale, "Save as…"),
         gettext(locale, "Show in folder"),
@@ -9076,23 +9069,6 @@ fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> 
         list.push(mine);
     }
     list
-}
-
-/// The file the menu's viewer item would open, when the message has one to
-/// show.
-///
-/// The album decides what belongs in the viewer: a sticker, a GIF or a card's
-/// image is not in it, so none of them offers the item. The recorded path has
-/// to still be a file: a path the archive kept after the file was deleted or
-/// moved elsewhere would open a viewer with nothing to show, and the click
-/// would fall back to opening a file that is not there.
-fn viewer_file(message: &Message) -> Option<&Path> {
-    message.content.gallery_kind()?;
-    message
-        .content
-        .media()
-        .and_then(|media| media.path.as_deref())
-        .filter(|path| crate::image_preview::can_view(path) && path.is_file())
 }
 
 /// Checks every selected message's revoke eligibility with one scan of loaded history.
@@ -9394,22 +9370,6 @@ fn context_menu(
     let can_revoke = message.from_me
         && !matches!(message.content, Content::Revoked)
         && age <= crate::app::REVOKE_WINDOW.as_secs() as i64;
-    if !matches!(message.content, Content::Revoked)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Reply),
-            &crate::i18n::gettext(view.locale, "Reply"),
-        )
-    {
-        if matches!(origin, MenuOrigin::List) {
-            actions.push(Action::OpenMessage {
-                chat: chat.clone(),
-                message: message.id.clone(),
-            });
-        }
-        actions.push(Action::Reply(message.id.clone()));
-    }
     // From the starred list the source chat is not on screen, and the
     // private reply starts from the group the reader is looking at.
     if !matches!(origin, MenuOrigin::List)
@@ -9441,19 +9401,6 @@ fn context_menu(
             });
         }
         actions.push(Action::Edit(message.id.clone()));
-    }
-    if crate::app::can_select(&message.content)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Forward),
-            &crate::i18n::gettext(view.locale, "Forward"),
-        )
-    {
-        actions.push(Action::ShowDialog(Dialog::Forward {
-            chat: chat.clone(),
-            messages: vec![message.id.clone()],
-        }));
     }
     let text = match &message.content {
         Content::Text { text, .. } | Content::Interactive { text, .. } => Some(text.clone()),
@@ -9531,35 +9478,9 @@ fn context_menu(
             pinned: !pinned,
         });
     }
-    // A photo opens the viewer on its own click; a clip plays in its bubble
-    // there, so this is how the album is reached from a chat that holds no
-    // pictures.
-    if let Some(path) = viewer_file(message)
-        && widgets::menu_item(
-            ui,
-            &palette,
-            Some(Icon::Maximize),
-            &crate::i18n::gettext(view.locale, "Open in the viewer"),
-        )
-    {
-        actions.push(Action::PreviewImage {
-            path: path.to_owned(),
-            chat: chat.clone(),
-            message: message.id.clone(),
-            card: None,
-        });
-    }
     if let Some(media) = message.content.media() {
         match &media.path {
             Some(path) => {
-                let open = if matches!(message.content, Content::Video { gif: false, .. }) {
-                    crate::i18n::gettext(view.locale, "Open in system player")
-                } else {
-                    crate::i18n::gettext(view.locale, "Open file")
-                };
-                if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &open) {
-                    actions.push(Action::OpenFile(path.clone()));
-                }
                 if matches!(message.content, Content::Image { .. })
                     && widgets::menu_item(
                         ui,
@@ -9684,28 +9605,6 @@ fn context_menu(
         widgets::menu_separator(ui, &palette);
     }
     delete_submenu(ui, view, message, can_revoke, actions);
-    widgets::menu_separator(ui, &palette);
-    if widgets::menu_item_enabled(
-        ui,
-        &palette,
-        Some(Icon::Refresh),
-        &crate::i18n::gettext(view.locale, "Reload earlier messages"),
-        view.connected && !matches!(message.status, Delivery::Pending | Delivery::Failed),
-    ) {
-        actions.push(Action::ReloadHistory {
-            chat: chat.clone(),
-            message: message.id.clone(),
-        });
-    }
-    // The id helps when looking a message up for a bug report.
-    if widgets::menu_item(
-        ui,
-        &palette,
-        Some(Icon::Copy),
-        &crate::i18n::gettext(view.locale, "Copy message ID"),
-    ) {
-        actions.push(Action::CopyText(message.id.clone()));
-    }
 }
 
 /// The menu's Delete row, which opens the ways to delete `message`: for me,
@@ -15567,52 +15466,6 @@ mod tests {
         }
     }
 
-    /// The menu offers the viewer for a message the album takes and a file
-    /// that is still on disk. A recorded path whose file was deleted elsewhere
-    /// offers nothing, or the click would fall back to opening a file that is
-    /// not there.
-    #[test]
-    fn the_viewer_item_needs_a_file_that_is_still_here() {
-        let dir = tempfile::tempdir().unwrap();
-        let picture = |path: &Path| {
-            message(Content::Image {
-                media: Media {
-                    path: Some(path.to_path_buf()),
-                    ..media(None, None)
-                },
-                caption: None,
-                motion: None,
-            })
-        };
-
-        let photo = dir.path().join("photo.png");
-        std::fs::write(&photo, b"jpeg").unwrap();
-        let downloaded = picture(&photo);
-        assert_eq!(viewer_file(&downloaded), Some(photo.as_path()));
-
-        let deleted = dir.path().join("deleted.png");
-        let gone = picture(&deleted);
-        assert_eq!(
-            viewer_file(&gone),
-            None,
-            "a path with no file offers nothing"
-        );
-
-        // A GIF plays inline as an animation, so the album leaves it out.
-        let animation = dir.path().join("animation.gif");
-        std::fs::write(&animation, b"gif").unwrap();
-        let inline = picture(&animation);
-        assert_eq!(viewer_file(&inline), None);
-
-        // Neither does a message whose file was never downloaded.
-        let pending = message(Content::Image {
-            media: media(None, None),
-            caption: None,
-            motion: None,
-        });
-        assert_eq!(viewer_file(&pending), None);
-    }
-
     #[test]
     fn picture_placeholder_matches_decoded_dimensions() {
         for limit in [200.0, PICTURE_WIDTH] {
@@ -16951,7 +16804,7 @@ mod reaction_tests {
         for spanish in [
             "Copiar texto",
             "Eliminar",
-            "Abrir archivo",
+            "Copiar imagen",
             "Mostrar en la carpeta",
             "Descargar",
         ] {
