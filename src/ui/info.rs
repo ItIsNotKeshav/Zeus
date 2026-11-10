@@ -1820,6 +1820,7 @@ fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
                     message,
                     uris.get(index).map(String::as_str),
                     overlay,
+                    None,
                 );
             }
         });
@@ -1967,8 +1968,430 @@ fn media_view(
             break;
         }
     }
+    if let Some(media) = shown {
+        pick_bar(app, ui, media, tab, full.intersect(clip));
+    }
     app.info_uris = uris;
     app.info_media = listing;
+}
+
+/// The items picked in a tab of the Media, links and docs panel, by message
+/// id, in the order they were picked. A right-click picks or drops one; while
+/// any are picked a click does too, and a bar at the panel's foot forwards,
+/// saves or copies them.
+fn picked_id(chat: &str, tab: MediaTab) -> egui::Id {
+    egui::Id::new(("info-picked", chat, tab as u8))
+}
+
+fn picked(ctx: &egui::Context, chat: &str, tab: MediaTab) -> Vec<String> {
+    ctx.data(|data| data.get_temp::<Vec<String>>(picked_id(chat, tab)))
+        .unwrap_or_default()
+}
+
+fn set_picked(ctx: &egui::Context, chat: &str, tab: MediaTab, ids: Vec<String>) {
+    ctx.data_mut(|data| {
+        if ids.is_empty() {
+            data.remove::<Vec<String>>(picked_id(chat, tab));
+        } else {
+            data.insert_temp(picked_id(chat, tab), ids);
+        }
+    });
+}
+
+/// Picks or drops `message` on a click while anything is picked (Select in
+/// its right-click menu picks the first). Returns whether the click went to
+/// picking.
+fn pick_click(
+    ctx: &egui::Context,
+    response: &egui::Response,
+    chat: &str,
+    tab: MediaTab,
+    message: &str,
+) -> bool {
+    let mut ids = picked(ctx, chat, tab);
+    if ids.is_empty() || !response.clicked() {
+        return false;
+    }
+    match ids.iter().position(|id| id == message) {
+        Some(index) => {
+            ids.remove(index);
+        }
+        None => ids.push(message.to_owned()),
+    }
+    set_picked(ctx, chat, tab, ids);
+    true
+}
+
+/// What a right-click menu in the panel is for.
+#[derive(Clone, Copy)]
+enum Listed<'a> {
+    Message(&'a Message),
+    Link(&'a crate::model::ChatLink),
+}
+
+/// The right-click menu of a listed item: Select (or Deselect), Copy,
+/// Forward and Save, or for a link Open, Copy link, Select and Forward. With
+/// items picked, Forward takes all of them when this is one.
+fn item_menu(
+    app: &mut App,
+    response: &egui::Response,
+    chat: &str,
+    tab: MediaTab,
+    item: Listed<'_>,
+) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let ctx = response.ctx.clone();
+    let id = match item {
+        Listed::Message(message) => message.id.clone(),
+        Listed::Link(link) => link.message.clone(),
+    };
+    let tr = |text: &'static str| crate::i18n::gettext(locale, text).into_owned();
+    egui::Popup::context_menu(response)
+        .width(200.0)
+        .frame(widgets::menu_frame(&palette))
+        .show(|ui| {
+            let ids = picked(&ctx, chat, tab);
+            let chosen = ids.contains(&id);
+            let together = if chosen {
+                ids.clone()
+            } else {
+                vec![id.clone()]
+            };
+            if let Listed::Link(link) = item {
+                if widgets::menu_item(ui, &palette, Some(Icon::ExternalLink), &tr("Open link")) {
+                    app.actions.push(Action::OpenUrl(link.url.clone()));
+                    ui.close();
+                }
+                if widgets::menu_item(ui, &palette, Some(Icon::Copy), &tr("Copy link")) {
+                    app.actions.push(Action::CopyText(link.url.clone()));
+                    ui.close();
+                }
+            }
+            let select = if chosen { tr("Deselect") } else { tr("Select") };
+            if widgets::menu_item(ui, &palette, Some(Icon::CircleCheck), &select) {
+                let mut ids = ids.clone();
+                match ids.iter().position(|picked| *picked == id) {
+                    Some(index) => {
+                        ids.remove(index);
+                    }
+                    None => ids.push(id.clone()),
+                }
+                set_picked(&ctx, chat, tab, ids);
+                ui.close();
+            }
+            if let Listed::Message(message) = item
+                && let Content::Image { .. } = &message.content
+                && let Some(path) = super::carry::downloaded(message).filter(|path| path.is_file())
+                && widgets::menu_item(ui, &palette, Some(Icon::Copy), &tr("Copy"))
+            {
+                app.actions.push(Action::CopyImage(path));
+                ui.close();
+            }
+            if app.chat(chat).is_some()
+                && widgets::menu_item(ui, &palette, Some(Icon::Forward), &tr("Forward"))
+            {
+                app.actions.push(Action::ShowDialog(Dialog::Forward {
+                    chat: chat.to_owned(),
+                    messages: together.clone(),
+                }));
+                ui.close();
+            }
+            if let Listed::Message(message) = item
+                && widgets::menu_item(ui, &palette, Some(Icon::Download), &tr("Save as…"))
+            {
+                match super::carry::downloaded(message).filter(|path| path.is_file()) {
+                    Some(path) => {
+                        let name = super::conversation::attachment_name(&message.content, &path);
+                        app.actions.push(Action::SaveAttachmentAs { path, name });
+                    }
+                    // Not here yet: fetched now, to be saved once it is.
+                    None => app.actions.push(Action::Download {
+                        manual: true,
+                        card: None,
+                        chat: chat.to_owned(),
+                        message: message.id.clone(),
+                    }),
+                }
+                ui.close();
+            }
+        });
+}
+
+/// A picked item's mark: the accent round it and a check in a circle, both
+/// easing in and out. `row` marks a document or link row (the check on its
+/// tile's corner) rather than a square of the grid (on its own corner).
+fn pick_mark(
+    ui: &egui::Ui,
+    palette: &Palette,
+    response: &egui::Response,
+    chat: &str,
+    message: &str,
+    rect: Rect,
+    row: bool,
+) {
+    let tab = if row { MediaTab::Docs } else { MediaTab::Media };
+    let on = [tab, MediaTab::Links]
+        .into_iter()
+        .any(|tab| picked(ui.ctx(), chat, tab).iter().any(|id| id == message));
+    let shown = theme::animate(
+        ui.ctx(),
+        response.id.with("picked"),
+        on,
+        theme::MOTION_QUICK,
+    );
+    if shown <= 0.0 || !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let (frame, radius, corner) = if row {
+        let frame = rect.shrink2(vec2(MARGIN - 10.0, 3.0));
+        let tile = Rect::from_center_size(
+            pos2(rect.left() + MARGIN + 24.0, rect.center().y),
+            Vec2::splat(48.0),
+        );
+        (
+            frame,
+            theme::RADIUS_CONTROL,
+            tile.right_bottom() - vec2(4.0, 4.0),
+        )
+    } else {
+        (
+            rect,
+            theme::RADIUS_CONTROL,
+            rect.right_top() + vec2(-14.0, 14.0),
+        )
+    };
+    painter.rect(
+        frame,
+        radius,
+        palette.accent.gamma_multiply(0.14 * shown),
+        Stroke::new(2.0, palette.accent.gamma_multiply(shown)),
+        egui::StrokeKind::Inside,
+    );
+    // The check pops in a little larger than it settles.
+    let size = 10.0 * egui::lerp(0.6..=1.0, theme::ease_out(shown));
+    painter.circle(
+        corner,
+        size,
+        palette.accent.gamma_multiply(shown),
+        Stroke::new(2.0, palette.window.to_opaque().gamma_multiply(shown)),
+    );
+    theme::paint_icon(
+        ui,
+        Icon::Check,
+        Rect::from_center_size(corner, Vec2::splat(size * 1.3)),
+        size * 1.3,
+        palette.on_accent.gamma_multiply(shown),
+    );
+}
+
+/// The bar at the panel's foot while items are picked: how many, and
+/// Forward, Save (pictures, videos, documents) or Copy (links), and a button
+/// that drops them all. It rises in and sinks away with the panel's motion.
+fn pick_bar(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, tab: MediaTab, area: Rect) {
+    let ctx = ui.ctx().clone();
+    let chat = listing.chat.as_str();
+    let ids = picked(&ctx, chat, tab);
+    // The ids still listed, oldest first, as the chat has them.
+    let listed: Vec<String> = match tab {
+        MediaTab::Media => listing.media.iter().rev().map(|m| m.id.clone()).collect(),
+        MediaTab::Docs => listing.docs.iter().rev().map(|m| m.id.clone()).collect(),
+        MediaTab::Links => listing
+            .links
+            .iter()
+            .rev()
+            .map(|l| l.message.clone())
+            .collect(),
+    };
+    let ids: Vec<String> =
+        listed
+            .into_iter()
+            .filter(|id| ids.contains(id))
+            .fold(Vec::new(), |mut kept, id| {
+                if !kept.contains(&id) {
+                    kept.push(id);
+                }
+                kept
+            });
+    if ids.is_empty() {
+        set_picked(&ctx, chat, tab, Vec::new());
+    }
+    let bar_id = egui::Id::new(("info-pick-bar", chat));
+    let count_id = bar_id.with("count");
+    if !ids.is_empty() {
+        ctx.data_mut(|data| data.insert_temp(count_id, (ids.len(), tab as u8)));
+    }
+    let rise = theme::animate(
+        &ctx,
+        bar_id,
+        !ids.is_empty(),
+        if ids.is_empty() {
+            theme::MOTION_PANEL * theme::CLOSE
+        } else {
+            theme::MOTION_PANEL
+        },
+    );
+    if rise <= 0.0 {
+        return;
+    }
+    if !ids.is_empty()
+        && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+    {
+        set_picked(&ctx, chat, tab, Vec::new());
+    }
+    let (count, _) = ctx
+        .data(|data| data.get_temp::<(usize, u8)>(count_id))
+        .unwrap_or((ids.len(), tab as u8));
+    let palette = app.palette;
+    let locale = app.locale;
+    let height = 52.0;
+    let eased = theme::ease_out(rise);
+    let bar = Rect::from_min_size(
+        pos2(
+            area.left() + 12.0,
+            area.bottom() - 12.0 - height + (1.0 - eased) * (height + 12.0),
+        ),
+        vec2((area.width() - 24.0).max(0.0), height),
+    );
+    let layer = egui::LayerId::new(egui::Order::Foreground, bar_id);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .layer_id(layer)
+            .max_rect(bar)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    child.set_clip_rect(area);
+    child.set_opacity(rise);
+    if ids.is_empty() {
+        child.disable();
+    }
+    let painter = child.painter().clone();
+    painter.add(palette.float_shadow().as_shape(bar, height / 2.0));
+    painter.rect(
+        bar,
+        height / 2.0,
+        palette.overlay.to_opaque(),
+        Stroke::new(1.0, palette.outline),
+        egui::StrokeKind::Inside,
+    );
+    child.add_space(8.0);
+    child.spacing_mut().item_spacing.x = 2.0;
+    let tr = |text: &'static str| crate::i18n::gettext(locale, text).into_owned();
+    if theme::icon_button(
+        &mut child,
+        Icon::X,
+        18.0,
+        palette.secondary,
+        palette.text,
+        &tr("Clear selection"),
+    )
+    .clicked()
+    {
+        set_picked(&ctx, chat, tab, Vec::new());
+    }
+    child.add_space(4.0);
+    let label = crate::i18n::ngettext(locale, "{} selected", "{} selected", count as u32)
+        .replace("{}", &count.to_string());
+    child.label(
+        egui::RichText::new(label)
+            .font(theme::semibold(theme::TEXT_CONTROL))
+            .color(palette.text),
+    );
+    let mut done = false;
+    child.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.add_space(8.0);
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let can_forward = app.chat(chat).is_some();
+        if can_forward
+            && theme::icon_button(
+                ui,
+                Icon::Forward,
+                19.0,
+                palette.secondary,
+                palette.text,
+                &tr("Forward"),
+            )
+            .clicked()
+        {
+            app.actions.push(Action::ShowDialog(Dialog::Forward {
+                chat: chat.to_owned(),
+                messages: ids.clone(),
+            }));
+            done = true;
+        }
+        if tab == MediaTab::Links {
+            if theme::icon_button(
+                ui,
+                Icon::Copy,
+                19.0,
+                palette.secondary,
+                palette.text,
+                &tr("Copy links"),
+            )
+            .clicked()
+            {
+                let urls: Vec<&str> = listing
+                    .links
+                    .iter()
+                    .rev()
+                    .filter(|link| ids.contains(&link.message))
+                    .map(|link| link.url.as_str())
+                    .collect();
+                app.actions.push(Action::CopyText(urls.join("\n")));
+                done = true;
+            }
+        } else if theme::icon_button(
+            ui,
+            Icon::Download,
+            19.0,
+            palette.secondary,
+            palette.text,
+            &tr("Save"),
+        )
+        .clicked()
+        {
+            let messages = if tab == MediaTab::Media {
+                &listing.media
+            } else {
+                &listing.docs
+            };
+            let chosen: Vec<&Message> = messages
+                .iter()
+                .rev()
+                .filter(|message| ids.contains(&message.id))
+                .collect();
+            let mut files = Vec::new();
+            for message in chosen {
+                match super::carry::downloaded(message).filter(|path| path.is_file()) {
+                    Some(path) => {
+                        let name = super::conversation::attachment_name(&message.content, &path);
+                        files.push((path, name));
+                    }
+                    // Not here yet: fetched now, to be saved once it is.
+                    None => app.actions.push(Action::Download {
+                        manual: true,
+                        card: None,
+                        chat: chat.to_owned(),
+                        message: message.id.clone(),
+                    }),
+                }
+            }
+            let all = files.len() == ids.len();
+            match files.len() {
+                0 => {}
+                1 => {
+                    let (path, name) = files.remove(0);
+                    app.actions.push(Action::SaveAttachmentAs { path, name });
+                }
+                _ => app.actions.push(Action::SaveAttachments { files }),
+            }
+            done = all;
+        }
+    });
+    if done {
+        set_picked(&ctx, chat, tab, Vec::new());
+    }
 }
 
 /// How far, in points, a tab's content slides while it changes, and how
@@ -2049,6 +2472,7 @@ fn media_grid(
     };
     let cell = ((width - (columns - 1) as f32 * GAP) / columns as f32).floor();
     let rows = listing.media.len().div_ceil(columns);
+    let picked = picked(ui.ctx(), &listing.chat, MediaTab::Media);
     ui.add_space(8.0);
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing = vec2(GAP, GAP);
@@ -2071,6 +2495,7 @@ fn media_grid(
                             message,
                             uris.get(index).map(String::as_str),
                             overlay,
+                            Some(&picked),
                         );
                     }
                 });
@@ -2086,6 +2511,7 @@ fn carriable(
     palette: &Palette,
     message: &Message,
     size: Vec2,
+    picked: &[String],
     paint: impl FnOnce(&mut egui::Ui, Rect, &egui::Response),
 ) -> egui::Response {
     let layer = ui.layer_id();
@@ -2107,15 +2533,7 @@ fn carriable(
         }
     }
     if super::carry::carriable(message) {
-        super::carry::watch(
-            ui,
-            &message.chat,
-            std::slice::from_ref(message),
-            &[],
-            start,
-            rect,
-            palette.surface,
-        );
+        super::carry::watch_listed(ui, message, picked, start, rect, palette.surface);
         if response.drag_started() {
             super::carry::lift_on_drag(ui.ctx(), &message.chat, &message.id);
         }
@@ -2126,6 +2544,7 @@ fn carriable(
 /// One square picture or video: its preview cropped to the square, with a
 /// play mark and the length on a video. Clicking it goes to the message;
 /// dragging it carries it to another chat.
+#[allow(clippy::too_many_arguments)]
 fn media_cell(
     app: &mut App,
     ui: &mut egui::Ui,
@@ -2133,6 +2552,7 @@ fn media_cell(
     message: &Message,
     uri: Option<&str>,
     overlay: bool,
+    picked: Option<&[String]>,
 ) {
     let palette = app.palette;
     let video = matches!(message.content, Content::Video { .. });
@@ -2140,51 +2560,69 @@ fn media_cell(
         Content::Video { seconds, .. } => *seconds,
         _ => None,
     };
-    let response = carriable(ui, &palette, message, size, |ui, rect, response| {
-        if !thumbnail(ui, &palette, rect, message, uri) {
-            ui.painter()
-                .rect_filled(rect, theme::RADIUS_CONTROL, palette.surface);
-            let icon = if video { Icon::Video } else { Icon::Image };
-            theme::paint_icon(ui, icon, rect, 22.0, palette.dim);
-        }
-        if video {
-            let disc = Rect::from_center_size(rect.center(), Vec2::splat(30.0));
-            ui.painter()
-                .circle_filled(disc.center(), 15.0, Color32::from_black_alpha(140));
-            theme::paint_icon(ui, Icon::Play, disc, 14.0, Color32::WHITE);
-            if let Some(seconds) = seconds {
-                let galley = ui.painter().layout_no_wrap(
-                    crate::util::duration(seconds),
-                    theme::medium(theme::TEXT_MICRO),
-                    Color32::WHITE,
-                );
-                let pad = vec2(5.0, 2.0);
-                let label = Rect::from_min_max(
-                    rect.max - galley.size() - pad * 2.0 - Vec2::splat(6.0),
-                    rect.max - Vec2::splat(6.0),
-                );
-                ui.painter().rect_filled(
-                    label,
-                    label.height() / 2.0,
-                    Color32::from_black_alpha(140),
-                );
-                ui.painter().galley(label.min + pad, galley, Color32::WHITE);
+    let response = carriable(
+        ui,
+        &palette,
+        message,
+        size,
+        picked.unwrap_or_default(),
+        |ui, rect, response| {
+            if !thumbnail(ui, &palette, rect, message, uri) {
+                ui.painter()
+                    .rect_filled(rect, theme::RADIUS_CONTROL, palette.surface);
+                let icon = if video { Icon::Video } else { Icon::Image };
+                theme::paint_icon(ui, icon, rect, 22.0, palette.dim);
             }
-        }
-        let hover = theme::animate(
-            ui.ctx(),
-            response.id,
-            response.hovered(),
-            theme::MOTION_QUICK,
-        );
-        if hover > 0.0 {
-            ui.painter().rect_filled(
-                rect,
-                theme::RADIUS_CONTROL,
-                Color32::from_white_alpha((24.0 * hover) as u8),
+            if video {
+                let disc = Rect::from_center_size(rect.center(), Vec2::splat(30.0));
+                ui.painter()
+                    .circle_filled(disc.center(), 15.0, Color32::from_black_alpha(140));
+                theme::paint_icon(ui, Icon::Play, disc, 14.0, Color32::WHITE);
+                if let Some(seconds) = seconds {
+                    let galley = ui.painter().layout_no_wrap(
+                        crate::util::duration(seconds),
+                        theme::medium(theme::TEXT_MICRO),
+                        Color32::WHITE,
+                    );
+                    let pad = vec2(5.0, 2.0);
+                    let label = Rect::from_min_max(
+                        rect.max - galley.size() - pad * 2.0 - Vec2::splat(6.0),
+                        rect.max - Vec2::splat(6.0),
+                    );
+                    ui.painter().rect_filled(
+                        label,
+                        label.height() / 2.0,
+                        Color32::from_black_alpha(140),
+                    );
+                    ui.painter().galley(label.min + pad, galley, Color32::WHITE);
+                }
+            }
+            let hover = theme::animate(
+                ui.ctx(),
+                response.id,
+                response.hovered(),
+                theme::MOTION_QUICK,
             );
-        }
-    });
+            if hover > 0.0 {
+                ui.painter().rect_filled(
+                    rect,
+                    theme::RADIUS_CONTROL,
+                    Color32::from_white_alpha((24.0 * hover) as u8),
+                );
+            }
+        },
+    );
+    if picked.is_some() {
+        pick_mark(
+            ui,
+            &palette,
+            &response,
+            &message.chat,
+            &message.id,
+            response.rect,
+            false,
+        );
+    }
     let stamp = crate::util::chat_stamp(app.locale, message.timestamp);
     response.widget_info(|| {
         let what = if video {
@@ -2194,10 +2632,25 @@ fn media_cell(
         };
         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{what}, {stamp}"))
     });
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if picked.is_some() {
+        item_menu(
+            app,
+            &response,
+            &message.chat,
+            MediaTab::Media,
+            Listed::Message(message),
+        );
+    }
+    let picking = picked.is_some()
+        && pick_click(
+            ui.ctx(),
+            &response,
+            &message.chat,
+            MediaTab::Media,
+            &message.id,
+        );
+    if !picking && response.clicked() {
         go_to(app, message, overlay);
     }
 }
@@ -2280,6 +2733,7 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
         );
         return;
     }
+    let picked = picked(ui.ctx(), &listing.chat, MediaTab::Docs);
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
     egui::ScrollArea::vertical()
@@ -2314,10 +2768,41 @@ fn docs_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia, overlay: boo
                     picture: None,
                 };
                 let size = vec2(ui.available_width(), ROW_HEIGHT);
-                let response = carriable(ui, &palette, message, size, |ui, rect, response| {
-                    paint_row(ui, &palette, rect, response, &row);
-                });
-                if row_response(response, &row).clicked() {
+                let response = carriable(
+                    ui,
+                    &palette,
+                    message,
+                    size,
+                    &picked,
+                    |ui, rect, response| {
+                        paint_row(ui, &palette, rect, response, &row);
+                    },
+                );
+                pick_mark(
+                    ui,
+                    &palette,
+                    &response,
+                    &message.chat,
+                    &message.id,
+                    response.rect,
+                    true,
+                );
+                let response = row_response(response, &row);
+                item_menu(
+                    app,
+                    &response,
+                    &message.chat,
+                    MediaTab::Docs,
+                    Listed::Message(message),
+                );
+                if !pick_click(
+                    ui.ctx(),
+                    &response,
+                    &message.chat,
+                    MediaTab::Docs,
+                    &message.id,
+                ) && response.clicked()
+                {
                     go_to(app, message, overlay);
                 }
             }
@@ -2339,6 +2824,7 @@ fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
         );
         return;
     }
+    let picked = picked(ui.ctx(), &listing.chat, MediaTab::Links);
     // `show_rows` reads the spacing from outside its closure.
     ui.spacing_mut().item_spacing.y = 0.0;
     egui::ScrollArea::vertical()
@@ -2361,12 +2847,64 @@ fn links_list(app: &mut App, ui: &mut egui::Ui, listing: &ChatMedia) {
                     detail: &detail,
                     picture,
                 };
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+                let start = ui.ctx().graphics(|graphics| {
+                    graphics
+                        .get(ui.layer_id())
+                        .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+                });
+                let (rect, response) = ui.allocate_exact_size(
+                    vec2(ui.available_width(), ROW_HEIGHT),
+                    Sense::click_and_drag(),
+                );
                 if ui.is_rect_visible(rect) {
-                    paint_row(ui, &palette, rect, &response, &row);
+                    match super::carry::ghost(ui.ctx(), &listing.chat, &link.message) {
+                        Some(opacity) => {
+                            ui.scope(|ui| {
+                                ui.multiply_opacity(opacity);
+                                paint_row(ui, &palette, rect, &response, &row);
+                            });
+                        }
+                        None => paint_row(ui, &palette, rect, &response, &row),
+                    }
                 }
-                if row_response(response, &row).clicked() {
+                // Carried, it forwards the message the link was written in.
+                super::carry::watch_listed_link(
+                    ui,
+                    &listing.chat,
+                    &link.message,
+                    &picked,
+                    start,
+                    rect,
+                    palette.surface,
+                );
+                if response.drag_started() {
+                    super::carry::lift_on_drag(ui.ctx(), &listing.chat, &link.message);
+                }
+                pick_mark(
+                    ui,
+                    &palette,
+                    &response,
+                    &listing.chat,
+                    &link.message,
+                    rect,
+                    true,
+                );
+                let response = row_response(response, &row);
+                item_menu(
+                    app,
+                    &response,
+                    &listing.chat,
+                    MediaTab::Links,
+                    Listed::Link(link),
+                );
+                if !pick_click(
+                    ui.ctx(),
+                    &response,
+                    &listing.chat,
+                    MediaTab::Links,
+                    &link.message,
+                ) && response.clicked()
+                {
                     app.actions.push(Action::OpenUrl(link.url.clone()));
                 }
             }

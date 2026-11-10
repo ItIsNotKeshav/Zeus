@@ -322,7 +322,7 @@ windows-native-keyring-store = { version = "1.1", default-features = false }
 # Locale calls, the benchmark's readings of its window's process (memory,
 # CPU time, the GPU Engine counters) and of the computer, and the working set
 # for the opt-in memory probe.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Graphics_Gdi", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 # Accesses the native window handle for the Messages theme's Mica backdrop.
 raw-window-handle = "0.6"
 # The camera for video calls, through Media Foundation.

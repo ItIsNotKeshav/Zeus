@@ -7821,12 +7821,14 @@ impl Worker {
                 height,
                 crop,
                 turns,
+                marks,
             } => {
                 let commands = self.commands.clone();
                 let dir = self.dirs.media_cache_dir().join("edited");
                 tokio::task::spawn_blocking(move || {
-                    let result =
-                        super::picture_edit::write(&source, width, height, crop, turns, &dir);
+                    let result = super::picture_edit::write(
+                        &source, width, height, crop, turns, &marks, &dir,
+                    );
                     let _ = commands.send(Command::PictureEdited { target, result });
                 });
             }

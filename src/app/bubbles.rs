@@ -319,9 +319,7 @@ impl App {
         else {
             return draw(self);
         };
-        view.swap_with(self);
-        let out = draw(self);
-        view.swap_with(self);
+        let out = view.draw(self, chat, draw);
         if let Some(bubble) = self.bubbles.get_mut(chat) {
             bubble.view = view;
         }

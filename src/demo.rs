@@ -3842,6 +3842,59 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     height,
                 ));
             }
+            // The same editor with a pen line, a highlighter stroke and an
+            // emoji laid on the picture; `draw-pen` opens it with the pen in
+            // hand and its colours out, `draw-stickers` with the tray open.
+            "draw" | "draw-pen" | "draw-stickers" => {
+                crate::ui::image_editor::DEMO_TOOL.store(
+                    u8::from(part == "draw-pen"),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                if part == "draw-stickers" {
+                    // The app's picker, open over the editor from its
+                    // Stickers button at the bottom of the window.
+                    app.picker = Some(crate::model::PickerTab::Emoji);
+                    app.picker_anchor = Some(egui::Rect::from_center_size(
+                        egui::pos2(657.0, 730.0),
+                        egui::vec2(34.0, 34.0),
+                    ));
+                }
+                use crate::model::{PictureMark, PictureSticker, PictureStroke, StickerArt};
+                let (photo, _) = sample_files(app);
+                let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
+                let target = app.stage(crate::app::Pending::File(photo.clone()));
+                let mut edit = crate::model::PictureEdit::new(
+                    target,
+                    crate::model::PictureSource::File(photo),
+                    width,
+                    height,
+                );
+                let (w, h) = (width as f32, height as f32);
+                let wave = (0..=24)
+                    .map(|step| {
+                        let t = step as f32 / 24.0;
+                        [w * (0.15 + 0.5 * t), h * (0.7 + 0.08 * (t * 12.0).sin())]
+                    })
+                    .collect();
+                edit.marks.push(PictureMark::Stroke(PictureStroke {
+                    points: wave,
+                    colour: [239, 68, 68],
+                    width: w / 120.0,
+                    highlighter: false,
+                }));
+                edit.marks.push(PictureMark::Stroke(PictureStroke {
+                    points: vec![[w * 0.1, h * 0.2], [w * 0.55, h * 0.2]],
+                    colour: [250, 204, 21],
+                    width: w / 30.0,
+                    highlighter: true,
+                }));
+                edit.marks.push(PictureMark::Sticker(PictureSticker {
+                    art: StickerArt::Emoji("😎".to_owned()),
+                    centre: [w * 0.75, h * 0.4],
+                    size: h * 0.25,
+                }));
+                app.picture_edit = Some(edit);
+            }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
             "label-filter" => {
@@ -6152,6 +6205,43 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// A message picked up and held over the chat is drawn as a card, and the
+    /// window notes where. Noting it once asked egui for the window's id from
+    /// inside the closure that had its memory locked for writing, which waits
+    /// on itself: the app stopped answering the moment a card was drawn.
+    #[test]
+    fn a_carried_message_is_drawn_without_locking_up() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("chat,carry=ada-photo"));
+        // The pointer rests over the chat list, as `--demo-hover` holds it.
+        // One pass lays the bubble out, the next presses it, then it lifts.
+        for _ in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events: vec![egui::Event::PointerMoved(egui::pos2(160.0, 300.0))],
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert!(crate::ui::carry::carrying(&ctx), "the message is picked up");
+        assert!(
+            crate::ui::carry::painted(&ctx).is_some(),
+            "the card is drawn, and the window knows where"
+        );
+    }
+
     /// Lays out each synthetic demo screen and checks that its controls fit the visible surface.
     #[test]
     fn keeping_a_crop_stages_the_cropped_picture_and_remembers_its_original() {
@@ -6220,6 +6310,7 @@ mod tests {
                 height,
                 crop: crate::model::PictureCrop::full(width, height),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         app.actions.push(crate::model::Action::EditPicture(target));
@@ -6520,6 +6611,9 @@ mod tests {
             "attachment-draft-away",
             "attachment-draft-return",
             "crop",
+            "draw",
+            "draw-pen",
+            "draw-stickers",
             "compose-emoji",
             "voice",
             "voice,voice-menu",

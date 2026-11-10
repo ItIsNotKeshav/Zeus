@@ -130,12 +130,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     skeleton::fade_out(app, ctx);
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
-    picker::show(app, ctx);
+    // Over the picture editor, the picker is drawn after it, so on top.
+    if app.picture_edit.is_none() {
+        picker::show(app, ctx);
+    }
     dialogs::show(app, ctx);
     image_preview::show(app, ctx);
     image_preview::show_sticker(app, ctx);
     call::show(app, ctx);
     image_editor::show(app, ctx);
+    if app.picture_edit.is_some() {
+        picker::show(app, ctx);
+    }
     drop_target(app, ctx);
     let status = banner(app, ctx, floor);
     toasts(app, ctx, floor, status);

@@ -96,6 +96,13 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 });
         });
     frost.place(area.response.rect);
+    if app.picture_edit.is_some() {
+        // Over the picture editor, which holds the pointer as a modal layer:
+        // the picker takes it from there while open.
+        let layer = egui::LayerId::new(egui::Order::Foreground, id);
+        ctx.move_to_top(layer);
+        ctx.memory_mut(|memory| memory.set_modal_layer(layer));
+    }
     // Grows up from the button that opened it, and goes back the same way.
     super::closing::surface(
         ctx,
@@ -126,11 +133,17 @@ fn tabs(app: &mut App, ui: &mut egui::Ui, palette: &Palette, current: PickerTab)
     let gif = gettext(locale, "GIF");
     let stickers = gettext(locale, "Stickers");
     ui.horizontal(|ui| {
-        let entries = [
+        // A GIF cannot be laid on a picture, so the editor's picker leaves
+        // them out.
+        let over_picture = app.picture_edit.is_some();
+        let entries: Vec<_> = [
             (PickerTab::Emoji, Icon::Smile, emoji.as_ref()),
             (PickerTab::Gifs, Icon::Gif, gif.as_ref()),
             (PickerTab::Stickers, Icon::Sticker, stickers.as_ref()),
-        ];
+        ]
+        .into_iter()
+        .filter(|(tab, _, _)| !(over_picture && *tab == PickerTab::Gifs))
+        .collect();
         let spacing = ui.spacing().item_spacing.x;
         let total = entries
             .iter()

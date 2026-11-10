@@ -376,12 +376,27 @@ pub(super) fn messages_in(
     over: f32,
     pane: Pane,
 ) {
+    // A transcript takes messages carried from another pane, window or chat,
+    // and from its own Media, links and docs panel.
+    if super::super::carry::carrying(ui.ctx()) {
+        let title = app.chat_title(chat);
+        let area = ui.max_rect();
+        super::super::carry::target(ui, area, chat, &title, area.center());
+    }
     match pane {
         Pane::Passive => app.with_other_view(|app| messages(app, ui, chat, under, over, pane)),
-        Pane::PopOut => app.with_pop_out_view(|app| messages(app, ui, chat, under, over, pane)),
+        Pane::PopOut => {
+            let ctx = ui.ctx().clone();
+            app.with_pop_out_view(|app| {
+                drawn_in_window(&ctx, || messages(app, ui, chat, under, over, pane))
+            })
+        }
         Pane::Bubble => {
             let id = chat.id.clone();
-            app.with_bubble_view(&id, |app| messages(app, ui, chat, under, over, pane))
+            let ctx = ui.ctx().clone();
+            app.with_bubble_view(&id, |app| {
+                drawn_in_window(&ctx, || messages(app, ui, chat, under, over, pane))
+            })
         }
         Pane::Solo | Pane::Active => messages(app, ui, chat, under, over, pane),
     }
@@ -458,7 +473,7 @@ pub(super) const TYPING_BUBBLE_PAD_X: f32 = 14.0;
 pub(super) const TYPING_BUBBLE_PAD_Y: f32 = 11.0;
 
 pub(super) fn typing_bubble_id(chat: &str) -> egui::Id {
-    egui::Id::new(("typing-bubble", chat))
+    in_window(egui::Id::new(("typing-bubble", chat)))
 }
 
 /// Where and when the typing bubble was last drawn, in which pass, and
