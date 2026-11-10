@@ -15,7 +15,7 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         theme::text(
             ui,
             crate::i18n::gettext(app.locale, "Send location"),
-            theme::bold(18.0),
+            theme::bold(theme::TEXT_TITLE),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -42,15 +42,27 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         .char_limit(2048)
         .width(f32::INFINITY)
         .show(ui, &palette);
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     // The spot is read again here and shown before it is sent: a pair read the
     // wrong way round is visible in this dialog, not in someone else's chat.
     let here = geo::spot(&app.location_draft);
     match here {
         Some(here) => {
-            theme::text(ui, here.text(), theme::regular(13.0), palette.text);
+            theme::text(
+                ui,
+                here.text(),
+                theme::regular(theme::TEXT_CONTROL),
+                palette.text,
+            );
             let open = crate::i18n::gettext(app.locale, "Open in a map");
-            if theme::link(ui, open.as_ref(), theme::regular(12.5), palette.link).clicked() {
+            if theme::link(
+                ui,
+                open.as_ref(),
+                theme::regular(theme::TEXT_CAPTION),
+                palette.link,
+            )
+            .clicked()
+            {
                 app.actions.push(Action::OpenUrl(geo::map_url(here)));
             }
         }
@@ -64,7 +76,7 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
                     app.locale,
                     "Short links only open online. Paste the full map link or the coordinates.",
                 ),
-                theme::regular(12.0),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.dim,
             );
         }
@@ -72,7 +84,7 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             theme::text(
                 ui,
                 crate::i18n::gettext(app.locale, "That is not a location."),
-                theme::regular(12.0),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.dim,
             );
         }

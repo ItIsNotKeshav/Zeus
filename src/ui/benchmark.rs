@@ -24,7 +24,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     theme::text(
         ui,
         gettext(locale, "Performance benchmark"),
-        theme::semibold(14.0),
+        theme::semibold(theme::TEXT_BODY),
         palette.text,
     );
     ui.add_space(4.0);
@@ -38,10 +38,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
              the power state and scale. Your chats and account are not used, and nothing leaves \
              this computer unless you share it.",
         ),
-        theme::regular(12.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     let stage = app.benchmark.as_ref().map(benchmark::Benchmark::stage);
     let running = matches!(stage, Some(Stage::Running { .. }));
     // The progress fades in as the run starts, the results as it ends.
@@ -69,7 +69,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         Some(Stage::Done(report)) => results(ui, app, &palette, &report, finished),
         Some(Stage::Failed(reason)) => {
-            theme::paragraph(ui, reason, theme::regular(13.0), palette.danger);
+            theme::paragraph(
+                ui,
+                reason,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.danger,
+            );
             ui.add_space(8.0);
             run_button(ui, app, &palette, "Try again");
         }
@@ -77,7 +82,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             theme::paragraph(
                 ui,
                 gettext(locale, "Stopped before the end."),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.secondary,
             );
             ui.add_space(8.0);
@@ -85,7 +90,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         }
         None => run_button(ui, app, &palette, "Run benchmark"),
     }
-    ui.add_space(6.0);
+    ui.add_space(8.0);
 }
 
 fn run_button(ui: &mut egui::Ui, app: &mut App, palette: &Palette, label: &'static str) {
@@ -118,7 +123,8 @@ fn progress(
         let length = benchmark::LENGTH.as_secs_f32();
         let target = (elapsed / length).clamp(0.0, 0.99);
         // Glides between redraws instead of stepping a quarter second at a time.
-        let fraction = ui.ctx().animate_value_with_time(
+        let fraction = theme::animate_value(
+            ui.ctx(),
             egui::Id::new("benchmark-progress"),
             target,
             theme::MOTION_PANEL,
@@ -129,7 +135,7 @@ fn progress(
         painter.rect_filled(rect, 3.0, palette.surface_active);
         let filled = Rect::from_min_size(rect.min, vec2(rect.width() * fraction, rect.height()));
         painter.rect_filled(filled, 3.0, palette.accent);
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         ui.horizontal(|ui| {
             theme::spinner(ui, 14.0, palette.accent);
             let doing = gettext(locale, benchmark::phase_label(phase.unwrap_or_default()));
@@ -141,7 +147,7 @@ fn progress(
                 .replace("{doing}", &doing)
                 .replace("{elapsed}", &clock(elapsed))
                 .replace("{total}", &clock(length));
-            theme::text(ui, line, theme::medium(13.0), palette.text);
+            theme::text(ui, line, theme::medium(theme::TEXT_CONTROL), palette.text);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if theme::soft_button(ui, palette, Some(Icon::X), &gettext(locale, "Stop"), false)
                     .clicked()
@@ -150,7 +156,7 @@ fn progress(
                 }
             });
         });
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         theme::paragraph(
             ui,
             gettext(
@@ -158,7 +164,7 @@ fn progress(
                 "Leave the benchmark window alone until it closes by itself. Using the computer \
                  meanwhile changes the numbers.",
             ),
-            theme::regular(12.0),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
     });
@@ -174,10 +180,10 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
         theme::paragraph(
             ui,
             report.machine_line(),
-            theme::regular(12.0),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         smoothness_table(ui, palette, locale, report);
         ui.add_space(12.0);
         phase_table(ui, palette, locale, report);
@@ -195,9 +201,14 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                 .into(),
             );
         }
-        theme::paragraph(ui, notes.join(" "), theme::regular(12.0), palette.secondary);
+        theme::paragraph(
+            ui,
+            notes.join(" "),
+            theme::regular(theme::TEXT_CAPTION),
+            palette.secondary,
+        );
         if !report.checks_passed() {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             theme::paragraph(
                 ui,
                 gettext(
@@ -205,7 +216,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                     "Some of the test's checks failed, so these numbers may not compare with \
                      other runs.",
                 ),
-                theme::regular(12.0),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.warning,
             );
             theme::paragraph(
@@ -245,7 +256,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
             run_button(ui, app, palette, "Run again");
         });
         if let Some(saved) = app.benchmark.as_ref().and_then(benchmark::Benchmark::saved) {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             let (text, color) = match saved {
                 Ok(path) => (
                     gettext(locale, "Saved to {path}.")
@@ -258,7 +269,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                     palette.danger,
                 ),
             };
-            theme::paragraph(ui, text, theme::regular(12.0), color);
+            theme::paragraph(ui, text, theme::regular(theme::TEXT_CAPTION), color);
         }
         share_preview(ui, app, palette, report, sharing);
     });
@@ -296,10 +307,10 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                          your browser, and it is shared only if you submit it there. The issue \
                          is public and shows your GitHub name. It holds only what is below.",
                     ),
-                    theme::regular(12.5),
+                    theme::regular(theme::TEXT_CAPTION),
                     palette.text,
                 );
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 egui::ScrollArea::vertical()
                     .id_salt("benchmark-share-text")
                     .max_height(220.0 * shown)
@@ -314,7 +325,7 @@ fn share_preview(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &R
                             .wrap_mode(egui::TextWrapMode::Wrap),
                         );
                     });
-                ui.add_space(10.0);
+                ui.add_space(8.0);
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
                     if theme::soft_button(
@@ -359,9 +370,9 @@ fn table(ui: &mut egui::Ui, palette: &Palette, header: &[String], rows: &[(Strin
         let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 22.0), Sense::hover());
         let painter = ui.painter();
         let font = if strong {
-            theme::medium(12.0)
+            theme::medium(theme::TEXT_CAPTION)
         } else {
-            theme::regular(12.5)
+            theme::regular(theme::TEXT_CAPTION)
         };
         let color = if strong {
             palette.secondary

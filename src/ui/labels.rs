@@ -99,7 +99,7 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if app.labels.is_empty() {
         return;
     }
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let row = widgets::chip_scroll_row(ui, "label-chips", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
@@ -108,8 +108,13 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         });
     });
     let hidden = row.content_size.x - row.state.offset.x - row.inner_rect.width();
-    if hidden > 0.5 {
-        widgets::fade_right(ui, row.inner_rect, super::chats::CHIP_FADE, palette.panel);
+    if hidden > 0.5 && !palette.vibrant() {
+        widgets::fade_right(
+            ui,
+            row.inner_rect,
+            super::chats::CHIP_FADE,
+            palette.sidebar(),
+        );
     }
     ui.ctx()
         .data_mut(|data| data.insert_temp(chip_row_id(), row.inner_rect));
@@ -222,7 +227,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         theme::text(
             ui,
             gettext(locale, "Labels"),
-            theme::bold(18.0),
+            theme::bold(theme::TEXT_TITLE),
             palette.text,
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -246,10 +251,10 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             locale,
             "Labels stay on this computer. They do not reach your phone or anyone you chat with.",
         ),
-        theme::regular(12.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.dim,
     );
-    ui.add_space(14.0);
+    ui.add_space(16.0);
 
     let full = app.labels.len() >= crate::archive::LABEL_LIMIT;
     if full {
@@ -257,7 +262,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             ui,
             gettext(locale, "You have {limit} labels, the most Zeus keeps.")
                 .replace("{limit}", &crate::archive::LABEL_LIMIT.to_string()),
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.warning,
         );
     } else {
@@ -290,7 +295,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
     ui.add_space(8.0);
     ui.separator();
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     let wearing: Vec<(Label, usize)> = app
         .labels
         .iter()
@@ -310,7 +315,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 locale,
                 "No labels yet. Create one above, then add chats to it from their right-click menu.",
             ),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.dim,
         );
         return;
@@ -334,7 +339,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 egui::TextEdit::singleline(&mut draft.1)
                     .id(rename_field_id(&label.id))
                     .char_limit(crate::archive::NAME_LIMIT)
-                    .font(theme::regular(13.5)),
+                    .font(theme::regular(theme::TEXT_BODY)),
             );
             let swatch_rect =
                 Rect::from_min_size(rect.left_center() + vec2(190.0, -9.0), vec2(18.0, 18.0));
@@ -381,7 +386,7 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         let name = widgets::line(
             ui,
             &label.name,
-            theme::medium(13.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
             (rect.width() - 140.0).max(40.0),
             1,
@@ -395,10 +400,21 @@ pub fn manager(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             ngettext(locale, "{} chat", "{} chats", count as u32).replace("{}", &count.to_string());
         let worn_width = ui
             .painter()
-            .layout_no_wrap(worn.clone(), theme::regular(12.0), palette.dim)
+            .layout_no_wrap(
+                worn.clone(),
+                theme::regular(theme::TEXT_CAPTION),
+                palette.dim,
+            )
             .size()
             .x;
-        let worn_line = widgets::line(ui, &worn, theme::regular(12.0), palette.dim, worn_width, 1);
+        let worn_line = widgets::line(
+            ui,
+            &worn,
+            theme::regular(theme::TEXT_CAPTION),
+            palette.dim,
+            worn_width,
+            1,
+        );
         worn_line.paint(
             ui,
             pos2(rect.right() - 62.0 - worn_width, rect.center().y - 7.0),

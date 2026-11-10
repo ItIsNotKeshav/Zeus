@@ -356,7 +356,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         header_title(
                             ui,
                             crate::i18n::gettext(app.locale, "Starred").as_ref(),
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                             buttons_width,
                         );
@@ -384,7 +384,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             } else {
                                 "Archived"
                             },
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                             buttons_width,
                         );
@@ -394,7 +394,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         header_title(
                             ui,
                             &crate::i18n::gettext(app.locale, tab_title(&app.page)),
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                             buttons_width,
                         );
@@ -407,7 +407,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
 
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             search_and_filters(app, ui);
         });
 }
@@ -683,7 +683,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     header_title(
                         ui,
                         crate::i18n::gettext(app.locale, "Starred").as_ref(),
-                        theme::bold(16.0),
+                        theme::bold(theme::TEXT_SECTION),
                         palette.text,
                         header_buttons_width(ui, &buttons),
                     );
@@ -711,7 +711,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         } else {
                             "Archived"
                         },
-                        theme::bold(16.0),
+                        theme::bold(theme::TEXT_SECTION),
                         palette.text,
                         header_buttons_width(ui, &buttons),
                     );
@@ -721,7 +721,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     header_title(
                         ui,
                         &crate::i18n::gettext(app.locale, tab_title(&app.page)),
-                        theme::bold(20.0),
+                        theme::bold(theme::TEXT_TITLE),
                         palette.text,
                         header_buttons_width(ui, &buttons),
                     );
@@ -732,7 +732,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             search_and_filters(app, ui);
         });
 }
@@ -748,7 +748,7 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
 }
 
 /// Width of the fade over the filter chips' right edge.
-pub(super) const CHIP_FADE: f32 = 16.0;
+pub(super) const CHIP_FADE: f32 = 32.0;
 
 /// Filter chips under the search field. Search lists every match, so the
 /// chips hide there.
@@ -905,7 +905,7 @@ fn starred_row(
     let clock = widgets::line(
         ui,
         &crate::util::clock(message.timestamp),
-        theme::regular(11.0),
+        theme::regular(theme::TEXT_MICRO),
         palette.secondary,
         80.0,
         1,
@@ -919,7 +919,7 @@ fn starred_row(
     let body = widgets::line(
         ui,
         &words,
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.text,
         body_width,
         12,
@@ -951,7 +951,7 @@ fn starred_row(
     let name_line = widgets::line(
         ui,
         &name,
-        theme::medium(14.0),
+        theme::medium(theme::TEXT_BODY),
         palette.text,
         width - 140.0,
         1,
@@ -968,7 +968,7 @@ fn starred_row(
         pos2(rect.right() - 16.0, rect.top() + 14.0),
         egui::Align2::RIGHT_CENTER,
         when,
-        theme::regular(11.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
     // The message itself, as the bubble the chat shows: same fill, same side,
@@ -1600,14 +1600,14 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
             pos2(rect.left() + widgets::ROW_SIDE + 62.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             "Locked chats",
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
         );
         ui.painter().text(
             pos2(rect.right() - widgets::ROW_SIDE, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             count.to_string(),
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.accent,
         );
     }
@@ -1922,7 +1922,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,
@@ -1931,7 +1931,12 @@ fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
             bottom: 10,
         })
         .show(ui, |ui| {
-            theme::text(ui, label, theme::semibold(12.5), palette.accent);
+            theme::text(
+                ui,
+                label,
+                theme::semibold(theme::TEXT_CAPTION),
+                palette.accent,
+            );
         });
 }
 
@@ -1968,7 +1973,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let right = rect.right() - widgets::ROW_SIDE;
         let stamp_galley = ui.painter().layout_no_wrap(
             crate::util::chat_stamp(app.locale, hit.timestamp),
-            theme::regular(11.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.dim,
         );
         let name_top = rect.top() + 14.0;
@@ -1978,7 +1983,14 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             palette.dim,
         );
         let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
-        let name = widgets::line(ui, &title, theme::medium(14.5), palette.text, name_width, 1);
+        let name = widgets::line(
+            ui,
+            &title,
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+            name_width,
+            1,
+        );
         name.paint(ui, pos2(left, name_top), palette.text);
         // Show the sender for group messages.
         let line_y = rect.top() + 38.0;
@@ -1987,7 +1999,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             let who = widgets::line(
                 ui,
                 "You: ",
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.dim,
                 (right - x) * 0.5,
                 1,
@@ -2000,7 +2012,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             let who = widgets::line(
                 ui,
                 &format!("{first}: "),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.dim,
                 (right - x) * 0.5,
                 1,
@@ -2011,7 +2023,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let words = widgets::line(
             ui,
             &app.preview_line(&hit.summary_in(app.locale), hit),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.dim,
             (right - x).max(0.0),
             1,
@@ -2078,7 +2090,7 @@ pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) 
         let line = widgets::line(
             ui,
             label,
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
             rect.right() - widgets::ROW_SIDE - left,
             1,
@@ -2119,7 +2131,7 @@ fn person_row(
         let name_line = widgets::line(
             ui,
             name,
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
             rect.right() - widgets::ROW_SIDE - left,
             1,
@@ -2129,7 +2141,7 @@ fn person_row(
             let phone_line = widgets::line(
                 ui,
                 detail,
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.dim,
                 rect.right() - widgets::ROW_SIDE - left,
                 1,
@@ -2248,9 +2260,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else {
             palette.dim
         };
-        let stamp_galley = ui
-            .painter()
-            .layout_no_wrap(stamp, theme::regular(11.5), stamp_color);
+        let stamp_galley =
+            ui.painter()
+                .layout_no_wrap(stamp, theme::regular(theme::TEXT_CAPTION), stamp_color);
         let name_top = rect.top() + 14.0;
         ui.painter().galley(
             pos2(right - stamp_galley.size().x, name_top + 1.0),
@@ -2259,9 +2271,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         );
         let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
         let name_font = if unread {
-            theme::semibold(14.5)
+            theme::semibold(theme::TEXT_BODY)
         } else {
-            theme::medium(14.5)
+            theme::medium(theme::TEXT_BODY)
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
         name.paint(ui, pos2(left, name_top), palette.text);
@@ -2332,7 +2344,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::line(
                 ui,
                 &who,
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.accent,
                 badge_right - x,
                 1,
@@ -2343,7 +2355,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             let label = widgets::line(
                 ui,
                 &label,
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.accent,
                 (badge_right - x) * 0.5,
                 1,
@@ -2354,7 +2366,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::line(
                 ui,
                 &draft,
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 preview_color,
                 (badge_right - x).max(0.0),
                 1,
@@ -2383,7 +2395,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 let sender = widgets::line(
                     ui,
                     &prefix,
-                    theme::regular(13.0),
+                    theme::regular(theme::TEXT_CONTROL),
                     preview_color,
                     (badge_right - x) * 0.5,
                     1,
@@ -2398,7 +2410,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     &app.resolve_mention_tokens(&last.summary_in(app.locale)),
                     &[],
                 ),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 preview_color,
                 (badge_right - x).max(0.0),
                 1,
@@ -2414,7 +2426,14 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             }
             words
         } else {
-            widgets::line(ui, "", theme::regular(13.0), preview_color, 1.0, 1)
+            widgets::line(
+                ui,
+                "",
+                theme::regular(theme::TEXT_CONTROL),
+                preview_color,
+                1.0,
+                1,
+            )
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
     }
@@ -2554,7 +2573,7 @@ fn full_preview_tooltip(
             let line = widgets::line(
                 ui,
                 text.trim_end(),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 color,
                 FULL_PREVIEW_WIDTH,
                 FULL_PREVIEW_ROWS,
