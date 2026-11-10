@@ -23,6 +23,7 @@ pub mod lock;
 pub mod login;
 pub mod message_info;
 pub mod new_group;
+pub(crate) mod overscroll;
 pub mod pane;
 pub mod picker;
 pub mod polls;
