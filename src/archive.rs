@@ -27,6 +27,7 @@ mod receipts;
 mod reconcile;
 #[cfg(test)]
 mod reconcile_tests;
+mod search_index;
 mod stars;
 mod stickers;
 pub use polls::PollVote;
@@ -475,6 +476,7 @@ impl Archive {
         connection.execute_batch(favorites::SCHEMA)?;
         connection.execute_batch(stars::SCHEMA)?;
         connection.execute_batch(pins::SCHEMA)?;
+        connection.execute_batch(&search_index::schema())?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -1577,6 +1579,20 @@ impl Archive {
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
         // The result list shows text and opens the message by id, so the
         // preview blobs stay behind.
+        if let Some(phrase) = search_index::phrase(needle)
+            && self.search_index_ready()?
+        {
+            let sql = format!(
+                "SELECT {BARE_COLUMNS}
+                 FROM messages
+                 WHERE rowid IN (SELECT rowid FROM message_text WHERE message_text MATCH ?1)
+                 ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
+                 LIMIT ?2"
+            );
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params![phrase, limit as i64], searched_message)?;
+            return rows.collect();
+        }
         let sql = format!(
             "SELECT {BARE_COLUMNS}
              FROM messages
