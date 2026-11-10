@@ -14,6 +14,7 @@ pub mod backdrop;
 pub mod backend;
 pub mod benchmark;
 pub mod bidi;
+pub mod blocking;
 pub mod brand;
 pub mod call_access;
 pub mod call_audio;
@@ -33,6 +34,7 @@ pub mod haptics;
 pub mod i18n;
 pub mod image_cache;
 pub mod image_preview;
+pub mod lottie;
 #[cfg(target_os = "macos")]
 pub mod macos;
 pub mod markup;

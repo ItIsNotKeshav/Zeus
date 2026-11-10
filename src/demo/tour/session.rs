@@ -92,6 +92,7 @@ pub fn respond_to(app: &mut App, search: bool) -> Vec<String> {
                 text,
                 quoting,
                 mentions,
+                ..
             } => {
                 let quoted = quoting.and_then(|id| quote(app, &chat, id));
                 let mut row = outgoing(app, &chat, Content::text(text));

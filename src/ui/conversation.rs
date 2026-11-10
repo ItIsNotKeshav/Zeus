@@ -11,7 +11,7 @@ use egui::{
 
 use super::widgets::FrostedPopup;
 use crate::animation;
-use crate::app::{App, Conversation, JumpHighlight, KeyScroll, RowHeight};
+use crate::app::{App, Conversation, JumpHighlight, KeyScroll, LinkPreviewState, RowHeight};
 use crate::geo::Spot;
 use crate::markup;
 use crate::model::{
@@ -747,6 +747,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                     } else {
                         crate::i18n::gettext(app.locale, "Archive")
                     };
+                    let export_label = crate::i18n::gettext(app.locale, "Export chat");
                     let clear_label = crate::i18n::gettext(app.locale, "Clear chat");
                     let copy_number_label = crate::i18n::gettext(app.locale, "Copy number");
                     let close_label = crate::i18n::gettext(app.locale, "Close chat");
@@ -757,6 +758,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             select_messages_label.as_ref(),
                             pin_label.as_ref(),
                             archive_label.as_ref(),
+                            export_label.as_ref(),
                             clear_label.as_ref(),
                             leave_label.as_ref(),
                             copy_number_label.as_ref(),
@@ -806,6 +808,18 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                             ) {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+                            }
+                            if widgets::menu_item_enabled(
+                                ui,
+                                &palette,
+                                Some(Icon::Download),
+                                export_label.as_ref(),
+                                !chat.locked && app.chat_export.is_none(),
+                            ) {
+                                app.actions.push(Action::ShowDialog(Dialog::ExportChat {
+                                    chat: chat.id.clone(),
+                                    include_media: false,
+                                }));
                             }
                             // Clearing reaches the phone, so it waits for a
                             // connection, as deleting does in the chat list.
@@ -1522,6 +1536,37 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 theme::MOTION_PANEL,
             );
             ui.multiply_opacity(if chat.can_send() { open } else { 1.0 - open });
+            if chat.can_send() && app.blocklist.contains(&chat.id) {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(6.0);
+                    theme::text(
+                        ui,
+                        crate::i18n::gettext(app.locale, "You blocked this contact").as_ref(),
+                        theme::regular(13.5),
+                        palette.secondary,
+                    );
+                    ui.add_space(4.0);
+                    if ui
+                        .add_enabled_ui(app.is_connected() && app.blocklist.editable(), |ui| {
+                            theme::pill_button(
+                                ui,
+                                &palette,
+                                &crate::i18n::gettext(app.locale, "Unblock"),
+                                false,
+                            )
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        app.actions.push(Action::ShowDialog(Dialog::ConfirmBlock {
+                            chat: chat.id.clone(),
+                            blocked: false,
+                            from_list: false,
+                        }));
+                    }
+                });
+                return;
+            }
             if !chat.can_send() {
                 if chat.kind == crate::model::ChatKind::Broadcast {
                     // A channel we left says so; the rest are only read-only.
@@ -1633,6 +1678,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     }
                     None => app.reply_to = None,
                 }
+            }
+            // Nearest the pill, under a reply. A caption goes without one.
+            if app.pending.is_empty() && app.recording.is_none() {
+                link_preview_strip(app, ui);
             }
             app.prepare_composer_undo(ui.ctx());
             let id = egui::Id::new("composer-text");
@@ -2330,6 +2379,95 @@ fn strip_frame(palette: &Palette) -> Frame {
         })
 }
 
+/// The link preview that goes with the message being written: "Loading
+/// preview…" while it is fetched, then the card with an X that sends the
+/// message without it. Nothing once dismissed.
+fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let Some(shown) = app.shown_preview() else {
+        return;
+    };
+    let mut dismiss = false;
+    let strip = match &shown.state {
+        LinkPreviewState::Dismissed => return,
+        LinkPreviewState::Loading => {
+            let loading = crate::i18n::gettext(app.locale, "Loading preview…");
+            widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
+                ui.set_width(ui.available_width().max(0.0));
+                ui.horizontal(|ui| {
+                    let (bar, _) = ui.allocate_exact_size(vec2(3.0, 18.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, palette.accent);
+                    theme::text(ui, loading, theme::regular(12.5), palette.secondary);
+                });
+            })
+        }
+        LinkPreviewState::Ready(composed) => {
+            let remove = crate::i18n::gettext(app.locale, "Remove link preview");
+            // The card has no message: its picture is named by its chat and
+            // link instead, the same each frame.
+            let image = composer_thumbnail_id(&composed.preview.url);
+            let thumbnail = composed
+                .thumbnail
+                .as_deref()
+                .map(|bytes| (shown.chat.as_str(), image.as_str(), bytes));
+            let frame = strip_frame(&palette).inner_margin(Margin::same(10));
+            widgets::raised(ui, &palette, frame, |ui| {
+                ui.set_width(ui.available_width().max(0.0));
+                // Top-aligned: a centred row would start the card partway down
+                // its own first line and leave the margin above it too deep.
+                ui.with_layout(Layout::left_to_right(Align::Min), |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    let right = ui.max_rect().right();
+                    let (bar, _) = ui.allocate_exact_size(vec2(3.0, 0.0), Sense::hover());
+                    let width = (ui.available_width() - 46.0).max(0.0);
+                    let card = preview_layout(ui, &palette, &composed.preview, thumbnail, width);
+                    ui.painter().rect_filled(
+                        Rect::from_x_y_ranges(bar.x_range(), card.y_range()),
+                        2.0,
+                        palette.accent,
+                    );
+                    let room = Rect::from_x_y_ranges(card.right()..=right, card.y_range());
+                    ui.scope_builder(
+                        egui::UiBuilder::new()
+                            .max_rect(room)
+                            .layout(Layout::right_to_left(Align::Center)),
+                        |ui| {
+                            let button = theme::icon_button(
+                                ui,
+                                Icon::X,
+                                16.0,
+                                palette.secondary,
+                                palette.text,
+                                remove.as_ref(),
+                            );
+                            dismiss = button.clicked();
+                        },
+                    );
+                });
+            })
+        }
+    };
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(link_preview_strip_id(), strip.response.rect));
+    if dismiss {
+        app.actions.push(Action::DismissLinkPreview);
+    }
+    strip_gap(ui);
+}
+
+/// The image id of the composer card's thumbnail for `url`.
+fn composer_thumbnail_id(url: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    format!("composer-preview-{:016x}", hasher.finish())
+}
+
+/// Where the composer's link preview was drawn, for layout tests.
+pub(crate) fn link_preview_strip_id() -> egui::Id {
+    egui::Id::new("link-preview-strip")
+}
+
 /// The emoji and @mention suggestion lists, raised above the composer like
 /// the strips, with the same fill and corners.
 fn suggestion_frame(palette: &Palette) -> Frame {
@@ -2759,6 +2897,7 @@ fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize
         Content::Document { caption, .. } => 70.0 + caption_rows(caption),
         Content::Sticker { .. } => 140.0,
         Content::Audio { .. } => 60.0,
+        Content::DisappearingTimer { .. } => 0.0,
         _ => 40.0,
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
@@ -3578,7 +3717,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     // measured before they show.
                     let margin = (viewport.height() * 3.0).max(600.0);
                     let last_outgoing = conversation.messages.iter().rposition(|message| {
-                        message.from_me && !matches!(message.content, Content::Revoked)
+                        message.from_me
+                            && !matches!(
+                                message.content,
+                                Content::Revoked | Content::DisappearingTimer { .. }
+                            )
                     });
                     for (message_index, message) in conversation.messages.iter().enumerate() {
                         let index = message_index;
@@ -5357,6 +5500,25 @@ fn spring_unit(t_ms: f64, stiffness: f64, damping: f64) -> f64 {
             + initial_delta * (angular * t_ms).cos())
 }
 
+/// The system row a disappearing-message timer change leaves in the
+/// transcript: a centred chip naming who changed it and to what, as the
+/// phone shows it. It is not a message, so nothing selects or copies it.
+fn timer_notice(
+    ui: &mut egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    seconds: u32,
+) -> egui::Response {
+    let name = if message.from_me {
+        crate::i18n::gettext(view.locale, "You").into_owned()
+    } else {
+        (view.names_or)(&message.sender, message.sender_name.as_deref())
+    };
+    let text = crate::util::disappearing_change(view.locale, &name, seconds);
+    ui.vertical_centered(|ui| widgets::chip(ui, &view.palette, &text))
+        .inner
+}
+
 /// Draws a message row and returns its bubble response for scrolling. A
 /// bubble whose card is being carried to another chat stays behind faintly,
 /// and a press on one may pick it up (`carry`).
@@ -5369,6 +5531,11 @@ fn bubble(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
+    // A timer change is a system row, not a message: a centred chip naming
+    // who changed it and to what, with no bubble, avatar, or selection.
+    if let Content::DisappearingTimer { seconds } = &message.content {
+        return Some(timer_notice(ui, view, message, *seconds));
+    }
     let layer = ui.layer_id();
     let start = ui.ctx().graphics(|graphics| {
         graphics
@@ -7276,7 +7443,10 @@ fn last_bubble_of_run(palette: &Palette, messages: &[Message], index: usize) -> 
 /// Whether `next` continues the run `message` belongs to: the same side,
 /// and in a group the same sender.
 fn same_run(message: &Message, next: &Message) -> bool {
-    message.from_me == next.from_me && (message.from_me || message.sender == next.sender)
+    !matches!(message.content, Content::DisappearingTimer { .. })
+        && !matches!(next.content, Content::DisappearingTimer { .. })
+        && message.from_me == next.from_me
+        && (message.from_me || message.sender == next.sender)
 }
 
 /// A Nothing bubble's room around its text.
@@ -10611,6 +10781,11 @@ fn content(
                 actions,
             )
         }
+        Content::DisappearingTimer { .. } => {
+            // Drawn as a centred system row by `bubble`, which returns before
+            // the bubble is built. This arm only keeps the match exhaustive.
+            None
+        }
         Content::Revoked => {
             mirrored_row(
                 ui,
@@ -11895,16 +12070,10 @@ fn preview_card(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
-    let thumbnail = message.thumbnail.as_deref();
-    let domain = preview
-        .url
-        .split("://")
-        .nth(1)
-        .unwrap_or(&preview.url)
-        .split('/')
-        .next()
-        .unwrap_or_default()
-        .to_owned();
+    let thumbnail = message
+        .thumbnail
+        .as_deref()
+        .map(|bytes| (message.chat.as_str(), message.id.as_str(), bytes));
     let (bleed, radius) = edge_card(ui, &palette, 6);
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
@@ -11915,46 +12084,7 @@ fn preview_card(
             // Include margins in the settled card width.
             let card_width = (width - bleed.sum().x - 16.0).max(0.0);
             ui.set_width(card_width);
-            // Limit text to the space beside the thumbnail and keep it
-            // left-aligned in own bubbles.
-            let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
-            ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
-                ui.set_width(card_width);
-                ui.horizontal(|ui| {
-                    if let Some(bytes) = thumbnail {
-                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-                        // Off-screen cards are laid out too; only a visible
-                        // one keeps its thumbnail resident.
-                        if ui.is_rect_visible(rect) {
-                            let uri = thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes);
-                            egui::Image::new(uri)
-                                .fit_to_exact_size(rect.size())
-                                .corner_radius(4.0)
-                                .paint_at(ui, rect);
-                        }
-                    }
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 2.0;
-                        ui.set_width(column);
-                        if let Some(title) = &preview.title {
-                            widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
-                        }
-                        if let Some(description) = &preview.description {
-                            let line = widgets::line(
-                                ui,
-                                description,
-                                theme::regular(12.5),
-                                palette.secondary,
-                                ui.available_width(),
-                                2,
-                            );
-                            let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
-                            line.paint(ui, rect.min, palette.secondary);
-                        }
-                        theme::text(ui, &domain, theme::regular(12.0), palette.dim);
-                    });
-                });
-            });
+            preview_layout(ui, &palette, preview, thumbnail, card_width);
         })
         .response;
     let card = response.rect - bleed;
@@ -11967,6 +12097,70 @@ fn preview_card(
     if response.clicked() {
         actions.push(Action::OpenUrl(preview.url.clone()));
     }
+}
+
+/// The inside of a link preview card, a bubble's or the composer's: a
+/// 64-point thumbnail (from `thumbnail`'s chat, image id and JPEG), then the
+/// title, up to two lines of description and the domain, `card_width` wide.
+/// Returns where it was laid out.
+fn preview_layout(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    preview: &LinkPreview,
+    thumbnail: Option<(&str, &str, &[u8])>,
+    card_width: f32,
+) -> Rect {
+    let domain = preview
+        .url
+        .split("://")
+        .nth(1)
+        .unwrap_or(&preview.url)
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    // Limit text to the space beside the thumbnail and keep it
+    // left-aligned in own bubbles.
+    let column = (card_width - if thumbnail.is_some() { 72.0 } else { 0.0 }).max(0.0);
+    ui.allocate_ui_with_layout(vec2(card_width, 0.0), Layout::top_down(Align::Min), |ui| {
+        ui.set_width(card_width);
+        ui.horizontal(|ui| {
+            if let Some((chat, id, bytes)) = thumbnail {
+                let (rect, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
+                // Off-screen cards are laid out too; only a visible
+                // one keeps its thumbnail resident.
+                if ui.is_rect_visible(rect) {
+                    let uri = thumbnail_uri(ui.ctx(), chat, id, bytes);
+                    egui::Image::new(uri)
+                        .fit_to_exact_size(rect.size())
+                        .corner_radius(4.0)
+                        .paint_at(ui, rect);
+                }
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.set_width(column);
+                if let Some(title) = &preview.title {
+                    widgets::rich_text(ui, title, theme::semibold(13.5), palette.text);
+                }
+                if let Some(description) = &preview.description {
+                    let line = widgets::line(
+                        ui,
+                        description,
+                        theme::regular(12.5),
+                        palette.secondary,
+                        ui.available_width(),
+                        2,
+                    );
+                    let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+                    line.paint(ui, rect.min, palette.secondary);
+                }
+                theme::text(ui, &domain, theme::regular(12.0), palette.dim);
+            });
+        });
+    })
+    .response
+    .rect
 }
 
 /// A location as a card: the map preview WhatsApp sent across the top, then

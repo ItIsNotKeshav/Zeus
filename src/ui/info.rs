@@ -58,6 +58,8 @@ const TAB_STOP: u8 = 20;
 const LEAVE_STOP: u8 = 30;
 const RETRY_STOP: u8 = 31;
 const MEMBERS_STOP: u8 = 32;
+const BLOCK_STOP: u8 = 33;
+const TIMER_STOP: u8 = 34;
 
 /// The media view's title, and the overview row that opens it.
 fn media_title(app: &App) -> String {
@@ -680,6 +682,9 @@ struct Shown {
     description: Option<String>,
     /// The disappearing-message timer line, when the timer is known.
     timer: Option<String>,
+    timer_seconds: Option<u32>,
+    /// The reader left this chat.
+    left: bool,
 }
 
 impl Shown {
@@ -717,6 +722,8 @@ impl Shown {
                 .clone()
                 .filter(|text| chat.is_group() && !text.trim().is_empty()),
             timer: crate::util::disappearing_line(app.locale, chat.ephemeral_expiration),
+            timer_seconds: chat.ephemeral_expiration,
+            left: chat.left,
         }
     }
 }
@@ -976,25 +983,121 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                 palette.secondary,
             );
         }
-        // The chat's disappearing-message timer, read-only. A timer WhatsApp
-        // turned off reads as "Off", which is a fact; a chat whose timer
-        // nobody has mentioned draws nothing rather than guessing.
-        // Recorded every frame, drawn or not, so a test reading the marker
-        // after the row went away sees nothing instead of the last frame.
+        // The chat's disappearing-message timer. A timer WhatsApp turned off
+        // reads as "Off", which is a fact; a chat whose timer nobody has
+        // mentioned draws nothing unless it can be changed, rather than
+        // guessing. A known timer stays visible when the group's permissions
+        // make it read-only. Recorded every frame so a hidden row cannot
+        // leave the previous chat's value behind.
+        let eligible = shown.has_chat && !shown.channel && !shown.left;
+        let changeable = eligible && (!shown.group || shown.can_edit_info);
+        let showable = eligible && (changeable || shown.timer.is_some());
+        let label = shown.timer.clone().unwrap_or_else(|| {
+            crate::i18n::gettext(app.locale, "Disappearing messages").into_owned()
+        });
         ui.ctx().data_mut(|data| {
             data.insert_temp(
                 super::dialogs::disappearing_timer_id(),
-                shown.timer.as_deref().map(|text| super::dialogs::TimerRow {
-                    text: text.to_owned(),
+                showable.then(|| super::dialogs::TimerRow {
+                    text: label.clone(),
                     rect: Rect::NOTHING,
                 }),
             )
         });
-        if let Some(text) = shown.timer.as_deref() {
+        if showable {
+            let text = label.as_str();
+            // A hover highlight painted under the row: the placeholder is
+            // added first and filled in once the row's rect is known.
+            let painter = ui.painter().clone();
+            let highlight = painter.add(egui::Shape::Noop);
             let drawn = super::dialogs::disappearing_timer_row(ui, &palette, text);
             ui.ctx().data_mut(|data| {
-                data.insert_temp(super::dialogs::disappearing_timer_id(), Some(drawn))
+                data.insert_temp(super::dialogs::disappearing_timer_id(), Some(drawn.clone()))
             });
+            let saving = app.timer_saving.contains(id);
+            let can_change = changeable && !saving;
+            let area = drawn.rect.expand2(vec2(8.0, 4.0));
+            let response = ui.interact(
+                area,
+                egui::Id::new(("disappearing-timer-control", id)),
+                if can_change {
+                    Sense::click()
+                } else {
+                    Sense::hover()
+                },
+            );
+            let response = if can_change {
+                response.tab_stop(Stop::InfoControl(TIMER_STOP))
+            } else {
+                response
+            };
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, can_change, text)
+            });
+            theme::reveal_focus(&response);
+            theme::focus_outline(ui, response.id, area, f32::from(theme::RADIUS_SMALL));
+            // A clickable row reads as one: the pointer changes over it and a
+            // soft fill appears behind its icon and text.
+            if can_change && response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                painter.set(
+                    highlight,
+                    egui::Shape::rect_filled(area, theme::RADIUS_SMALL, palette.surface_hover),
+                );
+            }
+            let choices = [
+                (0, crate::i18n::gettext(app.locale, "Off")),
+                (86_400, crate::i18n::gettext(app.locale, "24 hours")),
+                (604_800, crate::i18n::gettext(app.locale, "7 days")),
+                (7_776_000, crate::i18n::gettext(app.locale, "90 days")),
+            ];
+            let mut selected = None;
+            egui::Popup::menu(&response)
+                // The click opens it, as any menu button's does.
+                .open_memory(if can_change {
+                    response.clicked().then_some(egui::SetOpenCommand::Toggle)
+                } else {
+                    Some(egui::SetOpenCommand::Bool(false))
+                })
+                .align(egui::RectAlign::BOTTOM)
+                .width(widgets::menu_width(
+                    ui,
+                    &choices
+                        .iter()
+                        .map(|(_, label)| label.as_ref())
+                        .collect::<Vec<_>>(),
+                    true,
+                ))
+                .frame(widgets::menu_frame(&palette))
+                .show_frosted(&response.ctx, |ui| {
+                    for (seconds, label) in &choices {
+                        if widgets::menu_item_enabled(
+                            ui,
+                            &palette,
+                            (shown.timer_seconds == Some(*seconds)).then_some(Icon::Check),
+                            label,
+                            can_change,
+                        ) {
+                            selected = Some(*seconds);
+                            ui.close();
+                        }
+                    }
+                });
+            if let Some(seconds) = selected {
+                app.actions.push(Action::SetDisappearingTimer {
+                    chat: id.to_owned(),
+                    seconds,
+                });
+            }
+            // Both direct and group changes disable the row while waiting.
+            if saving {
+                theme::text(
+                    ui,
+                    crate::i18n::gettext(app.locale, "Saving…"),
+                    theme::regular(12.5),
+                    palette.dim,
+                );
+            }
         }
     });
     if let Some((first, last)) = saved {
@@ -1012,14 +1115,50 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
     ui.add_space(18.0);
     actions(app, ui, shown);
-    if let Some(description) = shown.description.as_deref() {
+    let describing = app.group_description_edit.take().filter(|_| group_editable);
+    if let Some(mut draft) = describing {
         ui.add_space(SECTION_GAP);
-        section_title(
-            ui,
-            &palette,
-            &crate::i18n::gettext(app.locale, "Description"),
-            None,
-        );
+        match group_description_field(app, ui, &mut draft) {
+            Some(true) => app.actions.push(Action::SetGroupDescription {
+                chat: id.to_owned(),
+                description: draft,
+            }),
+            Some(false) => app.actions.push(Action::CloseGroupDescription),
+            None => app.group_description_edit = Some(draft),
+        }
+    } else if group_editable && shown.description.is_none() && shown.group {
+        ui.add_space(SECTION_GAP);
+        let add = crate::i18n::gettext(app.locale, "Add group description");
+        if widgets::menu_item(ui, &palette, Some(Icon::Pencil), add.as_ref()) {
+            app.actions
+                .push(Action::EditGroupDescription(String::new()));
+        }
+    } else if let Some(description) = shown.description.as_deref() {
+        ui.add_space(SECTION_GAP);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            theme::text(
+                ui,
+                crate::i18n::gettext(app.locale, "Description"),
+                theme::semibold(14.5),
+                palette.text,
+            );
+            if group_editable
+                && theme::icon_button(
+                    ui,
+                    Icon::Pencil,
+                    15.0,
+                    palette.secondary,
+                    palette.text,
+                    &crate::i18n::gettext(app.locale, "Edit group description"),
+                )
+                .clicked()
+            {
+                app.actions
+                    .push(Action::EditGroupDescription(description.to_owned()));
+            }
+        });
+        ui.add_space(10.0);
         // A long description scrolls in place, so the media and the members
         // stay close under it.
         egui::ScrollArea::vertical()
@@ -1063,6 +1202,10 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         {
             leave = true;
         }
+    }
+    if !shown.group && !shown.channel {
+        ui.add_space(SECTION_GAP);
+        super::blocking::button(app, ui, id, Stop::InfoControl(BLOCK_STOP));
     }
     if leave {
         app.actions
@@ -2711,6 +2854,75 @@ fn group_photo(
 
 /// The group name being typed. Returns `Some(true)` when Enter or the check
 /// submits it, `Some(false)` when the cross cancels it.
+/// The group description editor: a multi-line field with save and cancel.
+/// Gives `Some(true)` to save, `Some(false)` to cancel, `None` while open.
+fn group_description_field(app: &App, ui: &mut egui::Ui, draft: &mut String) -> Option<bool> {
+    let palette = app.palette;
+    let hint = crate::i18n::gettext(app.locale, "Group description");
+    let field = Frame::new()
+        .fill(palette.surface)
+        .corner_radius(CornerRadius::same(theme::RADIUS))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(draft)
+                    .id(group_description_field_id())
+                    .hint_text(
+                        egui::RichText::new(hint.as_ref())
+                            .color(palette.dim)
+                            .font(theme::regular(13.5)),
+                    )
+                    .font(theme::regular(13.5))
+                    .text_color(palette.text)
+                    .frame(Frame::NONE)
+                    .char_limit(crate::model::GROUP_DESCRIPTION_LIMIT)
+                    .desired_rows(4)
+                    .desired_width(f32::INFINITY),
+            )
+        });
+    theme::focus_outline(
+        ui,
+        field.inner.id,
+        field.response.rect,
+        f32::from(theme::RADIUS),
+    );
+    if ui.memory(|memory| memory.focused().is_none()) {
+        field.inner.request_focus();
+    }
+    let mut outcome = None;
+    ui.horizontal(|ui| {
+        if theme::icon_button(
+            ui,
+            Icon::Check,
+            18.0,
+            palette.secondary,
+            palette.accent,
+            &crate::i18n::gettext(app.locale, "Save description"),
+        )
+        .clicked()
+        {
+            outcome = Some(true);
+        }
+        if theme::icon_button(
+            ui,
+            Icon::X,
+            18.0,
+            palette.secondary,
+            palette.text,
+            &crate::i18n::gettext(app.locale, "Cancel"),
+        )
+        .clicked()
+        {
+            outcome = Some(false);
+        }
+    });
+    outcome
+}
+
+fn group_description_field_id() -> egui::Id {
+    egui::Id::new("group-description-field")
+}
+
 fn group_name_field(app: &App, ui: &mut egui::Ui, draft: &mut String) -> Option<bool> {
     let palette = app.palette;
     let mut outcome = None;

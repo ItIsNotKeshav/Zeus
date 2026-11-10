@@ -628,6 +628,13 @@ fn month_step(month: Date, direction: i32) -> Date {
     Date::new(year, number, 1).unwrap_or(month)
 }
 
+/// Where a search result's row keeps its widget id, by its message, for
+/// scripted demos.
+#[cfg(any(test, feature = "demo"))]
+pub(crate) fn hit_row_id(message: &str) -> egui::Id {
+    egui::Id::new(("chat-search-hit", message))
+}
+
 /// One result: when it was said, and the line that matched, with who said
 /// it in a group. Returns whether it was clicked.
 fn hit_row(
@@ -641,6 +648,9 @@ fn hit_row(
     let palette = app.palette;
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+    #[cfg(any(test, feature = "demo"))]
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(hit_row_id(&hit.id), response.id));
     if scroll_to {
         response.scroll_to_me(None);
     }

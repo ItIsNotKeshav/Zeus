@@ -30,9 +30,9 @@ pub(crate) fn unhex(value: &str) -> Option<Vec<u8>> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeChoice {
-    #[default]
     Dark,
     Light,
+    #[default]
     System,
     /// macOS's greys, light or dark as the system is, with bubbles shaped as
     /// Messages draws them.
