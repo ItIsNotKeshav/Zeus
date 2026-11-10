@@ -214,13 +214,15 @@ fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
             .inner;
         let list = area.with_min_y(bar.top());
         // A strip opening over the field slides the messages up with it, so
-        // the last one is never left behind it.
+        // the last one is never left behind it. The reply strip's room moves
+        // on its own spring, which the messages follow exactly.
+        let reply = reply_room(ui.ctx());
         let over = theme::animate_value(
             ui.ctx(),
             ui.id().with("composer-over"),
-            foot.height(),
+            foot.height() - reply,
             theme::MOTION_QUICK,
-        );
+        ) + reply;
         ui.scope_builder(egui::UiBuilder::new().max_rect(list), |ui| {
             messages_in(app, ui, &chat, bar.height(), over, pane);
         });
@@ -1779,42 +1781,24 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             }
             if app.editing.is_some() {
                 edit_strip(app, ui);
-            } else if let Some(reply_id) = app.reply_to.clone() {
-                let quoted = app.reply_preview(&reply_id, &chat.id).cloned();
-                match quoted {
-                    Some(quoted) => reply_strip(app, ui, &quoted),
-                    None if reply_id.chat.is_some() => {
+            } else {
+                let card = match app.reply_to.clone() {
+                    Some(reply_id) => match app.reply_preview(&reply_id, &chat.id) {
+                        Some(quoted) => Some(ReplyCard::of(app, quoted)),
                         // Losing the source page must never silently turn a
                         // private reply into an unquoted send. The worker
                         // resolves the original from the archive on Send.
-                        let palette = app.palette;
-                        let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
-                            ui.set_width(ui.available_width().max(0.0));
-                            ui.horizontal(|ui| {
-                                ui.vertical(|ui| {
-                                    ui.set_max_width((ui.available_width() - 40.0).max(0.0));
-                                    widgets::rich_text(
-                                        ui,
-                                        &crate::i18n::gettext(app.locale, "Original group message unavailable"),
-                                        theme::regular(theme::TEXT_CAPTION),
-                                        palette.secondary,
-                                    );
-                                });
-                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                    if theme::icon_button(
-                                        ui, Icon::X, 16.0, palette.secondary, palette.text,
-                                        "Cancel reply (Esc)",
-                                    ).clicked() {
-                                        app.actions.push(Action::CancelReply);
-                                    }
-                                });
-                            });
-                        });
-                        ui.ctx().data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
-                        strip_gap(ui);
-                    }
-                    None => app.reply_to = None,
-                }
+                        None if reply_id.chat.is_some() => Some(ReplyCard::Unavailable),
+                        None => {
+                            app.reply_to = None;
+                            None
+                        }
+                    },
+                    None => None,
+                };
+                // Drawn while no reply is open too, so the strip it shows
+                // next opens from nothing and one just closed can leave.
+                reply_strip(app, ui, &chat.id, card);
             }
             // Nearest the pill, under a reply. A caption goes without one.
             if app.pending.is_empty() && app.recording.is_none() {
@@ -2876,35 +2860,187 @@ fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
     strip_gap(ui);
 }
 
-fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
-    let palette = app.palette;
-    let who = if quoted.from_me {
-        "You".to_owned()
-    } else {
-        app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
+/// What the reply strip over the composer shows.
+#[derive(Clone, Debug, PartialEq)]
+enum ReplyCard {
+    /// Who wrote the message being replied to, and a line of what it says.
+    Quote { who: String, summary: String },
+    /// A private reply whose group message is not on this computer.
+    Unavailable,
+}
+
+impl ReplyCard {
+    fn of(app: &App, quoted: &Message) -> Self {
+        let who = if quoted.from_me {
+            "You".to_owned()
+        } else {
+            app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
+        };
+        let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
+        Self::Quote { who, summary }
+    }
+}
+
+/// The spring the reply strip opens on: critically damped, since its room
+/// moves the field and the messages, and a reversal mid-way carries on
+/// from where it is.
+const REPLY_OPEN: crate::motion::Spring = crate::motion::Spring::new(0.35, 0.0);
+/// The spring it closes on, quicker, as surfaces close.
+const REPLY_CLOSE: crate::motion::Spring =
+    crate::motion::Spring::new(0.35 * theme::CLOSE as f64, 0.0);
+/// The share of the way open by which the strip is fully opaque: it fades
+/// in over the start of its rise and out over the end of its fall.
+const REPLY_FADE: f32 = 0.4;
+
+/// Where the reply strip over the composer stands as it opens and closes.
+/// Kept in the context's memory and brought up to date once a pass by
+/// [`reply_strip`].
+#[derive(Clone)]
+struct ReplyReveal {
+    chat: String,
+    /// The card shown: the open reply's, or the last one while it closes.
+    card: Option<ReplyCard>,
+    /// How far open the strip is, 0 closed and 1 open, with its speed per
+    /// second.
+    shown: f32,
+    velocity: f32,
+    /// The strip's height with the gap under it, as last laid out.
+    height: f32,
+    /// The room it took in the pass it was last drawn.
+    room: f32,
+    /// When it was last brought up to date, and the pass it was.
+    time: f64,
+    pass: u64,
+}
+
+fn reply_reveal_id() -> egui::Id {
+    egui::Id::new("reply-reveal")
+}
+
+/// The room the reply strip takes over the field in this pass, while it
+/// opens, closes or shows: 0 when it was not drawn.
+fn reply_room(ctx: &egui::Context) -> f32 {
+    ctx.data(|data| data.get_temp::<ReplyReveal>(reply_reveal_id()))
+        .filter(|reveal| reveal.pass == ctx.cumulative_pass_nr())
+        .map_or(0.0, |reveal| reveal.room)
+}
+
+/// The strip over the composer that quotes the message being replied to,
+/// `card`, or `None` while no reply is open. It opens out of the field: its
+/// room grows on [`REPLY_OPEN`] while the strip rises from behind the field
+/// and fades in, lifting the messages with it, and it sinks back the same
+/// way on [`REPLY_CLOSE`] once the reply is sent or cancelled, turning
+/// around from where it is. With a screen reader, in a background window,
+/// or in a chat just opened it is in place at once.
+fn reply_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, card: Option<ReplyCard>) {
+    let ctx = ui.ctx().clone();
+    let id = reply_reveal_id();
+    let now = ctx.input(|input| input.time);
+    let pass = ctx.cumulative_pass_nr();
+    let calm = selection_calm(&ctx, app.window_focused);
+    let open = card.is_some();
+    let target = if open { 1.0 } else { 0.0 };
+    let mut reveal = match ctx.data(|data| data.get_temp::<ReplyReveal>(id)) {
+        // Drawn in the pass before for the same chat: it moves on.
+        Some(mut reveal) if !calm && reveal.chat == chat && reveal.pass + 1 >= pass => {
+            let spring = if open { REPLY_OPEN } else { REPLY_CLOSE };
+            let dt = (now - reveal.time).max(0.0);
+            let (offset, velocity) = spring.advance(reveal.shown - target, reveal.velocity, dt);
+            if offset.abs() <= 1e-3 && velocity.abs() <= 1e-2 {
+                (reveal.shown, reveal.velocity) = (target, 0.0);
+            } else {
+                (reveal.shown, reveal.velocity) = (target + offset, velocity);
+            }
+            reveal
+        }
+        previous => ReplyReveal {
+            chat: chat.to_owned(),
+            card: None,
+            shown: target,
+            velocity: 0.0,
+            height: previous.map_or(0.0, |reveal| reveal.height),
+            room: 0.0,
+            time: now,
+            pass,
+        },
     };
-    let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
+    if card.is_some() {
+        reveal.card = card;
+    } else if reveal.shown == 0.0 && reveal.velocity == 0.0 {
+        reveal.card = None;
+    }
+    reveal.room = 0.0;
+    if let Some(card) = reveal.card.clone() {
+        let top = ui.cursor().min;
+        let mut strip = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(ui.available_rect_before_wrap())
+                .layout(Layout::top_down(Align::Min)),
+        );
+        let shown = reveal.shown.clamp(0.0, 1.0);
+        if shown < 1.0 {
+            // Laid out where it rests, below the top of its room, and cut
+            // off where the field starts, so it rises from behind it.
+            let mut clip = strip.clip_rect();
+            clip.max.y = clip.max.y.min(top.y + reveal.height * shown);
+            strip.set_clip_rect(clip);
+            strip.multiply_opacity((shown / REPLY_FADE).min(1.0));
+        }
+        let rect = reply_card(app, &mut strip, &card);
+        strip_gap(&mut strip);
+        reveal.height = strip.cursor().min.y - top.y;
+        reveal.room = reveal.height * shown;
+        ctx.data_mut(|data| data.insert_temp(reply_strip_id(), rect));
+        ui.add_space(reveal.room);
+    }
+    if reveal.shown != target || reveal.velocity != 0.0 {
+        crate::motion::request_frame(&ctx);
+    }
+    reveal.time = now;
+    reveal.pass = pass;
+    ctx.data_mut(|data| data.insert_temp(id, reveal));
+}
+
+/// Draws the reply strip's card in `ui` and returns where it lies.
+fn reply_card(app: &mut App, ui: &mut egui::Ui, card: &ReplyCard) -> Rect {
+    let palette = app.palette;
+    let locale = app.locale;
     let strip = widgets::raised(ui, &palette, strip_frame(&palette), |ui| {
         ui.set_width(ui.available_width().max(0.0));
         ui.horizontal(|ui| {
-            let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
-            ui.painter().rect_filled(bar, 2.0, palette.accent);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.set_max_width((ui.available_width() - 40.0).max(0.0));
-                widgets::rich_text(
-                    ui,
-                    &format!("Replying to {who}"),
-                    theme::semibold(theme::TEXT_CAPTION),
-                    palette.accent,
-                );
-                widgets::rich_text(
-                    ui,
-                    &summary,
-                    theme::regular(theme::TEXT_CAPTION),
-                    palette.secondary,
-                );
-            });
+            match card {
+                ReplyCard::Quote { who, summary } => {
+                    let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
+                    ui.painter().rect_filled(bar, 2.0, palette.accent);
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.set_max_width((ui.available_width() - 40.0).max(0.0));
+                        widgets::rich_text(
+                            ui,
+                            &format!("Replying to {who}"),
+                            theme::semibold(theme::TEXT_CAPTION),
+                            palette.accent,
+                        );
+                        widgets::rich_text(
+                            ui,
+                            summary,
+                            theme::regular(theme::TEXT_CAPTION),
+                            palette.secondary,
+                        );
+                    });
+                }
+                ReplyCard::Unavailable => {
+                    ui.vertical(|ui| {
+                        ui.set_max_width((ui.available_width() - 40.0).max(0.0));
+                        widgets::rich_text(
+                            ui,
+                            &crate::i18n::gettext(locale, "Original group message unavailable"),
+                            theme::regular(theme::TEXT_CAPTION),
+                            palette.secondary,
+                        );
+                    });
+                }
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if theme::icon_button(
                     ui,
@@ -2921,9 +3057,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
             });
         });
     });
-    ui.ctx()
-        .data_mut(|data| data.insert_temp(reply_strip_id(), strip.response.rect));
-    strip_gap(ui);
+    strip.response.rect
 }
 
 /// Where the emoji or @mention suggestion list was drawn, for layout tests.
