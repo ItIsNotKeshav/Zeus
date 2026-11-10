@@ -8682,6 +8682,16 @@ impl Worker {
             &jid,
             &original,
         );
+        // A view-once original is quoted by its kind alone: its keys in the
+        // quote would let the reply carry the media past its one viewing.
+        if let Content::PhoneOnly {
+            once: Some(kind), ..
+        } = row.content
+            && original.is_view_once()
+        {
+            context.quoted_message =
+                whatsapp_rust::prelude::MessageField::some(view_once_quote(kind));
+        }
         // The quoted copy can still carry the everyone bit. Clear it so a
         // reply does not notify the group again. The quote row keeps the
         // mention for display from the archived message.
@@ -11540,6 +11550,43 @@ fn participant_mentions(mentions: &[String]) -> (Vec<String>, bool) {
         .cloned()
         .collect();
     (jids, mention_all)
+}
+
+/// What a reply to view-once media quotes: the kind of media, marked view
+/// once, with none of the keys or thumbnail that would let the reply carry
+/// the media itself. WhatsApp then shows the quote as "View once photo".
+fn view_once_quote(kind: crate::model::OnceMedia) -> wa::Message {
+    use crate::model::OnceMedia;
+    use whatsapp_rust::prelude::MessageField;
+    let mut inner = wa::Message::default();
+    match kind {
+        OnceMedia::Photo => {
+            let mut proto = wa::message::ImageMessage::default();
+            proto.mimetype = Some("image/jpeg".into());
+            proto.view_once = Some(true);
+            inner.image_message = MessageField::some(proto);
+        }
+        OnceMedia::Video => {
+            let mut proto = wa::message::VideoMessage::default();
+            proto.mimetype = Some("video/mp4".into());
+            proto.view_once = Some(true);
+            inner.video_message = MessageField::some(proto);
+        }
+        OnceMedia::Voice | OnceMedia::Audio => {
+            let mut proto = wa::message::AudioMessage::default();
+            proto.mimetype = Some("audio/ogg; codecs=opus".into());
+            proto.ptt = Some(kind == OnceMedia::Voice);
+            proto.view_once = Some(true);
+            inner.audio_message = MessageField::some(proto);
+        }
+    }
+    let mut proto = wa::Message::default();
+    proto.view_once_message_v2 = MessageField::some({
+        let mut proto = wa::message::FutureProofMessage::default();
+        proto.message = MessageField::some(inner);
+        proto
+    });
+    proto
 }
 
 /// Drops the everyone notify bit from a context and from the message it quotes.
@@ -21995,6 +22042,58 @@ mod receipt_tests {
         assert_eq!(status("B2"), Delivery::Delivered);
         assert_eq!(status("B1"), Delivery::Sent);
     }
+    /// A reply to a view-once photo quotes it as a view-once photo, with
+    /// none of the original's keys or thumbnail.
+    #[test]
+    fn a_reply_to_view_once_media_quotes_its_kind_without_the_media() {
+        use whatsapp_rust::prelude::MessageField;
+        let (worker, _, _, _) = worker();
+        worker.archive.ensure_chat(PEER, "Fixture").unwrap();
+        let source = Message {
+            chat: PEER.into(),
+            sender: PEER.into(),
+            from_me: false,
+            content: Content::PhoneOnly {
+                view_once: true,
+                live_location: false,
+                once: Some(crate::model::OnceMedia::Photo),
+            },
+            ..own_message("once", 100)
+        };
+        let original = {
+            let mut image = wa::message::ImageMessage::default();
+            image.mimetype = Some("image/jpeg".into());
+            image.media_key = Some(vec![7; 32]);
+            image.jpeg_thumbnail = Some(vec![1, 2, 3]);
+            image.caption = Some("secret".into());
+            let mut inner = wa::Message::default();
+            inner.image_message = MessageField::some(image);
+            let mut proto = wa::Message::default();
+            proto.view_once_message_v2 = MessageField::some({
+                let mut proto = wa::message::FutureProofMessage::default();
+                proto.message = MessageField::some(inner);
+                proto
+            });
+            proto
+        };
+        worker
+            .archive
+            .insert_message(&source, Some(&original.encode_to_vec()))
+            .unwrap();
+        let (context, _) = worker.quote(PEER, Some("once")).unwrap().unwrap();
+        let quoted = context.quoted_message.as_option().expect("a quote");
+        assert!(quoted.is_view_once());
+        let image = quoted
+            .get_base_message()
+            .image_message
+            .as_option()
+            .expect("quoted as a photo");
+        assert_eq!(image.media_key, None);
+        assert_eq!(image.jpeg_thumbnail, None);
+        assert_eq!(image.caption, None);
+        assert_eq!(image.view_once, Some(true));
+    }
+
     #[test]
     fn replies_keep_the_original_reference_on_the_wire_and_in_the_archive() {
         for chat in [PEER, "123-456@g.us"] {
