@@ -578,6 +578,13 @@ fn push_to_talk(app: &mut App, ctx: &egui::Context) {
 /// staged picture alone, Enter keeps the crop.
 fn editor_keys(app: &mut App, ctx: &egui::Context) {
     let mut actions = Vec::new();
+    if app.picker.is_some() {
+        // The picker opened over it keeps its own keys; Escape closes it.
+        if ctx.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Escape)) {
+            app.actions.push(Action::ClosePicker);
+        }
+        return;
+    }
     ctx.input_mut(|input| {
         if input.consume_key(Modifiers::NONE, Key::Escape) {
             actions.push(Action::CancelPictureEdit);

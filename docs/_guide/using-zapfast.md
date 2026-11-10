@@ -270,14 +270,23 @@ Click a picture above the composer to crop it before you send it. The picture
 opens over the window with the region to keep marked, and you can drag that
 region by its edges and corners or move it whole. **Turn left** and **Turn
 right** turn the picture a quarter at a time, and **Reset** puts it back the way
-it started. Press Enter or click the check to keep the crop, or Escape or the
-close button to leave the picture as it was.
+it started, crop, turns and drawing alike. Press Enter or click the check to keep
+your changes, or Escape or the close button to leave the picture as it was.
 
-Keeping a crop does not change the file you picked. Zeus writes the cropped
-picture beside its other media and sends that one, keeping any see-through
-parts of it. Opening the cropper again
-starts from your original with the crop you chose, so you can widen it back out
-without a second pass over the picture.
+The tools under the picture draw on it. **Pen** draws a line and
+**Highlighter** a wide see-through one, each in the colour picked beside them.
+**Stickers and emoji** opens a tray of emoji and the stickers in your own
+packs: click one to lay it on the picture, drag it to move it, drag its corner
+to resize it, and click its × to take it off. **Undo** (or Ctrl+Z, Cmd+Z on
+macOS) takes back the last line or sticker. When a single photo is staged, the
+**View once** button at the top sends it as a photo that can be opened only
+once, the same switch as the one beside the composer.
+
+Keeping your changes does not change the file you picked. Zeus writes the
+edited picture beside its other media and sends that one, keeping any
+see-through parts of it. Opening the editor again starts from your original
+with the crop and drawing you chose, so you can widen the crop back out or undo
+a line without a second pass over the picture.
 
 Pictures and videos sent as a WhatsApp album appear together in a grid. Only
 items with the same protocol album identity, sender and local calendar date
