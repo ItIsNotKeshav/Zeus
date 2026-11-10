@@ -352,10 +352,22 @@ impl Palette {
         })
     }
 
-    /// Whether this is the Messages theme's glass: a frosted header, glass
-    /// pills and tints, on every platform. Whether the desktop also shows
-    /// through the window is [`crate::backdrop::active`].
+    /// Whether the palette draws glass: a frosted header and composer, glass
+    /// pills and tints, on every platform. Zeus and Messages always do. The
+    /// WhatsApp look does too until Glass is Solid, which gives back its
+    /// solid header, composer and menus exactly as they were. Whether the
+    /// desktop also shows through the window is [`Palette::shows_desktop`].
     pub fn vibrant(&self) -> bool {
+        match self.bubbles {
+            BubbleStyle::Messages | BubbleStyle::Nothing => true,
+            BubbleStyle::WhatsApp => crate::backdrop::glass() < 1.0,
+        }
+    }
+
+    /// Whether the desktop may show through the window in this palette: only
+    /// Zeus and Messages, whose windows have a material to take. WhatsApp's
+    /// window stays opaque at every Glass, as it always was.
+    pub fn shows_desktop(&self) -> bool {
         matches!(self.bubbles, BubbleStyle::Messages | BubbleStyle::Nothing)
     }
 
@@ -364,7 +376,7 @@ impl Palette {
     pub fn sidebar(&self) -> Color32 {
         if self.bubbles == BubbleStyle::Nothing && crate::backdrop::active() {
             window_fill(self.panel, if self.dark { 210 } else { 230 })
-        } else if self.vibrant() && crate::backdrop::active() {
+        } else if self.shows_desktop() && crate::backdrop::active() {
             window_multiply(self.panel, SIDEBAR_TINT)
         } else {
             self.panel
@@ -376,7 +388,19 @@ impl Palette {
     /// translucent sidebar darkens the same way, with a little more of it
     /// opaque.
     pub fn rail(&self) -> Color32 {
-        let sidebar = self.sidebar();
+        self.shaded_rail(self.sidebar())
+    }
+
+    /// The window's title bar where the system draws it (Windows): the rail
+    /// as it is at Solid Glass, opaque whatever Glass says, so the bar is the
+    /// same solid colour with the desktop showing through the window or not.
+    pub fn titlebar(&self) -> Color32 {
+        let [r, g, b, _] = self.shaded_rail(self.panel).to_array();
+        Color32::from_rgb(r, g, b)
+    }
+
+    /// `sidebar` one shade darker, as [`Palette::rail`] lays it.
+    fn shaded_rail(&self, sidebar: Color32) -> Color32 {
         let shade = if self.dark {
             DARK_RAIL_SHADE
         } else {
@@ -2417,6 +2441,44 @@ mod tests {
         stored["bubbles"] = "messages".into();
         let palette: Palette = serde_json::from_value(stored).unwrap();
         assert_eq!(palette.bubbles, BubbleStyle::WhatsApp);
+    }
+
+    /// WhatsApp's look draws glass (its frosted header, composer and menus)
+    /// while Glass is short of Solid, and its window stays opaque; Zeus and
+    /// Messages keep their window material.
+    #[test]
+    fn whatsapp_glass_follows_the_slider_and_keeps_its_window() {
+        let whatsapp = Palette::dark();
+        let zeus = Palette::nothing_dark();
+        let before = crate::backdrop::glass();
+        crate::backdrop::set_glass(crate::backdrop::GLASS_DEFAULT);
+        assert!(whatsapp.vibrant());
+        assert!(!whatsapp.shows_desktop());
+        assert!(zeus.vibrant() && zeus.shows_desktop());
+        crate::backdrop::set_glass(1.0);
+        assert!(!whatsapp.vibrant());
+        assert!(zeus.vibrant());
+        crate::backdrop::set_glass(before);
+    }
+
+    /// The system title bar's colour is opaque and the same at every Glass.
+    #[test]
+    fn titlebar_ignores_glass() {
+        for palette in [
+            Palette::dark(),
+            Palette::light(),
+            Palette::nothing_dark(),
+            Palette::nothing_light(),
+        ] {
+            let before = crate::backdrop::glass();
+            crate::backdrop::set_glass(0.0);
+            let clear = palette.titlebar();
+            crate::backdrop::set_glass(1.0);
+            let solid = palette.titlebar();
+            crate::backdrop::set_glass(before);
+            assert_eq!(clear, solid);
+            assert!(clear.is_opaque());
+        }
     }
 
     /// Bubble contents stay readable for every palette, custom ones included.
