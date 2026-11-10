@@ -118,6 +118,18 @@ pub fn window_is_transparent() -> bool {
     WINDOW_TRANSPARENT.load(Ordering::Relaxed)
 }
 
+/// Takes away the hairline border and rounded corners Windows 11 draws
+/// around a borderless window of this app titled `title`. A see-through
+/// window, such as the chat bubbles', otherwise shows them as a thin rectangle
+/// floating round what it draws. Does nothing on other systems, and nothing
+/// until the window exists, so call it on each frame the window is shown.
+pub fn strip_window_frame(title: &str) {
+    #[cfg(windows)]
+    platform::strip_window_frame(title);
+    #[cfg(not(windows))]
+    let _ = title;
+}
+
 /// The colour a frame clears to: `window`, made opaque on an opaque window,
 /// where alpha would leave the last frame's pixels behind (a theme with
 /// alpha chosen while the window is open, until the next one is made).
@@ -183,6 +195,61 @@ mod platform {
     /// and the window stays opaque.
     pub fn may_show_through() -> bool {
         true
+    }
+
+    /// See [`super::strip_window_frame`]. The window is found by its title
+    /// among this process's own, and each one is stripped once.
+    pub fn strip_window_frame(title: &str) {
+        use windows::Win32::Graphics::Dwm::{
+            DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+        use windows::core::PCWSTR;
+
+        /// `DWMWA_COLOR_NONE`: no border at all, rather than one in a colour.
+        const NO_BORDER: u32 = 0xFFFF_FFFE;
+        /// The window last stripped, so the attributes are set once for it.
+        static STRIPPED: Mutex<Option<isize>> = Mutex::new(None);
+
+        let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: `wide` ends in NUL and outlives the call.
+        let Ok(hwnd) = (unsafe { FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr())) }) else {
+            return;
+        };
+        if hwnd.is_invalid() {
+            return;
+        }
+        let mut process = 0_u32;
+        // SAFETY: `hwnd` was just found, and `process` holds the id asked for.
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut process)) };
+        if process != std::process::id() {
+            return;
+        }
+        let key = hwnd.0 as isize;
+        let mut stripped = STRIPPED.lock().unwrap_or_else(|p| p.into_inner());
+        if *stripped == Some(key) {
+            return;
+        }
+        let border = COLORREF(NO_BORDER);
+        let corners = DWMWCP_DONOTROUND;
+        // SAFETY: a live window of this process; the attributes are plain
+        // values of the sizes DWM expects. Windows 10 refuses both, where
+        // there is no such border to take away.
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_BORDER_COLOR,
+                (&raw const border).cast(),
+                size_of::<COLORREF>() as u32,
+            );
+            let _ = DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                (&raw const corners).cast(),
+                size_of_val(&corners) as u32,
+            );
+        }
+        *stripped = Some(key);
     }
 
     /// Personalisation's Transparency effects, off. A missing value is on,
