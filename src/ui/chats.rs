@@ -1113,7 +1113,10 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             };
             (title, "Choose All to see every chat.")
         } else if app.syncing {
-            ("Loading your chats", "Receiving history from your phone.")
+            let label = crate::i18n::gettext(app.locale, "Loading your chats");
+            let detail = crate::i18n::gettext(app.locale, "Receiving history from your phone.");
+            super::skeleton::list(ui, &palette, label.as_ref(), detail.as_ref());
+            return;
         } else {
             (
                 "No chats yet",
