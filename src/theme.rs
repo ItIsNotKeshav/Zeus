@@ -52,7 +52,7 @@ pub fn theme_status(status: fastframe_theme::Status) -> &'static str {
             "The Omarchy palette could not be loaded. Keeping the last usable appearance. See the log for details."
         }
         Status::Problem(Problem::LoaderFailed | _) => {
-            "Custom themes could not be loaded. Run zapfast reload-themes to try again."
+            "Custom themes could not be loaded. Run zeus reload-themes to try again."
         }
     }
 }

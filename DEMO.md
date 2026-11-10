@@ -1,6 +1,6 @@
 # Developing with the demo
 
-The `demo` feature builds ZapFast with offline sample chats, for development,
+The `demo` feature builds Zeus with offline sample chats, for development,
 screenshots, and recorded tours. `AGENTS.md` describes the architecture and
 the rules for changes; `CONTRIBUTING.md` lists the checks.
 
@@ -52,7 +52,7 @@ cargo build --locked --features demo
 ./target/debug/zapfast --demo-tour --demo-size 1280x800
 ```
 
-The **ZapFast Demo** window waits for **Space**. The 41-second tour starts with
+The **Zeus Demo** window waits for **Space**. The 41-second tour starts with
 search, switches chats with keyboard shortcuts, scrolls, right-clicks a message
 and selects Reply, types quickly, completes emoji and mentions, searches the GIF
 picker and sends a still sticker, opens group information and the shortcut list,
@@ -137,7 +137,7 @@ content:
 ```
 
 On Omarchy, run `omarchy screenrecord`, select the demo window, then press Space
-in ZapFast. Recording has no audio unless you explicitly enable desktop or
+in Zeus. Recording has no audio unless you explicitly enable desktop or
 microphone audio. Stop with `omarchy screenrecord --stop-recording` after the
 tour finishes. The default capture records a fixed rectangle, so keep the demo
 window visible and stationary until recording stops.

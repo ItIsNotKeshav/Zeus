@@ -4526,7 +4526,7 @@ impl App {
                     .into_owned(),
                     crate::calls::CALL_LINKS_OFF => crate::i18n::gettext(
                         self.locale,
-                        "ZapFast can't join group calls yet: open the link on your phone.",
+                        "Zeus can't join group calls yet: open the link on your phone.",
                     )
                     .into_owned(),
                     _ => message,
@@ -7414,7 +7414,7 @@ impl App {
                     } else {
                         self.toast(crate::i18n::gettext(
                             self.locale,
-                            "ZapFast can't join group calls yet: open the link on your phone.",
+                            "Zeus can't join group calls yet: open the link on your phone.",
                         ));
                     }
                 } else if let Some(code) = crate::safety::group_invite_code(&url) {

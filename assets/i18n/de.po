@@ -1989,19 +1989,19 @@ msgstr "Eingehender Anruf"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
 "your phone."
 msgstr ""
-"{caller} ruft {group} an. ZapFast kann Gruppenanrufen noch nicht beitreten: "
+"{caller} ruft {group} an. Zeus kann Gruppenanrufen noch nicht beitreten: "
 "Nimm auf deinem Telefon ab."
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"{caller} is calling you and others. Zeus can't join group calls yet: "
 "answer on your phone."
 msgstr ""
-"{caller} ruft dich und andere an. ZapFast kann Gruppenanrufen noch nicht "
+"{caller} ruft dich und andere an. Zeus kann Gruppenanrufen noch nicht "
 "beitreten: Nimm auf deinem Telefon ab."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
@@ -2140,9 +2140,9 @@ msgstr ""
 "freigeschaltet. Bitte jemanden in der Gruppe, anzurufen, und nimm hier ab."
 
 #: src/app.rs:4106 src/app.rs:6697
-msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgid "Zeus can't join group calls yet: open the link on your phone."
 msgstr ""
-"ZapFast kann Gruppenanrufen noch nicht beitreten: Öffne den Link auf deinem "
+"Zeus kann Gruppenanrufen noch nicht beitreten: Öffne den Link auf deinem "
 "Telefon."
 
 #: src/app.rs:4176

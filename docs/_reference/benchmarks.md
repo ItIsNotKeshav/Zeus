@@ -7,7 +7,7 @@ nav_order: 4
 
 ## Results
 
-ZapFast used **150 MB of idle RAM**, compared with **1.13 GB for WhatsApp Web
+Zeus used **150 MB of idle RAM**, compared with **1.13 GB for WhatsApp Web
 and its Chromium processes**. Both clients were linked to the same account.
 These are medians from four paired runs on one Linux desktop, measured on
 15 September 2026.
@@ -26,7 +26,7 @@ table below is the measured 0.13.1 run.
 timings matters: a browser window can appear while WhatsApp is still loading.
 The first-window measurement uses the same compositor event for both apps.
 
-*The chat-UI observations use different detectors: ZapFast's generic “Chats”
+*The chat-UI observations use different detectors: Zeus's generic “Chats”
 header in a cropped screen capture, and WhatsApp Web's chat pane with at least
 one row in the page. Both include detection and window-placement overhead.
 They illustrate what we observed; they do not establish a precise multiplier
@@ -41,7 +41,7 @@ Each RAM figure is the median of five idle samples. The headline figures are
 the medians of these four runs. MB and GB use decimal units; MiB uses binary
 units.
 
-| Run | ZapFast RAM, MiB PSS | Web + Chromium RAM, MiB PSS | ZapFast first window | Chromium first window |
+| Run | Zeus RAM, MiB PSS | Web + Chromium RAM, MiB PSS | Zeus first window | Chromium first window |
 | --- | ---: | ---: | ---: | ---: |
 | 1 | 147.9 | 1,093.1 | 156.0 ms | 526.2 ms |
 | 2 | 143.1 | 1,071.8 | 154.1 ms | 516.9 ms |
@@ -56,7 +56,7 @@ first memory sample and is excluded.
 ## How we measured
 
 **Machine and software.** AMD Ryzen 5 7500F, 62.4 GiB usable RAM, Arch Linux
-7.2.3, and Hyprland. ZapFast was the installed 0.13.1 release, using real
+7.2.3, and Hyprland. Zeus was the installed 0.13.1 release, using real
 linked chats. Chromium was version 152.0.7977.82, with a dedicated profile,
 one WhatsApp Web page, and no installed extensions. The regular browser
 profile remained open in the background.
@@ -78,7 +78,7 @@ shared pages, so summing it avoids counting those pages repeatedly.
 The [Linux kernel documentation](https://www.kernel.org/doc/html/latest/filesystems/proc.html)
 defines the metric. Chromium's total includes its browser, renderers, GPU,
 utility, zygote, and crash-handler processes: 14 processes in these runs,
-compared with one for ZapFast. Neither app had swapped memory in the samples.
+compared with one for Zeus. Neither app had swapped memory in the samples.
 
 ## What the comparison covers
 
@@ -101,11 +101,11 @@ of private chats.
 
 ## Try it
 
-ZapFast is a native WhatsApp client written in Rust for Linux, macOS, and
+Zeus is a native WhatsApp client written in Rust for Linux, macOS, and
 Windows. On Arch Linux:
 
 ```sh
 yay -S zapfast-bin
 ```
 
-[Download ZapFast](/download/).
+[Download Zeus](/download/).
