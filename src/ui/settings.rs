@@ -324,6 +324,7 @@ fn category_icon(source: &str) -> Icon {
         "System" => Icon::Monitor,
         "Account" => Icon::User,
         "Files" => Icon::Download,
+        "Experimental" => Icon::Flask,
         "About" => Icon::Info,
         _ => Icon::Settings,
     }
@@ -1100,6 +1101,24 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
+    let mut experimental = Section::new(translated(locale, "Experimental"));
+    experimental.toggle(
+        translated(locale, "Split view"),
+        translated(
+            locale,
+            "Drag a chat from the list onto the open one to read two side by side, or pop a chat out into a small window above the others. The window grows to fit both chats when it can.",
+        ),
+        |settings| &mut settings.split_view,
+    );
+    experimental.toggle(
+        translated(locale, "Chat bubbles"),
+        translated(
+            locale,
+            "Keep up to three chats as bubbles floating over your other windows. Click one to open a small chat where you can reply, and attach, paste or drop pictures and files. Start one from a chat's menu with Open as bubble.",
+        ),
+        |settings| &mut settings.chat_bubbles,
+    );
+
     let mut about_section = Section::new(translated(locale, "About"));
     about_section.block(
         vec![
@@ -1129,6 +1148,7 @@ fn sections(app: &App) -> Vec<Section> {
         system,
         account_section,
         files,
+        experimental,
         about_section,
     ]
 }

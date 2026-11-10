@@ -55,6 +55,8 @@ pub struct Account {
     pub(crate) chat_export_allowed_sent: Option<bool>,
     /// The phone's "Disable link previews"; also on until the phone has said.
     pub link_previews_disabled: bool,
+    /// A second chat beside the open one in the chat panel.
+    pub split: Option<crate::app::Split>,
     /// The background-history state last sent to this account's worker: the
     /// switch and the chat on screen.
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
@@ -205,6 +207,7 @@ impl Account {
             left_pending: false,
             phone_history: HashMap::new(),
             open_chat,
+            split: None,
             prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),

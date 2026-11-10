@@ -3052,6 +3052,50 @@ pub enum Action {
         messages: Vec<String>,
         to_chat: ChatId,
     },
+    /// Opens a chat in a pane on one side of the chat panel, beside the open
+    /// chat, and makes it the open chat: a chat dragged out of the list and
+    /// dropped on a side, or picked from a menu.
+    OpenSplit {
+        chat: ChatId,
+        side: crate::app::Side,
+    },
+    /// Makes the chat in the other pane of the split the open chat.
+    FocusSplit(ChatId),
+    /// Closes the pane showing this chat; the chat in the other pane fills
+    /// the panel.
+    CloseSplit(ChatId),
+    /// Puts the open chat's pane on the other side of the panel.
+    SwapSplit,
+    /// Shows a chat in a window of its own, above the other windows.
+    PopOut(ChatId),
+    /// Closes the pop-out window.
+    ClosePopOut,
+    /// Closes the pop-out and opens its chat in the window.
+    DockPopOut,
+    /// Sends what the pop-out's reply field holds to its chat.
+    PopOutSend {
+        chat: ChatId,
+        text: String,
+    },
+    /// Keeps a chat as a bubble over other windows and opens it.
+    Bubble(ChatId),
+    /// Opens this chat's bubble, or closes it when it is the open one.
+    ToggleBubble(ChatId),
+    /// Closes the open bubble back into its picture.
+    CollapseBubbles,
+    /// Lets go of a chat's bubble.
+    DismissBubble(ChatId),
+    /// Lets go of a chat's bubble and opens the chat in the window.
+    DockBubble(ChatId),
+    /// Sends what a chat's bubble holds: its text, its attachments, or both.
+    BubbleSend(ChatId),
+    /// Picks files to attach in a chat's bubble.
+    BubbleAttach(ChatId),
+    /// Takes one attachment out of a chat's bubble.
+    BubbleUnstage {
+        chat: ChatId,
+        index: usize,
+    },
     /// Starts selecting messages in the open chat, beginning with this one.
     SelectMessage(String),
     /// Adds a message to the selection or removes it.
@@ -3312,8 +3356,6 @@ pub enum Action {
     CloseUpdate,
     /// Asks GitHub for a newer release now, from Settings.
     CheckForUpdates,
-    /// Follows stable releases only, or betas too, from About.
-    SetUpdateChannel(crate::updates::Channel),
     /// Runs the benchmark in a second window, from About.
     StartBenchmark,
     /// Closes the benchmark window before it ends.

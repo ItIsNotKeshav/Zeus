@@ -112,6 +112,12 @@ pub fn set_window_transparent(transparent: bool) {
     WINDOW_TRANSPARENT.store(transparent, Ordering::Relaxed);
 }
 
+/// Whether the main window was made transparent, which also means its GL
+/// config has an alpha channel: other windows of the app may be see-through.
+pub fn window_is_transparent() -> bool {
+    WINDOW_TRANSPARENT.load(Ordering::Relaxed)
+}
+
 /// The colour a frame clears to: `window`, made opaque on an opaque window,
 /// where alpha would leave the last frame's pixels behind (a theme with
 /// alpha chosen while the window is open, until the next one is made).
