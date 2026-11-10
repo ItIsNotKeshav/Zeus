@@ -1142,12 +1142,7 @@ fn show_over_glass<R>(
     // Only an open popup runs its animation: a closed one asking for it
     // each frame would start it anew and keep the window repainting.
     let appear = if popup.is_open() {
-        ctx.animate_bool_with_time_and_easing(
-            id.with("appear"),
-            true,
-            theme::MOTION_QUICK,
-            theme::ease_out,
-        )
+        theme::appear(ctx, id.with("appear"), theme::MOTION_QUICK)
     } else {
         0.0
     };
@@ -1157,7 +1152,7 @@ fn show_over_glass<R>(
     });
     let Some(shown) = shown else {
         // Closed: the next opening starts from the beginning.
-        ctx.animate_bool_with_time(id.with("appear"), false, 0.0);
+        theme::forget_motion(ctx, id.with("appear"));
         return None;
     };
     if measured {
