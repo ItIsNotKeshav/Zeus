@@ -955,6 +955,10 @@ pub struct App {
     tray_badge: u32,
     /// Whether the app is running without a window.
     pub window_hidden: bool,
+    /// Whether the window exists but nothing of it is on screen: minimized,
+    /// fully covered by other windows, or hidden with the app (Cmd+H). The
+    /// open chat is not being read then, so its messages notify.
+    pub window_unseen: bool,
     /// Whether window close should keep the process running.
     pub hide_intent: bool,
     /// Whether a headless app should create a window.
@@ -1713,6 +1717,7 @@ impl App {
             tray_lockable,
             tray_badge: 0,
             window_hidden: false,
+            window_unseen: false,
             hide_intent: false,
             wants_show: false,
             tray_wait: None,
@@ -2293,10 +2298,13 @@ impl App {
         }
         let reading = !self.events_hidden
             && !self.window_hidden
+            && !self.window_unseen
             && self.chat_view()
             && self.open_chat.as_deref() == Some(chat_id);
         // An open, visible chat is on screen even when another window has the
-        // focus: its message is already there to see, so nothing pops up.
+        // focus: its message is already there to see, so nothing pops up. A
+        // window minimized, fully covered or hidden with the app (Cmd+H) shows
+        // nothing, so the open chat's messages notify then.
         if reading {
             return;
         }
@@ -10127,6 +10135,11 @@ impl App {
         if self.window_hidden || ctx.input(|input| input.viewport().focused) == Some(false) {
             self.window_focused = false;
         }
+        self.window_unseen = !self.window_hidden
+            && ctx.input(|input| {
+                let viewport = input.viewport();
+                viewport.occluded == Some(true) || viewport.minimized == Some(true)
+            });
         self.tick_app_lock(ctx);
         self.tick_login_item();
         // Nobody reads behind the lock screen: messages stay unread, the
@@ -24627,6 +24640,46 @@ mod app_lock_tests {
         app.power.set_conditions(Default::default());
         app.maybe_notify(CHAT, &message);
         assert_eq!(app.notifications.shown.len(), 1);
+    }
+
+    /// The open chat's messages are on screen while its window shows, even
+    /// unfocused; minimized, covered or hidden with Cmd+H, nothing of the
+    /// window shows, so they notify.
+    #[test]
+    fn the_open_chat_notifies_while_its_window_is_out_of_sight() {
+        let mut app = unlocked_app();
+        let message = incoming(&mut app);
+        app.open_chat = Some(CHAT.into());
+        app.window_focused = false;
+        app.maybe_notify(CHAT, &message);
+        assert!(app.notifications.shown.is_empty(), "the window shows it");
+
+        for viewport in [
+            egui::ViewportInfo {
+                occluded: Some(true),
+                ..Default::default()
+            },
+            egui::ViewportInfo {
+                minimized: Some(true),
+                ..Default::default()
+            },
+        ] {
+            let ctx = egui::Context::default();
+            let mut input = egui::RawInput::default();
+            input.viewports.insert(egui::ViewportId::ROOT, viewport);
+            let mut output = ctx.run_ui(input, |ui| app.background_frame(ui.ctx()));
+            output.textures_delta.clear();
+            assert!(app.window_unseen);
+        }
+        app.maybe_notify(CHAT, &message);
+        assert_eq!(app.notifications.shown.len(), 1);
+
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.background_frame(ui.ctx())
+        });
+        output.textures_delta.clear();
+        assert!(!app.window_unseen, "back in sight");
     }
 
     #[test]

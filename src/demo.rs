@@ -8044,18 +8044,27 @@ mod tests {
                         "{page}, {width}x{height}"
                     );
                     if description.is_some_and(|text| !text.is_empty()) {
-                        fn footer(shape: &egui::Shape) -> Option<&egui::epaint::TextShape> {
+                        // The open chat's own panel offers Search; Mute is
+                        // always there for a chat. Either label marks the
+                        // action row.
+                        let action = ["Search", "Mute", "Unmute", "Call", "Video call"];
+                        fn footer<'a>(
+                            shape: &'a egui::Shape,
+                            action: &[&str],
+                        ) -> Option<&'a egui::epaint::TextShape> {
                             match shape {
-                                egui::Shape::Text(text) if text.galley.text() == "Archive" => {
+                                egui::Shape::Text(text) if action.contains(&text.galley.text()) => {
                                     Some(text)
                                 }
-                                egui::Shape::Vec(shapes) => shapes.iter().find_map(footer),
+                                egui::Shape::Vec(shapes) => {
+                                    shapes.iter().find_map(|shape| footer(shape, action))
+                                }
                                 _ => None,
                             }
                         }
                         let footer = shapes
                             .iter()
-                            .find_map(|shape| footer(&shape.shape))
+                            .find_map(|shape| footer(&shape.shape, &action))
                             .expect("the panel actions are drawn");
                         assert!(
                             footer.pos.y >= 0.0
@@ -8798,8 +8807,11 @@ mod tests {
                 chat: chat.clone(),
                 message: format!("date-fixture-{index}"),
             });
-            render(&mut app, &ctx);
-            render(&mut app, &ctx);
+            // The jump glides for 0.35 s; frames are 1/60 s apart. Let it land
+            // before checking the date it leaves behind.
+            for _ in 0..10 {
+                render(&mut app, &ctx);
+            }
             // Jumping to a message is not scrolling; turning the wheel is.
             let label = crate::util::day_label(
                 app.locale,
@@ -9118,8 +9130,10 @@ mod tests {
             chat,
             message: "album-2".into(),
         });
-        render(&mut app, &ctx);
-        render(&mut app, &ctx);
+        // The jump glides for 0.35 s; frames are 1/60 s apart.
+        for _ in 0..30 {
+            render(&mut app, &ctx);
+        }
         assert!(
             app.scroll_anchor.is_none(),
             "a member jump resolves at its album row"
@@ -9920,8 +9934,13 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("{text} was not painted"))
         };
+        // The viewer opens at 0, when its opening flight starts, and the
+        // header fades in over the flight's last 40%: the title is laid out
+        // from the first pass but only painted once the picture has landed.
+        // Whichever pass that is, the name still rests where it started.
         narrow(0.0);
-        let shapes = narrow(0.0);
+        narrow(0.5);
+        let shapes = narrow(1.0);
         let (x, width, clip) = find(&shapes, name);
         let (fit, _, _) = find(&shapes, "Fit");
         assert!(clip.right() < fit, "the name runs under the buttons");
@@ -10145,7 +10164,12 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        render(app, ctx);
+        // The viewer takes no wheel or click input until the opening flight
+        // has landed, so settle it before handing any over. Frames are 1/60 s
+        // apart and the flight takes 0.4 s.
+        for _ in 0..20 {
+            render(app, ctx);
+        }
         app.image_preview.as_ref().unwrap().scale()
     }
 
@@ -16213,8 +16237,9 @@ mod tests {
         apply_flags(&mut app, Some("quote-jump"));
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        for _ in 0..3 {
-            frame_at(&mut app, &ctx, 10.0);
+        // The jump glides for 0.35 s; frames are 1/60 s apart.
+        for frame in 0..30 {
+            frame_at(&mut app, &ctx, 10.0 + f64::from(frame) / 60.0);
         }
         let since = app
             .jump_highlight
@@ -18637,7 +18662,9 @@ mod long_chat_tests {
             chat: chat.clone(),
             message: "long-40".into(),
         });
-        for _ in 0..3 {
+        // The jump glides for 0.35 s before the flash starts; frames are 1/60 s
+        // apart, so wait it out.
+        for _ in 0..30 {
             frame(&mut app, &ctx, Vec::new());
         }
         let first = painted_rows(&frame(&mut app, &ctx, Vec::new()));
