@@ -221,6 +221,7 @@ impl App {
                 text,
                 quoting: None,
                 mentions: Vec::new(),
+                preview: None,
             });
         } else {
             let caption = Some(text).filter(|text| !text.is_empty());

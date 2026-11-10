@@ -1901,7 +1901,6 @@ const SWATCH: f32 = 26.0;
 fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let locale = app.locale;
-    let chat_theme = app.settings.chat_theme;
     let custom = app.settings.custom_theme.is_some();
     let description = crate::i18n::gettext(
         locale,
@@ -3318,48 +3317,10 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             theme::paragraph(ui, text, theme::regular(theme::TEXT_CONTROL), color);
         }
     }
-    if crate::brand::UPDATES {
-        ui.add_space(crate::theme::SPACE_M);
-        update_channel_picker(app, ui);
-    }
     ui.add_space(16.0);
     if let Some(url) = widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
     }
-}
-
-/// Stable or Beta: which releases About offers.
-fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    let locale = app.locale;
-    let options: Vec<_> = crate::updates::Channel::ALL
-        .into_iter()
-        .map(|channel| (channel, crate::i18n::gettext(locale, channel.label())))
-        .collect();
-    let selected = Some(app.settings.update_channel);
-    ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::gettext(locale, "Update channel"),
-            theme::medium(theme::TEXT_CONTROL),
-            palette.secondary,
-        );
-        ui.add_space(8.0);
-        if let Some(channel) = segmented(ui, &palette, "channel", &options, selected, 88.0) {
-            app.actions.push(Action::SetUpdateChannel(channel));
-        }
-    });
-    let note = match app.settings.update_channel {
-        crate::updates::Channel::Stable => "Tested releases only.",
-        crate::updates::Channel::Beta => "Early builds first. They may have rough edges.",
-    };
-    ui.add_space(8.0);
-    theme::paragraph(
-        ui,
-        crate::i18n::gettext(locale, note),
-        theme::regular(theme::TEXT_CAPTION),
-        palette.secondary,
-    );
 }
 
 /// Asks GitHub for a newer release now; a newer one opens the update window.

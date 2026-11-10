@@ -28,7 +28,7 @@ pub fn respond_to(app: &mut App, search: bool) -> Vec<String> {
                     .filter(|message| message.summary().to_lowercase().contains(&needle))
                     .cloned()
                     .collect();
-                hits.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+                hits.sort_by_key(|hit| std::cmp::Reverse(hit.timestamp));
                 hits.truncate(50);
                 if query == app.search.trim() {
                     app.search_hits = hits;

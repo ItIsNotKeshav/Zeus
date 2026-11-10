@@ -985,15 +985,15 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             {
                                 app.actions.push(Action::Bubble(chat.id.clone()));
                             }
-                            if pane != Pane::Solo {
-                                if widgets::menu_item(
+                            if pane != Pane::Solo
+                                && widgets::menu_item(
                                     ui,
                                     &palette,
                                     Some(Icon::ArrowLeftRight),
                                     swap_label.as_ref(),
-                                ) {
-                                    app.actions.push(Action::SwapSplit);
-                                }
+                                )
+                            {
+                                app.actions.push(Action::SwapSplit);
                             }
                             if widgets::menu_item(ui, &palette, Some(Icon::X), close_label.as_ref())
                             {
@@ -6810,6 +6810,7 @@ fn status_colour(view: &View<'_>, shown: Delivery, plain: Color32) -> Color32 {
 /// Draws our message's status `text` with its right edge at `right`, centred
 /// on `y`. When the state has just moved on the new word eases in, sliding up
 /// into place, as the old one eases out and away.
+#[allow(clippy::too_many_arguments)]
 fn paint_status_word(
     ui: &egui::Ui,
     view: &View<'_>,
@@ -9527,13 +9528,10 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     let change = reaction_change(previous.as_deref(), &counts);
     ui.ctx().data_mut(|data| {
         // Stamp the frame in place; clone the tally only when it changed.
-        match data.get_temp_mut_or_insert_with(tally_id, || (frame, counts.clone())) {
-            (at, stored) => {
-                *at = frame;
-                if *stored != counts {
-                    stored.clone_from(&counts);
-                }
-            }
+        let (at, stored) = data.get_temp_mut_or_insert_with(tally_id, || (frame, counts.clone()));
+        *at = frame;
+        if *stored != counts {
+            stored.clone_from(&counts);
         }
         if change != ReactionChange::None && !calm {
             data.insert_temp(motion_id, (now, change == ReactionChange::Arrived));
@@ -16309,28 +16307,6 @@ mod tests {
             album_picture("two", Some("album-1"), "bob"),
         ];
         assert!(album_run(&senders, 0).is_none());
-    }
-
-    fn message(content: Content) -> Message {
-        Message {
-            id: "m1".into(),
-            chat: "peer@s.whatsapp.net".into(),
-            sender: "me".into(),
-            sender_name: None,
-            from_me: true,
-            timestamp: 0,
-            content,
-            status: Delivery::None,
-            delivered_at: None,
-            read_at: None,
-            quoted: None,
-            reactions: Vec::new(),
-            edited: false,
-            mentions: Vec::new(),
-            forwarded: false,
-            thumbnail: None,
-            history_order: None,
-        }
     }
 
     #[test]

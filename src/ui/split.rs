@@ -1053,6 +1053,13 @@ fn pop_out_contents(app: &mut App, ui: &mut egui::Ui, chat: &Chat, title: &str) 
     });
 }
 
+/// Whether the chat panel at `area` draws as a split, or a pane is leaving it.
+pub(super) fn active(app: &App, ctx: &egui::Context, area: Rect) -> bool {
+    app.page == Page::Chats
+        && app.current_chat().is_some()
+        && (live(app, ctx, area) || ctx.data(|data| data.get_temp::<Ghost>(ghost_id()).is_some()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1073,11 +1080,4 @@ mod tests {
         assert!((ease_in_out(1.0) - 1.0).abs() < 1e-6);
         assert!(ease_in_out(0.25) < 0.25);
     }
-}
-
-/// Whether the chat panel at `area` draws as a split, or a pane is leaving it.
-pub(super) fn active(app: &App, ctx: &egui::Context, area: Rect) -> bool {
-    app.page == Page::Chats
-        && app.current_chat().is_some()
-        && (live(app, ctx, area) || ctx.data(|data| data.get_temp::<Ghost>(ghost_id()).is_some()))
 }
