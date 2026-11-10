@@ -202,6 +202,10 @@ enum Target {
     /// Inside a bubble's lower corner, in its margin, clear of the text and
     /// media that take clicks for themselves.
     BubbleCorner(&'static str),
+    /// A message's time and ticks, which open its info and receipts.
+    Footer(&'static str),
+    /// The reply button that fades in beside a message's bubble.
+    Reply(&'static str),
     Picker,
     Gif,
     Sticker,
@@ -311,11 +315,19 @@ fn script() -> Vec<Cue> {
         Key(egui::Key::End, command(), "Ctrl + End · Latest messages"),
     );
     add(5.4, Move(Bubble("ada-voice")));
-    // The message's menu has no Reply: a double-click on the bubble's margin
-    // starts one.
-    add(5.8, Move(BubbleCorner("ada-voice")));
-    add(6.25, Click(left));
-    add(6.35, Click(left));
+    add(5.8, Click(PointerButton::Secondary));
+    add(
+        6.2,
+        Key(
+            egui::Key::Escape,
+            Modifiers::NONE,
+            "Esc · Close the message menu",
+        ),
+    );
+    // Replying has no menu row any more: hover the bubble and press the reply
+    // button that fades in beside it, as on the phone.
+    add(6.6, Move(Reply("ada-voice")));
+    add(6.9, Click(left));
     add(
         8.1,
         Key(egui::Key::Enter, Modifiers::NONE, "Enter · Complete emoji"),
@@ -629,6 +641,17 @@ impl Tour {
             Target::BubbleCorner(message) => {
                 let rect = Self::bubble(app, ctx, message)?;
                 Some(rect.right_bottom() - vec2(5.0, 2.0))
+            }
+            Target::Footer(message) => {
+                let chat = app.open_chat.as_deref()?;
+                let id = crate::ui::conversation::footer_id(chat, message);
+                ctx.data(|data| data.get_temp::<Rect>(id))
+                    .map(|rect| rect.center())
+            }
+            Target::Reply(message) => {
+                let chat = app.open_chat.as_deref()?;
+                let id = crate::ui::conversation::bubble_id(chat, message).with("reply");
+                ctx.read_response(id).map(|response| response.rect.center())
             }
             Target::Picker => app.picker_anchor.map(|rect| rect.center()),
             Target::Gif => ctx
@@ -1449,9 +1472,18 @@ mod tests {
         let locale = app.locale;
         let media_title = crate::i18n::gettext(locale, "Media, links and docs").to_string();
         click_sized(&mut app, &mut tour, &ctx, size, &media_title);
+        // The tab's list crossfades over 0.2 s per step; frames are 1/60 s
+        // apart. Let each list settle before reading its rows.
+        let settle = |app: &mut App, tour: &mut Tour| {
+            for _ in 0..40 {
+                frame_sized(app, tour, &ctx, size, Vec::new());
+            }
+        };
+        settle(&mut app, &mut tour);
         assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Media)));
         let docs = crate::ui::info::tab_label(&app, MediaTab::Docs);
         click_sized(&mut app, &mut tour, &ctx, size, &docs);
+        settle(&mut app, &mut tour);
         assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Docs)));
         // The bubble under the panel paints the same file name and title, so
         // the clicks land on the rows' detail lines, which carry the day.
@@ -1481,6 +1513,7 @@ mod tests {
         assert!(app.info.is_some(), "and the panel stays");
         let links = crate::ui::info::tab_label(&app, MediaTab::Links);
         click_sized(&mut app, &mut tour, &ctx, size, &links);
+        settle(&mut app, &mut tour);
         assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Links)));
         // The newest link the listing found, whichever the tour's sample
         // put there.
@@ -1828,8 +1861,8 @@ mod tests {
             // The new poll springs in and the list glides up to meet it, and
             // only the picture moves, so labels read off it sit away from
             // their controls until both settle. Each frame is 1/60 s; the
-            // spring takes half a second.
-            for _ in 0..40 {
+            // spring takes half a second and the row wave runs after it.
+            for _ in 0..90 {
                 frame(&mut app, &mut tour, &ctx, Vec::new());
             }
             click(&mut app, &mut tour, &ctx, "Pizza");

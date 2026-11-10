@@ -870,6 +870,9 @@ Windows, notifications show the chat picture. On Linux, Windows, and macOS, a
 click on a notification opens the chat at the message it announced. This holds for the 32 most recent tracked notifications on all three platforms;
 older notifications remain in system history without a message click listener.
 Reading a chat removes its tracked notifications, including Windows toasts.
+The open chat's new messages do not notify while its window shows, even behind
+another app's focus. Once the window is minimized, fully covered by other
+windows, or hidden with the app (Cmd+H on macOS), they notify like any other chat's.
 On Windows, while every display is off, Zeus leaves new-message notifications
 to the phone instead of queuing desktop banners to appear when the display turns on.
 Fastframe provides the same delivery and cancellation interface on each platform. macOS

@@ -1942,7 +1942,7 @@ mod tests {
         let square = Rect::from_min_size(pos2(10.0, 10.0), vec2(100.0, 100.0));
         let wide = Rect::from_min_size(pos2(10.0, 10.0), vec2(200.0, 100.0));
         let uv_painted = |rect: Rect| {
-            let output = ctx.run_ui(input.clone(), |ui| {
+            let mut output = ctx.run_ui(input.clone(), |ui| {
                 paint_flying(
                     ui,
                     egui::Image::from_texture(egui::load::SizedTexture::from_handle(&texture)),
@@ -1951,6 +1951,7 @@ mod tests {
                     egui::Color32::WHITE,
                 );
             });
+            output.textures_delta.clear();
             output
                 .shapes
                 .iter()
