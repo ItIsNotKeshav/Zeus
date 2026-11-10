@@ -16928,7 +16928,8 @@ mod tests {
         app.page = crate::model::Page::Settings;
         app.custom_themes =
             crate::theme::Catalog::preview(crate::theme::presets().collect(), false);
-        app.settings.choose_style(crate::chat_themes::Style::Themes);
+        app.settings
+            .choose_chat_theme(crate::chat_themes::ChatTheme::Catppuccin);
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         app.attach(&ctx);
@@ -16937,10 +16938,7 @@ mod tests {
             .into_iter()
             .map(|(label, _, _)| label)
             .collect();
-        assert!(
-            labels.iter().any(|label| label == "Orchestrate"),
-            "{labels:?}"
-        );
+        assert!(labels.iter().any(|label| label == "Vercel"), "{labels:?}");
         for gone in ["How to make a theme", "Open themes folder", "Ristretto"] {
             assert!(!labels.iter().any(|label| label == gone), "{gone}");
         }

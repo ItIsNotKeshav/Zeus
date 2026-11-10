@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use serde::{Deserialize, Serialize};
 
 /// Verifying the locked-chat code costs about 20 ms, paid once per distinct
@@ -630,7 +630,7 @@ impl SwipeAction {
         crate::i18n::gettext(
             locale,
             match self {
-                Self::None => "Nothing",
+                Self::None => "No shortcut",
                 Self::Reply => "Reply to the message",
                 Self::OpenChat => "Open the chat",
                 Self::CloseChat => "Back to the chat list",
@@ -1002,8 +1002,8 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
-            legacy_theme: ThemeChoice::Dark,
-            chat_theme: ChatTheme::WhatsApp,
+            legacy_theme: ThemeChoice::NothingDark,
+            chat_theme: ChatTheme::Zeus,
             mode: Mode::Dark,
             accent: Accent::Theme,
             last_look: ChatTheme::WhatsApp,
@@ -1012,7 +1012,7 @@ impl Default for Settings {
             glass: crate::backdrop::GLASS_DEFAULT,
             always_show_time: false,
             messages_theme: false,
-            font: FontChoice::GoogleSansFlex,
+            font: FontChoice::PlusJakartaSans,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
@@ -1164,16 +1164,6 @@ impl Settings {
         }
     }
 
-    /// Whether the colours are a look made your own or a ready-made theme.
-    /// A theme file counts as a ready-made theme.
-    pub fn style(&self) -> Style {
-        if self.custom_theme.is_some() || !self.chat_theme.is_look() {
-            Style::Themes
-        } else {
-            Style::Custom
-        }
-    }
-
     /// Draws the window in `choice`, leaving any theme file, and remembers
     /// it for when its style is chosen again.
     pub fn choose_chat_theme(&mut self, choice: ChatTheme) {
@@ -1185,22 +1175,6 @@ impl Settings {
         } else {
             self.last_theme = choice;
         }
-    }
-
-    /// Switches to `style`, returning to the look or theme it last had.
-    /// Returns whether anything changed.
-    pub fn choose_style(&mut self, style: Style) -> bool {
-        if self.style() == style {
-            return false;
-        }
-        let choice = match style {
-            Style::Custom if self.last_look.is_look() => self.last_look,
-            Style::Custom => ChatTheme::WhatsApp,
-            Style::Themes if !self.last_theme.is_look() => self.last_theme,
-            Style::Themes => ChatTheme::Catppuccin,
-        };
-        self.choose_chat_theme(choice);
-        true
     }
 
     /// Whether the window's colours are light, dark, or the system's, for
@@ -1694,9 +1668,9 @@ mod tests {
     }
 
     #[test]
-    fn the_font_defaults_to_google_sans_flex_and_is_saved_by_name() {
+    fn the_font_defaults_to_plus_jakarta_sans_and_is_saved_by_name() {
         let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
-        assert_eq!(older.font, FontChoice::GoogleSansFlex);
+        assert_eq!(older.font, FontChoice::PlusJakartaSans);
         let chosen: Settings = serde_json::from_str(r#"{"font":"inter"}"#).unwrap();
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
@@ -1741,27 +1715,17 @@ mod tests {
     /// a chat theme, a mode and an accent, and an older release reading the
     /// file back finds the nearest theme it knows.
     #[test]
-    fn each_style_returns_to_the_look_or_theme_it_last_had() {
+    fn the_accent_stays_when_the_theme_changes() {
         let mut settings = Settings {
             accent: Accent::Red,
             ..Settings::default()
         };
-        assert_eq!(settings.style(), Style::Custom);
-        settings.choose_chat_theme(ChatTheme::Zeus);
-        assert!(settings.choose_style(Style::Themes));
-        assert_eq!(settings.chat_theme, ChatTheme::Catppuccin);
-        // A ready-made theme keeps its own accent; the chosen one waits.
+        settings.choose_chat_theme(ChatTheme::Dracula);
+        assert_eq!(settings.accent, Accent::Red);
         assert_eq!(
             settings.palette(true),
-            ChatTheme::Catppuccin.palette(true, Accent::Theme)
+            ChatTheme::Dracula.palette(true, Accent::Red)
         );
-        settings.choose_chat_theme(ChatTheme::Dracula);
-        assert!(!settings.choose_style(Style::Themes));
-        assert!(settings.choose_style(Style::Custom));
-        assert_eq!(settings.chat_theme, ChatTheme::Zeus);
-        assert_eq!(settings.accent, Accent::Red);
-        assert!(settings.choose_style(Style::Themes));
-        assert_eq!(settings.chat_theme, ChatTheme::Dracula);
     }
 
     #[test]

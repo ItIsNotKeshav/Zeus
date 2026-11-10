@@ -20,14 +20,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // A hairline sets the benchmark apart from the version and credits.
     let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
     ui.painter().rect_filled(line, 0.0, palette.outline);
-    ui.add_space(16.0);
+    ui.add_space(crate::theme::SPACE_L);
     theme::text(
         ui,
         gettext(locale, "Performance benchmark"),
         theme::semibold(theme::TEXT_BODY),
         palette.text,
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     theme::paragraph(
         ui,
         gettext(
@@ -85,7 +85,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 theme::regular(theme::TEXT_CONTROL),
                 palette.secondary,
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
             run_button(ui, app, &palette, "Run benchmark");
         }
         None => run_button(ui, app, &palette, "Run benchmark"),
@@ -185,9 +185,9 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
         );
         ui.add_space(8.0);
         smoothness_table(ui, palette, locale, report);
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         phase_table(ui, palette, locale, report);
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         let mut notes = vec![
             gettext(locale, "Peak memory {peak} MB.").replace("{peak}", &number(report.peak_mb)),
             gettext(locale, "CPU 100% is one core busy.").to_string(),
@@ -227,7 +227,7 @@ fn results(ui: &mut egui::Ui, app: &mut App, palette: &Palette, report: &Report,
                 palette.secondary,
             );
         }
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         let sharing = app.benchmark_share;
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(8.0, 8.0);

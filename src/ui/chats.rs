@@ -761,7 +761,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let output = widgets::chip_scroll_row(ui, "chat-filters", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
@@ -820,7 +820,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     app.actions.push(Action::SetChatFilter(next));
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
         })
     });
     // Chips cut off at the edge fade into the panel, which says the row
@@ -2174,7 +2174,7 @@ fn approach_hover(amount: f32, on: bool, dt: f32) -> (f32, bool) {
 
 /// The row's hover fill, eased. A screen reader gets it at once: the
 /// animation would otherwise ask for a frame every step of the way.
-fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
+pub(crate) fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
     if crate::motion::screen_reader_attached(ui.ctx()) {
         return if on { 1.0 } else { 0.0 };
     }

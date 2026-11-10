@@ -2416,10 +2416,12 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
     let size = galley.size() + vec2(20.0, 10.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     if ui.is_rect_visible(rect) {
-        let radius = CornerRadius::from(rect.height() / 2.0);
+        // The control radius, the corner the menus and the composer use.
+        let radius = CornerRadius::same(theme::RADIUS_CONTROL);
         if palette.vibrant() {
-            // Glass over a vibrant conversation, as the header's.
-            ui.painter().rect_filled(rect, radius, palette.glass());
+            // The menu glass over a vibrant conversation, as the composer and
+            // the menus. The pill glass is thinned too far to read as a surface.
+            ui.painter().rect_filled(rect, radius, palette.menu_glass());
             ui.painter()
                 .rect_stroke(rect, radius, palette.glass_edge(), egui::StrokeKind::Inside);
             ui.painter().galley(

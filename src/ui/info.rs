@@ -1189,7 +1189,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
         media_row(app, ui, id, overlay);
     }
     if shown.can_manage {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let label = crate::i18n::gettext(app.locale, "Group permissions");
         let response = nav_row(app, ui, Icon::Shield, &label, PERMISSIONS_STOP);
         ui.ctx()
@@ -1417,7 +1417,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
         &crate::i18n::gettext(app.locale, "Members"),
         Some(members.len().to_string()),
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     if group.can_add {
         let label = crate::i18n::gettext(app.locale, "Add members");
         let response = nav_row(app, ui, Icon::UserPlus, &label, ADD_MEMBERS_STOP);
@@ -1430,7 +1430,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
     }
     if group.can_share_link {
         invite_link(app, ui, id, group.can_manage);
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
     }
     let roles = app
         .chat(id)
@@ -1628,7 +1628,7 @@ fn members(app: &mut App, ui: &mut egui::Ui, group: &Shown) {
         }
     });
     if shown.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(
             ui,
             crate::i18n::gettext(app.locale, "No members found"),
@@ -1764,7 +1764,7 @@ fn media_row(app: &mut App, ui: &mut egui::Ui, chat: &str, overlay: bool) {
     if let Some(media) = shown
         && !media.media.is_empty()
     {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         let cell = ((ui.available_width() - 2.0 * GAP) / 3.0).floor();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = GAP;
@@ -1959,14 +1959,14 @@ fn media_body(
             }
         }
         None if app.info_media_failed => {
-            ui.add_space(24.0);
+            ui.add_space(crate::theme::SPACE_XXL);
             ui.horizontal(|ui| {
                 ui.add_space(MARGIN);
                 failure_line(app, ui);
             });
         }
         None if app.info_media_pending => {
-            ui.add_space(32.0);
+            ui.add_space(crate::theme::SPACE_SECTION);
             ui.vertical_centered(|ui| theme::spinner(ui, 22.0, palette.secondary));
         }
         None => {}
@@ -2429,7 +2429,7 @@ fn paint_row(
 /// than it carries.
 fn truncated_note(app: &App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.add_space(MARGIN);
         let line = widgets::line(
@@ -2443,7 +2443,7 @@ fn truncated_note(app: &App, ui: &mut egui::Ui) {
         let (rect, _) = ui.allocate_exact_size(line.size(), Sense::hover());
         line.paint(ui, rect.min, palette.dim);
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// A tab's label. The words are short, so each carries the context that
@@ -2568,7 +2568,7 @@ fn invite_link(app: &mut App, ui: &mut egui::Ui, id: &str, can_reset: bool) {
                     );
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             ui.horizontal_wrapped(|ui| {
                 match &state {
                     LinkState::Failed(_) => {
@@ -2719,7 +2719,7 @@ fn permissions_view(app: &mut App, ui: &mut egui::Ui, chat: &str, card: bool) {
                     for (index, (permission, value)) in values.iter().enumerate() {
                         if index == 0 || *permission == Permission::ApproveMembers {
                             if index > 0 {
-                                ui.add_space(8.0);
+                                ui.add_space(crate::theme::SPACE_S);
                             }
                             let heading = if *permission == Permission::ApproveMembers {
                                 crate::i18n::gettext(locale, "Admins can:")
@@ -2819,7 +2819,7 @@ fn permission_row(
         });
     });
     let _ = row;
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     turned
 }
 

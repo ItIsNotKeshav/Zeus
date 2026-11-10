@@ -9256,12 +9256,6 @@ impl App {
                 self.settings_search.clear();
             }
             Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),
-            Action::SetStyle(style) => {
-                if self.settings.choose_style(style) {
-                    self.mark_settings_dirty();
-                    self.apply_theme(ctx);
-                }
-            }
             Action::SetMode(mode) => {
                 self.settings.mode = mode;
                 self.mark_settings_dirty();
@@ -19049,7 +19043,7 @@ mod tests {
         let mut app = app();
         let ctx = egui::Context::default();
         app.attach(&ctx);
-        assert_eq!(app.settings.font, FontChoice::GoogleSansFlex);
+        assert_eq!(app.settings.font, FontChoice::PlusJakartaSans);
         app.apply(Action::SetFont(FontChoice::Inter), &ctx);
         assert_eq!(app.settings.font, FontChoice::Inter);
         assert!(crate::theme::inter_chosen());

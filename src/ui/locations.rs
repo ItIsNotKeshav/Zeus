@@ -33,7 +33,7 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             }
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let hint = crate::i18n::gettext(app.locale, "Paste a map link or coordinates");
     let palette = app.palette;
     controls::Field::new(&mut app.location_draft)
@@ -89,7 +89,7 @@ pub fn send(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             );
         }
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         let cancel = crate::i18n::gettext(app.locale, "Cancel");
         if theme::soft_button(ui, &palette, None, cancel.as_ref(), false).clicked() {

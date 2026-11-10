@@ -57,10 +57,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         .min_scrolled_height(height)
         .auto_shrink([false, true])
         .show(ui, |ui| {
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
             receipts(app, ui, chat, id, &message);
             // The list ends clear of the dialog's edge rather than on it.
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
         });
     let bubble = super::conversation::bubble_id(chat, id);
     ui.ctx().data_mut(|data| {
@@ -212,7 +212,7 @@ fn direct(app: &App, ui: &mut egui::Ui, message: &Message) {
         ),
     ];
     for (label, reached, at, color) in stages {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
             theme::paint_icon(ui, Icon::DeliveryTicks, rect, 18.0, color);
@@ -243,7 +243,7 @@ fn group(app: &mut App, ui: &mut egui::Ui, receipts: &MessageReceipts) {
     // before then has no saved audience. Say so instead of implying that
     // nobody has read it.
     if receipts.recipients.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         note(
             ui,
             &gettext(
@@ -255,7 +255,7 @@ fn group(app: &mut App, ui: &mut egui::Ui, receipts: &MessageReceipts) {
         return;
     }
     if !known {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         note(
             ui,
             &gettext(
@@ -294,7 +294,7 @@ fn group(app: &mut App, ui: &mut egui::Ui, receipts: &MessageReceipts) {
     );
     let remaining = receipts.remaining();
     if remaining > 0 {
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         theme::text(
             ui,
             ngettext(locale, "{} remaining", "{} remaining", remaining as u32)
@@ -314,7 +314,7 @@ fn section(
     at: impl Fn(&Recipient) -> Option<i64>,
 ) {
     let palette = app.palette;
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal(|ui| {
         let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
         theme::paint_icon(ui, Icon::DeliveryTicks, rect, 16.0, color);
