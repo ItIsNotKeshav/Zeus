@@ -15001,10 +15001,16 @@ mod tests {
                 );
             }
         }
-        assert!(
-            lagged > 2.0,
-            "the far row lags the scroll by {lagged} points"
-        );
+        if super::super::scroll_springs::RIPPLE_ON_SCROLL {
+            assert!(
+                lagged > 2.0,
+                "the far row lags the scroll by {lagged} points"
+            );
+        } else {
+            // With the ripple off the rows stay put relative to each other:
+            // the whole list moves with the reader's scroll.
+            assert!(lagged < 0.5, "rows moved apart by {lagged} points");
+        }
         assert!(
             lagged <= super::super::scroll_springs::MAX_LAG + 1.0,
             "lag {lagged}"
