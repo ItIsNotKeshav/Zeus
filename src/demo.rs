@@ -430,6 +430,8 @@ pub fn populate(app: &mut App) {
     // Demo mode has no backend to handle downloads.
     app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
+    // The sample account was linked long ago: past the first-run setup.
+    app.settings.setup_done = true;
     app.me = Some(ME.to_owned());
     app.me_name = Some("Carmine".to_owned());
     app.chats.clear();
@@ -3342,6 +3344,18 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     filename: "Messages light.json".into(),
                     palette: crate::theme::Palette::messages_light(),
                 });
+            }
+            // The first-run setup at one of its steps, such as setup-look,
+            // waiting on the sample code to scan.
+            part if let Some(step) = crate::ui::setup::Step::named(part) => {
+                unlink(app);
+                app.settings.setup_done = false;
+                app.setup_step = step;
+                app.link = LinkStatus::Unlinked {
+                    qr: Some(sample_qr()),
+                    pair_code: None,
+                    pairing_phone: None,
+                };
             }
             "login" => {
                 unlink(app);
@@ -6549,7 +6563,19 @@ mod tests {
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
         }
-        for page in ["login", "pair", "phone"] {
+        for page in [
+            "login",
+            "pair",
+            "phone",
+            "setup",
+            "setup-look",
+            "setup-personal",
+            "setup-notifications",
+            "setup-privacy",
+            "setup-link",
+            "setup-link,pair",
+            "setup-look,light",
+        ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);

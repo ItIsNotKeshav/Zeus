@@ -494,6 +494,8 @@ pub struct App {
     pub accounts: Vec<Account>,
     pub active: usize,
     pub adding_account: bool,
+    /// The step of the first-run setup on screen (`ui::setup`).
+    pub setup_step: crate::ui::setup::Step,
     /// The account on screen when "Add account" was chosen, for Cancel.
     account_before_adding: Option<AccountId>,
     /// Whether the account switcher under our own avatar is open.
@@ -1504,6 +1506,7 @@ impl App {
             accounts,
             active,
             adding_account: false,
+            setup_step: crate::ui::setup::Step::default(),
             account_before_adding: None,
             account_menu: false,
             palette,
@@ -4799,6 +4802,12 @@ impl App {
         }
         match &status {
             LinkStatus::Connected => {
+                // The first link ends the first-run setup: from now on an
+                // unlinked account opens straight on the link.
+                if !self.settings.setup_done {
+                    self.settings.setup_done = true;
+                    self.mark_settings_dirty();
+                }
                 for conversation in self.conversations.values_mut() {
                     for message in &mut conversation.messages {
                         if let Content::Poll { state, .. } = &mut message.content {

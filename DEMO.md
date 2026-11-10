@@ -10,6 +10,7 @@ cargo run --features demo -- --demo-page login # or settings, pair, info, light,
 cargo run --features demo -- --demo-shot shot.png --demo-page chat,light
 cargo run --features demo -- --demo-tour      # Space starts/replays a 41-second tour
 cargo run --features demo -- --demo-tour --demo-tour-script whats-new # what 0.16 added
+cargo run --features demo -- --demo-tour --demo-tour-script setup # the first-run setup
 cargo run --features demo -- --demo-hover 900,400 # holds a fake pointer there
 cargo test --all-features                      # includes a headless layout of every screen
 cargo clippy --all-targets --all-features -- -D warnings
@@ -66,6 +67,10 @@ sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
 
+`--demo-tour-script setup` plays the first-run setup in 24 seconds: the card
+arriving, a mode, a theme, a font and doodles picked, the phone link, and a
+step back.
+
 `--demo-tour-script whats-new` plays an 86-second tour of what ZapFast 0.16
 added instead: the composer's plus menu and poll dialog, searching a chat and
 narrowing it to a day, the photo preview, videos and round video messages
@@ -103,7 +108,10 @@ ours and members'), and `call-entries` files the sample calls in a chat.
 Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,
-`app-lock-forgot`, `app-lock-settings`, and `app-lock-setup`. `new-chat`,
+`app-lock-forgot`, `app-lock-settings`, and `app-lock-setup`. The first-run
+setup opens with `setup`, and each step with `setup-look`, `setup-personal`,
+`setup-notifications`, `setup-privacy` and `setup-link`; `connecting` shows
+the launch splash. `new-chat`,
 `new-contact`, `unnamed-group`, and `react-picker` show those dialogs
 (`new-contact-number` with a formatted number and no name); `new-group` New
 chat's New group with two people picked and a search, `new-group-name` the
