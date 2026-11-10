@@ -300,16 +300,37 @@ pub fn moment_stamp(locale: Locale, unix_seconds: i64) -> String {
 /// saying so would be a guess.
 pub fn disappearing_line(locale: Locale, seconds: Option<u32>) -> Option<String> {
     let seconds = seconds?;
+    let label = crate::i18n::gettext(locale, "Disappearing messages");
+    Some(format!("{label}: {}", disappearing_value(locale, seconds)))
+}
+
+/// The duration alone, as WhatsApp words it: "Off", "24 hours", "7 days",
+/// "90 days", or the raw seconds for a value WhatsApp never offers.
+pub fn disappearing_value(locale: Locale, seconds: u32) -> String {
     use crate::i18n::gettext;
-    let value = match seconds {
+    match seconds {
         0 => gettext(locale, "Off").into_owned(),
         86_400 => gettext(locale, "24 hours").into_owned(),
         604_800 => gettext(locale, "7 days").into_owned(),
         7_776_000 => gettext(locale, "90 days").into_owned(),
         _ => format!("{seconds}s"),
-    };
-    let label = gettext(locale, "Disappearing messages");
-    Some(format!("{label}: {value}"))
+    }
+}
+
+/// The conversation notice for a timer change, as WhatsApp words it. `name`
+/// is the actor: the reader's own name is passed in as a translated "You".
+pub fn disappearing_change(locale: Locale, name: &str, seconds: u32) -> String {
+    use crate::i18n::gettext;
+    if seconds == 0 {
+        gettext(locale, "{name} turned off disappearing messages").replace("{name}", name)
+    } else {
+        gettext(
+            locale,
+            "{name} changed the disappearing messages setting to {duration}",
+        )
+        .replace("{name}", name)
+        .replace("{duration}", &disappearing_value(locale, seconds))
+    }
 }
 
 /// A contact's last-seen line as WhatsApp words it: "last seen today at
@@ -893,6 +914,110 @@ pub fn tray_template_rgba(size: usize) -> Vec<u8> {
     rgba
 }
 
+/// The largest count the tray icon spells out; more reads "9+".
+const TRAY_BADGE_MAX: u32 = 9;
+
+/// A tray icon: the app's, or its monochrome shape.
+type TrayIcon = fn(usize) -> Vec<u8>;
+
+/// The tray icon and its monochrome template for `count` unread chats. The
+/// tray takes plain functions, so each badge is one of its own.
+pub fn tray_icons(count: u32) -> (TrayIcon, TrayIcon) {
+    fn pair<const COUNT: u32>() -> (TrayIcon, TrayIcon) {
+        (
+            |size| badged(app_icon_rgba(size), size, COUNT, false),
+            |size| badged(tray_template_rgba(size), size, COUNT, true),
+        )
+    }
+    match tray_badge_level(count) {
+        0 => (app_icon_rgba, tray_template_rgba),
+        1 => pair::<1>(),
+        2 => pair::<2>(),
+        3 => pair::<3>(),
+        4 => pair::<4>(),
+        5 => pair::<5>(),
+        6 => pair::<6>(),
+        7 => pair::<7>(),
+        8 => pair::<8>(),
+        9 => pair::<9>(),
+        _ => pair::<{ TRAY_BADGE_MAX + 1 }>(),
+    }
+}
+
+/// What the tray's badge shows for `count`: counts above
+/// [`TRAY_BADGE_MAX`] draw alike, so they need no new icon.
+pub fn tray_badge_level(count: u32) -> u32 {
+    count.min(TRAY_BADGE_MAX + 1)
+}
+
+/// Five rows of three columns per digit from 1 to 9, top bit first, small
+/// enough to read in a tray icon.
+const BADGE_DIGITS: [[u8; 5]; 9] = [
+    [0b010, 0b110, 0b010, 0b010, 0b111],
+    [0b111, 0b001, 0b111, 0b100, 0b111],
+    [0b111, 0b001, 0b011, 0b001, 0b111],
+    [0b101, 0b101, 0b111, 0b001, 0b001],
+    [0b111, 0b100, 0b111, 0b001, 0b111],
+    [0b111, 0b100, 0b111, 0b101, 0b111],
+    [0b111, 0b001, 0b010, 0b010, 0b010],
+    [0b111, 0b101, 0b111, 0b101, 0b111],
+    [0b111, 0b101, 0b111, 0b001, 0b111],
+];
+const BADGE_PLUS: [u8; 5] = [0b000, 0b010, 0b111, 0b010, 0b000];
+
+/// Draws the unread badge on the top right of an icon: a disc with a clear
+/// ring around it and the count inside. In a `template`, which is one colour
+/// the panel may repaint, the digits are holes in the disc; otherwise they
+/// are white on red. `level` comes from [`tray_badge_level`].
+fn badged(mut rgba: Vec<u8>, size: usize, level: u32, template: bool) -> Vec<u8> {
+    const RED: [u8; 3] = [0xe5, 0x39, 0x35];
+    let radius = size as f32 * 0.3;
+    let center = (size as f32 - radius, radius);
+    let ring = size as f32 / 20.0;
+    // The glyphs, in columns, with a column between two.
+    let more = level > TRAY_BADGE_MAX;
+    let digit = BADGE_DIGITS[(level.clamp(1, TRAY_BADGE_MAX) - 1) as usize];
+    let columns = if more { 7 } else { 3 };
+    let cell = (size / 16).max(1);
+    let left = (center.0 - (columns * cell) as f32 / 2.0).round() as isize;
+    let top = (center.1 - (5 * cell) as f32 / 2.0).round() as isize;
+    let inked = |x: usize, y: usize| {
+        let (x, y) = (x as isize - left, y as isize - top);
+        if x < 0 || y < 0 {
+            return false;
+        }
+        let (column, row) = (x as usize / cell, y as usize / cell);
+        if row >= 5 || column >= columns {
+            return false;
+        }
+        match column {
+            0..=2 => digit[row] >> (2 - column) & 1 == 1,
+            3 => false,
+            _ => BADGE_PLUS[row] >> (6 - column) & 1 == 1,
+        }
+    };
+    for (index, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let (x, y) = (index % size, index / size);
+        let distance =
+            ((x as f32 + 0.5 - center.0).powi(2) + (y as f32 + 0.5 - center.1).powi(2)).sqrt();
+        if distance >= radius + ring + 0.5 {
+            continue;
+        }
+        let disc = (radius - distance + 0.5).clamp(0.0, 1.0);
+        let colour = if template { [0, 0, 0] } else { RED };
+        pixel[..3].copy_from_slice(&colour);
+        pixel[3] = (disc * 255.0) as u8;
+        if inked(x, y) {
+            if template {
+                pixel[3] = 0;
+            } else {
+                pixel[..4].copy_from_slice(&[255, 255, 255, 255]);
+            }
+        }
+    }
+    rgba
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1312,6 +1437,40 @@ mod tests {
 
     /// The menu-bar template is the disc with the bubble cut out: solid in
     /// the bubble's middle, clear along its outline and outside the disc.
+    #[test]
+    fn the_tray_icon_counts_unread_chats_up_to_nine_and_more() {
+        use super::{app_icon_rgba, tray_icons, tray_template_rgba};
+        let size = 32;
+        assert_eq!(tray_icons(0).0(size), app_icon_rgba(size));
+        assert_eq!(tray_icons(0).1(size), tray_template_rgba(size));
+        assert_eq!(tray_icons(10).0(size), tray_icons(250).0(size));
+        let icons: Vec<_> = (1..=10).map(|count| tray_icons(count).0(size)).collect();
+        for (index, icon) in icons.iter().enumerate() {
+            assert_ne!(*icon, app_icon_rgba(size));
+            for other in &icons[index + 1..] {
+                assert_ne!(icon, other, "each count draws differently");
+            }
+        }
+        // The digits are white on the colour icon and holes in the template,
+        // so they survive being painted one colour.
+        let white = |rgba: &[u8]| rgba.as_chunks::<4>().0.contains(&[255, 255, 255, 255]);
+        assert!(white(&tray_icons(5).0(size)));
+        let template = tray_icons(5).1(size);
+        let pixel = |x: usize, y: usize| template[(y * size + x) * 4 + 3];
+        let (radius, centre) = (size as f32 * 0.3, size as f32 * 0.7);
+        let (x, y) = (centre as usize, radius as usize);
+        assert_ne!(tray_template_rgba(size), template);
+        assert!((0..size).any(|column| pixel(column, y) == 255));
+        assert!(
+            (x - 4..x + 4).any(|column| pixel(column, y) == 0),
+            "a hole inside the disc"
+        );
+        for size in [16, 22, 36, 64] {
+            assert_eq!(tray_icons(12).0(size).len(), size * size * 4);
+            assert_eq!(tray_icons(12).1(size).len(), size * size * 4);
+        }
+    }
+
     #[test]
     fn the_tray_template_cuts_the_z_out_of_the_square() {
         let size = 64;

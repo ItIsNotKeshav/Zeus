@@ -2,9 +2,11 @@
 
 pub mod accounts;
 pub mod benchmark;
+mod blocking;
 pub mod call;
 pub mod calls;
 pub(crate) mod carry;
+mod chat_export;
 pub mod chats;
 pub mod closing;
 pub mod controls;
@@ -81,7 +83,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // The call screen covers the chats.
         && (app.call.is_none() || app.call_surface_hidden)
         // A name typed in the info panel keeps Tab between its fields.
-        && !(app.info_visible() && (app.contact_edit.is_some() || app.group_name_edit.is_some()))
+        && !(app.info_visible() && (app.contact_edit.is_some()
+                || app.group_name_edit.is_some()
+                || app.group_description_edit.is_some()))
         && !egui::Popup::is_any_open(ctx);
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.

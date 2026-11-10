@@ -695,6 +695,13 @@ pub struct LinkPreview {
     pub description: Option<String>,
 }
 
+/// A link preview made here for an outgoing message, with its picture as JPEG.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ComposedPreview {
+    pub preview: LinkPreview,
+    pub thumbnail: Option<Vec<u8>>,
+}
+
 impl Message {
     /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
@@ -955,6 +962,14 @@ pub enum Content {
     },
     /// "This message was deleted."
     Revoked,
+    /// A disappearing-message timer change, drawn as a centred system row
+    /// rather than a bubble. The message's `from_me` and `sender` say who
+    /// changed it.
+    #[serde(rename = "disappearing_timer")]
+    DisappearingTimer {
+        /// The new duration in seconds; `0` means the timer was turned off.
+        seconds: u32,
+    },
     /// Unsupported content with a user-facing description.
     Unsupported {
         what: String,
@@ -996,6 +1011,21 @@ pub const CALL_ENTRY_PREFIX: &str = "zapfast-call-";
 /// under. No chat has it: such a call belongs to none, so its entries show on
 /// the Calls page alone, never in the chat list.
 pub const CALL_LINK_CHAT: &str = "zapfast-call-link";
+
+/// The id prefix of the disappearing-timer notices Zeus files from live
+/// setting changes. They are local system rows, never sent anywhere.
+pub const TIMER_NOTICE_PREFIX: &str = "zapfast-timer-";
+
+/// Whether `id` is one Zeus made up for a row of its own, which no server
+/// ever issued: a call entry, or a disappearing-timer notice.
+pub fn local_message_id(id: &str) -> bool {
+    id.starts_with(CALL_ENTRY_PREFIX) || timer_notice_id(id)
+}
+
+/// Whether `id` names a disappearing-timer notice.
+pub fn timer_notice_id(id: &str) -> bool {
+    id.starts_with(TIMER_NOTICE_PREFIX)
+}
 
 /// How far apart, in seconds, two entries for one call may be: the phone's
 /// call-log message and the call's record are stamped by different clocks.
@@ -1179,6 +1209,9 @@ impl PollDraft {
 
 /// The longest group name WhatsApp accepts, in characters.
 pub const GROUP_NAME_LIMIT: usize = whatsapp_rust::wacore::iq::groups::GROUP_SUBJECT_MAX_LENGTH;
+/// The longest group description WhatsApp takes.
+pub const GROUP_DESCRIPTION_LIMIT: usize =
+    whatsapp_rust::wacore::iq::groups::GROUP_DESCRIPTION_MAX_LENGTH;
 
 /// WhatsApp's longest live location share, in seconds.
 pub const LIVE_LOCATION_LIMIT: i64 = 8 * 60 * 60;
@@ -1405,6 +1438,11 @@ impl Content {
 
     /// [`Self::summary`] with its content label in `locale`.
     pub fn summary_in(&self, locale: crate::i18n::Locale) -> String {
+        if let Self::DisappearingTimer { seconds } = self {
+            return crate::util::disappearing_line(locale, Some(*seconds)).unwrap_or_else(|| {
+                crate::i18n::gettext(locale, "Disappearing messages").into_owned()
+            });
+        }
         let summary = self.summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1415,6 +1453,9 @@ impl Content {
 
     /// [`Self::full_summary`] with its content label in `locale`.
     pub fn full_summary_in(&self, locale: crate::i18n::Locale) -> String {
+        if matches!(self, Self::DisappearingTimer { .. }) {
+            return self.summary_in(locale);
+        }
         let summary = self.full_summary();
         if self.labelled() {
             localized_summary(locale, &summary).into_owned()
@@ -1463,6 +1504,10 @@ impl Content {
             }
             Self::Contact { display_name, .. } => format!("Contact: {display_name}"),
             Self::Poll { question, .. } => format!("Poll: {question}"),
+            Self::DisappearingTimer { seconds } => {
+                crate::util::disappearing_line(crate::i18n::Locale::English, Some(*seconds))
+                    .unwrap_or_else(|| "Disappearing messages changed".to_owned())
+            }
             Self::Revoked => "This message was deleted".to_owned(),
             Self::Unsupported { what } => format!("Unsupported message ({what})"),
             Self::PhoneOnly {
@@ -2463,12 +2508,22 @@ pub enum Dialog {
     NewContact,
     UnlockLockedChats,
     ConfirmLockChat(ChatId),
+    BlockedContacts,
+    ConfirmBlock {
+        chat: ChatId,
+        blocked: bool,
+        from_list: bool,
+    },
     /// Manages the local labels.
     Labels,
     /// Confirms deleting a chat, which cannot be undone.
     ConfirmDeleteChat(ChatId),
     /// Confirms clearing a chat's messages, which cannot be undone.
     ConfirmClearChat(ChatId),
+    ExportChat {
+        chat: ChatId,
+        include_media: bool,
+    },
     /// Leaves a group or channel, optionally archiving the chat.
     ConfirmLeaveGroup(ChatId),
     /// Confirms deleting one message. The archive is the only copy, so a
@@ -2695,6 +2750,18 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
+    /// Sends the message being written without its link preview.
+    DismissLinkPreview,
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
+    FetchBlocklist,
+    SetBlocked {
+        chat: ChatId,
+        blocked: bool,
+    },
     Open(Page),
     /// Opens settings, or closes them when they are already showing.
     ToggleSettings,
@@ -2934,6 +3001,11 @@ pub enum Action {
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),
     OpenFolder(PathBuf),
+    ExportChat {
+        chat: ChatId,
+        include_media: bool,
+    },
+    CancelChatExport,
     /// Saves a copy of a downloaded attachment where the person chooses.
     SaveAttachmentAs {
         path: PathBuf,
@@ -3331,6 +3403,16 @@ pub enum Action {
     EditGroupName(String),
     /// Closes the group name editor without renaming.
     CloseGroupName,
+    /// Opens the group description editor, holding the current text.
+    EditGroupDescription(String),
+    /// Closes the group description editor without changing it.
+    CloseGroupDescription,
+    /// Changes a group's description on WhatsApp; the editor closes. Empty
+    /// text removes it.
+    SetGroupDescription {
+        chat: ChatId,
+        description: String,
+    },
     /// Renames a group on WhatsApp; the editor closes.
     SetGroupName {
         chat: ChatId,
