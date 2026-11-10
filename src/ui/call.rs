@@ -113,8 +113,18 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 let icon = if call.video { Icon::Video } else { Icon::Phone };
                 theme::icon(ui, icon, 15.0, palette.on_accent);
-                theme::text(ui, peer, theme::semibold(13.0), palette.on_accent);
-                theme::text(ui, status, theme::medium(13.0), palette.on_accent);
+                theme::text(
+                    ui,
+                    peer,
+                    theme::semibold(theme::TEXT_CONTROL),
+                    palette.on_accent,
+                );
+                theme::text(
+                    ui,
+                    status,
+                    theme::medium(theme::TEXT_CONTROL),
+                    palette.on_accent,
+                );
                 if !call.phase.is_live() {
                     return;
                 }
@@ -133,9 +143,19 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                         let key = crate::voice_input::key_label(app.settings.push_to_talk_key());
                         gettext(locale, "Hold {key} to talk").replace("{key}", &key)
                     };
-                    ui.add_space(6.0);
-                    theme::text(ui, "·", theme::medium(13.0), palette.on_accent);
-                    theme::text(ui, text, theme::medium(13.0), palette.on_accent);
+                    ui.add_space(8.0);
+                    theme::text(
+                        ui,
+                        "·",
+                        theme::medium(theme::TEXT_CONTROL),
+                        palette.on_accent,
+                    );
+                    theme::text(
+                        ui,
+                        text,
+                        theme::medium(theme::TEXT_CONTROL),
+                        palette.on_accent,
+                    );
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let locale = app.locale;
@@ -156,7 +176,7 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
                     let response = ui.add(
                         egui::Button::new(
                             egui::RichText::new(&back)
-                                .font(theme::semibold(13.0))
+                                .font(theme::semibold(theme::TEXT_CONTROL))
                                 .color(palette.on_accent),
                         )
                         .frame(false),
@@ -212,13 +232,13 @@ fn live(
             } else {
                 widgets::avatar(ui, palette, peer, &call.chat, size, picture);
             }
-            ui.add_space(18.0);
-            theme::text(ui, peer, theme::bold(26.0), palette.text);
-            ui.add_space(6.0);
+            ui.add_space(16.0);
+            theme::text(ui, peer, theme::bold(theme::TEXT_DISPLAY), palette.text);
+            ui.add_space(8.0);
             theme::text(
                 ui,
                 status(locale, call),
-                theme::medium(15.0),
+                theme::medium(theme::TEXT_SECTION),
                 status_color(call, palette),
             );
             if call.video_requested {
@@ -230,7 +250,7 @@ fn live(
                         locale,
                         "Wants to switch to video: turn on your camera to answer",
                     ),
-                    theme::medium(12.5),
+                    theme::medium(theme::TEXT_CAPTION),
                     palette.accent,
                 );
             }
@@ -239,7 +259,7 @@ fn live(
                 theme::text(
                     ui,
                     gettext(locale, "Their camera is off"),
-                    theme::medium(12.5),
+                    theme::medium(theme::TEXT_CAPTION),
                     palette.secondary,
                 );
             }
@@ -248,12 +268,16 @@ fn live(
     } else {
         // Over a picture, the name and the length sit on a plate of their own,
         // as wide as they are.
-        let name =
-            ui.painter()
-                .layout_no_wrap(peer.to_owned(), theme::semibold(15.0), Color32::WHITE);
-        let line =
-            ui.painter()
-                .layout_no_wrap(status(locale, call), theme::medium(13.0), Color32::WHITE);
+        let name = ui.painter().layout_no_wrap(
+            peer.to_owned(),
+            theme::semibold(theme::TEXT_SECTION),
+            Color32::WHITE,
+        );
+        let line = ui.painter().layout_no_wrap(
+            status(locale, call),
+            theme::medium(theme::TEXT_CONTROL),
+            Color32::WHITE,
+        );
         let inner = vec2(
             name.size().x.max(line.size().x),
             name.size().y + line.size().y,
@@ -451,7 +475,7 @@ fn notes(ui: &mut egui::Ui, locale: Locale, call: &CallUpdate, palette: &Palette
         theme::text(
             ui,
             template.replace("{name}", &lost.name),
-            theme::medium(12.5),
+            theme::medium(theme::TEXT_CAPTION),
             palette.warning,
         );
     }
@@ -460,7 +484,7 @@ fn notes(ui: &mut egui::Ui, locale: Locale, call: &CallUpdate, palette: &Palette
         theme::text(
             ui,
             peer_audio_text(locale, audio),
-            theme::medium(12.5),
+            theme::medium(theme::TEXT_CAPTION),
             palette.warning,
         );
     }
@@ -632,9 +656,9 @@ fn talk_button(
     } else {
         (palette.surface_active, palette.text)
     };
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.clone(), theme::semibold(13.0), tint);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.clone(), theme::semibold(theme::TEXT_CONTROL), tint);
     let size = vec2(galley.size().x + 15.0 + 8.0 + 2.0 * 16.0, TALK_HEIGHT);
     let rect = Rect::from_center_size(
         // A little nearer the controls than the rows above, as it belongs with them.
@@ -778,7 +802,12 @@ impl Picker<'_> {
             ui.set_width(PICKER);
             ui.horizontal(|ui| {
                 theme::icon(ui, self.icon, 13.0, self.palette.secondary);
-                theme::text(ui, self.title, theme::medium(12.0), self.palette.secondary);
+                theme::text(
+                    ui,
+                    self.title,
+                    theme::medium(theme::TEXT_CAPTION),
+                    self.palette.secondary,
+                );
             });
             controls::dropdown(
                 ui,
@@ -855,13 +884,13 @@ fn ringing(
         ui.add_space(area.height() * 0.18);
         let size = (area.height() * 0.24).clamp(96.0, 160.0);
         widgets::avatar(ui, palette, who.peer, &call.chat, size, who.picture);
-        ui.add_space(18.0);
-        theme::text(ui, who.peer, theme::bold(26.0), palette.text);
-        ui.add_space(6.0);
+        ui.add_space(16.0);
+        theme::text(ui, who.peer, theme::bold(theme::TEXT_DISPLAY), palette.text);
+        ui.add_space(8.0);
         theme::text(
             ui,
             incoming_text(locale, call, who.caller),
-            theme::medium(15.0),
+            theme::medium(theme::TEXT_SECTION),
             palette.secondary,
         );
         // Who is on the group call already, by their pictures.
@@ -949,7 +978,7 @@ fn faces(ui: &mut egui::Ui, palette: &Palette, people: &[&CallPerson]) {
             at.center(),
             egui::Align2::CENTER_CENTER,
             format!("+{extra}"),
-            theme::semibold(13.0),
+            theme::semibold(theme::TEXT_CONTROL),
             palette.text,
         );
     }
@@ -1039,12 +1068,12 @@ fn group_live(
     let header = Rect::from_min_size(area.min, vec2(area.width(), 52.0)).shrink2(vec2(56.0, 0.0));
     ui.scope_builder(egui::UiBuilder::new().max_rect(header), |ui| {
         ui.vertical_centered(|ui| {
-            theme::text(ui, who.peer, theme::bold(19.0), palette.text);
-            ui.add_space(2.0);
+            theme::text(ui, who.peer, theme::bold(theme::TEXT_TITLE), palette.text);
+            ui.add_space(4.0);
             theme::text(
                 ui,
                 status(locale, call),
-                theme::medium(13.5),
+                theme::medium(theme::TEXT_BODY),
                 status_color(call, palette),
             );
         });
@@ -1160,7 +1189,7 @@ fn group_live(
                     rect.center(),
                     egui::Align2::CENTER_CENTER,
                     format!("+{rest}"),
-                    theme::bold(24.0),
+                    theme::bold(theme::TEXT_DISPLAY),
                     palette.secondary,
                 );
             }
@@ -1224,9 +1253,11 @@ fn video_tile(ui: &mut egui::Ui, name: &str, texture: egui::TextureId, size: Vec
         .uv(cover_uv(size, rect.size()))
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
         .paint_at(ui, rect);
-    let label = ui
-        .painter()
-        .layout_no_wrap(name.to_owned(), theme::semibold(13.0), Color32::WHITE);
+    let label = ui.painter().layout_no_wrap(
+        name.to_owned(),
+        theme::semibold(theme::TEXT_CONTROL),
+        Color32::WHITE,
+    );
     let width = label.size().x.min(rect.width() - 36.0).max(0.0);
     let plate = Rect::from_min_size(
         egui::pos2(
@@ -1320,12 +1351,12 @@ fn person_tile(
             } else {
                 palette.secondary
             };
-            theme::text(ui, &person.name, theme::semibold(14.0), color);
+            theme::text(ui, &person.name, theme::semibold(theme::TEXT_BODY), color);
             if !person.joined {
                 theme::text(
                     ui,
                     gettext(locale, "Invited"),
-                    theme::medium(12.0),
+                    theme::medium(theme::TEXT_CAPTION),
                     palette.dim,
                 );
             }
@@ -1348,7 +1379,12 @@ fn answer(
         |ui| {
             ui.spacing_mut().item_spacing.y = 6.0;
             let response = control(ui, icon, fill, tint, label, true);
-            theme::text(ui, label, theme::medium(13.0), palette.secondary);
+            theme::text(
+                ui,
+                label,
+                theme::medium(theme::TEXT_CONTROL),
+                palette.secondary,
+            );
             response
         },
     )

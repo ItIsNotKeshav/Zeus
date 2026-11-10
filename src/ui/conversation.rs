@@ -173,7 +173,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         let list = area.with_min_y(bar.top());
         // A strip opening over the field slides the messages up with it, so
         // the last one is never left behind it.
-        let over = ui.ctx().animate_value_with_time(
+        let over = theme::animate_value(
+            ui.ctx(),
             ui.id().with("composer-over"),
             foot.height(),
             theme::MOTION_QUICK,
@@ -324,7 +325,7 @@ fn pin_banner(app: &mut App, ui: &mut egui::Ui, chat: &Chat, floating: bool) {
     let label = widgets::line(
         ui,
         &crate::markup::plain(&app.resolve_mention_tokens(&row.text), &[]),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.text,
         text_width,
         1,
@@ -380,7 +381,7 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         center,
         Align2::CENTER_CENTER,
         "Zeus",
-        theme::bold(24.0),
+        theme::bold(theme::TEXT_DISPLAY),
         palette.text,
     );
     ui.painter().text(
@@ -391,7 +392,7 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
         } else {
             crate::i18n::gettext(app.locale, "Select a chat on the left.")
         },
-        theme::regular(14.0),
+        theme::regular(theme::TEXT_BODY),
         palette.secondary,
     );
     if app.settings.show_shortcut_hints {
@@ -402,7 +403,7 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
                 crate::i18n::gettext(app.locale, "Ctrl+K to search · ? for keyboard shortcuts")
                     .as_ref(),
             ),
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.dim,
         );
     }
@@ -621,9 +622,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> Rect {
                                                     &title,
                                                     // Lighter on glass, as Apple's.
                                                     if palette.vibrant() {
-                                                        theme::medium(15.0)
+                                                        theme::medium(theme::TEXT_SECTION)
                                                     } else {
-                                                        theme::semibold(17.0)
+                                                        theme::semibold(theme::TEXT_SECTION)
                                                     },
                                                     palette.text,
                                                 )
@@ -1264,6 +1265,7 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
             let emoji = widgets::line(
                 ui,
                 candidate.emoji,
+                // An emoji glyph, sized to its tile rather than the type scale.
                 theme::regular(22.0),
                 palette.text,
                 30.0,
@@ -1277,7 +1279,7 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
             let shortcode = widgets::line(
                 ui,
                 &candidate.shortcode,
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.text,
                 (rect.width() * 0.4).max(100.0),
                 1,
@@ -1292,7 +1294,7 @@ fn emoji_suggestions(app: &mut App, ui: &mut egui::Ui, field: egui::Id) {
             let name = widgets::line(
                 ui,
                 candidate.name,
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
                 (rect.right() - name_x - 8.0).max(0.0),
                 1,
@@ -1414,7 +1416,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                     let detail = widgets::line(
                         ui,
                         &detail,
-                        theme::regular(11.5),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.secondary,
                         (rect.width() * 0.36).min(150.0),
                         1,
@@ -1422,7 +1424,7 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                     let name = widgets::line(
                         ui,
                         label,
-                        theme::medium(13.5),
+                        theme::medium(theme::TEXT_BODY),
                         palette.text,
                         rect.width() - detail.size().x - 62.0,
                         1,
@@ -1582,7 +1584,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                 )
                             }
                             .as_ref(),
-                            theme::regular(13.5),
+                            theme::regular(theme::TEXT_BODY),
                             palette.secondary,
                         );
                     });
@@ -1590,7 +1592,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 }
                 if chat.locked {
                     ui.vertical_centered(|ui| {
-                        theme::text(ui, "Locked chats are read-only in Zeus", theme::regular(13.5), palette.secondary);
+                        theme::text(ui, "Locked chats are read-only in Zeus", theme::regular(theme::TEXT_BODY), palette.secondary);
                     });
                     return;
                 }
@@ -1608,19 +1610,19 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         theme::text(
                             ui,
                             crate::i18n::gettext(app.locale, "You left this group"),
-                            theme::regular(13.5),
+                            theme::regular(theme::TEXT_BODY),
                             palette.secondary,
                         );
                     } else {
                         ui.horizontal(|ui| {
                             let width = 230.0;
                             ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-                            theme::text(ui, "Only", theme::regular(13.5), palette.secondary);
-                            theme::text(ui, "admins", theme::semibold(13.5), palette.accent);
+                            theme::text(ui, "Only", theme::regular(theme::TEXT_BODY), palette.secondary);
+                            theme::text(ui, "admins", theme::semibold(theme::TEXT_BODY), palette.accent);
                             theme::text(
                                 ui,
                                 "can send messages",
-                                theme::regular(13.5),
+                                theme::regular(theme::TEXT_BODY),
                                 palette.secondary,
                             );
                         });
@@ -1659,7 +1661,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                                     widgets::rich_text(
                                         ui,
                                         &crate::i18n::gettext(app.locale, "Original group message unavailable"),
-                                        theme::regular(12.5),
+                                        theme::regular(theme::TEXT_CAPTION),
                                         palette.secondary,
                                     );
                                 });
@@ -2494,7 +2496,12 @@ fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             theme::icon(ui, Icon::Mic, 16.0, palette.danger);
-            theme::text(ui, &label, theme::semibold(12.5), palette.danger);
+            theme::text(
+                ui,
+                &label,
+                theme::semibold(theme::TEXT_CAPTION),
+                palette.danger,
+            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let button = theme::icon_button(
                     ui,
@@ -2523,7 +2530,12 @@ fn edit_strip(app: &mut App, ui: &mut egui::Ui) {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             theme::icon(ui, Icon::Pencil, 16.0, palette.accent);
-            theme::text(ui, "Editing message", theme::semibold(12.5), palette.accent);
+            theme::text(
+                ui,
+                "Editing message",
+                theme::semibold(theme::TEXT_CAPTION),
+                palette.accent,
+            );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if theme::icon_button(
                     ui,
@@ -2562,10 +2574,15 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, quoted: &Message) {
                 widgets::rich_text(
                     ui,
                     &format!("Replying to {who}"),
-                    theme::semibold(12.5),
+                    theme::semibold(theme::TEXT_CAPTION),
                     palette.accent,
                 );
-                widgets::rich_text(ui, &summary, theme::regular(12.5), palette.secondary);
+                widgets::rich_text(
+                    ui,
+                    &summary,
+                    theme::regular(theme::TEXT_CAPTION),
+                    palette.secondary,
+                );
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if theme::icon_button(
@@ -3014,7 +3031,7 @@ fn sticky_date<R>(
     }
     // It appears at once when scrolling starts and fades only on the way out.
     let fade = if scrolling { 0.0 } else { STICKY_DATE_FADE };
-    let opacity = ctx.animate_bool_with_time(id, scrolling, fade);
+    let opacity = ctx.animate_bool_with_time(id, scrolling, theme::motion_time(&ctx, fade));
     let Some((timestamp, separator_top)) = visible_day else {
         return;
     };
@@ -3882,7 +3899,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         if let Some((id, count, placed)) = &divider
                             && row_contains(id)
                         {
-                            ui.add_space(6.0);
+                            ui.add_space(8.0);
                             let label = crate::i18n::ngettext(
                                 app.locale,
                                 "{} unread message",
@@ -4756,7 +4773,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                 spread: 0,
                 color: palette.lift_shadow(),
             }
-            .as_shape(button, CornerRadius::same(20)),
+            .as_shape(button, CornerRadius::from(button.height() / 2.0)),
         );
         // Frosted over the messages it floats on; solid while Blur is off.
         child
@@ -4820,7 +4837,7 @@ fn top_of_history(
             if conversation.loading_older {
                 theme::spinner(ui, 18.0, palette.accent);
             } else {
-                ui.add_space(18.0);
+                ui.add_space(16.0);
             }
         } else if conversation.fetching_phone {
             ui.horizontal(|ui| {
@@ -4830,7 +4847,7 @@ fn top_of_history(
                 theme::text(
                     ui,
                     "Loading older messages from your phone…",
-                    theme::regular(12.5),
+                    theme::regular(theme::TEXT_CAPTION),
                     palette.secondary,
                 );
             });
@@ -4842,7 +4859,7 @@ fn top_of_history(
                 widgets::chip(ui, palette, "No messages here yet");
             }
         } else {
-            ui.add_space(6.0);
+            ui.add_space(8.0);
         }
     });
 }
@@ -4911,7 +4928,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
             },
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
 }
 
 const TYPING_BUBBLE_PAD_X: f32 = 14.0;
@@ -6113,6 +6130,8 @@ fn bubble_row(
             // reacting to its own item.
             let members = album.unwrap_or(std::slice::from_ref(message));
             if members.iter().any(|member| !member.reactions.is_empty()) {
+                // Off the spacing scale on purpose: the chips overlap the
+                // bubble's lower edge.
                 ui.add_space(-5.0);
                 // Chips hang off the bubble's far side: the right of a
                 // received message, the left of one we sent.
@@ -6143,7 +6162,7 @@ fn bubble_row(
                         reactions(ui, view, member, actions);
                     }
                 });
-                ui.add_space(2.0);
+                ui.add_space(4.0);
             }
             // Members without a pill record that, so the first reaction
             // that arrives live pops like any later change.
@@ -6316,24 +6335,34 @@ fn reference_timestamp(
             let _ = status_motion(ui, view, message, shown);
             match message.status {
                 Delivery::Pending => {
-                    widgets::rich_text(ui, "•••", theme::semibold(12.0), view.palette.secondary);
+                    widgets::rich_text(
+                        ui,
+                        "•••",
+                        theme::semibold(theme::TEXT_CAPTION),
+                        view.palette.secondary,
+                    );
                 }
                 Delivery::Failed => {
-                    widgets::rich_text(ui, "✗", theme::semibold(12.0), view.palette.danger);
+                    widgets::rich_text(
+                        ui,
+                        "✗",
+                        theme::semibold(theme::TEXT_CAPTION),
+                        view.palette.danger,
+                    );
                 }
                 _ => {}
             }
             widgets::rich_text(
                 ui,
                 &time,
-                theme::regular(10.0),
+                theme::regular(theme::TEXT_MICRO),
                 view.palette.secondary.gamma_multiply(0.82),
             );
         } else {
             widgets::rich_text(
                 ui,
                 &time,
-                theme::regular(10.0),
+                theme::regular(theme::TEXT_MICRO),
                 view.palette.secondary.gamma_multiply(0.82),
             );
         }
@@ -6345,7 +6374,11 @@ fn reference_timestamp(
 fn reference_timestamp_width(ui: &egui::Ui, time: &str, own: bool) -> f32 {
     let time = ui
         .painter()
-        .layout_no_wrap(time.to_owned(), theme::regular(10.0), Color32::WHITE)
+        .layout_no_wrap(
+            time.to_owned(),
+            theme::regular(theme::TEXT_MICRO),
+            Color32::WHITE,
+        )
         .size()
         .x;
     // The mark is 14 points of ticks, or "•••" / "✗" while sending or failed.
@@ -6995,7 +7028,7 @@ fn editing_label(ui: &egui::Ui, view: &View<'_>, message: &Message, editor: egui
                         ui.add(
                             egui::Label::new(
                                 egui::RichText::new(label.as_ref())
-                                    .font(theme::semibold(12.0))
+                                    .font(theme::semibold(theme::TEXT_CAPTION))
                                     .color(palette.accent),
                             )
                             .selectable(false)
@@ -7344,7 +7377,7 @@ fn speed_pill(
         };
         let galley = ui
             .painter()
-            .layout_no_wrap(label, theme::medium(11.0), colour);
+            .layout_no_wrap(label, theme::medium(theme::TEXT_MICRO), colour);
         ui.painter()
             .galley(rect.center() - galley.size() / 2.0, galley, colour);
     }
@@ -7380,7 +7413,7 @@ fn speed_menu_row(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             for option in crate::audio::SPEEDS {
                 let selected = option == speed;
                 let response = speed_pill(
@@ -7544,7 +7577,7 @@ fn bubble_frame(
                 let response = widgets::rich_text(
                     ui,
                     &name,
-                    theme::semibold(13.0),
+                    theme::semibold(theme::TEXT_CONTROL),
                     palette.sender(crate::util::hue(&message.sender)),
                 );
                 let response = ui
@@ -8124,8 +8157,18 @@ fn quote_block(
                 |ui| {
                     ui.set_width(inner_width);
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(ui, &who, theme::semibold(12.5), colours.name);
-                    widgets::rich_text(ui, &summary, theme::regular(12.5), colours.text);
+                    widgets::rich_text(
+                        ui,
+                        &who,
+                        theme::semibold(theme::TEXT_CAPTION),
+                        colours.name,
+                    );
+                    widgets::rich_text(
+                        ui,
+                        &summary,
+                        theme::regular(theme::TEXT_CAPTION),
+                        colours.text,
+                    );
                 },
             );
         })
@@ -8205,10 +8248,13 @@ fn call_entry(
     let detail = entry.detail(locale);
     let title_galley =
         ui.painter()
-            .layout_no_wrap(title.clone(), theme::medium(14.0), palette.text);
+            .layout_no_wrap(title.clone(), theme::medium(theme::TEXT_BODY), palette.text);
     let detail_galley = detail.as_ref().map(|detail| {
-        ui.painter()
-            .layout_no_wrap(detail.clone(), theme::regular(12.5), palette.secondary)
+        ui.painter().layout_no_wrap(
+            detail.clone(),
+            theme::regular(theme::TEXT_CAPTION),
+            palette.secondary,
+        )
     });
     let title_width = title_galley.size().x;
     let detail_width = detail_galley.as_ref().map_or(0.0, |galley| galley.size().x);
@@ -8357,7 +8403,7 @@ fn forwarded_label(ui: &mut egui::Ui, palette: &Palette) -> (Rect, std::sync::Ar
         "Forwarded",
         0.0,
         egui::TextFormat {
-            font_id: theme::regular(12.5),
+            font_id: theme::regular(theme::TEXT_CAPTION),
             color: palette.dim,
             italics: true,
             ..Default::default()
@@ -8410,7 +8456,6 @@ const FOOTER_MARK: f32 = 13.0;
 const FOOTER_MARK_GAP: f32 = 8.0;
 /// Room one visible mark keeps next to the clock.
 const FOOTER_MARK_SLOT: f32 = FOOTER_MARK + FOOTER_MARK_GAP;
-const FOOTER_STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
 
 /// The clock's own width at the footer's size: the floor a footer starts from,
 /// and the one part of it that depends on the reader's clock format.
@@ -8418,7 +8463,7 @@ fn clock_width(ui: &egui::Ui, message: &Message) -> f32 {
     ui.painter()
         .layout_no_wrap(
             crate::util::clock(message.timestamp),
-            theme::regular(11.0),
+            theme::regular(theme::TEXT_MICRO),
             Color32::WHITE,
         )
         .size()
@@ -8440,7 +8485,7 @@ fn footer_width_with(
     pinned: bool,
     status: Option<&str>,
 ) -> f32 {
-    let font = theme::regular(11.0);
+    let font = theme::regular(theme::TEXT_MICRO);
     let time = match status {
         Some(text) => {
             ui.painter()
@@ -8461,7 +8506,11 @@ fn footer_width_with(
     };
     let not_sent = if not_sent(message) {
         ui.painter()
-            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
+            .layout_no_wrap(
+                NOT_SENT.to_owned(),
+                theme::medium(theme::TEXT_MICRO),
+                Color32::WHITE,
+            )
             .size()
             .x
             + 6.0
@@ -8498,7 +8547,11 @@ fn message_footer_width(
     }
     let edited = if message.edited {
         ui.painter()
-            .layout_no_wrap("edited".to_owned(), theme::regular(11.0), palette.dim)
+            .layout_no_wrap(
+                "edited".to_owned(),
+                theme::regular(theme::TEXT_MICRO),
+                palette.dim,
+            )
             .size()
             .x
             + 4.0
@@ -8763,7 +8816,7 @@ fn footer_over_picture(
     pinned: bool,
     actions: &mut Vec<Action>,
 ) {
-    let font = theme::regular(11.0);
+    let font = theme::regular(theme::TEXT_MICRO);
     let shown = shown_delivery(view, message);
     let status = message_status_text(view, message);
     let time = ui.painter().layout_no_wrap(
@@ -8774,8 +8827,11 @@ fn footer_over_picture(
         Color32::WHITE,
     );
     let failed = not_sent(message).then(|| {
-        ui.painter()
-            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), Color32::WHITE)
+        ui.painter().layout_no_wrap(
+            NOT_SENT.to_owned(),
+            theme::medium(theme::TEXT_MICRO),
+            Color32::WHITE,
+        )
     });
     let tick_width = if message.from_me && status.is_none() {
         19.0
@@ -8884,7 +8940,7 @@ fn footer_over_picture(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
     ui.ctx().data_mut(|data| {
@@ -8955,7 +9011,7 @@ fn footer(
         reference_footer_marks(ui, message, slot, starred, pinned, palette);
         return;
     }
-    let font = theme::regular(11.0);
+    let font = theme::regular(theme::TEXT_MICRO);
     let shown = shown_delivery(view, message);
     let status = message_status_text(view, message);
     let time_colour = status_colour(view, shown, palette.secondary);
@@ -8974,8 +9030,11 @@ fn footer(
     // uses the text colour: the danger red on an outgoing bubble is too faint
     // to read, and the red icon beside it already carries the alarm.
     let failed = not_sent(message).then(|| {
-        ui.painter()
-            .layout_no_wrap(NOT_SENT.to_owned(), theme::medium(11.0), palette.text)
+        ui.painter().layout_no_wrap(
+            NOT_SENT.to_owned(),
+            theme::medium(theme::TEXT_MICRO),
+            palette.text,
+        )
     });
     let tick_width = if message.from_me && status.is_none() {
         19.0
@@ -9083,7 +9142,7 @@ fn footer(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
 }
@@ -9129,9 +9188,11 @@ fn reference_footer_marks(
         );
     }
     if message.edited {
-        let galley =
-            ui.painter()
-                .layout_no_wrap("edited".to_owned(), theme::regular(11.0), palette.dim);
+        let galley = ui.painter().layout_no_wrap(
+            "edited".to_owned(),
+            theme::regular(theme::TEXT_MICRO),
+            palette.dim,
+        );
         x -= galley.size().x + 4.0;
         ui.painter().galley(
             pos2(x, rect.center().y - galley.size().y / 2.0),
@@ -9149,7 +9210,7 @@ fn reference_footer_marks(
                 Vec2::splat(FOOTER_MARK),
             ),
             FOOTER_MARK,
-            FOOTER_STAR,
+            theme::STAR,
         );
     }
 }
@@ -9212,7 +9273,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     let line = widgets::line(
         ui,
         &shown.join(" "),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
         240.0,
         1,
@@ -9700,7 +9761,14 @@ fn context_menu(
                 .enumerate()
             {
                 let chosen = mine == Some(emoji);
-                let line = widgets::line(ui, emoji, theme::regular(20.0), palette.text, 40.0, 1);
+                let line = widgets::line(
+                    ui,
+                    emoji,
+                    theme::regular(theme::TEXT_TITLE),
+                    palette.text,
+                    40.0,
+                    1,
+                );
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(34.0), Sense::click());
                 let first_shape = super::swipe::mark(ui);
                 let old_opacity = ui.opacity();
@@ -10626,7 +10694,7 @@ fn content(
                     let name = details
                         .as_ref()
                         .map_or(display_name.as_str(), |contact| contact.name.as_str());
-                    widgets::rich_text(ui, name, theme::medium(14.0), palette.text);
+                    widgets::rich_text(ui, name, theme::medium(theme::TEXT_BODY), palette.text);
                     match details.as_ref() {
                         Some(SharedContact {
                             account: Some(account),
@@ -10677,7 +10745,7 @@ fn content(
                             theme::text(
                                 ui,
                                 &contact.number,
-                                theme::regular(12.5),
+                                theme::regular(theme::TEXT_CAPTION),
                                 palette.secondary,
                             );
                         }
@@ -10699,7 +10767,7 @@ fn content(
             mirrored_row(ui, own, icon, |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    widgets::rich_text(ui, name, theme::medium(14.0), palette.text);
+                    widgets::rich_text(ui, name, theme::medium(theme::TEXT_BODY), palette.text);
                     let stickers =
                         crate::i18n::ngettext(view.locale, "{} sticker", "{} stickers", *count)
                             .replace("{}", &count.to_string());
@@ -10708,14 +10776,24 @@ fn content(
                     } else {
                         format!("{publisher} · {stickers}")
                     };
-                    widgets::rich_text(ui, &detail, theme::regular(12.5), palette.secondary);
+                    widgets::rich_text(
+                        ui,
+                        &detail,
+                        theme::regular(theme::TEXT_CAPTION),
+                        palette.secondary,
+                    );
                     if let Some(caption) = caption {
-                        widgets::rich_text(ui, caption, theme::regular(13.5), palette.text);
+                        widgets::rich_text(
+                            ui,
+                            caption,
+                            theme::regular(theme::TEXT_BODY),
+                            palette.text,
+                        );
                     }
                     if theme::link(
                         ui,
                         crate::i18n::gettext(view.locale, "View stickers"),
-                        theme::regular(12.5),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.link,
                     )
                     .clicked()
@@ -10797,7 +10875,7 @@ fn content(
                     theme::text(
                         ui,
                         "This message was deleted",
-                        theme::regular(13.5),
+                        theme::regular(theme::TEXT_BODY),
                         palette.secondary,
                     );
                 },
@@ -10820,7 +10898,7 @@ fn content(
                         widgets::rich_text(
                             ui,
                             &crate::i18n::gettext(view.locale, "Live location"),
-                            theme::medium(14.0),
+                            theme::medium(theme::TEXT_BODY),
                             palette.text,
                         );
                         widgets::rich_text(
@@ -10829,7 +10907,7 @@ fn content(
                                 view.locale,
                                 "Open WhatsApp on your phone to follow it.",
                             ),
-                            theme::regular(12.5),
+                            theme::regular(theme::TEXT_CAPTION),
                             palette.secondary,
                         );
                     });
@@ -10872,7 +10950,12 @@ fn content(
                     theme::icon(ui, Icon::Smartphone, 14.0, palette.dim);
                 },
                 |ui| {
-                    theme::text(ui, text, theme::regular(13.5), palette.secondary);
+                    theme::text(
+                        ui,
+                        text,
+                        theme::regular(theme::TEXT_BODY),
+                        palette.secondary,
+                    );
                 },
             );
             None
@@ -10888,7 +10971,7 @@ fn content(
                     theme::text(
                         ui,
                         format!("Unsupported: {what}"),
-                        theme::regular(13.5),
+                        theme::regular(theme::TEXT_BODY),
                         palette.secondary,
                     );
                 },
@@ -10948,7 +11031,7 @@ fn carousel(
                                 } else {
                                     view.palette.bubble_in
                                 })
-                                .corner_radius(10)
+                                .corner_radius(widgets::BUBBLE_RADIUS)
                                 .inner_margin(Margin {
                                     left: 10,
                                     right: 10,
@@ -11509,7 +11592,8 @@ fn carousel_picture(
                 image
                     .uv(Rect::from_center_size(pos2(0.5, 0.5), uv_size))
                     .fit_to_exact_size(size)
-                    .corner_radius(6.0)
+                    // Nested in its card's bubble corner, less the room between.
+                    .corner_radius(widgets::BUBBLE_RADIUS - 4)
                     .paint_at(ui, rect);
             } else if media.path.is_some() {
                 theme::paint_icon(ui, Icon::CircleAlert, rect, 24.0, view.palette.danger);
@@ -11517,7 +11601,7 @@ fn carousel_picture(
                     rect.center() + vec2(0.0, 24.0),
                     Align2::CENTER_CENTER,
                     "Could not display this picture. Click to open it.",
-                    theme::regular(11.5),
+                    theme::regular(theme::TEXT_CAPTION),
                     view.palette.secondary,
                 );
             }
@@ -11534,7 +11618,7 @@ fn carousel_picture(
                         rect.center() + vec2(0.0, 34.0),
                         Align2::CENTER_CENTER,
                         "Download failed. Click to retry.",
-                        theme::regular(11.5),
+                        theme::regular(theme::TEXT_CAPTION),
                         Color32::WHITE,
                     );
                 }
@@ -11641,7 +11725,7 @@ fn interactive_buttons(
         let line = widgets::line(
             ui,
             &button.label,
-            theme::medium(14.0),
+            theme::medium(theme::TEXT_BODY),
             color,
             (width - 48.0).max(1.0),
             2,
@@ -11791,11 +11875,11 @@ fn interactive_buttons(
         }
     }
     if card.needs_phone {
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         widgets::rich_text(
             ui,
             "More content in WhatsApp Web or on your phone",
-            theme::regular(12.0),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
     }
@@ -12197,24 +12281,34 @@ fn location_card(
                     .maintain_aspect_ratio(false)
                     .uv(Rect::from_min_max(pos2(0.0, crop), pos2(1.0, 1.0 - crop)))
                     .fit_to_exact_size(Vec2::new(card, height))
-                    .corner_radius(8.0),
+                    .corner_radius(theme::RADIUS_SMALL),
             );
             ui.add_space(4.0);
         }
         ui.horizontal(|ui| {
             theme::icon(ui, Icon::MapPin, 16.0, palette.accent);
-            widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
+            widgets::rich_text(ui, title, theme::medium(theme::TEXT_BODY), palette.text);
         });
         if let Some(detail) = detail {
-            widgets::rich_text(ui, &detail, theme::regular(12.5), palette.secondary);
+            widgets::rich_text(
+                ui,
+                &detail,
+                theme::regular(theme::TEXT_CAPTION),
+                palette.secondary,
+            );
         }
         if let Some(note) = note {
-            widgets::rich_text(ui, &note, theme::regular(12.5), palette.secondary);
+            widgets::rich_text(
+                ui,
+                &note,
+                theme::regular(theme::TEXT_CAPTION),
+                palette.secondary,
+            );
         }
         if theme::link(
             ui,
             crate::i18n::gettext(view.locale, "Open in a map").as_ref(),
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.link,
         )
         .clicked()
@@ -12533,7 +12627,7 @@ fn picture(
                         rect.center() + vec2(0.0, 24.0),
                         Align2::CENTER_CENTER,
                         "Could not display this picture. Click to open it.",
-                        theme::regular(11.5),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.secondary,
                     );
                 }
@@ -12584,7 +12678,7 @@ fn picture(
                     rect.center() + vec2(0.0, 34.0),
                     Align2::CENTER_CENTER,
                     "Download failed. Click to retry.",
-                    theme::regular(11.5),
+                    theme::regular(theme::TEXT_CAPTION),
                     Color32::WHITE,
                 );
             }
@@ -12607,7 +12701,7 @@ fn picture(
                         rect.center() + vec2(0.0, 34.0),
                         Align2::CENTER_CENTER,
                         crate::util::bytes(media.size),
-                        theme::regular(11.5),
+                        theme::regular(theme::TEXT_CAPTION),
                         Color32::WHITE,
                     );
                 }
@@ -12895,7 +12989,7 @@ fn video(
                 if !label.is_empty() {
                     let galley = ui.painter().layout_no_wrap(
                         label.join(" · "),
-                        theme::medium(11.5),
+                        theme::medium(theme::TEXT_CAPTION),
                         Color32::WHITE,
                     );
                     let chip = Rect::from_min_size(
@@ -13410,7 +13504,14 @@ fn attachment(
     let text_left = ATTACHMENT_DISC + ATTACHMENT_GAP;
     let text_width =
         (width - inset.x * 2.0 - text_left - ATTACHMENT_GAP - ATTACHMENT_ACTION).max(0.0);
-    let name = widgets::line(ui, title, theme::medium(14.0), palette.text, text_width, 2);
+    let name = widgets::line(
+        ui,
+        title,
+        theme::medium(theme::TEXT_BODY),
+        palette.text,
+        text_width,
+        2,
+    );
     let detail = match &media.state {
         MediaState::Failed(error) => format!("{error}. Click to retry."),
         _ => detail.to_owned(),
@@ -13418,7 +13519,7 @@ fn attachment(
     let detail = widgets::line(
         ui,
         &detail,
-        theme::regular(12.0),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
         text_width,
         1,
@@ -13730,9 +13831,10 @@ fn voice_player(
                         .unwrap_or_else(|| crate::util::bytes(media.size)),
                 };
                 let (text, font) = match &media.state {
-                    MediaState::Failed(error) => {
-                        (format!("{error}. Click to retry."), theme::regular(11.5))
-                    }
+                    MediaState::Failed(error) => (
+                        format!("{error}. Click to retry."),
+                        theme::regular(theme::TEXT_CAPTION),
+                    ),
                     _ => (
                         shown,
                         theme::tabular(fastframe_fonts::Weight::Regular, 11.5),
@@ -14408,7 +14510,7 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
             selected.len() as u32,
         )
         .replace("{count}", &selected.len().to_string());
-        theme::text(ui, &count, theme::medium(14.5), palette.text);
+        theme::text(ui, &count, theme::medium(theme::TEXT_BODY), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             // The selection stays open with nothing in it, as its check
             // boxes do; there is nothing to forward until one is ticked.
@@ -14532,12 +14634,15 @@ fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate::model::Up
     let cap = (ui.available_width() * WHATSAPP_WIDTH_SHARE).min(CARD_WIDTH);
     for upload in uploads {
         let id = ui.id().with(("upload", upload.id));
-        let shown = ui.ctx().animate_bool_with_time(id, true, UPLOAD_ENTRANCE);
+        let shown = ui.ctx().animate_bool_with_time(
+            id,
+            true,
+            theme::motion_time(ui.ctx(), UPLOAD_ENTRANCE),
+        );
         // Eased out, so it settles softly.
         let eased = theme::ease_out(shown);
         let fraction = upload.fraction().map(|fraction| {
-            ui.ctx()
-                .animate_value_with_time(id.with("progress"), fraction, theme::MOTION_PANEL)
+            theme::animate_value(ui.ctx(), id.with("progress"), fraction, theme::MOTION_PANEL)
         });
         let picture = upload.preview.as_ref().filter(|_| {
             matches!(
@@ -14858,7 +14963,8 @@ fn upload_picture(
     );
     if let Some(fraction) = fraction {
         let label = format!("{:.0}%", fraction * 100.0);
-        let galley = painter.layout_no_wrap(label, theme::medium(12.0), Color32::WHITE);
+        let galley =
+            painter.layout_no_wrap(label, theme::medium(theme::TEXT_CAPTION), Color32::WHITE);
         let chip = Rect::from_min_size(
             picture.left_bottom() + vec2(8.0, -8.0 - galley.size().y - 6.0),
             galley.size() + vec2(14.0, 6.0),
@@ -14943,7 +15049,7 @@ fn upload_card(
         } else {
             &upload.name
         },
-        theme::medium(14.0),
+        theme::medium(theme::TEXT_BODY),
         colours.text,
         text_width,
         1,
@@ -14958,7 +15064,11 @@ fn upload_card(
         ),
         None => "Preparing…".to_owned(),
     };
-    let detail = painter.layout_no_wrap(detail, theme::regular(12.0), colours.secondary);
+    let detail = painter.layout_no_wrap(
+        detail,
+        theme::regular(theme::TEXT_CAPTION),
+        colours.secondary,
+    );
     let gap = 2.0;
     let top = content.center().y - (name.size().y + gap + detail.size().y) / 2.0;
     name.paint(ui, pos2(text_left, top), colours.text.gamma_multiply(eased));
@@ -16466,7 +16576,7 @@ mod tests {
     #[test]
     fn the_star_mark_tint_is_not_the_secondary() {
         let palette = Palette::dark();
-        assert_ne!(FOOTER_STAR, palette.secondary);
+        assert_ne!(theme::STAR, palette.secondary);
     }
 
     #[test]
@@ -17779,7 +17889,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                             let line = widgets::line(
                                 ui,
                                 &name,
-                                theme::regular(10.5),
+                                theme::regular(theme::TEXT_MICRO),
                                 palette.text,
                                 size.x - 8.0,
                                 1,

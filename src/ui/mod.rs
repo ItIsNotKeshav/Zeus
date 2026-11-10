@@ -400,14 +400,15 @@ fn central_background(app: &App) -> egui::Color32 {
     }
 }
 
+/// The thin edge around the wallpaper page: the palette's text at an eighth.
+fn wallpaper_edge(palette: &crate::theme::Palette) -> egui::Color32 {
+    let [r, g, b, _] = palette.text.to_srgba_unmultiplied();
+    egui::Color32::from_rgba_unmultiplied(r, g, b, 32)
+}
+
 fn central_frame(app: &App) -> Frame {
     let stroke = if app.page == Page::Wallpaper {
-        let color = if app.palette.dark {
-            egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
-        } else {
-            egui::Color32::from_rgba_unmultiplied(10, 10, 10, 32)
-        };
-        Stroke::new(1.0, color)
+        Stroke::new(1.0, wallpaper_edge(&app.palette))
     } else {
         Stroke::NONE
     };
@@ -575,7 +576,12 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
                         theme::icon(ui, Icon::Paperclip, 28.0, palette.accent);
                         let drop_text = crate::i18n::gettext(app.locale, "Drop to send to {name}")
                             .replace("{name}", &name);
-                        theme::text(ui, drop_text, theme::semibold(15.0), palette.text);
+                        theme::text(
+                            ui,
+                            drop_text,
+                            theme::semibold(theme::TEXT_SECTION),
+                            palette.text,
+                        );
                     });
                 });
         });
@@ -662,7 +668,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(text)
-                                .font(theme::medium(12.5))
+                                .font(theme::medium(theme::TEXT_CAPTION))
                                 .color(palette.text),
                         )
                         .wrap()
@@ -798,7 +804,7 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
                                 .show(ui, |ui| {
                                     // One width for all: the message wraps beside its
                                     // buttons.
-                                    let font = theme::medium(13.5);
+                                    let font = theme::medium(theme::TEXT_BODY);
                                     let inner = width - 28.0;
                                     let undo = crate::i18n::gettext(app.locale, "Undo");
                                     let offer = toast
@@ -980,10 +986,7 @@ mod idle_tests {
         app.page = Page::Wallpaper;
         assert_eq!(
             central_frame(&app).stroke,
-            Stroke::new(
-                1.0,
-                egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
-            )
+            Stroke::new(1.0, wallpaper_edge(&app.palette))
         );
     }
 

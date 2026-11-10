@@ -204,7 +204,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
         let heading = widgets::line(
             ui,
             label,
-            theme::semibold(18.0),
+            theme::semibold(theme::TEXT_TITLE),
             palette.text,
             (ui.available_width() - 36.0).max(1.0),
             2,
@@ -230,7 +230,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
         widgets::rich_text(
             ui,
             &crate::i18n::gettext(app.locale, "This list is no longer available."),
-            theme::regular(14.0),
+            theme::regular(theme::TEXT_BODY),
             palette.secondary,
         );
         return;
@@ -249,7 +249,12 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
         } else {
             crate::i18n::gettext(app.locale, "Connect to WhatsApp to reply")
         };
-        widgets::rich_text(ui, &reason, theme::regular(13.0), palette.secondary);
+        widgets::rich_text(
+            ui,
+            &reason,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.secondary,
+        );
     }
     ui.add_space(8.0);
     let height = (ui.ctx().content_rect().height() - 200.0).clamp(100.0, 420.0);
@@ -270,7 +275,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
                             widgets::rich_text(
                                 ui,
                                 section,
-                                theme::semibold(12.5),
+                                theme::semibold(theme::TEXT_CAPTION),
                                 palette.secondary,
                             );
                             ui.add_space(4.0);
@@ -306,7 +311,7 @@ fn interactive_option(
     let title = super::widgets::line(
         ui,
         &option.title,
-        theme::medium(14.0),
+        theme::medium(theme::TEXT_BODY),
         palette.text,
         (width - 52.0).max(1.0),
         2,
@@ -315,7 +320,7 @@ fn interactive_option(
         super::widgets::line(
             ui,
             &option.description,
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
             (width - 52.0).max(1.0),
             3,
@@ -389,7 +394,7 @@ fn unlock_locked_chats(app: &mut App, ui: &mut egui::Ui) {
     theme::paragraph(
         ui,
         desc_text.as_ref(),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
     );
     let entry_id = ui.make_persistent_id("locked-code");
@@ -426,7 +431,7 @@ fn unlock_locked_chats(app: &mut App, ui: &mut egui::Ui) {
         theme::paragraph(
             ui,
             crate::i18n::gettext(app.locale, "That code did not match. Try again."),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.danger,
         );
     }
@@ -478,7 +483,7 @@ fn confirm_lock_chat(app: &mut App, ui: &mut egui::Ui, id: &str) {
             app.locale,
             "This moves the chat to the Locked tab, hiding it from the normal chat list, search, unread badges, and notifications. The lock status also syncs to your phone. Open Locked with a separate local Zeus code to read it. Sending from locked chats is not supported yet.",
         ),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
     );
     ui.horizontal(|ui| {
@@ -555,7 +560,7 @@ fn new_chat(app: &mut App, ui: &mut egui::Ui) {
                 theme::text(
                     ui,
                     crate::i18n::gettext(app.locale, "No matching contacts"),
-                    theme::regular(13.0),
+                    theme::regular(theme::TEXT_CONTROL),
                     palette.secondary,
                 );
             }
@@ -655,7 +660,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
         theme::text(
             ui,
             crate::i18n::gettext(app.locale, "Forward to these chats?"),
-            theme::regular(13.5),
+            theme::regular(theme::TEXT_BODY),
             palette.secondary,
         );
         ui.add_space(8.0);
@@ -719,8 +724,13 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
         } else {
             crate::i18n::gettext(app.locale, "Chats")
         };
-        theme::text(ui, heading.as_ref(), theme::semibold(12.0), palette.dim);
-        ui.add_space(6.0);
+        theme::text(
+            ui,
+            heading.as_ref(),
+            theme::semibold(theme::TEXT_CAPTION),
+            palette.dim,
+        );
+        ui.add_space(8.0);
     }
 
     let row_height = FORWARD_ROW + FORWARD_ROW_GAP;
@@ -823,7 +833,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             theme::text(
                 ui,
                 crate::i18n::gettext(app.locale, "No writable chats found"),
-                theme::regular(13.5),
+                theme::regular(theme::TEXT_BODY),
                 palette.secondary,
             );
         });
@@ -873,7 +883,11 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         let button_width = ui
             .painter()
-            .layout_no_wrap(label.to_string(), theme::semibold(13.0), palette.on_accent)
+            .layout_no_wrap(
+                label.to_string(),
+                theme::semibold(theme::TEXT_CONTROL),
+                palette.on_accent,
+            )
             .size()
             .x
             + 36.0;
@@ -889,7 +903,7 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
                     count as u32,
                 )
                 .replace("{count}", &count.to_string()),
-                theme::regular(13.5),
+                theme::regular(theme::TEXT_BODY),
                 palette.secondary,
             );
         });
@@ -929,7 +943,7 @@ fn forward_footer(app: &mut App, ui: &mut egui::Ui) {
         ui.add(
             egui::Label::new(
                 egui::RichText::new(limit)
-                    .font(theme::regular(13.0))
+                    .font(theme::regular(theme::TEXT_CONTROL))
                     .color(palette.secondary),
             )
             .wrap(),
@@ -972,7 +986,7 @@ fn forward_row_contents(
     let line = super::widgets::line(
         ui,
         title,
-        theme::medium(14.5),
+        theme::medium(theme::TEXT_BODY),
         colour,
         (rect.right() - 44.0 - left).max(0.0),
         1,
@@ -985,7 +999,7 @@ fn forward_row_contents(
             pos2(left, top + line.size().y + 1.0),
             egui::Align2::LEFT_TOP,
             kind,
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
     }
@@ -1025,7 +1039,7 @@ fn forwardable(chat: &crate::model::Chat) -> bool {
 fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
     let palette = app.palette;
     ui.horizontal(|ui| {
-        theme::text(ui, label, theme::bold(18.0), palette.text);
+        theme::text(ui, label, theme::bold(theme::TEXT_TITLE), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let close = theme::icon_button(
                 ui,
@@ -1082,13 +1096,18 @@ fn shortcut_row(
             theme::text(
                 ui,
                 super::keys::label(keys),
-                theme::semibold(13.0),
+                theme::semibold(theme::TEXT_CONTROL),
                 palette.text,
             );
         });
         ui.allocate_ui_with_layout(vec2(rest, 0.0), Layout::top_down(Align::Min), |ui| {
             ui.set_width(rest);
-            theme::paragraph(ui, what, theme::regular(13.0), palette.secondary);
+            theme::paragraph(
+                ui,
+                what,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.secondary,
+            );
         });
     });
 }
@@ -1107,7 +1126,7 @@ fn shortcuts(app: &mut App, ui: &mut egui::Ui) {
             ui.painter()
                 .layout_no_wrap(
                     super::keys::label(keys),
-                    theme::semibold(13.0),
+                    theme::semibold(theme::TEXT_CONTROL),
                     egui::Color32::WHITE,
                 )
                 .size()
@@ -1153,20 +1172,25 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         let (logo, _) = ui.allocate_exact_size(egui::Vec2::splat(44.0), egui::Sense::hover());
         theme::mark(ui, logo.center(), 44.0);
         ui.vertical(|ui| {
-            theme::text(ui, "Zeus", theme::bold(17.0), palette.text);
+            theme::text(ui, "Zeus", theme::bold(theme::TEXT_SECTION), palette.text);
             let version_label = crate::i18n::gettext(app.locale, "Version {version}")
                 .replace("{version}", env!("CARGO_PKG_VERSION"));
-            theme::text(ui, version_label, theme::regular(13.0), palette.secondary);
+            theme::text(
+                ui,
+                version_label,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.secondary,
+            );
         });
     });
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     theme::paragraph(
         ui,
         crate::i18n::gettext(
             app.locale,
             "A native WhatsApp client written in Rust with egui. It connects through whatsapp-rust. Messages are end-to-end encrypted on this device.",
         ),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.text,
     );
     theme::paragraph(
@@ -1175,15 +1199,15 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             app.locale,
             "This is an unofficial client. Using it may be against WhatsApp's terms of service and could get an account suspended.",
         ),
-        theme::regular(12.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         if theme::link(
             ui,
             crate::i18n::gettext(app.locale, "Source code"),
-            theme::medium(13.0),
+            theme::medium(theme::TEXT_CONTROL),
             palette.link,
         )
         .clicked()
@@ -1191,8 +1215,15 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             app.actions
                 .push(Action::OpenUrl(env!("CARGO_PKG_REPOSITORY").to_owned()));
         }
-        theme::text(ui, "·", theme::regular(13.0), palette.dim);
-        if theme::link(ui, "whatsapp-rust", theme::medium(13.0), palette.link).clicked() {
+        theme::text(ui, "·", theme::regular(theme::TEXT_CONTROL), palette.dim);
+        if theme::link(
+            ui,
+            "whatsapp-rust",
+            theme::medium(theme::TEXT_CONTROL),
+            palette.link,
+        )
+        .clicked()
+        {
             app.actions.push(Action::OpenUrl(
                 "https://github.com/oxidezap/whatsapp-rust".to_owned(),
             ));
@@ -1279,14 +1310,19 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
         }
         InviteState::Failed(error) => {
             title(ui, app, &crate::i18n::gettext(app.locale, "Group invite"));
-            theme::paragraph(ui, error, theme::regular(13.5), palette.text);
+            theme::paragraph(ui, error, theme::regular(theme::TEXT_BODY), palette.text);
             cancel_row(app, ui);
             return;
         }
         InviteState::Ready(info) => (info, false),
         InviteState::Joining(info) => (info, true),
     };
-    super::widgets::rich_text(ui, &info.subject, theme::semibold(17.0), palette.text);
+    super::widgets::rich_text(
+        ui,
+        &info.subject,
+        theme::semibold(theme::TEXT_SECTION),
+        palette.text,
+    );
     let members = crate::i18n::ngettext(app.locale, "{} member", "{} members", info.members as u32)
         .replace("{}", &info.members.to_string());
     ui.label(egui::RichText::new(members).color(palette.secondary));
@@ -1295,7 +1331,12 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
         egui::ScrollArea::vertical()
             .max_height(140.0)
             .show(ui, |ui| {
-                super::widgets::rich_text(ui, description, theme::regular(13.5), palette.text);
+                super::widgets::rich_text(
+                    ui,
+                    description,
+                    theme::regular(theme::TEXT_BODY),
+                    palette.text,
+                );
             });
     }
     let member = app.chats.iter().any(|chat| chat.id == info.id);
@@ -1307,11 +1348,11 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
                 app.locale,
                 "An admin must approve your request before you join.",
             ),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.secondary,
         );
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let label = match (member, info.approval) {
@@ -1346,7 +1387,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
 
 fn cancel_row(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::pill_button(
@@ -1374,7 +1415,7 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
             theme::text(
                 ui,
                 crate::i18n::gettext(locale, "Downloading the pack…"),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.secondary,
             );
         });
@@ -1383,7 +1424,12 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
     };
     title(ui, app, &pack.name);
     if !publisher.trim().is_empty() {
-        theme::text(ui, &publisher, theme::regular(13.0), palette.secondary);
+        theme::text(
+            ui,
+            &publisher,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.secondary,
+        );
     }
     egui::ScrollArea::vertical()
         .max_height(320.0)
@@ -1391,7 +1437,7 @@ fn sticker_pack(app: &mut App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             super::picker::sticker_preview_grid(ui, &palette, &pack.stickers, app.window_focused);
         });
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::pill_button(
@@ -1486,7 +1532,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Size"),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.secondary,
         );
         let width = ui.available_width() - 8.0;
@@ -1512,7 +1558,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
             theme::text(
                 ui,
                 crate::i18n::gettext(locale, "Keep the transparent background"),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.text,
             );
         });
@@ -1524,7 +1570,7 @@ fn sticker_maker(app: &mut App, ui: &mut egui::Ui) {
         .width(f32::INFINITY)
         .show(ui, &palette);
     app.sticker_draft = Some(draft);
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     let can_send = app.open_chat.is_some();
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1740,13 +1786,13 @@ pub(super) fn confirm_destructive(
     title(ui, app, heading);
     for (index, paragraph) in body.iter().enumerate() {
         let (font, colour) = if index == 0 {
-            (theme::regular(13.5), palette.text)
+            (theme::regular(theme::TEXT_BODY), palette.text)
         } else {
-            (theme::regular(13.0), palette.secondary)
+            (theme::regular(theme::TEXT_CONTROL), palette.secondary)
         };
         theme::paragraph(ui, *paragraph, font, colour);
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     let cancel = crate::i18n::gettext(app.locale, "Cancel");
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1777,10 +1823,10 @@ fn confirm_reset_invite_link(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             locale,
             "The current link will stop working, and nobody can join with it any more. A new link replaces it.",
         ),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
     );
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     confirm_buttons(
         app,
         ui,
@@ -1811,10 +1857,10 @@ fn confirm_remove_member(app: &mut App, ui: &mut egui::Ui, chat: &str, member: &
         )
         .replace("{name}", &name)
         .replace("{group}", &group),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
     );
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     confirm_buttons(
         app,
         ui,
@@ -1861,10 +1907,10 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
             locale,
             "You will not receive new messages. The local history stays on this computer.",
         ),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
     );
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     let leave_label = if channel {
         crate::i18n::gettext(locale, "Leave channel")
     } else {
@@ -1920,7 +1966,7 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
             app.locale,
             "Enter the WhatsApp phone number with its country code. Do not include a plus sign or leading zero. You will get a code to enter on the phone.",
         ),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
     );
     ui.add_space(4.0);
@@ -1936,19 +1982,24 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
                 // Set the row height from the field instead of the shorter label.
                 ui.set_min_height(
                     ui.ctx()
-                        .fonts_mut(|fonts| fonts.row_height(&theme::regular(16.0)))
+                        .fonts_mut(|fonts| fonts.row_height(&theme::regular(theme::TEXT_SECTION)))
                         + 4.0,
                 );
-                theme::text(ui, "+", theme::semibold(16.0), palette.secondary);
+                theme::text(
+                    ui,
+                    "+",
+                    theme::semibold(theme::TEXT_SECTION),
+                    palette.secondary,
+                );
                 let response = ui.add(
                     egui::TextEdit::singleline(&mut app.pair_phone)
                         .id(id)
                         .hint_text(
                             egui::RichText::new("15551234567")
                                 .color(palette.dim)
-                                .font(theme::regular(16.0)),
+                                .font(theme::regular(theme::TEXT_SECTION)),
                         )
-                        .font(theme::regular(16.0))
+                        .font(theme::regular(theme::TEXT_SECTION))
                         .text_color(palette.text)
                         .frame(egui::Frame::NONE)
                         .desired_width(f32::INFINITY),
@@ -2007,7 +2058,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
             app.locale,
             "Enter a phone number with its country code. Add a name to save the contact, or leave it blank to message the number without saving it. WhatsApp uses the first name as the display name.",
         ),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
     );
     ui.add_space(4.0);
@@ -2019,9 +2070,9 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.set_min_height(
-                        ui.ctx()
-                            .fonts_mut(|fonts| fonts.row_height(&theme::regular(16.0)))
-                            + 4.0,
+                        ui.ctx().fonts_mut(|fonts| {
+                            fonts.row_height(&theme::regular(theme::TEXT_SECTION))
+                        }) + 4.0,
                     );
                     inner(ui)
                 })
@@ -2042,9 +2093,9 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
                 .hint_text(
                     egui::RichText::new($hint)
                         .color(palette.dim)
-                        .font(theme::regular(16.0)),
+                        .font(theme::regular(theme::TEXT_SECTION)),
                 )
-                .font(theme::regular(16.0))
+                .font(theme::regular(theme::TEXT_SECTION))
                 .text_color(palette.text)
                 .frame(egui::Frame::NONE)
                 .desired_width($width)
@@ -2069,7 +2120,8 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     let (first_field, last_field) = ui
         .horizontal(|ui| {
             let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0 - 24.0;
-            let format = egui::TextFormat::simple(theme::regular(16.0), palette.text);
+            let format =
+                egui::TextFormat::simple(theme::regular(theme::TEXT_SECTION), palette.text);
             let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
                 crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
             };
@@ -2135,7 +2187,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
             theme::text(
                 ui,
                 crate::i18n::gettext(app.locale, "Checking the number…"),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
         }
@@ -2214,7 +2266,7 @@ pub(super) fn disappearing_timer_row(
 ) -> TimerRow {
     const ICON: f32 = 12.0;
     const GAP: f32 = 5.0;
-    let font = theme::regular(12.5);
+    let font = theme::regular(theme::TEXT_CAPTION);
     let line = super::widgets::line(
         ui,
         text,
@@ -2260,7 +2312,7 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> eg
     let palette = app.palette;
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        theme::semibold(13.0),
+        theme::semibold(theme::TEXT_CONTROL),
         egui::Color32::WHITE,
     );
     let size = galley.size() + egui::vec2(36.0, 16.0);
