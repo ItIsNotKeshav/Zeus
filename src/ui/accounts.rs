@@ -7,7 +7,7 @@ use egui::{Align2, CornerRadius, Rect, Sense, Vec2, pos2, vec2};
 use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::i18n::gettext;
-use crate::model::{AccountId, Action};
+use crate::model::{AccountId, Action, Dialog};
 use crate::theme::{self, Icon};
 
 use super::widgets;
@@ -100,7 +100,7 @@ fn entries(app: &mut App) -> Vec<Entry> {
 fn menu(app: &mut App, button: &egui::Response) {
     let palette = app.palette;
     let popup_id = button.id.with("popup");
-    if app.account_menu {
+    if app.account_menu || button.secondary_clicked() {
         app.account_menu = false;
         egui::Popup::open_id(&button.ctx, popup_id);
     }
@@ -124,6 +124,24 @@ fn menu(app: &mut App, button: &egui::Response) {
                 &gettext(app.locale, "Add account"),
             ) {
                 app.actions.push(Action::AddAccount);
+            }
+            widgets::menu_separator(ui, &palette);
+            // Logging out asks once more in a dialog before anything goes:
+            // with several numbers it removes this one, otherwise it unlinks
+            // the only one, as Settings does.
+            if widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::LogOut),
+                &gettext(app.locale, "Log out"),
+            ) {
+                let dialog = if app.has_several_accounts() {
+                    Dialog::ConfirmRemoveAccount(app.account().id.clone())
+                } else {
+                    Dialog::ConfirmUnlink
+                };
+                app.actions.push(Action::ShowDialog(dialog));
+                ui.close();
             }
         });
 }

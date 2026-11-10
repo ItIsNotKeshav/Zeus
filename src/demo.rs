@@ -11878,9 +11878,9 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// The menu lists what is done to the message itself: replying,
-    /// forwarding and selecting have ways of their own, the sent, delivery
-    /// and read times open from the message's time, and deleting waits
+    /// The menu lists every action on the message: replying, forwarding,
+    /// selecting, the message's info and the troubleshooting rows, while the
+    /// sent, delivery and read times stay out of it and deleting waits
     /// behind one Delete row.
     #[test]
     fn message_menu_lists_actions_only() {
@@ -11912,16 +11912,17 @@ mod tests {
                 "the menu has no {status}row"
             );
         }
-        for gone in [
+        for present in [
             "Reply",
             "Forward",
             "Select",
             "Message info",
             "Reload earlier messages",
             "Copy message ID",
-            "Delete for me",
-            "Delete for everyone",
         ] {
+            find(present);
+        }
+        for gone in ["Delete for me", "Delete for everyone"] {
             assert!(
                 nodes.iter().all(|(label, _, _)| label != gone),
                 "the menu has no {gone} row"
