@@ -5051,9 +5051,14 @@ fn reaction_affordance(
         return;
     }
     let reply = ui.interact(reply_rect, bubble.id.with("reply"), Sense::click());
-    reply.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Reply")
-    });
+    // An invisible control is not announced: while the affordance is faded
+    // out, this is only a hit target, and a reader listing the open message
+    // menu would otherwise find a Reply row that is not drawn.
+    if opacity(reply.has_focus()) > 0.0 {
+        reply.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Reply")
+        });
+    }
     theme::reveal_focus(&reply);
     if ui.is_rect_visible(reply_rect) && opacity(reply.has_focus()) > 0.0 {
         let opacity = opacity(reply.has_focus());

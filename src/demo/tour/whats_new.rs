@@ -204,13 +204,13 @@ pub(super) fn script() -> Vec<Cue> {
     add(38.4, Press(K::Backspace, Modifiers::NONE));
     add(40.4, esc("Esc · Close stickers"));
 
-    // Who read a group message.
+    // Who read a group message. The message menu has no Message info row, so
+    // the message's own time and ticks open the receipts, as they do on the
+    // phone.
     add(41.0, Move(Label("Rust Berlin")));
     add(41.4, Click(left));
-    add(42.2, Move(Bubble("group-poll")));
-    add(42.6, Click(right));
-    add(43.3, Move(Label("Message info")));
-    add(43.7, Click(left));
+    add(42.2, Move(Footer("group-poll")));
+    add(42.6, Click(left));
     add(46.8, esc("Esc · Close message info"));
 
     // Favorites and label chips, and a chat's menu.
