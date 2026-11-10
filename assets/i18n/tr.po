@@ -1976,19 +1976,19 @@ msgstr "Gelen arama"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
 "your phone."
 msgstr ""
-"{caller}, {group} grubunu arıyor. ZapFast henüz grup aramalarına "
+"{caller}, {group} grubunu arıyor. Zeus henüz grup aramalarına "
 "katılamıyor: telefonunuzdan yanıtlayın."
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"{caller} is calling you and others. Zeus can't join group calls yet: "
 "answer on your phone."
 msgstr ""
-"{caller} sizi ve başkalarını arıyor. ZapFast henüz grup aramalarına "
+"{caller} sizi ve başkalarını arıyor. Zeus henüz grup aramalarına "
 "katılamıyor: telefonunuzdan yanıtlayın."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
@@ -2127,9 +2127,9 @@ msgstr ""
 "Gruptan birinin aramasını isteyin ve buradan yanıtlayın."
 
 #: src/app.rs:4106 src/app.rs:6697
-msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgid "Zeus can't join group calls yet: open the link on your phone."
 msgstr ""
-"ZapFast henüz grup aramalarına katılamıyor: bağlantıyı telefonunuzda açın."
+"Zeus henüz grup aramalarına katılamıyor: bağlantıyı telefonunuzda açın."
 
 #: src/app.rs:4176
 msgid "Connecting"
