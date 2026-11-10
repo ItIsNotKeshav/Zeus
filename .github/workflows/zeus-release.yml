@@ -31,6 +31,10 @@ env:
   CARGO_TERM_COLOR: always
   TAG: ${{ inputs.tag || github.event.release.tag_name }}
   CONFIG: zeus.native-packages.yaml
+  # Baked into the binary by settings.rs, as release.yml does, so the GIF
+  # picker works without each user pasting a key of their own. Without the
+  # secret the build ships keyless and the picker asks for one.
+  ZAPFAST_GIPHY_KEY: ${{ secrets.ZAPFAST_GIPHY_KEY || secrets.FASTSAPP_GIPHY_KEY }}
 
 jobs:
   check:
