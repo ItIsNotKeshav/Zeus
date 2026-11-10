@@ -65,6 +65,8 @@ pub enum ScrollPane {
     Chats,
     /// The open chat's messages.
     Messages,
+    /// The messages of the other pane of a split.
+    OtherMessages,
 }
 
 /// Keeps a scroll gesture, glide included, with the pane it began over
@@ -634,6 +636,10 @@ pub struct App {
     paste_keys: PasteKeys,
     /// Open emoji, GIF, or sticker picker tab.
     pub picker: Option<PickerTab>,
+    /// A chat shown in a window of its own, above other windows.
+    pub pop_out: Option<PopOut>,
+    /// Chats kept as bubbles over other windows.
+    pub bubbles: Bubbles,
     /// Picker anchor at the composer button.
     pub picker_anchor: Option<egui::Rect>,
     pub picker_search: String,
@@ -1330,7 +1336,6 @@ impl App {
         options: AppOptions,
     ) -> std::io::Result<Self> {
         crate::proxy::configure(&settings.proxy);
-        crate::updates::set_channel(settings.update_channel);
         let mut roster = AccountRoster::load(&dirs.accounts_file())?;
         if roster.order.is_empty() {
             roster = AccountRoster::default();
@@ -1569,6 +1574,8 @@ impl App {
             dropping: false,
             paste_keys: PasteKeys::default(),
             picker: None,
+            pop_out: None,
+            bubbles: Bubbles::default(),
             picker_anchor: None,
             picker_search: String::new(),
             picker_recent: None,
@@ -1892,6 +1899,9 @@ impl App {
     fn clear_account_ui(&mut self) {
         self.recent_chats.clear();
         self.invalidate_composer_undo();
+        // The pop-out and the bubbles show the previous account's chats.
+        self.pop_out = None;
+        self.bubbles.clear();
         self.forward_recipients.clear();
         self.forward_reviewing = false;
         // The locked folder and the picker show the previous account's chats
@@ -2060,6 +2070,8 @@ impl App {
 
     /// Updates the linked app while no window exists.
     pub fn window_gone(&mut self) {
+        // Its window goes with the main one.
+        self.pop_out = None;
         self.flush_open_draft();
         self.clear_chat_lock_entry();
         if self.dialog == Some(Dialog::UnlockLockedChats) {
@@ -2300,7 +2312,7 @@ impl App {
             && !self.window_hidden
             && !self.window_unseen
             && self.chat_view()
-            && self.open_chat.as_deref() == Some(chat_id);
+            && self.on_screen(chat_id);
         // An open, visible chat is on screen even when another window has the
         // focus: its message is already there to see, so nothing pops up. A
         // window minimized, fully covered or hidden with the app (Cmd+H) shows
@@ -2598,6 +2610,13 @@ impl App {
         // A locked or deleted chat keeps none of its pinned words on screen.
         self.pins.remove(id);
         self.chat_pins.remove(id);
+        // A pane that loses its chat leaves the other chat open alone.
+        self.forget_split_of(id);
+        let promote = if self.open_chat.as_deref() == Some(id) {
+            self.split.take()
+        } else {
+            None
+        };
         if self.events_hidden {
             if self.open_chat.as_deref() == Some(id) {
                 self.open_chat = None;
@@ -2645,6 +2664,11 @@ impl App {
             self.dialog = None;
             self.recording = None;
             self.player.stop();
+        }
+        if let Some(split) = promote {
+            let mut view = split.view;
+            self.open_chat(split.other);
+            view.swap_with(self);
         }
     }
 
@@ -3923,7 +3947,9 @@ impl App {
                 paths,
                 documents,
             } => {
-                if live && self.open_chat.as_deref() == Some(chat.as_str()) {
+                // A picker opened from a bubble fills that bubble.
+                if live && !documents && self.bubble_picked(&chat, &paths) {
+                } else if live && self.open_chat.as_deref() == Some(chat.as_str()) {
                     if documents {
                         self.stage_documents(paths);
                     } else {
@@ -4876,6 +4902,8 @@ impl App {
         // read would send receipts for messages nobody has seen.
         let remembered = self.open_chat.as_deref() == Some(chat.id.as_str());
         let is_open = live && remembered && self.chat_view();
+        // Beside the open chat, the other pane's chat is read as it is.
+        let on_screen = live && self.on_screen(&chat.id) && self.chat_view();
         let mut chat = chat;
         if chat.unread == 0 {
             self.clear_chat_notifications(&chat.id);
@@ -4884,7 +4912,7 @@ impl App {
                 self.reset_notification_throttle(&chat.id);
             }
         }
-        if is_open
+        if on_screen
             && (!chat.locked || self.locked_folder_open())
             && chat.unread > 0
             && self.window_focused
@@ -5902,7 +5930,14 @@ impl App {
             self.search.clear();
             self.search_hits.clear();
         }
+        // A chat is never in the window and in a pop-out at once.
+        if self.pop_out.as_ref().is_some_and(|pop| pop.chat == id) {
+            self.pop_out = None;
+        }
         self.reset_notification_throttle(&id);
+        // The other pane's chat takes focus: the open chat steps aside into
+        // the pane it leaves and keeps its place there.
+        let focusing = self.focus_other_pane(&id);
         if self.open_chat.as_deref() != Some(id.as_str()) {
             let previous = self.open_chat.clone();
             self.recent_chats
@@ -5989,8 +6024,11 @@ impl App {
         if self.page != Page::Calls {
             self.page = Page::Chats;
         }
-        self.scroll_to_bottom = true;
-        self.at_bottom = true;
+        // A chat that took focus from the other pane is where it was left.
+        if !focusing {
+            self.scroll_to_bottom = true;
+            self.at_bottom = true;
+        }
         self.focus_composer = true;
         self.ensure_loaded(&id);
         // Read again on every open: a pin that expired while the chat was
@@ -6482,19 +6520,39 @@ impl App {
         self.store_draft(&chat, "");
         self.composer_mentions = selected;
         // The reply travels with the first attachment, like the caption.
-        let mut quoting = self.reply_to.take();
+        let quoting = self.reply_to.take();
         let quoted = quoting.clone();
         let caption = caption.trim().to_owned();
         let (caption, mentions) = self.encode_composer_mentions(&chat, caption);
         let caption = Some(caption).filter(|text| !text.is_empty());
-        let mut caption = caption;
-        let mut mentions = mentions;
         self.emoji_start = None;
         self.mention_start = None;
+        let items = std::mem::take(&mut self.pending)
+            .into_iter()
+            .map(|staged| staged.item)
+            .collect();
+        self.send_staged(&chat, items, caption, mentions, quoting, view_once);
+        // Everything staged has gone, so nothing is remembered about it.
+        self.forget_unstaged_pictures();
+        self.follow_outgoing(quoted.as_ref());
+    }
+
+    /// Sends staged attachments to `chat` in the order they were staged, the
+    /// caption, mentions and quote going with the first.
+    pub(crate) fn send_staged(
+        &mut self,
+        chat: &ChatId,
+        items: Vec<Pending>,
+        mut caption: Option<String>,
+        mut mentions: Vec<String>,
+        mut quoting: Option<crate::model::ReplyTarget>,
+        view_once: bool,
+    ) {
+        let chat = chat.clone();
         // Files go in runs of one kind, in the order they were staged.
         let mut runs: Vec<(bool, Vec<PathBuf>)> = Vec::new();
-        for staged in std::mem::take(&mut self.pending) {
-            let (documents, path) = match staged.item {
+        for item in items {
+            let (documents, path) = match item {
                 Pending::Picture {
                     width,
                     height,
@@ -6558,9 +6616,6 @@ impl App {
                 uploads,
             });
         }
-        // Everything staged has gone, so nothing is remembered about it.
-        self.forget_unstaged_pictures();
-        self.follow_outgoing(quoted.as_ref());
     }
 
     #[allow(dead_code)]
@@ -6731,28 +6786,6 @@ impl App {
             self.show_update = true;
             self.inspect_update();
         }
-    }
-
-    /// Moves to another channel: what the last one offered no longer applies,
-    /// so the offer and any download of it go, and the new channel is asked
-    /// at once.
-    fn set_update_channel(&mut self, channel: crate::updates::Channel) {
-        if self.settings.update_channel == channel {
-            return;
-        }
-        self.settings.update_channel = channel;
-        crate::updates::set_channel(channel);
-        self.mark_settings_dirty();
-        self.update = None;
-        self.show_update = false;
-        if matches!(
-            self.update_download,
-            crate::updates::DownloadState::Ready(_) | crate::updates::DownloadState::Failed(_)
-        ) {
-            self.update_download = crate::updates::DownloadState::Idle;
-        }
-        self.update_check = crate::updates::Check::Idle;
-        self.check_for_updates_now();
     }
 
     /// A check the reader asked for, whatever the daily setting says.
@@ -7010,7 +7043,7 @@ impl App {
         }
     }
 
-    fn apply_actions(&mut self, ctx: &egui::Context) {
+    pub(crate) fn apply_actions(&mut self, ctx: &egui::Context) {
         let deferred = std::mem::take(&mut self.deferred_account_actions);
         for (id, action) in deferred {
             let Some(index) = self.accounts.iter().position(|account| account.id == id) else {
@@ -7199,6 +7232,30 @@ impl App {
                 };
                 self.apply(Action::Open(page), ctx);
             }
+            Action::OpenSplit { chat, side } => self.open_split(chat, side),
+            Action::CloseSplit(chat) => self.close_split_pane(&chat, ctx),
+            Action::SwapSplit => self.swap_split_sides(),
+            Action::FocusSplit(chat) => self.open_chat(chat),
+            Action::PopOut(chat) => {
+                // A chat is never in the window and in a pop-out at once.
+                if self.split.is_some() && self.on_screen(&chat) {
+                    self.close_split_pane(&chat, ctx);
+                } else if self.open_chat.as_deref() == Some(chat.as_str()) {
+                    self.apply(Action::CloseChat, ctx);
+                }
+                self.open_pop_out(chat);
+            }
+            Action::ClosePopOut => self.pop_out = None,
+            action @ (Action::Bubble(_)
+            | Action::ToggleBubble(_)
+            | Action::CollapseBubbles
+            | Action::DismissBubble(_)
+            | Action::DockBubble(_)
+            | Action::BubbleSend(_)
+            | Action::BubbleAttach(_)
+            | Action::BubbleUnstage { .. }) => self.apply_bubble(action, ctx),
+            Action::DockPopOut => self.dock_pop_out(),
+            Action::PopOutSend { chat, text } => self.send_from_pop_out(chat, text),
             Action::PreloadChat(id) => {
                 // A locked chat's messages stay in the locked folder.
                 let locked = self.chat(&id).is_some_and(|chat| chat.locked);
@@ -7353,6 +7410,12 @@ impl App {
                         id: message,
                         before,
                     });
+                }
+            }
+            // Closing one pane of a split leaves the other open.
+            Action::CloseChat if self.split.is_some() && self.open_chat.is_some() => {
+                if let Some(open) = self.open_chat.clone() {
+                    self.close_split_pane(&open, ctx);
                 }
             }
             Action::CloseChat => {
@@ -9206,7 +9269,6 @@ impl App {
             }
             Action::CloseUpdate => self.show_update = false,
             Action::CheckForUpdates => self.check_for_updates_now(),
-            Action::SetUpdateChannel(channel) => self.set_update_channel(channel),
             Action::StartBenchmark => {
                 if crate::benchmark::AVAILABLE
                     && !self.benchmark.as_ref().is_some_and(|run| run.running())
@@ -9393,7 +9455,10 @@ impl App {
                 self.search_hits.clear();
                 self.mark_settings_dirty();
             }
-            Action::SettingsChanged => self.mark_settings_dirty(),
+            Action::SettingsChanged => {
+                self.mark_settings_dirty();
+                self.drop_disabled_experiments();
+            }
             Action::SetAccountPrivacy { kind, choice } => {
                 // The value lives on the phone: nothing is written without a
                 // connection and a snapshot to write against.
@@ -11752,6 +11817,10 @@ fn notification_eligible(chat: &Chat, now: i64, message_at: i64) -> bool {
 
 mod calls;
 pub use calls::CallPerson;
+pub(crate) mod split;
+pub use split::{PaneView, PopOut, Side, Split};
+pub(crate) mod bubbles;
+pub use bubbles::{Bubble, Bubbles, MAX_BUBBLES};
 mod conversations;
 pub(crate) use conversations::PhoneHistory;
 mod voice_input;
@@ -12138,6 +12207,66 @@ mod tests {
         let predicted = Duration::from_secs_f32(1.0 / 60.0);
         assert_eq!(run(false), (Duration::from_millis(40) - predicted, false));
         assert_eq!(run(true), (crate::motion::STEP - predicted, true));
+    }
+
+    #[test]
+    fn a_split_follows_the_chat_that_is_open() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.settings.split_view = true;
+        let (a, b, c) = ("1@s.whatsapp.net", "2@s.whatsapp.net", "3@s.whatsapp.net");
+        for (id, name) in [(a, "Ada"), (b, "Bo"), (c, "Cy")] {
+            app.chats.push(Chat::new(id.into(), name.into()));
+        }
+        app.apply_actions(&ctx);
+        app.apply(Action::OpenChat(a.into()), &ctx);
+        app.apply(
+            Action::OpenSplit {
+                chat: b.into(),
+                side: Side::Right,
+            },
+            &ctx,
+        );
+        assert_eq!(app.open_chat.as_deref(), Some(b), "the dropped chat opens");
+        assert_eq!(app.split_other().map(|chat| chat.id.as_str()), Some(a));
+
+        // A press in the other pane makes it the open chat and swaps them.
+        app.apply(Action::FocusSplit(a.into()), &ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(a));
+        assert_eq!(app.split_other().map(|chat| chat.id.as_str()), Some(b));
+
+        // Opening a third chat replaces the open pane, not the other one.
+        app.apply(Action::OpenChat(c.into()), &ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(c));
+        assert_eq!(app.split_other().map(|chat| chat.id.as_str()), Some(b));
+
+        // Closing a pane leaves the other alone in the panel.
+        app.apply(Action::CloseSplit(c.into()), &ctx);
+        assert!(app.split.is_none());
+        assert_eq!(app.open_chat.as_deref(), Some(b));
+    }
+
+    #[test]
+    fn a_popped_out_chat_leaves_the_window() {
+        let ctx = egui::Context::default();
+        let mut app = app();
+        app.settings.split_view = true;
+        let (a, b) = ("1@s.whatsapp.net", "2@s.whatsapp.net");
+        for (id, name) in [(a, "Ada"), (b, "Bo")] {
+            app.chats.push(Chat::new(id.into(), name.into()));
+        }
+        app.apply_actions(&ctx);
+        app.apply(Action::OpenChat(a.into()), &ctx);
+        app.apply(Action::PopOut(a.into()), &ctx);
+        assert_eq!(app.open_chat, None, "the chat moved out of the window");
+        assert_eq!(app.pop_out.as_ref().map(|pop| pop.chat.as_str()), Some(a));
+
+        app.apply(Action::OpenChat(a.into()), &ctx);
+        assert!(app.pop_out.is_none(), "opening it again brings it back");
+        app.apply(Action::PopOut(a.into()), &ctx);
+        app.apply(Action::DockPopOut, &ctx);
+        assert_eq!(app.open_chat.as_deref(), Some(a));
+        assert!(app.pop_out.is_none());
     }
 
     #[test]

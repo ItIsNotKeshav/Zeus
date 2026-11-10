@@ -3,6 +3,7 @@
 pub mod accounts;
 pub mod benchmark;
 mod blocking;
+pub mod bubbles;
 pub mod call;
 pub mod calls;
 pub(crate) mod carry;
@@ -31,9 +32,11 @@ pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod reaction_list;
+mod room;
 pub(crate) mod scroll_springs;
 pub mod settings;
 pub mod skeleton;
+pub mod split;
 pub(crate) mod swipe;
 pub mod update;
 pub mod widgets;
@@ -62,6 +65,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     carry::begin(ctx);
+    split::begin(ctx);
     keys::handle(app, ctx);
     history_buttons(app, ctx);
     let main_navigation = app.is_linked()
@@ -134,6 +138,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let status = banner(app, ctx, floor);
     toasts(app, ctx, floor, status);
     carry::show(app, ctx);
+    split::drag(app, ctx);
+    split::pop_out(app, ctx);
+    bubbles::show(app, ctx);
     focus_ring(app, ctx);
     announce(app, ctx);
 }
@@ -177,9 +184,22 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // (maximized, full screen, tiled), the list steps aside before the chat
     // gets too narrow for its header.
     info::prepare(app, ui.ctx());
-    let crowded = app.info_visible()
+    let info_crowded = app.info_visible()
         && ui.available_width() + info::room_ahead(ui.ctx()) - list_width
             < info::CARD_COLUMN + pane::INFO_CONVERSATION_MIN;
+    // A split grows the window the same way for its second pane, and folds
+    // the list when the window cannot grow enough.
+    let info_column = if app.info_visible() {
+        info::CARD_COLUMN
+    } else {
+        0.0
+    };
+    let card = ui.available_width() - list_width - chats::CARD_GAP - info_column;
+    split::prepare(app, ui.ctx(), card);
+    let split_crowded = app.page == Page::Chats
+        && split::wanted(app, ui.ctx())
+        && card + split::room_ahead(ui.ctx()) < split::NEED;
+    let crowded = info_crowded || split_crowded;
     if !narrow(ui.ctx()) && crowded {
         // The list folds into the rail's avatars, as when it is collapsed:
         // the chats stay a click (or a drop) away.
@@ -219,7 +239,6 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 .with_max_x(outer.right() - chats::CARD_GAP)
                 .with_max_y(outer.bottom() - chats::CARD_GAP);
             let gutter = app.palette.rail();
-            let radius = f32::from(chats::CARD_RADIUS);
             // The gutter goes around the card, never under it: under a
             // translucent card it would show through.
             let painter = ui.painter();
@@ -230,30 +249,24 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
             ] {
                 painter.rect_filled(strip, 0.0, gutter);
             }
-            painter.add(widgets::card_corners(rect, radius, gutter));
-            let frame = central_frame(app);
-            painter.rect(
-                rect,
-                radius,
-                frame.fill,
-                frame.stroke,
-                egui::StrokeKind::Inside,
-            );
+            // A split draws a card for each of its panes.
+            let split = split::active(app, ui.ctx(), rect);
+            if !split {
+                card_back(app, ui, rect, gutter);
+            }
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
                 ui.set_clip_rect(rect.intersect(ui.clip_rect()));
                 central_page(app, ui);
             });
-            // Square fills inside an opaque card are rounded off over the top.
-            if gutter.is_opaque() {
-                ui.painter()
-                    .add(widgets::card_corners(rect, radius, gutter));
+            if !split {
+                card_front(
+                    app,
+                    ui,
+                    rect,
+                    gutter,
+                    Stroke::new(1.25, app.palette.outline),
+                );
             }
-            ui.painter().rect_stroke(
-                rect,
-                radius,
-                Stroke::new(1.25, app.palette.outline),
-                egui::StrokeKind::Inside,
-            );
         });
     if let Some(region) = search_overlay {
         pane::show_overlay(app, ui.ctx(), region);
@@ -261,6 +274,40 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     if let Some(region) = info_overlay {
         info::show_overlay(app, ui.ctx(), region);
     }
+}
+
+/// The card behind the chat panel (or one pane of it), over the gutter.
+pub(crate) fn card_back(app: &App, ui: &egui::Ui, rect: egui::Rect, gutter: egui::Color32) {
+    let radius = f32::from(chats::CARD_RADIUS);
+    let frame = central_frame(app);
+    let painter = ui.painter();
+    painter.add(widgets::card_corners(rect, radius, gutter));
+    painter.rect(
+        rect,
+        radius,
+        frame.fill,
+        frame.stroke,
+        egui::StrokeKind::Inside,
+    );
+}
+
+/// The corners and outline over what a card holds: square fills inside an
+/// opaque card are rounded off over the top.
+pub(crate) fn card_front(
+    app: &App,
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    gutter: egui::Color32,
+    outline: Stroke,
+) {
+    let _ = app;
+    let radius = f32::from(chats::CARD_RADIUS);
+    if gutter.is_opaque() {
+        ui.painter()
+            .add(widgets::card_corners(rect, radius, gutter));
+    }
+    ui.painter()
+        .rect_stroke(rect, radius, outline, egui::StrokeKind::Inside);
 }
 
 /// The open chat or page in the central area.
