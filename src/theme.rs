@@ -841,9 +841,6 @@ pub fn animate_value(ctx: &egui::Context, id: egui::Id, value: f32, seconds: f32
     ctx.animate_value_with_time(id, value, motion_time(ctx, seconds))
 }
 
-/// The starred mark's gold, the same in every theme so a star reads as one.
-pub const STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
-
 /// How strong the tint of a field over a vibrant window is, and of a row
 /// under the pointer and a selected one.
 pub const TINT_FIELD: f32 = 0.08;

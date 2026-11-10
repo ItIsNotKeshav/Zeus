@@ -353,7 +353,7 @@ fn friend_messages(
     rows.push(video_message(
         chat,
         &format!("bench-{index}-video"),
-        index % 2 == 0,
+        index.is_multiple_of(2),
         newest - 30,
         clip,
         index as u32 + 2,

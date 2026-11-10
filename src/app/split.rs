@@ -349,6 +349,7 @@ impl App {
             text,
             quoting: None,
             mentions: Vec::new(),
+            preview: None,
         });
         self.follow_outgoing(None);
     }

@@ -1111,7 +1111,7 @@ fn personal(app: &mut App, ui: &mut egui::Ui) {
         &gettext(locale, "An accent, a typeface, and doodles for your chats."),
     );
     let chat_theme = app.settings.chat_theme;
-    let takes = app.settings.custom_theme.is_none() && chat_theme.takes_accent();
+    let takes = app.settings.custom_theme.is_none();
     let note = if takes {
         None
     } else if chat_theme == ChatTheme::Messages {
