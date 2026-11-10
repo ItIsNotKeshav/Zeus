@@ -5,7 +5,7 @@
 //! interface. With a screen reader attached they hold still and leave at
 //! once.
 
-use egui::{Align2, Color32, CornerRadius, Painter, Pos2, Rect, Sense, Ui, pos2, vec2};
+use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Sense, Ui, pos2, vec2};
 
 use crate::app::App;
 use crate::theme::{self, Palette};
@@ -89,8 +89,8 @@ fn shimmer(ctx: &egui::Context) -> Option<f32> {
     Some(((time % SHIMMER) / SHIMMER) as f32 * (1.0 + 2.0 * BAND) - BAND)
 }
 
-/// The whole window as placeholders while Zeus starts, `label` saying what
-/// it waits for.
+/// The whole window as placeholders while Zeus starts; `label`, what it
+/// waits for, is said to a screen reader and not drawn.
 pub fn window(app: &App, ui: &mut Ui, label: &str) {
     let ctx = ui.ctx().clone();
     // Shown at once, with nothing to fade in from; the animation is kept
@@ -104,7 +104,7 @@ pub fn window(app: &App, ui: &mut Ui, label: &str) {
             let response = ui.allocate_rect(rect, Sense::hover());
             response
                 .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
-            paint_window(ui.painter(), rect, app, opacity, shimmer(&ctx), Some(label));
+            paint_window(ui.painter(), rect, app, opacity, shimmer(&ctx));
         });
 }
 
@@ -118,17 +118,10 @@ pub fn fade_out(app: &App, ctx: &egui::Context) {
     let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, id()));
     let rect = ctx.content_rect();
     painter.rect_filled(rect, 0, app.palette.window.gamma_multiply(opacity));
-    paint_window(&painter, rect, app, opacity, shimmer(ctx), None);
+    paint_window(&painter, rect, app, opacity, shimmer(ctx));
 }
 
-fn paint_window(
-    painter: &Painter,
-    rect: Rect,
-    app: &App,
-    opacity: f32,
-    shimmer: Option<f32>,
-    label: Option<&str>,
-) {
+fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer: Option<f32>) {
     let palette = &app.palette;
     let look = Look {
         palette,
@@ -203,7 +196,7 @@ fn paint_window(
     }
 
     // The conversation card: a header, a few bubbles either side, and the
-    // composer, with what Zeus waits for in the middle.
+    // composer.
     let card = Rect::from_min_max(
         pos2(list.right() + chats::CARD_GAP, rect.top() + chats::CARD_GAP),
         pos2(
@@ -255,15 +248,6 @@ fn paint_window(
             super::widgets::BUBBLE_RADIUS,
         );
         y -= 12.0;
-    }
-    if let Some(label) = label {
-        painter.text(
-            card.center(),
-            Align2::CENTER_CENTER,
-            label,
-            theme::regular(12.0),
-            palette.dim.gamma_multiply(opacity),
-        );
     }
 }
 
