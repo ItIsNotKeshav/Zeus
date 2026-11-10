@@ -31,6 +31,7 @@ pub mod rail;
 pub mod reaction_list;
 pub(crate) mod scroll_springs;
 pub mod settings;
+pub mod skeleton;
 pub(crate) mod swipe;
 pub mod update;
 pub mod widgets;
@@ -114,6 +115,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         None => main_view(app, ui, list_only),
     }
     slide_shield(ctx, narrow, slide.is_some());
+    // The startup placeholders, if the window opened on them, fade out over
+    // the chats that replaced them.
+    skeleton::fade_out(app, ctx);
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
     picker::show(app, ctx);
