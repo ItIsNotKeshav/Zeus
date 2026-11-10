@@ -1597,7 +1597,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     return;
                 }
                 ui.vertical_centered(|ui| {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     // A group we left says so instead of blaming the admins:
                     // either we left it here, or the phone says we are no
                     // longer a member.
@@ -1627,7 +1627,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                             );
                         });
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                 });
                 return;
             }
@@ -2059,7 +2059,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 let (fill, hover, icon) = if ready {
                     (palette.accent, palette.accent_hover, palette.on_accent)
                 } else {
-                    (palette.surface, palette.surface_hover, palette.dim)
+                    // On the glass field the plain surface colour nearly
+                    // vanishes, so the idle circle takes a text-tinted fill.
+                    if palette.vibrant() {
+                        (
+                            palette.text.gamma_multiply(0.12),
+                            palette.text.gamma_multiply(0.2),
+                            palette.dim,
+                        )
+                    } else {
+                        (palette.surface, palette.surface_hover, palette.dim)
+                    }
                 };
                 last_line(ui, line, |ui| {
                     // An empty composer changes the send button to record.
@@ -2264,7 +2274,7 @@ fn composer_pill(palette: &Palette) -> Frame {
     // Glass over a vibrant conversation, as the header's.
     let (fill, edge) = if palette.vibrant() {
         (
-            palette.frosted(palette.chat),
+            palette.menu_glass(),
             Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
         )
     } else {
@@ -3879,7 +3889,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         }
                         let ui = &mut row_ui;
                         if new_day {
-                            ui.add_space(8.0);
+                            ui.add_space(crate::theme::SPACE_S);
                             ui.vertical_centered(|ui| {
                                 widgets::chip(
                                     ui,
@@ -3887,7 +3897,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                     &crate::util::day_label(app.locale, message.timestamp),
                                 );
                             });
-                            ui.add_space(4.0);
+                            ui.add_space(crate::theme::SPACE_XS);
                         }
                         for _ in 0..here {
                             let Some(notice) = notices.get(placed) else {
@@ -3918,7 +3928,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 );
                                 divider_placed = true;
                             }
-                            ui.add_space(4.0);
+                            ui.add_space(crate::theme::SPACE_XS);
                         }
                         let show_sender = shows_sender_pictures(chat)
                             && !message.from_me
@@ -4852,7 +4862,7 @@ fn top_of_history(
                 );
             });
         } else if conversation.messages.is_empty() {
-            ui.add_space(24.0);
+            ui.add_space(crate::theme::SPACE_XXL);
             if conversation.fetching_phone {
                 widgets::chip(ui, palette, "Loading messages from your phone…");
             } else {
@@ -4870,7 +4880,7 @@ fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(String, Strin
     // Keep the indicator comfortably separated from the last message and
     // composer. Its height stays fixed while the dots animate, so motion
     // never shifts the transcript layout.
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     ui.horizontal(|ui| {
         let show_avatars = shows_sender_pictures(view.chat);
         let count = if show_avatars { typers.len().min(3) } else { 0 };
@@ -10385,7 +10395,7 @@ fn content(
             }
             if let Some(image) = &card.image {
                 picture(ui, view, message, image, width, None, actions);
-                ui.add_space(4.0);
+                ui.add_space(crate::theme::SPACE_XS);
                 if card.body.is_empty() {
                     return None;
                 }
@@ -11002,7 +11012,7 @@ fn carousel(
             Some(width),
             actions,
         );
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
     }
     // Reserve a glimpse of the next card only when there is another card.
     let inset = if card.carousel.len() > 1 { 36.0 } else { 20.0 };
@@ -12283,7 +12293,7 @@ fn location_card(
                     .fit_to_exact_size(Vec2::new(card, height))
                     .corner_radius(theme::RADIUS_SMALL),
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
         }
         ui.horizontal(|ui| {
             theme::icon(ui, Icon::MapPin, 16.0, palette.accent);
@@ -17943,7 +17953,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     if let Some(target) = open {
         app.actions.push(Action::EditPicture(target));
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// A photo's view-once choice stays beside its caption and Send, with the

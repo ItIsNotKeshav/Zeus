@@ -390,6 +390,10 @@ fn central_background(app: &App) -> egui::Color32 {
     if conversation && app.palette.vibrant() {
         // The conversation paints its own translucent background.
         egui::Color32::TRANSPARENT
+    } else if conversation && app.current_chat().is_none() {
+        // With no chat open the pane is the window's own panel, in every
+        // look, rather than the wallpaper colour of the chat it would hold.
+        app.palette.panel
     } else if conversation {
         app.settings.wallpaper_background(&app.palette)
     } else if app.page == Page::Settings && app.palette.vibrant() {
@@ -910,7 +914,7 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
                                     // message keeps the width to read.
                                     if let (Some(label), Some((_, action))) = (&offer, &toast.offer)
                                     {
-                                        ui.add_space(4.0);
+                                        ui.add_space(crate::theme::SPACE_XS);
                                         ui.allocate_ui_with_layout(
                                             vec2(ui.available_width(), 28.0),
                                             egui::Layout::right_to_left(egui::Align::Center),

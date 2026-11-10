@@ -96,7 +96,7 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
             palette.danger,
         );
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let ready = app.app_lock.can_try();
     if checking {
         theme::spinner(ui, 20.0, palette.accent);

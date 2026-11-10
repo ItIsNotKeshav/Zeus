@@ -269,7 +269,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                 }
             });
             if let Some(day) = app.chat_search_day {
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_S);
                 day_chip(app, ui, &palette, day);
             }
         });
@@ -282,7 +282,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
         Stroke::new(1.0, palette.outline),
     );
     if app.chat_search.trim().is_empty() && app.chat_search_day.is_none() {
-        ui.add_space(24.0);
+        ui.add_space(crate::theme::SPACE_XXL);
         ui.vertical_centered(|ui| {
             // The whole sentence is translated, with the chat's name filled
             // in: word order differs between languages.
@@ -307,7 +307,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
     }
     if app.chat_search_hits.is_empty() {
         if app.chat_search_pending {
-            ui.add_space(32.0);
+            ui.add_space(crate::theme::SPACE_SECTION);
             ui.vertical_centered(|ui| theme::spinner(ui, 22.0, palette.secondary));
         } else {
             widgets::empty_state(
@@ -357,7 +357,7 @@ fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
                     line.paint(ui, rect.min, palette.dim);
                 });
             }
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
         });
     app.chat_search_hits = hits;
     if picked && overlay {

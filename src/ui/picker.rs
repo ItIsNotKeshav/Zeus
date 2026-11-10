@@ -993,7 +993,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     // Ask for a key when none is set or GIPHY rejects it.
     let bad_key = app.gif_error.as_ref().is_some_and(|error| error.bad_key);
     if app.settings.effective_giphy_key().is_none() || bad_key {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         if let Some(error) = app.gif_error.as_ref().filter(|error| error.bad_key) {
             theme::paragraph(
                 ui,
@@ -1112,7 +1112,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 });
             }
             if results.is_empty() && !app.gif_pending && app.gif_error.is_none() {
-                ui.add_space(20.0);
+                ui.add_space(crate::theme::SPACE_XL);
                 ui.vertical_centered(|ui| {
                     theme::text(
                         ui,
@@ -1257,7 +1257,7 @@ fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
 /// A short centered note in place of an empty grid.
 fn shelf_hint(ui: &mut egui::Ui, palette: &Palette, text: &str) {
-    ui.add_space(24.0);
+    ui.add_space(crate::theme::SPACE_XXL);
     ui.vertical_centered(|ui| {
         theme::paragraph(
             ui,
@@ -1467,7 +1467,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .id_salt("sticker-add")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             theme::text(
                 ui,
                 gettext(locale, "Import a pack"),
@@ -1483,7 +1483,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             import_row(app, ui, palette);
             ui.add_space(16.0);
             theme::text(
@@ -1501,7 +1501,7 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             new_pack_row(app, ui, palette);
             ui.add_space(8.0);
             if theme::soft_button(

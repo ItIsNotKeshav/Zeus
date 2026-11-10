@@ -116,7 +116,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 theme::regular(theme::TEXT_BODY),
                 palette.text,
             );
-            ui.add_space(8.0);
+            ui.add_space(crate::theme::SPACE_S);
             busy(
                 ui,
                 palette.accent,
@@ -134,7 +134,7 @@ fn body(app: &mut App, ui: &mut egui::Ui) {
                 )
                 .wrap(),
             );
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::SPACE_M);
             ui.horizontal(|ui| {
                 if theme::pill_button(
                     ui,
@@ -233,14 +233,14 @@ fn qr_view(app: &mut App, ui: &mut egui::Ui, code: &str) {
             theme::paint_icon(ui, Icon::CircleAlert, rect, 32.0, palette.danger);
         }
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
     let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
     let step3 = crate::i18n::gettext(locale, "Tap Link a device and point the phone at this code");
     let steps = [&step1, &step2, &step3];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::SPACE_M);
             theme::text(
                 ui,
                 format!("{}.", index + 1),
@@ -286,7 +286,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             palette.secondary,
         );
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let shown = if code.len() == 8 && !code.contains('-') {
         format!("{}-{}", &code[..4], &code[4..])
     } else {
@@ -301,7 +301,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
             // so it stands above the type scale.
             theme::text(ui, &shown, theme::bold(30.0), palette.text);
         });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let step1 = crate::i18n::gettext(locale, "Open WhatsApp on your phone");
     let step2 = crate::i18n::gettext(locale, "Tap Menu or Settings, then Linked devices");
     let step3 = crate::i18n::gettext(
@@ -311,7 +311,7 @@ fn pair_code_view(app: &mut App, ui: &mut egui::Ui, code: &str, phone: Option<&s
     let steps = [&step1, &step2, &step3];
     for (index, step) in steps.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.add_space(12.0);
+            ui.add_space(crate::theme::SPACE_M);
             theme::text(
                 ui,
                 format!("{}.", index + 1),

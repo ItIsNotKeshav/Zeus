@@ -8,7 +8,7 @@ use egui::{
 
 use super::controls;
 use crate::app::App;
-use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
@@ -294,7 +294,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         found |= section.show(ui, app, &filter, one.is_none());
                     }
                     if !found {
-                        ui.add_space(24.0);
+                        ui.add_space(crate::theme::SPACE_XXL);
                         theme::paragraph(
                             ui,
                             crate::i18n::gettext(locale, "No settings match “{query}”.")
@@ -364,10 +364,10 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         );
                     },
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_S);
                 search(app, ui);
             });
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let searching = !app.settings_search.trim().is_empty();
         let titles: Vec<Text> = sections(app)
             .into_iter()
@@ -396,8 +396,16 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::focus_outline(ui, response.id, rect, 12.0);
                         if selected {
                             ui.painter().rect_filled(rect, 12.0, palette.surface);
-                        } else if response.hovered() {
-                            ui.painter().rect_filled(rect, 12.0, palette.surface_hover);
+                        } else {
+                            let hover =
+                                super::chats::row_hover_amount(ui, response.id, response.hovered());
+                            if hover > 0.0 {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    12.0,
+                                    palette.surface_hover.gamma_multiply(hover),
+                                );
+                            }
                         }
                         let color = if selected {
                             palette.text
@@ -494,49 +502,22 @@ fn sections(app: &App) -> Vec<Section> {
         chat_preview,
     );
     appearance.row(
-        translated(locale, "Colours"),
-        translated(
-            locale,
-            "Make your own from a look, a mode and an accent, or pick a ready-made theme.",
-        ),
-        style_picker,
+        translated(locale, "Mode"),
+        if app.custom_themes.follows_omarchy() {
+            translated(locale, "Follow system uses your Omarchy colours.")
+        } else {
+            translated(locale, "Light, dark, or as the system is.")
+        },
+        mode_picker,
     );
-    match app.settings.style() {
-        Style::Custom => {
-            appearance.block(
-                vec![translated(locale, "Look"), translated(locale, "Theme")],
-                look_cards,
-            );
-            appearance.row(
-                translated(locale, "Mode"),
-                if app.custom_themes.follows_omarchy() {
-                    translated(locale, "Follow system uses your Omarchy colours.")
-                } else {
-                    translated(locale, "Light, dark, or as the system is.")
-                },
-                mode_picker,
-            );
-            appearance.block(
-                vec![translated(locale, "Accent"), translated(locale, "Colour")],
-                accent_picker,
-            );
-        }
-        Style::Themes => {
-            appearance.row(
-                translated(locale, "Mode"),
-                translated(locale, "Each theme comes in light and dark."),
-                mode_picker,
-            );
-            appearance.block(
-                vec![
-                    translated(locale, "Themes"),
-                    translated(locale, "Theme"),
-                    "Agent Orchestrator".into(),
-                ],
-                theme_cards,
-            );
-        }
-    }
+    appearance.block(
+        vec![translated(locale, "Themes"), translated(locale, "Theme")],
+        theme_cards,
+    );
+    appearance.block(
+        vec![translated(locale, "Accent"), translated(locale, "Colour")],
+        accent_picker,
+    );
     appearance.row(
         translated(locale, "Glass"),
         translated(
@@ -1506,7 +1487,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
     let mode = form.mode;
     let busy = form.busy;
     let mut submit = false;
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     theme::text(
         ui,
         match mode {
@@ -1869,21 +1850,6 @@ fn segmented<T: Copy + PartialEq>(
     clicked
 }
 
-/// Custom or Themes: a look made your own, or a ready-made theme.
-fn style_picker(ui: &mut egui::Ui, app: &mut App) {
-    let options: Vec<_> = Style::ALL
-        .into_iter()
-        .map(|style| (style, crate::i18n::gettext(app.locale, style.label())))
-        .collect();
-    let selected = Some(app.settings.style());
-    if let Some(style) = segmented(ui, &app.palette, "style", &options, selected, 88.0) {
-        if let Some(origin) = ui.ctx().pointer_interact_pos() {
-            app.actions.push(Action::RevealThemeFrom(origin));
-        }
-        app.actions.push(Action::SetStyle(style));
-    }
-}
-
 /// Light, dark or system, as three segments of one control.
 fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
     let custom = app.settings.custom_theme.is_some();
@@ -1917,21 +1883,17 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
     let locale = app.locale;
     let chat_theme = app.settings.chat_theme;
     let custom = app.settings.custom_theme.is_some();
-    let description = if !chat_theme.takes_accent() {
-        crate::i18n::gettext(locale, "Messages keeps the system blue.")
-    } else {
-        crate::i18n::gettext(
-            locale,
-            "Buttons, links, ticks and your own messages take this colour.",
-        )
-    };
+    let description = crate::i18n::gettext(
+        locale,
+        "Buttons, links, ticks and your own messages take this colour in any theme.",
+    );
     block_heading(
         ui,
         &palette,
         &crate::i18n::gettext(locale, "Accent"),
         &description,
     );
-    let enabled = !custom && chat_theme.takes_accent();
+    let enabled = !custom;
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -1952,11 +1914,18 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                     color.gamma_multiply(0.4)
                 };
                 let center = rect.center();
-                if on {
+                let t = ui.ctx().animate_bool_with_time_and_easing(
+                    response.id,
+                    on,
+                    theme::MOTION_QUICK,
+                    theme::ease_out,
+                );
+                if t > 0.0 {
+                    // The ring eases in from the swatch's edge.
                     ui.painter().circle_stroke(
                         center,
-                        SWATCH / 2.0 + 2.5,
-                        Stroke::new(2.0, palette.text),
+                        SWATCH / 2.0 + 2.5 * t,
+                        Stroke::new(2.0, palette.text.gamma_multiply(t)),
                     );
                 } else if response.hovered() {
                     ui.painter().circle_stroke(
@@ -1976,8 +1945,9 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                         Stroke::new(1.0, palette.outline),
                     );
                 }
-                if on && accent != Accent::Theme {
-                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0);
+                if t > 0.0 && accent != Accent::Theme {
+                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0)
+                        .gamma_multiply(t);
                     theme::paint_icon(
                         ui,
                         Icon::Check,
@@ -2005,7 +1975,7 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add_space(16.0);
+    ui.add_space(crate::theme::SPACE_L);
 }
 
 /// The least width of a theme card.
@@ -2036,24 +2006,7 @@ fn chat_theme_cards(ui: &mut egui::Ui, app: &mut App, salt: &str, choices: &[Cha
     card_grid(ui, app, salt, cards);
 }
 
-/// The looks the Custom style starts from.
-fn look_cards(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(app.locale, "Look"),
-        &crate::i18n::gettext(
-            app.locale,
-            "Zeus's monochrome glass, WhatsApp's greens, or the bubbles of Messages.",
-        ),
-    );
-    ui.add_space(4.0);
-    chat_theme_cards(ui, app, "look", &ChatTheme::LOOKS);
-    ui.add_space(4.0);
-}
-
-/// The ready-made themes as cards, each in the mode on screen.
+/// Every theme as a card, each in the mode on screen with the accent chosen.
 fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     block_heading(
@@ -2062,16 +2015,12 @@ fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
         &crate::i18n::gettext(app.locale, "Themes"),
         &crate::i18n::gettext(
             app.locale,
-            "Ported from Agent Orchestrator, each with its own accent.",
+            "Pick a theme, then an accent below: every theme wears it in its own style.",
         ),
     );
-    ui.add_space(4.0);
-    let themes: Vec<ChatTheme> = ChatTheme::ALL
-        .into_iter()
-        .filter(|choice| !choice.is_look())
-        .collect();
-    chat_theme_cards(ui, app, "chat-theme", &themes);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
+    chat_theme_cards(ui, app, "chat-theme", &ChatTheme::ALL);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// Theme cards in as many columns as fit, widened to fill the row.
@@ -2098,7 +2047,7 @@ fn card_grid(
         ),
         Sense::hover(),
     );
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     for (index, (label, colours, selected, action)) in cards.into_iter().enumerate() {
         let rect = Rect::from_min_size(
             area.min
@@ -2310,7 +2259,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                     .with_main_align(Align::Min),
                             ),
                         |ui| {
-                            ui.add_space(24.0);
+                            ui.add_space(crate::theme::SPACE_XXL);
                             if theme::icon_button(
                                 ui,
                                 Icon::ArrowLeft,
@@ -2349,7 +2298,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             "Your own picture replaces the colour and doodles.",
                                         ),
                                     );
-                                    ui.add_space(8.0);
+                                    ui.add_space(crate::theme::SPACE_S);
                                     image_buttons(app, ui);
                                     ui.add_space(24.0);
                                     block_heading(
@@ -2397,7 +2346,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             app.actions.push(Action::SetWallpaperColor(*color));
                                         }
                                     }
-                                    ui.add_space(20.0);
+                                    ui.add_space(crate::theme::SPACE_XL);
                                 });
                         },
                     );
@@ -2594,7 +2543,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         DOODLE_PREVIEW + CARD_LABEL,
     );
     let rows = tiles.div_ceil(columns);
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     let (area, _) = ui.allocate_exact_size(
         vec2(width, rows as f32 * (tile.y + gap) - gap),
         Sense::hover(),
@@ -2711,7 +2660,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
     }
     ui.add_space(PAGE_ROW_GAP + 4.0);
     doodle_ink_controls(ui, app);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// The space a doodle control's row leaves under itself, beyond the ten
@@ -3011,7 +2960,7 @@ fn storage_bar_row(
             );
         }
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 }
 
 /// A titled group of settings on a rounded card, or untitled on the page.
@@ -3050,7 +2999,7 @@ fn section(
         ui.set_width(ui.available_width());
         add_contents(ui);
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 }
 
 /// Our WhatsApp profile, which can be edited in place, and unlinking.
@@ -3273,7 +3222,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             );
         });
     });
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         if let Some(update) = &app.update {
@@ -3339,7 +3288,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     if crate::brand::UPDATES {
-        ui.add_space(12.0);
+        ui.add_space(crate::theme::SPACE_M);
         update_channel_picker(app, ui);
     }
     ui.add_space(16.0);

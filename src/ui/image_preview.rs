@@ -618,7 +618,7 @@ fn header(
                 // Zoom is for a picture: a clip fills the stage at its own shape,
                 // so the controls are left out while one is on screen.
                 if !clip {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     // Right to left: zoom in, the current scale, zoom out.
                     if theme::icon_button(
                         ui,
@@ -669,7 +669,7 @@ fn header(
                 // What the message itself can do, when the viewer knows which one
                 // it is. A picture opened on its own has nothing to act on.
                 if has_message {
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     if theme::icon_button(
                         ui,
                         Icon::Reply,
@@ -782,7 +782,7 @@ fn header(
                         actions.push(Action::CloseImagePreview);
                         actions.push(Action::ScrollTo(message.clone()));
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                 }
                 // Last, so it takes what the actions left, scrolling if it needs
                 // more rather than drawn under them.

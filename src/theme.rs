@@ -343,10 +343,16 @@ impl Palette {
     /// which the text on the bubble is checked. `None` elsewhere.
     pub fn bubble_out_gradient(&self) -> Option<(Color32, Color32)> {
         (self.bubbles == BubbleStyle::Messages).then(|| {
-            let [_, bottom] = if self.dark {
+            let blue = if self.dark {
                 MESSAGES_BLUE_DARK
             } else {
                 MESSAGES_BLUE_LIGHT
+            };
+            // An accent of your own replaces the blue, and is the deeper end.
+            let bottom = if self.bubble_out == blue[0] {
+                blue[1]
+            } else {
+                self.accent
             };
             (self.bubble_out, bottom)
         })
@@ -974,6 +980,47 @@ pub const RADIUS_MENU: u8 = 20;
 pub const RADIUS_CARD: u8 = 20;
 /// Dialogs and the larger surfaces that float over the window.
 pub const RADIUS_DIALOG: u8 = 28;
+
+/// The spacing scale, in points, from DESIGN.md. Every gap and padding in the
+/// interface is one of these; add a step here rather than a literal.
+pub const SPACE_HAIR: f32 = 2.0;
+pub const SPACE_XS: f32 = 4.0;
+pub const SPACE_S: f32 = 8.0;
+pub const SPACE_M: f32 = 12.0;
+pub const SPACE_L: f32 = 16.0;
+pub const SPACE_XL: f32 = 20.0;
+pub const SPACE_XXL: f32 = 24.0;
+pub const SPACE_SECTION: f32 = 32.0;
+pub const SPACE_MAJOR: f32 = 40.0;
+
+/// The gold of a starred message's mark in the footer.
+pub const STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
+
+/// The hairline around the wallpaper page: a light rule over a dark wallpaper,
+/// a dark rule over a light one.
+pub fn wallpaper_rule(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+    } else {
+        Color32::from_rgba_unmultiplied(10, 10, 10, 32)
+    }
+}
+
+/// The type scale, in points, from DESIGN.md. Every text size in the
+/// interface is one of these; add a step here rather than a literal size.
+pub const TYPE_DISPLAY: f32 = 24.0;
+/// Screen and dialog titles.
+pub const TYPE_TITLE: f32 = 20.0;
+/// Section headings within a screen.
+pub const TYPE_SECTION: f32 = 16.0;
+/// Messages, names and explanations.
+pub const TYPE_BODY: f32 = 14.0;
+/// Buttons, fields and other controls.
+pub const TYPE_CONTROL: f32 = 13.0;
+/// Timestamps and other secondary metadata.
+pub const TYPE_CAPTION: f32 = 12.0;
+/// The smallest text, for badges and fine print.
+pub const TYPE_MICRO: f32 = 11.0;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
@@ -1512,16 +1559,22 @@ pub fn icon_button(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
     if ui.is_rect_visible(rect) {
-        let tint = if response.hovered() || response.has_focus() {
-            hover
-        } else {
-            color
-        };
-        let scale = if response.is_pointer_button_down_on() {
-            0.92
-        } else {
-            1.0
-        };
+        // The tint and the press shrink ease, as the circle buttons' do.
+        let ctx = ui.ctx();
+        let lit = animate(
+            ctx,
+            response.id.with("icon-hover"),
+            response.hovered() || response.has_focus(),
+            MOTION_QUICK,
+        );
+        let press = animate(
+            ctx,
+            response.id.with("icon-press"),
+            response.is_pointer_button_down_on(),
+            PRESS_SECONDS,
+        );
+        let tint = color.lerp_to_gamma(hover, lit);
+        let scale = 1.0 - 0.08 * press;
         paint_icon(ui, icon, rect, size * scale, tint);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);

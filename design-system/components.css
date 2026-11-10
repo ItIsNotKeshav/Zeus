@@ -40,7 +40,7 @@
 /* Soft button: theme::soft_button. 13 medium, 12x7 padding, surface capsule; active = accent tint. */
 .z-soft {
   appearance: none; border: 0; cursor: pointer;
-  display: inline-flex; align-items: center; gap: var(--space-6);
+  display: inline-flex; align-items: center; gap: var(--space-8);
   font: 470 13px/18px var(--font-sans);
   padding: 7px var(--space-12);
   border-radius: var(--radius-pill);
@@ -79,7 +79,7 @@
 .z-chip {
   display: inline-flex; align-items: center; gap: var(--space-4);
   font: 470 12.5px/17px var(--font-sans);
-  padding: 5px var(--space-10);
+  padding: 5px var(--space-12);
   border-radius: var(--radius-pill);
   background: var(--glass); color: var(--text);
   box-shadow: inset 0 0 0 1px var(--glass-edge);
@@ -166,7 +166,7 @@
 .z-backdrop { position: absolute; inset: 0; background: var(--backdrop); display: grid; place-items: center; padding: var(--space-16); }
 .z-dialog {
   width: var(--dialog-width); max-width: 100%;
-  padding: var(--space-22); border-radius: var(--radius-dialog);
+  padding: var(--space-24); border-radius: var(--radius-dialog);
   background: var(--menu-glass);
   box-shadow: inset 0 0 0 1px var(--outline), var(--shadow-modal);
   -webkit-backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation));
@@ -183,7 +183,7 @@
 .z-toast svg { width: 16px; height: 16px; color: var(--secondary); flex: none; }
 
 /* Settings row: widgets::setting_row. Label 14 medium, description 12.5 secondary, control right-aligned in a 220 column. */
-.z-setting { display: flex; align-items: center; gap: var(--space-24); padding-bottom: var(--space-10); }
+.z-setting { display: flex; align-items: center; gap: var(--space-24); padding-bottom: var(--space-12); }
 .z-setting .text { flex: 1; min-width: 120px; }
 .z-setting .label { font: 470 14px/20px var(--font-sans); }
 .z-setting .desc { font: 370 12.5px/17px var(--font-sans); color: var(--secondary); }
@@ -230,7 +230,7 @@
 .z-row .preview { flex: 1; min-width: 0; font: 370 13.5px/18px var(--font-sans); color: var(--secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Empty state: widgets::empty_state. 40 icon in dim, 16 semibold title, 13.5 secondary body. */
-.z-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-8); padding: var(--space-48) var(--space-24) var(--space-24); }
+.z-empty { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--space-8); padding: var(--space-40) var(--space-24) var(--space-24); }
 .z-empty svg { width: 40px; height: 40px; color: var(--dim); }
 .z-empty .t { font: 570 16px/22px var(--font-sans); }
 .z-empty .b { font: 370 13.5px/19px var(--font-sans); color: var(--secondary); max-width: 32ch; margin-top: -6px; }

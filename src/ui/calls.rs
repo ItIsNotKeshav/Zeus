@@ -250,7 +250,7 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(inset);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if rows.is_empty() {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::SPACE_M);
                     ui.vertical_centered(|ui| {
                         theme::text(
                             ui,
@@ -263,7 +263,7 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 for row in &rows {
                     history_row(app, ui, row, &mut actions);
                 }
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_M);
             });
     });
     app.actions.extend(actions);
@@ -280,7 +280,7 @@ pub fn filter_chip_id(filter: CallFilter) -> egui::Id {
 /// so Missed carries no count.
 pub fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
         for filter in CallFilter::EVERY {
@@ -548,7 +548,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
                 if contacts.is_empty() {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::SPACE_M);
                     ui.vertical_centered(|ui| {
                         theme::text(
                             ui,
@@ -565,7 +565,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                         person(app, ui, &contact.id, &mut actions);
                     });
                 }
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_M);
             });
     });
     if !actions.is_empty() {
@@ -608,8 +608,12 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         pos2(rect.right() - widgets::ROW_SIDE, rect.bottom()),
     );
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+        let hover = super::chats::row_hover_amount(ui, response.id, response.hovered());
+        if hover > 0.0 {
+            ui.scope(|ui| {
+                ui.multiply_opacity(hover);
+                widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+            });
         }
         let avatar_rect = Rect::from_center_size(
             pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
@@ -657,7 +661,7 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
     {
         actions.push(Action::StartVideoCall(id.to_owned()));
     }
-    child.add_space(4.0);
+    child.add_space(crate::theme::SPACE_XS);
     let voice = gettext(locale, "Voice call {name}").replace("{name}", &name);
     if theme::icon_button(
         &mut child,

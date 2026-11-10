@@ -256,7 +256,7 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
             palette.secondary,
         );
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let height = (ui.ctx().content_rect().height() - 200.0).clamp(100.0, 420.0);
     egui::ScrollArea::vertical()
         .id_salt(("interactive-list", chat, message, button))
@@ -271,14 +271,14 @@ fn interactive_list(app: &mut App, ui: &mut egui::Ui, chat: &str, message: &str,
                     if section != option.section {
                         section = &option.section;
                         if !section.is_empty() {
-                            ui.add_space(8.0);
+                            ui.add_space(crate::theme::SPACE_S);
                             widgets::rich_text(
                                 ui,
                                 section,
                                 theme::semibold(theme::TEXT_CAPTION),
                                 palette.secondary,
                             );
-                            ui.add_space(4.0);
+                            ui.add_space(crate::theme::SPACE_XS);
                         }
                     }
                     let id = super::conversation::bubble_id(chat, message).with((
@@ -663,7 +663,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
             theme::regular(theme::TEXT_BODY),
             palette.secondary,
         );
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         let list = egui::ScrollArea::vertical()
             .id_salt("forward-review")
             .max_height((footer_rect.top() - ui.cursor().top() - 8.0).max(1.0))
@@ -703,7 +703,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     if ui.memory(|memory| memory.focused().is_none()) {
         search.request_focus();
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 
     let needle = app.forward_search.trim().to_lowercase();
     let mut chats: Vec<_> = app
@@ -828,7 +828,7 @@ fn forward(app: &mut App, ui: &mut egui::Ui, messages: &[String]) {
     #[cfg(not(any(test, feature = "demo")))]
     let _ = list;
     if chats.is_empty() {
-        ui.add_space(20.0);
+        ui.add_space(crate::theme::SPACE_XL);
         ui.vertical_centered(|ui| {
             theme::text(
                 ui,
@@ -1060,7 +1060,7 @@ fn title(ui: &mut egui::Ui, app: &mut App, label: &str) {
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// The shortcuts dialog's width with its two columns, and with one.
@@ -1229,7 +1229,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             ));
         }
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     if let Some(url) = super::widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
     }
@@ -1327,7 +1327,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
         .replace("{}", &info.members.to_string());
     ui.label(egui::RichText::new(members).color(palette.secondary));
     if let Some(description) = &info.description {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         egui::ScrollArea::vertical()
             .max_height(140.0)
             .show(ui, |ui| {
@@ -1341,7 +1341,7 @@ fn join_group(app: &mut App, ui: &mut egui::Ui) {
     }
     let member = app.chats.iter().any(|chat| chat.id == info.id);
     if info.approval && !member {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         theme::paragraph(
             ui,
             crate::i18n::gettext(
@@ -1923,7 +1923,7 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
         });
     }
     if !archived {
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let archive_label = if channel {
             crate::i18n::gettext(locale, "Leave channel and archive")
         } else {
@@ -1936,7 +1936,7 @@ fn confirm_leave_group(app: &mut App, ui: &mut egui::Ui, id: &str) {
             });
         }
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::pill_button(
@@ -1969,7 +1969,7 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let id = egui::Id::new("pair-phone");
     let submit = ui.memory(|memory| memory.has_focus(id))
         && ui.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
@@ -2010,7 +2010,7 @@ fn pair_with_phone(app: &mut App, ui: &mut egui::Ui) {
             });
         });
     theme::focus_outline(ui, id, field.response.rect, f32::from(theme::RADIUS));
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let ready = app.pair_phone.chars().filter(char::is_ascii_digit).count() >= 7;
@@ -2061,7 +2061,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
     );
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let boxed = |ui: &mut egui::Ui, inner: &mut dyn FnMut(&mut egui::Ui) -> egui::Response| {
         let field = Frame::new()
             .fill(palette.surface)
@@ -2114,7 +2114,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
         }
         response
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let first_name_hint = crate::i18n::gettext(app.locale, "First name");
     let surname_hint = crate::i18n::gettext(app.locale, "Surname");
     let (first_field, last_field) = ui
@@ -2170,7 +2170,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
     let submitted =
         (phone_field.lost_focus() || first_field.lost_focus() || last_field.lost_focus())
             && ui.input(|input| input.key_pressed(egui::Key::Enter));
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     // As on the phone, each contact chooses; the choice starts the next one.
     ui.add_enabled(
         named,
@@ -2180,7 +2180,7 @@ fn new_contact(app: &mut App, ui: &mut egui::Ui) {
         ),
     );
     let to_phone = Some(app.new_contact_to_phone);
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         if app.new_contact_pending {
             theme::spinner(ui, 16.0, palette.accent);
@@ -2326,11 +2326,8 @@ pub(super) fn danger_button(ui: &mut egui::Ui, app: &mut App, label: &str) -> eg
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
     });
     if ui.is_rect_visible(rect) {
-        let fill = if response.hovered() {
-            palette.danger.gamma_multiply(0.85)
-        } else {
-            palette.danger
-        };
+        let hover = super::chats::row_hover_amount(ui, response.id, response.hovered());
+        let fill = palette.danger.gamma_multiply(1.0 - 0.15 * hover);
         ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
         ui.painter().galley(
             rect.center() - galley.size() / 2.0,
