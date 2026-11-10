@@ -6677,8 +6677,8 @@ impl App {
         } else if self.applied_dark.is_some()
             && self.palette != palette
             && self.reveal_theme_changes
-            && !self.palette.vibrant()
-            && !palette.vibrant()
+            && !self.palette.shows_desktop()
+            && !palette.shows_desktop()
         {
             self.theme_transition.begin(ctx);
             if self.theme_transition.holding(ctx) {

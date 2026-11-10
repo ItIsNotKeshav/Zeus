@@ -827,7 +827,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     if hidden > 0.5 {
         // A translucent sidebar would show the fade as a band; the chips
         // are only cut there.
-        if !palette.vibrant() {
+        if !palette.shows_desktop() {
             widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.rail());
         }
     }
@@ -2519,7 +2519,7 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     // Avatars cut off at either end fade into the rail, which says the
     // column scrolls on. A translucent rail would show the fade as a band.
     let palette = app.palette;
-    if !palette.vibrant() {
+    if !palette.shows_desktop() {
         let rect = output.inner_rect;
         let offset = output.state.offset.y;
         if offset > 0.5 {
