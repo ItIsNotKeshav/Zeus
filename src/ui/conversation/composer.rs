@@ -227,8 +227,13 @@ pub(super) fn unsent_seconds(samples: usize) -> u32 {
 /// What the reply strip over the composer shows.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum ReplyCard {
-    /// Who wrote the message being replied to, and a line of what it says.
-    Quote { who: String, summary: String },
+    /// Who wrote the message being replied to, a line of what it says, and
+    /// the thumbnail of the photo or video it is, with its chat and id.
+    Quote {
+        who: String,
+        summary: String,
+        picture: Option<(String, String, Vec<u8>)>,
+    },
     /// A private reply whose group message is not on this computer.
     Unavailable,
 }
@@ -241,7 +246,19 @@ impl ReplyCard {
             app.display_name_or(&quoted.sender, quoted.sender_name.as_deref())
         };
         let summary = markup::plain(&quoted.summary_in(app.locale), &app.mention_list(quoted));
-        Self::Quote { who, summary }
+        let picture = matches!(
+            quoted.content,
+            Content::Image { .. } | Content::Video { .. }
+        )
+        .then(|| quoted.thumbnail.as_deref())
+        .flatten()
+        .filter(|bytes| !bytes.is_empty())
+        .map(|bytes| (quoted.chat.clone(), quoted.id.clone(), bytes.to_vec()));
+        Self::Quote {
+            who,
+            summary,
+            picture,
+        }
     }
 }
 
@@ -503,7 +520,7 @@ pub(super) fn reply_card(app: &mut App, ui: &mut egui::Ui, card: &ReplyCard) -> 
         ui.set_width(ui.available_width().max(0.0));
         ui.horizontal(|ui| {
             match card {
-                ReplyCard::Quote { who, summary } => {
+                ReplyCard::Quote { who, summary, .. } => {
                     let (bar, _) = ui.allocate_exact_size(vec2(3.0, 34.0), Sense::hover());
                     ui.painter().rect_filled(bar, 2.0, palette.accent);
                     ui.vertical(|ui| {
@@ -547,6 +564,23 @@ pub(super) fn reply_card(app: &mut App, ui: &mut egui::Ui, card: &ReplyCard) -> 
                 .clicked()
                 {
                     app.actions.push(Action::CancelReply);
+                }
+                // The photo or video being replied to, beside its caption.
+                if let ReplyCard::Quote {
+                    picture: Some((chat, id, bytes)),
+                    ..
+                } = card
+                {
+                    let (slot, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                    let uri = thumbnail_uri(ui.ctx(), chat, id, bytes);
+                    if let Ok(egui::load::TexturePoll::Ready { texture }) =
+                        egui::Image::new(uri).load_for_size(ui.ctx(), slot.size())
+                    {
+                        egui::Image::from_texture(texture)
+                            .uv(crate::video::square_uv(texture.size.x, texture.size.y))
+                            .corner_radius(6.0)
+                            .paint_at(ui, slot);
+                    }
                 }
             });
         });
