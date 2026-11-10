@@ -2480,12 +2480,7 @@ fn wallpaper_color_button(
     let radius = f32::from(theme::RADIUS_CARD);
     theme::focus_outline(ui, response.id, rect, radius);
     if ui.is_rect_visible(rect) {
-        let t = ui.ctx().animate_bool_with_time_and_easing(
-            response.id,
-            chosen,
-            theme::MOTION_QUICK,
-            theme::ease_out,
-        );
+        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
         let painter = ui.painter_at(rect.expand(6.0));
         painter.rect_filled(rect, radius, fill);
         // Theme follows the palette, so its swatch names itself.
@@ -2595,12 +2590,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, radius);
         if ui.is_rect_visible(rect) {
-            let t = ui.ctx().animate_bool_with_time_and_easing(
-                response.id,
-                chosen,
-                theme::MOTION_QUICK,
-                theme::ease_out,
-            );
+            let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
             let painter = ui.painter_at(rect.expand(6.0));
             let r = radius as u8;
             let preview = Rect::from_min_size(rect.min, vec2(rect.width(), DOODLE_PREVIEW));
