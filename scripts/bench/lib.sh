@@ -3,7 +3,7 @@
 # it without anything installed.
 
 # The scenario's phases, in order, as the app's marks name them.
-BENCH_PHASES="settle scroll churn picker minimized settle-again"
+BENCH_PHASES="settle scroll churn picker search minimized settle-again"
 # Seconds between readings, in every phase.
 BENCH_INTERVAL=2
 # The scenario runs about 2 minutes; give up on a run well after that.
