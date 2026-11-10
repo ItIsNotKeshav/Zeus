@@ -951,7 +951,7 @@ pub fn tray_icons(count: u32) -> (TrayIcon, TrayIcon) {
 }
 
 /// What the tray's badge shows for `count`: counts above
-/// [`TRAY_BADGE_MAX`] draw alike, so they need no new icon.
+/// `TRAY_BADGE_MAX` draw alike, so they need no new icon.
 pub fn tray_badge_level(count: u32) -> u32 {
     count.min(TRAY_BADGE_MAX + 1)
 }
