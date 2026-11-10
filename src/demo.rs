@@ -17052,24 +17052,99 @@ mod tests {
             .get(&chat)
             .and_then(|conversation| conversation.messages.last())
             .map(|message| message.id.clone().into());
-        for _ in 0..4 {
+        // A second of frames: the strip has opened out of the field.
+        for _ in 0..60 {
             frame_sized(&mut app, &ctx, 780.0, Vec::new());
         }
+        let (strip, pill) = reply_strip_and_pill(&ctx);
+        let gap = pill.top() - strip.bottom();
+        assert!(
+            (gap - crate::ui::conversation::STRIP_GAP).abs() < 0.5,
+            "the strip ends {gap} above the composer"
+        );
+    }
+
+    /// Where the reply strip and the composer's field were last drawn.
+    fn reply_strip_and_pill(ctx: &egui::Context) -> (egui::Rect, egui::Rect) {
         let (strip, pill) = ctx.data(|data| {
             (
                 data.get_temp::<egui::Rect>(crate::ui::conversation::reply_strip_id()),
                 data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id()),
             )
         });
-        let (strip, pill) = (
+        (
             strip.expect("the strip is drawn"),
             pill.expect("the composer"),
+        )
+    }
+
+    /// Whether `shapes` paint the reply strip's "Replying to" line.
+    fn paints_reply_strip(shapes: &[egui::epaint::ClippedShape]) -> bool {
+        let mut stack: Vec<_> = shapes.iter().map(|shape| &shape.shape).collect();
+        while let Some(shape) = stack.pop() {
+            match shape {
+                egui::Shape::Text(text) if text.galley.text().starts_with("Replying to") => {
+                    return true;
+                }
+                egui::Shape::Vec(shapes) => stack.extend(shapes),
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Replying opens the strip out of the field rather than at once: its
+    /// room grows over the next frames while the field stays where it is,
+    /// and once the reply is cancelled it sinks back before it goes.
+    #[test]
+    fn the_reply_strip_opens_out_of_the_field_and_sinks_back() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        render(&mut app, &ctx);
+        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let field = ctx
+            .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id()))
+            .expect("the composer");
+        let chat = app.open_chat.clone().expect("a chat is open");
+        app.reply_to = app
+            .conversations
+            .get(&chat)
+            .and_then(|conversation| conversation.messages.last())
+            .map(|message| message.id.clone().into());
+        // A few frames in, about a tenth of a second.
+        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(paints_reply_strip(&shapes), "the strip is opening");
+        let (strip, pill) = reply_strip_and_pill(&ctx);
+        assert!(
+            (pill.top() - field.top()).abs() < 1.0,
+            "the field stays put: {pill:?} was {field:?}"
         );
         let gap = pill.top() - strip.bottom();
         assert!(
-            (gap - crate::ui::conversation::STRIP_GAP).abs() < 0.5,
-            "the strip ends {gap} above the composer"
+            gap < crate::ui::conversation::STRIP_GAP - 1.0,
+            "the strip is still partly behind the field: {gap}"
         );
+        for _ in 0..60 {
+            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let (strip, pill) = reply_strip_and_pill(&ctx);
+        assert!((pill.top() - field.top()).abs() < 1.0);
+        let gap = pill.top() - strip.bottom();
+        assert!(
+            (gap - crate::ui::conversation::STRIP_GAP).abs() < 0.5,
+            "open, the strip ends {gap} above the composer"
+        );
+        app.reply_to = None;
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(paints_reply_strip(&shapes), "the strip sinks back");
+        for _ in 0..60 {
+            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        }
+        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        assert!(!paints_reply_strip(&shapes), "the strip has gone");
     }
 
     /// The emoji and @mention suggestion lists sit on the composer as the

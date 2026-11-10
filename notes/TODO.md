@@ -53,7 +53,7 @@ Recon: dialogs (`closing::surface`, dialogs.rs:151), picker (picker.rs:100), pan
 
 | file:line | today | purpose | freq | motion |
 |---|---|---|---|---|
-| conversation.rs:1555 (reply), :2324 (`edit_strip`), :2289 (`unsent_voice_strip`) | strip above composer appears, field and transcript jump by its height | spatial, prevent jarring | tens/day | strip grows height 0->full, Spring 0.35 s bounce 0 (no overshoot, layout-affecting) + fade 140 ms; exit reverse 100 ms. Transcript bottom follows via `stick_to_bottom` |
+| :2324 (`edit_strip`), :2289 (`unsent_voice_strip`); the reply strip (`reply_strip`) does this since 2026-11-10 | strip above composer appears, field and transcript jump by its height | spatial, prevent jarring | tens/day | strip grows height 0->full, Spring 0.35 s bounce 0 (no overshoot, layout-affecting) + fade 140 ms; exit reverse 100 ms. Transcript bottom follows via `stick_to_bottom` |
 | ui/polls.rs:259 (`ballot` bars) | vote bar width snaps on vote/update | state indication | occasional | bar width ease_out 300 ms from old fraction, `animate_value_with_time`; selected check pops Spring 0.3 bounce 0.25; first render: no animation |
 | ui/info.rs:184 (`members_open`, Show all) | member list expands in one frame | prevent jarring change | occasional | height ease_out 220 ms + rows fade; collapse 150 ms |
 | ui/message_info.rs:73 (`receipts`) | read/delivered sections appear with data, tick times snap | state indication | occasional | section fade 140 ms; nothing on live receipt updates (reading UI) |
@@ -81,7 +81,7 @@ Recon: dialogs (`closing::surface`, dialogs.rs:151), picker (picker.rs:100), pan
 
 ### Top 5 picks
 
-1. Composer strips grow in/out (reply, edit, voice): daily, kills the layout jump above the field.
+1. Composer strips grow in/out (edit, voice; reply done): daily, kills the layout jump above the field.
 2. Call screen enter/exit + phase and tile transitions: biggest un-animated full-window surface.
 3. Chip selected fill cross-fade (`dotted_chip`): one fix covers chats, calls, labels filters.
 4. Rail lit pill glides between destinations + page content cross-fade: ties navigation together like the settings pill.
