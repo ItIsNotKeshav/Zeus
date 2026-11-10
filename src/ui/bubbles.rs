@@ -125,8 +125,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     // alpha channel. Elsewhere the window is a solid tile in the theme's
     // colour, so no platform shows black where the circles are not.
     let see_through = crate::backdrop::window_is_transparent();
+    let title = crate::i18n::gettext(app.locale, "Zeus bubbles");
     let mut builder = egui::ViewportBuilder::default()
-        .with_title(crate::i18n::gettext(app.locale, "Zeus bubbles"))
+        .with_title(title.as_ref())
         .with_inner_size(size)
         .with_decorations(false)
         .with_transparent(see_through)
@@ -150,6 +151,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         }
         contents(app, ui);
     });
+    if see_through {
+        // Windows 11 frames even a borderless window with a hairline and
+        // rounds its corners, which a see-through one shows as a thin
+        // rectangle hanging round the bubbles.
+        crate::backdrop::strip_window_frame(title.as_ref());
+    }
     // Only what names its own chat or message leaves the window.
     let mut index = 0;
     app.actions.retain(|action| {
