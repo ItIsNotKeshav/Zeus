@@ -2323,8 +2323,8 @@ mod tests {
     }
 
     /// The benchmark plays every phase through real input on its timetable:
-    /// the photo chat scrolls to both ends twice, the churn opens 20
-    /// other chats, the sticker picker opens five times, and the marks name
+    /// the photo chat scrolls to both ends twice, the churn opens every
+    /// other chat in turn, the sticker picker opens once per round, and the marks name
     /// each phase in order. Played on a stepped clock that skips the idle
     /// stretches; the window cannot minimize headless.
     #[test]
@@ -2396,8 +2396,12 @@ mod tests {
             .map(|line| line["phase"].as_str().unwrap())
             .collect();
         assert_eq!(timed, bench::TIMED);
-        assert!(opened.len() >= 21, "opened {} chats", opened.len());
-        assert_eq!(pickers, 5);
+        assert!(
+            opened.len() > bench::CHURN_STEPS,
+            "opened {} chats",
+            opened.len()
+        );
+        assert_eq!(pickers, bench::PICKER_ROUNDS);
         assert!(app.picker.is_none());
     }
 }

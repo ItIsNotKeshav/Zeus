@@ -330,7 +330,7 @@ the new one.
 ## Performance benchmark
 
 **Settings > About > Run benchmark** opens a second Zeus window with the
-built-in sample chats, in a temporary folder, and plays a two-minute test in
+built-in sample chats, in a temporary folder, and plays a test of about two and a half minutes in
 it: it settles, scrolls a chat full of photos, switches through chats, opens
 the sticker picker, minimizes and idles, then closes itself. Your archive,
 keys and WhatsApp connection are never opened, and nothing goes over the
