@@ -12127,9 +12127,49 @@ fn outgoing_location(
     message
 }
 
+/// The text message inside a group mention. A message that tags a group of
+/// its community arrives in a wrapper the library does not unwrap, and read
+/// as it stands it has no content. Only text is taken out: the media paths
+/// read their attachment from the message as the library unwraps it.
+fn group_mentioned(base: &wa::Message) -> Option<&wa::Message> {
+    base.group_mentioned_message
+        .as_option()
+        .and_then(|wrapper| wrapper.message.as_option())
+        .map(|inner| inner.get_base_message())
+        .filter(|inner| inner.text_content().is_some())
+}
+
+/// `text` with each tagged group's id replaced by its name, as WhatsApp
+/// shows it: the text carries `@` and the group's id, and the context names
+/// the group.
+fn name_group_mentions(text: &str, context: Option<&wa::ContextInfo>) -> String {
+    let mut text = text.to_owned();
+    for mention in context.map_or(&[][..], |context| &context.group_mentions) {
+        let (Some(id), Some(subject)) = (
+            mention.group_jid.as_deref().filter(|id| !id.is_empty()),
+            mention.group_subject.as_deref().map(str::trim),
+        ) else {
+            continue;
+        };
+        if subject.is_empty() {
+            continue;
+        }
+        let named = format!("@{subject}");
+        text = text.replace(&format!("@{id}"), &named);
+        // Some senders write the id without its server.
+        if let Some((user, _)) = id.split_once('@') {
+            text = text.replace(&format!("@{user}"), &named);
+        }
+    }
+    text
+}
+
 /// Extracts quote and mention context from a message.
 fn context_of(base: &wa::Message) -> Option<&wa::ContextInfo> {
     if let Some(inner) = bot_replies::invoked(base) {
+        return context_of(inner);
+    }
+    if let Some(inner) = group_mentioned(base) {
         return context_of(inner);
     }
     if let Some(reply) = base.rich_response_message.as_option() {
@@ -12401,6 +12441,9 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
     if let Some(inner) = bot_replies::invoked(base) {
         return classify_base(inner);
     }
+    if let Some(inner) = group_mentioned(base) {
+        return classify_base(inner);
+    }
     if let Some(text) = base.text_content() {
         let preview = base.extended_text_message.as_option().and_then(|extended| {
             let title = non_empty(&extended.title);
@@ -12422,7 +12465,7 @@ fn classify_base(base: &wa::Message) -> Option<Content> {
             })
         });
         return Some(Content::Text {
-            text: text.to_owned(),
+            text: name_group_mentions(text, context_of(base)),
             preview,
         });
     }
@@ -16880,6 +16923,84 @@ mod tests {
                 None => assert!(matches!(stored, Content::Unsupported { .. })),
             }
         }
+    }
+
+    /// A message that tags a group of its community arrives inside
+    /// `group_mentioned_message`. It reads as its text, with the group's
+    /// name where the text carries the group's id.
+    #[test]
+    fn a_message_tagging_a_community_group_reads_as_its_text() {
+        use whatsapp_rust::prelude::MessageField;
+        const GROUP: &str = "120363000000000001@g.us";
+        let tagging = |text: &str| {
+            let mut inner = wa::Message::default();
+            inner.extended_text_message = MessageField::some({
+                let mut proto = wa::message::ExtendedTextMessage::default();
+                proto.text = Some(text.to_owned());
+                proto.context_info = MessageField::some({
+                    let mut proto = wa::ContextInfo::default();
+                    proto.group_mentions = vec![{
+                        let mut proto = wa::GroupMention::default();
+                        proto.group_jid = Some(GROUP.into());
+                        proto.group_subject = Some("Book club".into());
+                        proto
+                    }];
+                    proto.mentioned_jid = vec!["15550001111@s.whatsapp.net".into()];
+                    proto
+                });
+                proto
+            });
+            let mut proto = wa::Message::default();
+            proto.group_mentioned_message = MessageField::some({
+                let mut proto = wa::message::FutureProofMessage::default();
+                proto.message = MessageField::some(inner);
+                proto
+            });
+            proto
+        };
+        let text = |message: &wa::Message| match classify(message) {
+            Some(Content::Text { text, .. }) => text,
+            other => panic!("not text: {other:?}"),
+        };
+        assert_eq!(
+            text(&tagging(&format!("see @{GROUP} tonight"))),
+            "see @Book club tonight"
+        );
+        assert_eq!(
+            text(&tagging("see @120363000000000001 tonight")),
+            "see @Book club tonight",
+            "the id without its server is named too"
+        );
+        assert_eq!(text(&tagging("no tag here")), "no tag here");
+        // The mentions of people inside still reach the row.
+        let message = tagging("hello");
+        assert_eq!(
+            mentioned_of(message.get_base_message()),
+            ["15550001111@s.whatsapp.net"]
+        );
+    }
+
+    /// Only text is taken out of the wrapper: a photo inside it stays a
+    /// placeholder rather than a picture that could not be downloaded.
+    #[test]
+    fn media_tagging_a_community_group_stays_a_placeholder() {
+        use whatsapp_rust::prelude::MessageField;
+        let mut inner = wa::Message::default();
+        inner.image_message = MessageField::some({
+            let mut proto = wa::message::ImageMessage::default();
+            proto.mimetype = Some("image/jpeg".into());
+            proto
+        });
+        let mut message = wa::Message::default();
+        message.group_mentioned_message = MessageField::some({
+            let mut proto = wa::message::FutureProofMessage::default();
+            proto.message = MessageField::some(inner);
+            proto
+        });
+        assert!(matches!(
+            classify(&message),
+            Some(Content::Unsupported { .. })
+        ));
     }
 
     /// View-once media that arrives whole, in any of its wrappers or with
