@@ -100,6 +100,18 @@ const PHONE_PATIENCE: Duration = Duration::from_secs(30);
 const PHONE_BATCH: i32 = 50;
 /// `HistorySync.sync_type` for on-demand history responses.
 const ON_DEMAND: i32 = 6;
+
+/// Whether a history chunk of `sync_type` is a load of chat history, which
+/// the window says is under way: the first after linking
+/// (`INITIAL_BOOTSTRAP`, 0), the rest of it (`FULL`, 2) and the recent
+/// messages (`RECENT`, 3). The phone also sends chunks that carry no chats
+/// to read, whenever it likes: statuses (`INITIAL_STATUS_V3`, 1), contact
+/// names (`PUSH_NAME`, 4), settings and stickers (`NON_BLOCKING_DATA`, 5)
+/// and notices (`NO_HISTORY`, 7; `MESSAGE_ACCESS_STATUS`, 8). Those are
+/// filed without a word, as is a kind this was not written for.
+fn loads_chat_history(sync_type: i32) -> bool {
+    matches!(sync_type, 0 | 2 | 3)
+}
 /// Maximum attachment-preview dimension.
 const THUMBNAIL_SIDE: u32 = 96;
 /// Maximum dimension of the picture a sent video carries. It stands in for
@@ -5916,7 +5928,23 @@ impl Worker {
         let session = lazy.peer_data_request_session_id().map(str::to_owned);
         let on_demand =
             lazy.sync_type() == ON_DEMAND || lazy.peer_data_request_session_id().is_some();
+        // "Loading chat history…" and the "History loaded" that follows it
+        // are for chat history. Shown for every chunk, they came back each
+        // time the phone sent names or settings, long after the history was
+        // in.
+        let announced = !on_demand && loads_chat_history(lazy.sync_type());
         if !on_demand {
+            log::info!(
+                "history sync: chunk of type {}, {}",
+                lazy.sync_type(),
+                if announced {
+                    "announced"
+                } else {
+                    "filed quietly"
+                }
+            );
+        }
+        if announced {
             self.sync_deadline = Some(Instant::now() + SYNC_QUIET);
             self.set_syncing(true);
             if let Some(progress) = lazy.progress() {
@@ -5973,7 +6001,7 @@ impl Worker {
                 Err(_error) => log::warn!("history parsing worker failed"),
             }
         }
-        if !on_demand && lazy.progress().is_some_and(|progress| progress >= 100) {
+        if announced && lazy.progress().is_some_and(|progress| progress >= 100) {
             self.sync_deadline = Some(Instant::now() + Duration::from_secs(3));
         }
         self.emit_chats();
@@ -17521,6 +17549,27 @@ mod tests {
             classify(&message),
             Some(Content::Unsupported { .. })
         ));
+    }
+
+    /// Only chunks of chat history raise "Loading chat history…": names,
+    /// statuses, settings and notices, which the phone sends at any time,
+    /// do not, and neither does a kind added since.
+    #[test]
+    fn only_chat_history_is_announced_as_loading() {
+        for (sync_type, announced) in [
+            (0, true),
+            (1, false),
+            (2, true),
+            (3, true),
+            (4, false),
+            (5, false),
+            (ON_DEMAND, false),
+            (7, false),
+            (8, false),
+            (99, false),
+        ] {
+            assert_eq!(loads_chat_history(sync_type), announced, "{sync_type}");
+        }
     }
 
     /// View-once media that arrives whole, in any of its wrappers or with
