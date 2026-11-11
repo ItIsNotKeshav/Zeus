@@ -515,7 +515,7 @@ pub(super) enum PendingPoster {
 /// The poster of a staged video, started on first sight and picked up
 /// when the decode finishes. `None` while it is still loading or when the
 /// clip has no picture the app can decode.
-pub(super) fn pending_poster(
+pub(crate) fn pending_poster(
     ctx: &egui::Context,
     path: &std::path::Path,
 ) -> Option<egui::TextureHandle> {
