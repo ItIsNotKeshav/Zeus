@@ -3072,6 +3072,12 @@ pub enum Action {
         messages: Vec<String>,
         to_chat: ChatId,
     },
+    /// Sends messages again in their own chat: carried out of its Media,
+    /// links and docs panel and dropped on it.
+    ForwardHere {
+        chat: ChatId,
+        messages: Vec<String>,
+    },
     /// Opens a chat in a pane on one side of the chat panel, beside the open
     /// chat, and makes it the open chat: a chat dragged out of the list and
     /// dropped on a side, or picked from a menu.
