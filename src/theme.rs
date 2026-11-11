@@ -826,13 +826,14 @@ pub fn forget_motion(ctx: &egui::Context, id: egui::Id) {
     crate::motion::forget(ctx, id);
 }
 
-/// `seconds`, or none at all while a screen reader is attached (see
-/// [`crate::motion`]): every animation takes its time through here.
+/// `seconds`, scaled by Settings' Motion ([`crate::motion::speed`]), or
+/// none at all while a screen reader is attached (see [`crate::motion`]):
+/// every animation takes its time through here.
 pub fn motion_time(ctx: &egui::Context, seconds: f32) -> f32 {
     if crate::motion::screen_reader_attached(ctx) {
         0.0
     } else {
-        seconds
+        seconds * crate::motion::speed() as f32
     }
 }
 

@@ -155,6 +155,9 @@ name or description, in the interface language or in English.
   shows the chat that was already open.
 - **Enter sends**: when off, Enter adds a line and `Ctrl+Enter` (Command+Enter
   on macOS) sends.
+- **Motion**: Default runs the chat's springs and animations at the speed they
+  were tuned at; Fast runs them in 70% of that time. With a screen reader
+  they are instant either way.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.

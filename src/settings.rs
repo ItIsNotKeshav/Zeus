@@ -158,6 +158,36 @@ impl FontChoice {
     }
 }
 
+/// How fast the chat's motion runs: its springs and timed animations.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MotionSpeed {
+    /// The speeds the motion was tuned at.
+    #[default]
+    Default,
+    /// Every spring and timed animation takes 70% of its tuned time.
+    Fast,
+}
+
+impl MotionSpeed {
+    pub const ALL: [Self; 2] = [Self::Default, Self::Fast];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Fast => "Fast",
+        }
+    }
+
+    /// The share of its tuned time each animation takes.
+    pub fn factor(self) -> f64 {
+        match self {
+            Self::Default => 1.0,
+            Self::Fast => 0.7,
+        }
+    }
+}
+
 /// The doodle pattern drawn over the wallpaper colour. Each is a tile of
 /// Lucide icons (ISC), see `assets/doodles` and `scripts/generate-doodles.py`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -858,6 +888,8 @@ pub struct Settings {
     /// Whether Enter sends. Off, Enter adds a line and Ctrl+Enter (Cmd+Enter
     /// on macOS) sends.
     pub enter_sends: bool,
+    /// How fast the chat's springs and animations run.
+    pub motion: MotionSpeed,
     /// Send read receipts, subject to the account privacy setting.
     pub send_read_receipts: bool,
     /// Send typing state while composing.
@@ -1043,6 +1075,7 @@ impl Default for Settings {
             search_pane_width: 380.0,
             info_pane_width: 380.0,
             enter_sends: true,
+            motion: MotionSpeed::Default,
             send_read_receipts: true,
             send_typing: true,
             auto_download: true,
