@@ -14,6 +14,17 @@ use whatsapp_rust::wacore::net::WHATSAPP_WEB_WS_URL;
 
 /// Time allowed to reach the proxy and open the tunnel.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Time an HTTP request is allowed to reach its server: the name lookup,
+/// and then the socket, the proxy and TLS. whatsapp-rust's own client allows
+/// the same.
+const HTTP_CONNECT: Duration = Duration::from_secs(10);
+/// Time a server is allowed before it starts to answer a request it has
+/// received in full.
+const HTTP_ANSWER: Duration = Duration::from_secs(30);
+/// Time a small request is allowed from start to finish: a search, a
+/// thumbnail, a profile picture. Media goes through whatsapp-rust and has no
+/// such limit, since a large file on a slow line takes as long as it takes.
+pub const SMALL_REQUEST: Duration = Duration::from_secs(30);
 /// Longest proxy reply header accepted for an HTTP tunnel.
 const MAX_REPLY: usize = 8 * 1024;
 const ENV_VARS: [&str; 4] = ["ALL_PROXY", "all_proxy", "HTTPS_PROXY", "https_proxy"];
@@ -392,6 +403,19 @@ pub fn ureq_proxy() -> Option<ureq::Proxy> {
     }
 }
 
+/// Sets how long an agent waits on a server that does not answer. ureq waits
+/// for ever by default, so a connection that stalled held its thread, and
+/// whatever waited on it, until Zeus quit. The body of an answer is not
+/// limited here: see [`SMALL_REQUEST`].
+pub fn patient(
+    builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    builder
+        .timeout_resolve(Some(HTTP_CONNECT))
+        .timeout_connect(Some(HTTP_CONNECT))
+        .timeout_recv_response(Some(HTTP_ANSWER))
+}
+
 /// A shared HTTP agent that uses [`ureq_proxy`].
 pub fn agent() -> ureq::Agent {
     if let Some(agent) = &configured().read().unwrap_or_else(|e| e.into_inner()).agent {
@@ -400,7 +424,7 @@ pub fn agent() -> ureq::Agent {
     // The defaults hold 128 KiB each way per connection and ten idle ones.
     // Downloads here are small, and the input buffer must still hold a whole
     // response head, so it keeps room for far more than any server sends.
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+    let agent: ureq::Agent = patient(ureq::Agent::config_builder())
         .proxy(ureq_proxy())
         .input_buffer_size(32 * 1024)
         .output_buffer_size(16 * 1024)
@@ -454,6 +478,43 @@ impl TransportFactory for ProxyTransportFactory {
 mod tests {
     use super::*;
     use tokio::net::TcpListener;
+
+    /// An agent gives up on a server it cannot reach or that never starts to
+    /// answer, and leaves the body of an answer alone.
+    #[test]
+    fn agents_wait_only_so_long_for_a_server() {
+        let agent: ureq::Agent = patient(ureq::Agent::config_builder()).build().into();
+        let timeouts = agent.config().timeouts();
+        assert_eq!(timeouts.resolve, Some(HTTP_CONNECT));
+        assert_eq!(timeouts.connect, Some(HTTP_CONNECT));
+        assert_eq!(timeouts.recv_response, Some(HTTP_ANSWER));
+        assert_eq!(timeouts.global, None, "media may take as long as it takes");
+        assert_eq!(timeouts.recv_body, None);
+    }
+
+    /// A request with a limit of its own ends when a server accepts the
+    /// connection and then says nothing, where it used to wait for ever.
+    #[test]
+    fn a_limited_request_gives_up_on_a_silent_server() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        // Held open and never answered, until the test ends.
+        let server = std::thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+        let agent: ureq::Agent = patient(ureq::Agent::config_builder()).build().into();
+        let started = std::time::Instant::now();
+        let outcome = agent
+            .get(&format!("http://{address}/"))
+            .config()
+            .timeout_global(Some(Duration::from_millis(300)))
+            .build()
+            .call();
+        assert!(
+            matches!(outcome, Err(ureq::Error::Timeout(_))),
+            "{outcome:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5));
+        drop(server.join());
+    }
 
     #[test]
     fn parses_supported_schemes() {
