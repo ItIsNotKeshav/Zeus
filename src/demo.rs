@@ -8489,9 +8489,12 @@ mod tests {
             "Enter sends the clip again"
         );
         assert!(app.unsent_voice.is_none());
-        // The strip's X discards a clip without sending it.
+        // The strip's X discards a clip without sending it, once the strip
+        // has opened out of the field.
         app.unsent_voice = Some((own, clip));
-        render(&mut app, &ctx);
+        for _ in 0..20 {
+            render(&mut app, &ctx);
+        }
         let pos = discard(&ctx).unwrap().center();
         let click = |pressed| egui::Event::PointerButton {
             pos,
@@ -17145,6 +17148,60 @@ mod tests {
         }
         let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
         assert!(!paints_reply_strip(&shapes), "the strip has gone");
+    }
+
+    /// An attachment added to a strip already open pops in, while the first
+    /// one, there since the strip opened, does not; one removed leaves where
+    /// it was without holding its room, and the one after it slides into the
+    /// room it left.
+    #[test]
+    fn staged_tiles_pop_in_leave_and_slide_into_place() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.pending.clear();
+        render(&mut app, &ctx);
+        let chat = app.open_chat.clone().expect("a chat is open");
+        let first = app.stage(crate::app::Pending::Document("/fixture/a.pdf".into()));
+        for _ in 0..20 {
+            render(&mut app, &ctx);
+        }
+        let (tiles, _) = crate::ui::conversation::tile_motion(&ctx, &chat);
+        assert_eq!(tiles.len(), 1);
+        assert!(!tiles[0].1, "the first tile comes with its strip");
+        let second = app.stage(crate::app::Pending::Document("/fixture/b.pdf".into()));
+        render(&mut app, &ctx);
+        let (tiles, _) = crate::ui::conversation::tile_motion(&ctx, &chat);
+        let popping = |id| tiles.iter().find(|tile| tile.0 == id).map(|tile| tile.1);
+        assert_eq!(popping(first), Some(false));
+        assert_eq!(popping(second), Some(true), "the new tile pops in");
+        for _ in 0..20 {
+            render(&mut app, &ctx);
+        }
+        assert!(
+            crate::ui::conversation::tile_motion(&ctx, &chat)
+                .0
+                .iter()
+                .all(|tile| !tile.1 && tile.2 == egui::Vec2::ZERO),
+            "settled"
+        );
+        app.actions.push(crate::model::Action::RemovePending(0));
+        render(&mut app, &ctx);
+        let (tiles, leaving) = crate::ui::conversation::tile_motion(&ctx, &chat);
+        assert_eq!(leaving, 1, "the removed tile leaves");
+        assert_eq!(tiles.len(), 1);
+        assert_eq!(tiles[0].0, second);
+        assert!(
+            tiles[0].2.x > 0.0,
+            "the second tile slides left into the room: {:?}",
+            tiles[0].2
+        );
+        for _ in 0..20 {
+            render(&mut app, &ctx);
+        }
+        let (tiles, leaving) = crate::ui::conversation::tile_motion(&ctx, &chat);
+        assert_eq!(leaving, 0);
+        assert_eq!(tiles[0].2, egui::Vec2::ZERO);
     }
 
     /// The emoji and @mention suggestion lists sit on the composer as the
