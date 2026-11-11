@@ -617,6 +617,14 @@ fn sections(app: &App) -> Vec<Section> {
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
         |settings| &mut settings.enter_sends,
     );
+    chats.row(
+        translated(locale, "Motion"),
+        translated(
+            locale,
+            "Fast runs the chat's springs and animations in 70% of their time.",
+        ),
+        motion_picker,
+    );
     chats.account_toggle(
         translated(locale, "Download files automatically"),
         translated(
@@ -1173,6 +1181,31 @@ fn swipe_section(locale: Locale) -> Section {
         );
     }
     swipes
+}
+
+/// Settings' Motion: the chat's springs and animations at their tuned
+/// speed, or faster.
+fn motion_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let selected = app.settings.motion;
+    controls::dropdown(
+        ui,
+        &palette,
+        "motion-speed",
+        &crate::i18n::gettext(locale, "Motion"),
+        &crate::i18n::gettext(locale, selected.label()),
+        controls::WIDTH,
+        |ui| {
+            for choice in crate::settings::MotionSpeed::ALL {
+                let label = crate::i18n::gettext(locale, choice.label());
+                if controls::option(ui, &palette, &label, selected == choice) {
+                    app.settings.motion = choice;
+                    app.actions.push(Action::SettingsChanged);
+                }
+            }
+        },
+    );
 }
 
 fn swipe_picker(ui: &mut egui::Ui, app: &mut App, slot: crate::settings::SwipeSlot) {

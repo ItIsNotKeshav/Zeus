@@ -1782,6 +1782,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 egui::Id::new("unsent-voice-reveal"),
                 &chat.id,
                 unsent_voice.as_ref(),
+                false,
                 |strip, seconds| unsent_voice_strip(app, strip, *seconds),
             );
             // Editing and replying trade places: one strip sinks as the
@@ -1793,6 +1794,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 egui::Id::new("edit-reveal"),
                 &chat.id,
                 editing.then_some(&()),
+                false,
                 |strip, _| edit_strip(app, strip),
             );
             {
@@ -2726,7 +2728,8 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) 
         egui::Id::new("link-preview-reveal"),
         chat,
         shown,
-        |strip, shown| dismiss = link_preview_card(strip, &palette, locale, shown),
+        true,
+        |strip, shown| dismiss |= link_preview_card(strip, &palette, locale, shown),
     );
     if dismiss {
         app.actions.push(Action::DismissLinkPreview);
@@ -2942,6 +2945,12 @@ const STRIP_CLOSE: crate::motion::Spring =
 /// The share of the way open by which a strip is fully opaque: it fades in
 /// over the start of its rise and out over the end of its fall.
 const STRIP_FADE: f32 = 0.4;
+/// How long an open strip takes to trade its card for another, as when a
+/// second message is double-clicked for a reply while one is quoted: the
+/// old card fades out rising [`SWAP_RISE`] points as the new one fades in
+/// rising into its place.
+const SWAP_SECONDS: f32 = 0.2;
+const SWAP_RISE: f32 = 6.0;
 
 /// Where one strip over the composer stands as it opens and closes. Kept
 /// in the context's memory under the strip's own id and brought up to date
@@ -2951,6 +2960,9 @@ struct Reveal<T> {
     chat: String,
     /// What the strip shows: the open one's, or the last while it closes.
     card: Option<std::sync::Arc<T>>,
+    /// The card it showed before, while it fades out, and when it began to.
+    outgoing: Option<std::sync::Arc<T>>,
+    swapped: f64,
     /// How far open the strip is, 0 closed and 1 open, with its speed per
     /// second.
     shown: f32,
@@ -3009,8 +3021,9 @@ fn spring_toward(
 /// lifting the messages with it, and it sinks back the same way on
 /// [`STRIP_CLOSE`] once `card` goes, drawing the last card meanwhile and
 /// turning around from where it is. A strip that changes height while open
-/// grows out from behind the field or settles down onto it. `draw` lays
-/// the card out, the gap under it included. When `calm` (a screen reader, a
+/// grows out from behind the field or settles down onto it. With `swap`, a
+/// new card in an open strip crossfades with the old one. `draw` lays the
+/// card out, the gap under it included. When `calm` (a screen reader, a
 /// background window) or in a chat just opened, it is in place at once.
 /// Returns whether anything was drawn.
 fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
@@ -3019,7 +3032,8 @@ fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
     id: egui::Id,
     chat: &str,
     card: Option<&T>,
-    draw: impl FnOnce(&mut egui::Ui, &T),
+    swap: bool,
+    mut draw: impl FnMut(&mut egui::Ui, &T),
 ) -> bool {
     let ctx = ui.ctx().clone();
     let id = id.with(chat);
@@ -3050,6 +3064,8 @@ fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
             Reveal {
                 chat: chat.to_owned(),
                 card: None,
+                outgoing: None,
+                swapped: now,
                 shown: target,
                 velocity: 0.0,
                 height,
@@ -3065,12 +3081,30 @@ fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
     let from_nothing = reveal.card.is_none() || !moving;
     match card {
         Some(card) if reveal.card.as_deref() != Some(card) => {
+            if swap && !from_nothing && reveal.shown > 0.0 {
+                reveal.outgoing = reveal.card.take();
+                reveal.swapped = now;
+            }
             reveal.card = Some(std::sync::Arc::new(card.clone()));
         }
         Some(_) => {}
         None if reveal.shown == 0.0 && reveal.velocity == 0.0 => reveal.card = None,
         None => {}
     }
+    let swap_time = theme::motion_time(&ctx, SWAP_SECONDS);
+    let swapped = if calm || swap_time <= 0.0 {
+        1.0
+    } else {
+        (((now - reveal.swapped) as f32) / swap_time).clamp(0.0, 1.0)
+    };
+    if swapped >= 1.0 {
+        reveal.outgoing = None;
+    }
+    let lift = if reveal.outgoing.is_some() {
+        SWAP_RISE * (1.0 - theme::ease_out(swapped))
+    } else {
+        0.0
+    };
     let mut room = 0.0;
     let drawn = reveal.card.clone();
     if let Some(card) = &drawn {
@@ -3088,7 +3122,10 @@ fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
         let settle = (tall - reveal.height).max(0.0) * shown;
         let mut strip = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(ui.available_rect_before_wrap().translate(vec2(0.0, settle)))
+                .max_rect(
+                    ui.available_rect_before_wrap()
+                        .translate(vec2(0.0, settle + lift)),
+                )
                 .layout(Layout::top_down(Align::Min)),
         );
         // One in place at once has no room to keep to yet: its height is
@@ -3101,8 +3138,26 @@ fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
         if shown < 1.0 {
             strip.multiply_opacity((shown / STRIP_FADE).min(1.0));
         }
-        draw(&mut strip, card);
-        reveal.height = strip.cursor().min.y - top.y - settle;
+        if let Some(old) = reveal.outgoing.clone() {
+            // Beneath the new card, only painting: it rises away as it fades.
+            let gone = theme::ease_out(swapped);
+            let mut leaving = strip.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("outgoing-card")
+                    .max_rect(
+                        strip
+                            .max_rect()
+                            .translate(vec2(0.0, -lift - SWAP_RISE * gone)),
+                    )
+                    .layout(Layout::top_down(Align::Min)),
+            );
+            leaving.disable();
+            leaving.multiply_opacity(1.0 - gone);
+            draw(&mut leaving, &*old);
+            strip.multiply_opacity(gone);
+        }
+        draw(&mut strip, &**card);
+        reveal.height = strip.cursor().min.y - top.y - settle - lift;
         if from_nothing {
             (reveal.tall, reveal.tall_velocity) = (reveal.height, 0.0);
         }
@@ -3111,6 +3166,7 @@ fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
     }
     if reveal.shown != target
         || reveal.velocity != 0.0
+        || reveal.outgoing.is_some()
         || (drawn.is_some() && (reveal.tall != reveal.height || reveal.tall_velocity != 0.0))
     {
         crate::motion::request_frame(&ctx);
@@ -3139,6 +3195,7 @@ fn reply_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, card: Option<ReplyC
         egui::Id::new("reply-reveal"),
         chat,
         card.as_ref(),
+        true,
         |strip, card| {
             let rect = reply_card(app, strip, card);
             strip_gap(strip);
@@ -15625,6 +15682,7 @@ mod tests {
                         egui::Id::new("test-strip"),
                         "chat",
                         card.as_ref(),
+                        false,
                         |strip, _| {
                             strip.allocate_space(super::vec2(100.0, 40.0));
                         },
@@ -15651,6 +15709,11 @@ mod tests {
             last = room;
         }
         assert!((last - full).abs() < 1e-3, "open: {last} of {full}");
+        let swapped = frame(Some(2), false);
+        assert!(
+            (swapped - full).abs() < 1e-3,
+            "another card keeps the strip open: {swapped}"
+        );
         let closing = frame(None, false);
         assert!(closing > 0.0 && closing < full, "sinking: {closing}");
         for _ in 0..60 {
@@ -18276,6 +18339,7 @@ fn attachment_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
         egui::Id::new("pending-reveal"),
         chat,
         card.as_ref(),
+        false,
         |strip, card| {
             if live {
                 pending_strip(app, strip, chat, calm);

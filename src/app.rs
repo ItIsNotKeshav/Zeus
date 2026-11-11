@@ -11035,6 +11035,7 @@ impl App {
     pub fn frame_ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         let ctx = &ctx;
+        crate::motion::set_speed(self.settings.motion.factor());
         self.settle_pending_reply();
         self.copy_rows
             .lock()

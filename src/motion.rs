@@ -172,6 +172,23 @@ pub fn egui_spinner(ui: &mut egui::Ui) -> egui::Response {
     response
 }
 
+thread_local! {
+    /// The share of its tuned time every spring and timed animation takes on
+    /// this thread, from Settings' Motion: 1 as tuned, less to run faster.
+    /// Per thread, as the interface draws on one and each test on its own.
+    static SPEED: std::cell::Cell<f64> = const { std::cell::Cell::new(1.0) };
+}
+
+/// Sets the share of its tuned time every spring and timed animation takes.
+pub fn set_speed(factor: f64) {
+    SPEED.with(|speed| speed.set(factor.clamp(0.1, 4.0)));
+}
+
+/// The share of its tuned time every spring and timed animation takes.
+pub fn speed() -> f64 {
+    SPEED.with(std::cell::Cell::get)
+}
+
 /// How near its target a [`Spring`] counts as at rest, as a share of the
 /// distance it travels: a third of a point over 300 points.
 const SETTLED: f64 = 1e-3;
@@ -192,9 +209,10 @@ impl Spring {
         Self { duration, bounce }
     }
 
-    /// The undamped angular frequency, `2π / duration`.
+    /// The undamped angular frequency, `2π / duration`, with the duration
+    /// scaled by Settings' Motion ([`speed`]).
     fn omega(self) -> f64 {
-        std::f64::consts::TAU / self.duration.max(1e-3)
+        std::f64::consts::TAU / (self.duration * speed()).max(1e-3)
     }
 
     /// The damping ratio, 1 for no bounce.
@@ -270,7 +288,7 @@ impl Spring {
 
     /// How long the spring takes to come to rest, in seconds.
     pub fn settle_time(self) -> f64 {
-        let (mut low, mut high) = (0.0, self.duration.max(1e-3));
+        let (mut low, mut high) = (0.0, (self.duration * speed()).max(1e-3));
         while self.envelope(high) > SETTLED {
             high *= 2.0;
         }
@@ -454,6 +472,24 @@ impl Curve {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    /// Settings' Motion at Fast settles every spring in 70% of its tuned
+    /// time, and Default puts it back.
+    #[test]
+    fn fast_motion_settles_springs_sooner() {
+        let spring = Spring::new(0.35, 0.0);
+        let tuned = spring.settle_time();
+        set_speed(crate::settings::MotionSpeed::Fast.factor());
+        let fast = spring.settle_time();
+        let halfway = spring.value(tuned * 0.35);
+        set_speed(crate::settings::MotionSpeed::Default.factor());
+        assert!((fast / tuned - 0.7).abs() < 1e-3, "{fast} of {tuned}");
+        assert!(
+            halfway > spring.value(tuned * 0.35),
+            "further along when fast"
+        );
+        assert_eq!(spring.settle_time(), tuned);
+    }
 
     #[test]
     fn idle_cursor_stays_visible_and_resumes_on_input_or_focus_change() {
