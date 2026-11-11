@@ -12922,6 +12922,9 @@ async fn download_avatar(
     let bytes = tokio::task::spawn_blocking(move || {
         crate::proxy::agent()
             .get(&url)
+            .config()
+            .timeout_global(Some(crate::proxy::SMALL_REQUEST))
+            .build()
             .call()
             .and_then(|mut response| response.body_mut().read_to_vec())
             .map_err(|error| error.to_string())
@@ -13441,7 +13444,12 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
             percent_encode(query.trim())
         )
     };
-    let body = match crate::proxy::agent().get(&url).call() {
+    let request = crate::proxy::agent()
+        .get(&url)
+        .config()
+        .timeout_global(Some(crate::proxy::SMALL_REQUEST))
+        .build();
+    let body = match request.call() {
         Ok(mut response) => response
             .body_mut()
             .read_to_string()
@@ -13520,7 +13528,13 @@ fn search_gifs(query: &str, key: &str, dir: &Path) -> Result<Vec<Gif>, GifError>
             }
             let slot = &mut gif.still;
             scope.spawn(move || {
-                let fetched = ureq::get(&url)
+                // Through the shared agent, so a still goes by the proxy
+                // the search itself went by.
+                let fetched = crate::proxy::agent()
+                    .get(&url)
+                    .config()
+                    .timeout_global(Some(crate::proxy::SMALL_REQUEST))
+                    .build()
                     .call()
                     .and_then(|mut response| response.body_mut().read_to_vec());
                 if let Ok(bytes) = fetched

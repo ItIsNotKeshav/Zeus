@@ -228,7 +228,7 @@ fn signal_agent() -> Result<ureq::Agent, String> {
     let tls = TlsConfig::builder()
         .root_certs(RootCerts::new_with_certs(&[ca]))
         .build();
-    Ok(ureq::Agent::config_builder()
+    Ok(crate::proxy::patient(ureq::Agent::config_builder())
         .tls_config(tls)
         .proxy(crate::proxy::ureq_proxy())
         .build()
