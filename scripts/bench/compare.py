@@ -19,18 +19,20 @@ import statistics
 import sys
 from pathlib import Path
 
-PHASES = ["settle", "scroll", "churn", "picker", "minimized", "settle-again"]
+PHASES = ["settle", "scroll", "churn", "picker", "search", "minimized", "settle-again"]
 PHASE_NAMES = {
     "settle": "Settle (10 s)",
     "scroll": "Scroll the photo chat",
     "churn": "Switch through 20 chats",
     "picker": "Sticker picker",
+    "search": "Search",
     "minimized": "Minimized (10 s)",
     "settle-again": "Idle again (40 s)",
 }
 # The phases whose frames the app times, and what they are called in the
 # smoothness table.
-TIMED = {"scroll": "Scrolling", "churn": "Switching chats", "picker": "Sticker picker"}
+TIMED = {"scroll": "Scrolling", "churn": "Switching chats", "picker": "Sticker picker",
+         "search": "Search"}
 METRIC_NAMES = {
     "physical_footprint": "physical footprint",
     "pss": "PSS",

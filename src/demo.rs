@@ -430,6 +430,8 @@ pub fn populate(app: &mut App) {
     // Demo mode has no backend to handle downloads.
     app.account_mut().settings.auto_download = false;
     app.link = LinkStatus::Connected;
+    // The sample account was linked long ago: past the first-run setup.
+    app.settings.setup_done = true;
     app.me = Some(ME.to_owned());
     app.me_name = Some("Carmine".to_owned());
     app.chats.clear();
@@ -3343,6 +3345,18 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     palette: crate::theme::Palette::messages_light(),
                 });
             }
+            // The first-run setup at one of its steps, such as setup-look,
+            // waiting on the sample code to scan.
+            part if let Some(step) = crate::ui::setup::Step::named(part) => {
+                unlink(app);
+                app.settings.setup_done = false;
+                app.setup_step = step;
+                app.link = LinkStatus::Unlinked {
+                    qr: Some(sample_qr()),
+                    pair_code: None,
+                    pairing_phone: None,
+                };
+            }
             "login" => {
                 unlink(app);
                 app.link = LinkStatus::Unlinked {
@@ -4417,7 +4431,15 @@ mod tests {
             .prefix("zapfast-demo-")
             .tempdir()
             .unwrap();
-        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // These tests measure the WhatsApp look with Glass at Solid: the
+        // time and ticks inside the bubble, a solid header and composer.
+        // The ones about the Zeus look or about glass ask for it by name.
+        let mut settings = Settings {
+            chat_theme: crate::chat_themes::ChatTheme::WhatsApp,
+            ..Settings::default()
+        };
+        settings.set_glass(1.0);
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), settings);
         ROOTS.with(|roots| roots.borrow_mut().push(root));
         populate(&mut app);
         app
@@ -4717,10 +4739,22 @@ mod tests {
                 })
                 .fold(f32::NEG_INFINITY, f32::max);
             let body_bottom = pos.y + body.rows.last().expect("rows").rect().max.y;
+            // Our own messages say their state ("Read") in place of the clock
+            // and ticks, adding the time only when it came more than five
+            // minutes after the message was sent. The words repeat, so take
+            // the one nearest under this body.
             let (time_pos, time) = texts
                 .iter()
-                .find(|(_, galley)| galley.text() == clock.as_str())
-                .unwrap_or_else(|| panic!("painted time {clock}"));
+                .filter(|(pos, galley)| {
+                    let text = galley.text();
+                    pos.y >= body_bottom - 0.5
+                        && (text == clock.as_str()
+                            || ["Sent", "Delivered", "Read", "Played"].iter().any(|word| {
+                                text == *word || text.starts_with(&format!("{word} • "))
+                            }))
+                })
+                .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+                .unwrap_or_else(|| panic!("painted time or status for {clock}"));
             assert!(
                 time_pos.y >= body_bottom - 0.5,
                 "time at {} overlaps the last row ending at {body_bottom}",
@@ -4728,7 +4762,9 @@ mod tests {
             );
             let gap = body_right - (time_pos.x + time.size().x);
             assert!(
-                (0.0..40.0).contains(&gap),
+                // A state word ends at the right edge itself, a glyph's own
+                // padding past the text.
+                (-4.0..40.0).contains(&gap),
                 "time should end beside the ticks at the right edge, {gap} short of it"
             );
             let body_rect = body
@@ -6535,7 +6571,19 @@ mod tests {
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
         }
-        for page in ["login", "pair", "phone"] {
+        for page in [
+            "login",
+            "pair",
+            "phone",
+            "setup",
+            "setup-look",
+            "setup-personal",
+            "setup-notifications",
+            "setup-privacy",
+            "setup-link",
+            "setup-link,pair",
+            "setup-look,light",
+        ] {
             let mut app = self::app();
             apply_flags(&mut app, Some(page));
             render(&mut app, &ctx);
@@ -7852,8 +7900,9 @@ mod tests {
         );
         let ctx = egui::Context::default();
         app.attach(&ctx);
+        // Tall enough for the member rows under the panel's other rows.
         let shapes = (0..3)
-            .map(|_| frame_sized(&mut app, &ctx, 780.0, Vec::new()))
+            .map(|_| frame_sized(&mut app, &ctx, 1100.0, Vec::new()))
             .last()
             .unwrap();
         let mut drawn = Vec::new();
@@ -7866,9 +7915,9 @@ mod tests {
     }
 
     /// The timer line says what WhatsApp says: a duration for a chat with one,
-    /// "Off" for a chat the phone turned it off for, and nothing at all for a
-    /// chat nobody has mentioned a timer for, which includes a frame where the
-    /// row was drawn a moment ago and the chat changed under it.
+    /// "Off" for a chat the phone turned it off for, and for a chat nobody has
+    /// mentioned a timer for, the plain row that sets one where we may change
+    /// it and nothing at all where we may not.
     #[test]
     fn chat_info_says_the_timer_and_hides_what_it_does_not_know() {
         use crate::ui::dialogs::disappearing_timer_id;
@@ -7882,8 +7931,11 @@ mod tests {
                 Some("Disappearing messages: 7 days"),
             ),
             ("disappearing-off,info", Some("Disappearing messages: Off")),
-            ("group-info", None),
-            ("info", None),
+            // A chat whose timer nobody has mentioned offers the row to set
+            // one where we may; a group locked for us draws nothing.
+            ("group-info", Some("Disappearing messages")),
+            ("info", Some("Disappearing messages")),
+            ("group-info-locked", None),
         ] {
             let mut app = app();
             let ctx = egui::Context::default();
@@ -7912,7 +7964,7 @@ mod tests {
         }
     }
 
-    /// A chat whose timer is not known draws no row, even in the same context
+    /// A chat that has no timer draws no row, even in the same context
     /// that just drew one: the marker records each frame, so the last frame's
     /// row cannot be read back as this frame's.
     #[test]
@@ -7934,9 +7986,14 @@ mod tests {
             Some("Disappearing messages: Off".to_owned())
         );
 
-        // The same panel, now a chat whose timer nobody has mentioned.
-        app.open_chat = Some(SAMPLES[3].id.to_owned());
-        info_sample(&mut app, SAMPLES[3].id, InfoView::Overview);
+        // The same panel, now a channel, which has no timer to show or set.
+        let channel = SAMPLES
+            .iter()
+            .find(|sample| sample.id.ends_with("@newsletter"))
+            .expect("a channel sample")
+            .id;
+        app.open_chat = Some(channel.to_owned());
+        info_sample(&mut app, channel, InfoView::Overview);
         render(&mut app, &ctx);
 
         assert!(
@@ -11463,14 +11520,11 @@ mod tests {
             render(&mut app, &ctx);
             let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
             assert!(nodes.iter().any(|(label, _, _)| label == "Delete"));
-            // Selecting and forwarding start from a Ctrl-click and the
-            // selection bar, never from the menu.
-            for action in ["Select", "Forward"] {
-                assert!(
-                    nodes.iter().all(|(label, _, _)| label != action),
-                    "no message's menu offers {action}"
-                );
-            }
+            // Forwarding starts from the selection bar, never from the menu.
+            assert!(
+                nodes.iter().all(|(label, _, _)| label != "Forward"),
+                "no message's menu offers Forward"
+            );
         }
     }
 
@@ -11902,9 +11956,9 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// The menu lists what is done to the message itself: replying,
-    /// forwarding and selecting have ways of their own, the sent, delivery
-    /// and read times open from the message's time, and deleting waits
+    /// The menu lists every action on the message: replying, forwarding,
+    /// selecting, the message's info and the troubleshooting rows, while the
+    /// sent, delivery and read times stay out of it and deleting waits
     /// behind one Delete row.
     #[test]
     fn message_menu_lists_actions_only() {
@@ -11936,16 +11990,23 @@ mod tests {
                 "the menu has no {status}row"
             );
         }
+        for present in ["Select", "Message info", "Copy text", "Star", "Pin message"] {
+            find(present);
+        }
+        // Reply, Forward and the developer rows are not in the menu.
         for gone in [
-            "Reply",
             "Forward",
-            "Select",
-            "Message info",
             "Reload earlier messages",
             "Copy message ID",
-            "Delete for me",
-            "Delete for everyone",
+            "Open file",
+            "Open in the viewer",
         ] {
+            assert!(
+                nodes.iter().all(|(label, _, _)| label != gone),
+                "the menu has no {gone} row"
+            );
+        }
+        for gone in ["Delete for me", "Delete for everyone"] {
             assert!(
                 nodes.iter().all(|(label, _, _)| label != gone),
                 "the menu has no {gone} row"
@@ -16935,7 +16996,8 @@ mod tests {
         app.page = crate::model::Page::Settings;
         app.custom_themes =
             crate::theme::Catalog::preview(crate::theme::presets().collect(), false);
-        app.settings.choose_style(crate::chat_themes::Style::Themes);
+        app.settings
+            .choose_chat_theme(crate::chat_themes::ChatTheme::Catppuccin);
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         app.attach(&ctx);
@@ -16944,10 +17006,7 @@ mod tests {
             .into_iter()
             .map(|(label, _, _)| label)
             .collect();
-        assert!(
-            labels.iter().any(|label| label == "Orchestrate"),
-            "{labels:?}"
-        );
+        assert!(labels.iter().any(|label| label == "Vercel"), "{labels:?}");
         for gone in ["How to make a theme", "Open themes folder", "Ristretto"] {
             assert!(!labels.iter().any(|label| label == gone), "{gone}");
         }

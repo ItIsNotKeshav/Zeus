@@ -220,6 +220,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             // The same move the surface's own button makes: the call keeps running, and the bar at
             // the bottom of the chat offers the way back.
             actions.push(Action::LeaveCallSurface);
+        } else if app.info_visible() && app.group_description_edit.is_some() {
+            actions.push(Action::CloseGroupDescription);
         } else if app.info_visible() && app.group_name_edit.is_some() {
             // Cancels the group rename and keeps the panel open.
             actions.push(Action::CloseGroupName);

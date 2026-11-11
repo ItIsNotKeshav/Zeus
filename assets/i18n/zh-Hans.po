@@ -1907,18 +1907,18 @@ msgstr "来电"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
 "your phone."
 msgstr ""
-"{caller} 正在呼叫 {group}。ZapFast 暂时无法加入群组通话：请在手机上接听。"
+"{caller} 正在呼叫 {group}。Zeus 暂时无法加入群组通话：请在手机上接听。"
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"{caller} is calling you and others. Zeus can't join group calls yet: "
 "answer on your phone."
 msgstr ""
-"{caller} 正在呼叫你和其他人。ZapFast 暂时无法加入群组通话：请在手机上接听。"
+"{caller} 正在呼叫你和其他人。Zeus 暂时无法加入群组通话：请在手机上接听。"
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
 #: src/ui/widgets.rs:944
@@ -2051,8 +2051,8 @@ msgstr ""
 "这里接听。"
 
 #: src/app.rs:4106 src/app.rs:6697
-msgid "ZapFast can't join group calls yet: open the link on your phone."
-msgstr "ZapFast 暂时无法加入群组通话：请在手机上打开此链接。"
+msgid "Zeus can't join group calls yet: open the link on your phone."
+msgstr "Zeus 暂时无法加入群组通话：请在手机上打开此链接。"
 
 #: src/app.rs:4176
 msgid "Connecting"

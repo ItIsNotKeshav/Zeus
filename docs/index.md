@@ -1,10 +1,10 @@
 ---
 layout: home
-title: ZapFast
+title: Zeus
 description: A fast, lightweight WhatsApp app for Linux, macOS, and Windows.
 permalink: /
 hero:
-  name: ZapFast
+  name: Zeus
   text: WhatsApp, native and fast
   tagline: A lightweight WhatsApp app for Linux, macOS, and Windows. Chat, send voice messages, and share files.
   actions:
@@ -12,7 +12,7 @@ hero:
       text: Download
       link: /download/
     - theme: alt
-      text: What is ZapFast?
+      text: What is Zeus?
       link: /what-is-zapfast/
     - theme: alt
       text: GitHub
@@ -20,7 +20,7 @@ hero:
   image:
     dark: /screenshot.png
     light: /screenshot-light.png
-    alt: "ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview"
+    alt: "Zeus showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview"
     width: 1800
     height: 1360
 
@@ -39,7 +39,7 @@ features:
     details: Photos, GIFs, stickers, documents, polls, locations, and link previews appear in the chat. Add captions before sending files.
   - icon: 🔔
     title: Background mode
-    details: Closing the window keeps ZapFast linked in the tray. Notifications show the chat picture, and muted chats stay quiet.
+    details: Closing the window keeps Zeus linked in the tray. Notifications show the chat picture, and muted chats stay quiet.
   - icon: 👥
     title: Several numbers
     details: Link more than one WhatsApp number and switch between them from your picture at the foot of the rail beside the chat list.
@@ -60,7 +60,7 @@ features:
 
 <p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify. Both are built on <a href="https://fastframe.dev">fastframe</a>, the shared foundation for native Rust apps built with <a href="https://www.egui.rs">egui</a>.</p>
 
-<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="ZapFast in under a minute: a film of the app, made with its built-in demo content" hidden>
+<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="Zeus in under a minute: a film of the app, made with its built-in demo content" hidden>
   <source src="{{ '/assets/videos/launch-film.mp4' | relative_url }}" type="video/mp4">
 </video>
 

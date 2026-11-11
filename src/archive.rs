@@ -12,6 +12,7 @@ use crate::model::{
 };
 
 mod calls;
+pub mod chat_export;
 pub use calls::CALL_LOG_LIMIT;
 mod drafts;
 mod encryption;
@@ -27,6 +28,7 @@ mod receipts;
 mod reconcile;
 #[cfg(test)]
 mod reconcile_tests;
+mod search_index;
 mod stars;
 mod stickers;
 pub use polls::PollVote;
@@ -67,6 +69,8 @@ pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
 /// Marks an archived photo whose clip is known as a motion photo. Only the
 /// photo's own sender can give it a clip.
+const LINK_PREVIEWS_DISABLED: &str = "link_previews_disabled";
+const LINK_PREVIEWS_DISABLED_AT: &str = "link_previews_disabled_at";
 const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
     WHERE chat = ?1 AND id = ?2 AND json_valid(content)
       AND json_extract(content, '$.kind') = 'image'
@@ -329,6 +333,22 @@ fn search_pattern(needle: &str) -> Option<String> {
     })
 }
 
+/// The same `LIKE` pattern applied to the stored JSON text rather than to the
+/// parsed fields, or `None` when the needle has a character JSON writes
+/// escaped (a quote, a backslash, a control character) or is blank.
+///
+/// JSON escapes nothing else, so a needle without those characters that
+/// occurs in a field's text occurs verbatim in the stored `content` too. The
+/// scan can therefore skip every row whose raw text lacks it without parsing
+/// the row, and the parsed match then decides the rest.
+fn raw_prefilter(needle: &str) -> Option<String> {
+    let plain = needle
+        .trim()
+        .chars()
+        .all(|c| c != '"' && c != '\\' && c >= ' ');
+    search_pattern(needle).filter(|_| plain)
+}
+
 /// A message from a row of [`SEARCH_COLUMNS`].
 fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     let content: String = row.get(6)?;
@@ -459,6 +479,7 @@ impl Archive {
         connection.execute_batch(favorites::SCHEMA)?;
         connection.execute_batch(stars::SCHEMA)?;
         connection.execute_batch(pins::SCHEMA)?;
+        connection.execute_batch(&search_index::schema())?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -470,6 +491,12 @@ impl Archive {
                 ))?;
             }
         }
+        // Newest first in the order the search lists, so a search for common
+        // text stops once it has its page of hits instead of parsing every
+        // message. Created after the migrations, which add `history_order`.
+        connection.execute_batch(
+            "CREATE INDEX IF NOT EXISTS messages_by_recency ON messages (timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC);",
+        )?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
@@ -1453,10 +1480,11 @@ impl Archive {
             "SELECT {BARE_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND timestamp >= ?2 AND timestamp < ?3
+             AND (?4 IS NULL OR content LIKE ?4 ESCAPE '\\')
              AND json_valid(content)
-             AND (?4 IS NULL OR {SEARCHED_TEXT} LIKE ?4 ESCAPE '\\')
+             AND (?5 IS NULL OR {SEARCHED_TEXT} LIKE ?5 ESCAPE '\\')
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
-             LIMIT ?5"
+             LIMIT ?6"
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(
@@ -1464,6 +1492,7 @@ impl Archive {
                 chat,
                 from.unwrap_or(i64::MIN),
                 until.unwrap_or(i64::MAX),
+                raw_prefilter(needle),
                 search_pattern(needle),
                 limit as i64
             ],
@@ -1553,16 +1582,31 @@ impl Archive {
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
         // The result list shows text and opens the message by id, so the
         // preview blobs stay behind.
+        if let Some(phrase) = search_index::phrase(needle)
+            && self.search_index_ready()?
+        {
+            let sql = format!(
+                "SELECT {BARE_COLUMNS}
+                 FROM messages
+                 WHERE rowid IN (SELECT rowid FROM message_text WHERE message_text MATCH ?1)
+                 ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
+                 LIMIT ?2"
+            );
+            let mut statement = self.connection.prepare(&sql)?;
+            let rows = statement.query_map(params![phrase, limit as i64], searched_message)?;
+            return rows.collect();
+        }
         let sql = format!(
             "SELECT {BARE_COLUMNS}
              FROM messages
-             WHERE json_valid(content) AND {SEARCHED_TEXT} LIKE ?1 ESCAPE '\\'
+             WHERE (?1 IS NULL OR content LIKE ?1 ESCAPE '\\')
+             AND json_valid(content) AND {SEARCHED_TEXT} LIKE ?2 ESCAPE '\\'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
-             LIMIT ?2"
+             LIMIT ?3"
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(
-            params![search_pattern(needle), limit as i64],
+            params![raw_prefilter(needle), search_pattern(needle), limit as i64],
             searched_message,
         )?;
         rows.collect()
@@ -2629,6 +2673,36 @@ impl Archive {
         Ok(unarchive)
     }
 
+    /// The phone's "Disable link previews": `Some(true)` when it is on.
+    /// `None` until the phone has said.
+    pub fn link_previews_disabled(&self) -> Result<Option<bool>> {
+        Ok(self.meta(LINK_PREVIEWS_DISABLED)?.map(|value| value == "1"))
+    }
+
+    /// Records the phone's "Disable link previews" changed at `timestamp`
+    /// milliseconds, unless a newer change is stored, so a replayed snapshot
+    /// cannot undo it. Returns the setting in force.
+    pub fn set_link_previews_disabled_at(&self, disabled: bool, timestamp: i64) -> Result<bool> {
+        let stored = self
+            .meta(LINK_PREVIEWS_DISABLED_AT)?
+            .and_then(|value| value.parse::<i64>().ok());
+        if stored.is_some_and(|stored| stored > timestamp) {
+            return Ok(self.link_previews_disabled()?.unwrap_or(disabled));
+        }
+        // One statement, so a failed write leaves the previous pair intact.
+        self.connection.execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2), (?3, ?4)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![
+                LINK_PREVIEWS_DISABLED,
+                if disabled { "1" } else { "0" },
+                LINK_PREVIEWS_DISABLED_AT,
+                timestamp.to_string()
+            ],
+        )?;
+        Ok(disabled)
+    }
+
     pub fn set_meta(&self, key: &str, value: &str) -> Result<()> {
         self.connection.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -3531,6 +3605,62 @@ pub(crate) mod tests {
     }
 
     /// Checks that archive search indexes fixture text, attachment captions and file names.
+    #[test]
+    fn search_with_raw_prefilter_matches_quotes_backslashes_and_accents() {
+        let archive = Archive::in_memory().expect("opens");
+        archive
+            .ensure_chat("1@s.whatsapp.net", "Ada")
+            .expect("chat");
+        let texts = [
+            ("m1", 10, "He said \"hi\" to Zoë"),
+            ("m2", 20, "path C:\\temp\\new"),
+            ("m3", 30, "café crème"),
+            ("m4", 40, "line one\nline two"),
+        ];
+        for (id, at, text) in texts {
+            let mut row = message("1@s.whatsapp.net", id, at, false);
+            row.content = Content::text(text);
+            archive.insert_message(&row, None).expect("insert");
+        }
+        let ids =
+            |hits: Vec<Message>| -> Vec<String> { hits.into_iter().map(|hit| hit.id).collect() };
+        // Needles JSON escapes skip the raw prefilter but still match.
+        assert_eq!(
+            ids(archive.search_messages("\"hi\"", 10).expect("search")),
+            ["m1"]
+        );
+        assert_eq!(
+            ids(archive.search_messages("c:\\temp", 10).expect("search")),
+            ["m2"]
+        );
+        assert_eq!(
+            ids(archive.search_messages("one\nline", 10).expect("search")),
+            ["m4"]
+        );
+        // Accented needles take the raw prefilter and still match.
+        assert_eq!(
+            ids(archive.search_messages("café", 10).expect("search")),
+            ["m3"]
+        );
+        assert_eq!(
+            ids(archive.search_messages("ZOË", 10).expect("search")),
+            ["m1"],
+            "the needle is lowercased before it is compared"
+        );
+        assert_eq!(
+            ids(archive
+                .search_chat_messages("1@s.whatsapp.net", "café", None, None, 10)
+                .expect("search")),
+            ["m3"]
+        );
+        assert_eq!(
+            ids(archive
+                .search_chat_messages("1@s.whatsapp.net", "\"hi\"", None, None, 10)
+                .expect("search")),
+            ["m1"]
+        );
+    }
+
     #[test]
     fn search_finds_text_captions_and_file_names() {
         let archive = Archive::in_memory().expect("opens");

@@ -26,6 +26,10 @@ pub(crate) const SPRING: Spring = Spring::new(1.0, 0.2);
 /// takes fewer of them.
 pub(crate) const SPAN: f32 = 1200.0;
 
+/// Whether the reader's scrolling ripples the rows. Off: messages no longer
+/// move while scrolling; the springs module stays for other uses.
+pub(crate) const RIPPLE_ON_SCROLL: bool = false;
+
 /// The furthest a row lags behind its place, about a line of text, so a
 /// fast scroll ripples rather than smears.
 pub(crate) const MAX_LAG: f32 = 20.0;

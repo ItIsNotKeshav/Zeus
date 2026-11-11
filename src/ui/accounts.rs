@@ -7,7 +7,7 @@ use egui::{Align2, CornerRadius, Rect, Sense, Vec2, pos2, vec2};
 use super::widgets::FrostedPopup;
 use crate::app::App;
 use crate::i18n::gettext;
-use crate::model::{AccountId, Action};
+use crate::model::{AccountId, Action, Dialog};
 use crate::theme::{self, Icon};
 
 use super::widgets;
@@ -100,7 +100,7 @@ fn entries(app: &mut App) -> Vec<Entry> {
 fn menu(app: &mut App, button: &egui::Response) {
     let palette = app.palette;
     let popup_id = button.id.with("popup");
-    if app.account_menu {
+    if app.account_menu || button.secondary_clicked() {
         app.account_menu = false;
         egui::Popup::open_id(&button.ctx, popup_id);
     }
@@ -124,6 +124,24 @@ fn menu(app: &mut App, button: &egui::Response) {
                 &gettext(app.locale, "Add account"),
             ) {
                 app.actions.push(Action::AddAccount);
+            }
+            widgets::menu_separator(ui, &palette);
+            // Logging out asks once more in a dialog before anything goes:
+            // with several numbers it removes this one, otherwise it unlinks
+            // the only one, as Settings does.
+            if widgets::menu_item(
+                ui,
+                &palette,
+                Some(Icon::LogOut),
+                &gettext(app.locale, "Log out"),
+            ) {
+                let dialog = if app.has_several_accounts() {
+                    Dialog::ConfirmRemoveAccount(app.account().id.clone())
+                } else {
+                    Dialog::ConfirmUnlink
+                };
+                app.actions.push(Action::ShowDialog(dialog));
+                ui.close();
             }
         });
 }
@@ -192,7 +210,7 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> bool {
         let name = single_line(
             ui,
             &entry.name,
-            theme::semibold(13.5),
+            theme::semibold(theme::TEXT_BODY),
             palette.text,
             max_width,
         );
@@ -200,7 +218,7 @@ fn account_row(app: &App, ui: &mut egui::Ui, entry: &Entry) -> bool {
             single_line(
                 ui,
                 &entry.detail,
-                theme::regular(12.0),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
                 max_width,
             )
@@ -262,7 +280,7 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
-    ui.add_space(6.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         let back = if app.adding_account {
             gettext(app.locale, "Cancel").into_owned()
@@ -272,18 +290,26 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
         let remove = (!app.adding_account).then(|| gettext(app.locale, "Remove this account"));
         let width = ui
             .painter()
-            .layout_no_wrap(back.clone(), theme::medium(13.0), palette.link)
+            .layout_no_wrap(
+                back.clone(),
+                theme::medium(theme::TEXT_CONTROL),
+                palette.link,
+            )
             .size()
             .x
             + remove.as_ref().map_or(0.0, |remove| {
                 24.0 + ui
                     .painter()
-                    .layout_no_wrap(remove.to_string(), theme::medium(13.0), palette.link)
+                    .layout_no_wrap(
+                        remove.to_string(),
+                        theme::medium(theme::TEXT_CONTROL),
+                        palette.link,
+                    )
                     .size()
                     .x
             });
         ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
-        if theme::link(ui, &back, theme::medium(13.0), palette.link).clicked() {
+        if theme::link(ui, &back, theme::medium(theme::TEXT_CONTROL), palette.link).clicked() {
             if app.adding_account {
                 app.actions.push(Action::CancelAddAccount);
             } else {
@@ -292,7 +318,14 @@ pub fn login_choices(app: &mut App, ui: &mut egui::Ui) {
         }
         if let Some(remove) = remove {
             ui.add_space(24.0);
-            if theme::link(ui, remove.as_ref(), theme::medium(13.0), palette.danger).clicked() {
+            if theme::link(
+                ui,
+                remove.as_ref(),
+                theme::medium(theme::TEXT_CONTROL),
+                palette.danger,
+            )
+            .clicked()
+            {
                 let id = app.account().id.clone();
                 app.actions.push(Action::ShowDialog(
                     crate::model::Dialog::ConfirmRemoveAccount(id),

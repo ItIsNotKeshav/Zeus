@@ -1987,19 +1987,19 @@ msgstr "Входящий звонок"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
 "your phone."
 msgstr ""
-"{caller} звонит в {group}. ZapFast пока не может присоединяться к групповым "
+"{caller} звонит в {group}. Zeus пока не может присоединяться к групповым "
 "звонкам: ответьте на телефоне."
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"{caller} is calling you and others. Zeus can't join group calls yet: "
 "answer on your phone."
 msgstr ""
-"{caller} звонит вам и другим участникам. ZapFast пока не может "
+"{caller} звонит вам и другим участникам. Zeus пока не может "
 "присоединяться к групповым звонкам: ответьте на телефоне."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
@@ -2139,9 +2139,9 @@ msgstr ""
 "Попросите кого-нибудь из группы позвонить и ответьте здесь."
 
 #: src/app.rs:4106 src/app.rs:6697
-msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgid "Zeus can't join group calls yet: open the link on your phone."
 msgstr ""
-"ZapFast пока не может присоединяться к групповым звонкам: откройте ссылку на "
+"Zeus пока не может присоединяться к групповым звонкам: откройте ссылку на "
 "телефоне."
 
 #: src/app.rs:4176

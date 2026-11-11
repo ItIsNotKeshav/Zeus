@@ -51,7 +51,7 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
     theme::paragraph(
         ui,
         gettext(locale, "Enter your password to unlock."),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.secondary,
     );
     let id = egui::Id::new(PASSWORD_ID);
@@ -80,25 +80,37 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
             "Too many wrong passwords. Try again in {seconds} s.",
         )
         .replace("{seconds}", &seconds.to_string());
-        theme::paragraph(ui, text, theme::regular(13.0), palette.danger);
+        theme::paragraph(
+            ui,
+            text,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.danger,
+        );
         ui.ctx()
             .request_repaint_after(wait.min(std::time::Duration::from_millis(250)));
     } else if app.app_lock.wrong {
         theme::paragraph(
             ui,
             gettext(locale, "Wrong password. Try again."),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.danger,
         );
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let ready = app.app_lock.can_try();
     if checking {
         theme::spinner(ui, 20.0, palette.accent);
     } else {
         submit |= ui
             .add_enabled_ui(ready, |ui| {
-                theme::pill_button(ui, &palette, &gettext(locale, "Unlock"), true)
+                let width = ui.available_width();
+                super::setup::sized_primary_button(
+                    ui,
+                    &palette,
+                    &gettext(locale, "Unlock"),
+                    None,
+                    width,
+                )
             })
             .inner
             .clicked();
@@ -106,11 +118,11 @@ fn password(app: &mut App, ui: &mut egui::Ui) {
     if submit && ready {
         app.actions.push(Action::UnlockApp);
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     if theme::link(
         ui,
         gettext(locale, "Forgot password? Unlink this computer"),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.accent,
     )
     .clicked()
@@ -125,7 +137,7 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
     theme::text(
         ui,
         gettext(locale, "Unlink this computer?"),
-        theme::semibold(16.0),
+        theme::semibold(theme::TEXT_SECTION),
         palette.text,
     );
     theme::paragraph(
@@ -134,10 +146,10 @@ fn confirm_unlink(app: &mut App, ui: &mut egui::Ui) {
             locale,
             "Without the password, the only way back in is to unlink. This removes the device from WhatsApp, deletes the chats stored here, and turns the app lock off. You can link again with a new code.",
         ),
-        theme::regular(13.5),
+        theme::regular(theme::TEXT_BODY),
         palette.text,
     );
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if super::dialogs::danger_button(ui, app, &gettext(locale, "Unlink")).clicked() {

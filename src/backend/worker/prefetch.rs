@@ -9,6 +9,13 @@ pub const HISTORY_GAP: Duration = Duration::from_secs(20);
 /// history would be drained in one run, and the phone asked for page after
 /// page until it said it had nothing more.
 pub const HISTORY_MAX_PAGES: u32 = 5;
+/// Pages asked for, across every chat, before the pump rests. Each request
+/// wakes the phone, so the pages come in one short run rather than one every
+/// few minutes for as long as Zeus is open.
+pub const ROUND_PAGES: u32 = 10;
+/// How long the pump rests after a run. A reconnect, which a sleeping Mac
+/// makes every minute or so, does not cut it short.
+pub const ROUND_REST: Duration = Duration::from_secs(6 * 60 * 60);
 const RECENT_LIMIT: usize = 10;
 
 #[derive(Default)]
@@ -28,6 +35,10 @@ pub(super) struct State {
     /// again, and only then.
     rebuild: bool,
     history_due: Option<Instant>,
+    /// Pages answered in this run, which [`ROUND_PAGES`] caps.
+    round_pages: u32,
+    /// Until when the pump rests after a run.
+    resting_until: Option<Instant>,
     history_failures: u32,
     history_chat: Option<ChatId>,
 }
@@ -59,7 +70,7 @@ impl State {
     pub fn on_connected(&mut self) {
         self.exhausted.clear();
         self.history_failures = 0;
-        self.history_due = None;
+        self.history_due = self.resting_until;
         self.rebuild = true;
     }
 
@@ -169,6 +180,13 @@ impl State {
         self.history_chat = None;
         self.history_failures = 0;
         self.history_due = Some(now + HISTORY_GAP);
+        self.round_pages = self.round_pages.saturating_add(1);
+        if self.round_pages >= ROUND_PAGES {
+            self.round_pages = 0;
+            let rest = now + ROUND_REST;
+            self.resting_until = Some(rest);
+            self.history_due = Some(rest);
+        }
         self.count_page(chat);
         if more {
             // The phone has more, but the other chats get their turn first.
@@ -675,6 +693,39 @@ mod tests {
             now += Duration::from_secs(900);
         }
         assert!(state.may_ask(&"a".to_owned()), "the budget is untouched");
+    }
+
+    /// After a run of pages the pump rests, and a reconnect does not wake it.
+    #[test]
+    fn a_run_of_pages_is_followed_by_a_rest_a_reconnect_keeps() {
+        let ids: Vec<String> = (0..ROUND_PAGES).map(|n| format!("c{n}")).collect();
+        let chats: Vec<Chat> = ids
+            .iter()
+            .enumerate()
+            .map(|(n, id)| chat(id, n as i64, false, 0, false))
+            .collect();
+        let mut state = State::default();
+        state.configure(true, None);
+        state.set_chats(&chats);
+        let mut now = Instant::now();
+        for _ in 0..ROUND_PAGES {
+            let chat = state.next_history(now, false).expect("a page in the run");
+            state.start_history(chat.clone());
+            assert!(state.finish_history(&chat, true, now));
+            now += HISTORY_GAP;
+        }
+        assert!(state.next_history(now, false).is_none(), "the pump rests");
+        state.on_connected();
+        assert!(
+            state.next_history(now, false).is_none(),
+            "a reconnect does not cut the rest short"
+        );
+        assert!(
+            state
+                .next_history(now - HISTORY_GAP + ROUND_REST, false)
+                .is_some(),
+            "the next run starts after the rest"
+        );
     }
 
     /// The chat that is open is asked first even when it joins the queue after

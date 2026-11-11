@@ -3,14 +3,14 @@
 # launcher entry that opens ZapFast with no terminal.
 #
 # Usage: packaging/install-user.sh [binary] [prefix]
-#   binary  the built executable (default: target/release/zapfast)
+#   binary  the built executable (default: target/release/zeus)
 #   prefix  the install prefix   (default: $PREFIX, else ~/.local with data
 #           in $XDG_DATA_HOME when it is set)
 #
-# The desktop file in packaging/ names its binary as `Exec=zapfast`, which is
+# The desktop file in packaging/ names its binary as `Exec=zeus`, which is
 # right for a package: a package manager installs the binary to /usr/bin,
 # where every session finds it on PATH. A user install lands in ~/.local/bin,
-# which a graphical session often does not put on PATH, so `Exec=zapfast`
+# which a graphical session often does not put on PATH, so `Exec=zeus`
 # would find nothing and the launcher entry would do nothing when clicked.
 # This script therefore writes the installed entry with the full path to the
 # binary it just installed, computed here at install time. No machine's path
@@ -20,7 +20,7 @@ set -euo pipefail
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo=$(dirname -- "$here")
 
-binary=${1:-"$repo/target/release/zapfast"}
+binary=${1:-"$repo/target/release/zeus"}
 prefix=${2:-"${PREFIX:-}"}
 if [[ -n "$prefix" ]]; then
   # An explicit prefix owns everything, data included, and is made absolute
@@ -41,11 +41,11 @@ if [[ ! -x "$binary" ]]; then
   exit 1
 fi
 
-installed="$bin_dir/zapfast"
+installed="$bin_dir/zeus"
 install -Dm755 "$binary" "$installed"
 install -Dm644 "$here/icons/zapfast.svg" "$icons_dir/zapfast.svg"
 mkdir -p "$apps_dir"
-# The lines that change: `Exec=zapfast`, and the actions' `Exec=zapfast <verb>`,
+# The lines that change: `Exec=zeus`, and the actions' `Exec=zeus <verb>`,
 # name the path just installed, so the entry works whether or not ~/.local/bin
 # is on the session's PATH. Arguments after the binary are kept.
 #

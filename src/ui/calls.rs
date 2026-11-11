@@ -175,7 +175,7 @@ fn row_name(app: &App, chat: &str) -> String {
 /// Whether `id`'s name or number matches `needle`, a `search_key`.
 fn matches(app: &App, id: &str, needle: &str) -> bool {
     needle.is_empty()
-        || crate::util::fuzzy_matches(&crate::util::search_key(&row_name(app, id)), needle)
+        || crate::util::search_key(&row_name(app, id)).contains(needle)
         || crate::model::phone_of(id).is_some_and(|phone| phone.contains(needle))
 }
 
@@ -250,12 +250,12 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(inset);
                 ui.spacing_mut().item_spacing.y = 0.0;
                 if rows.is_empty() {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::SPACE_M);
                     ui.vertical_centered(|ui| {
                         theme::text(
                             ui,
                             gettext(app.locale, "No matching calls"),
-                            theme::regular(13.0),
+                            theme::regular(theme::TEXT_CONTROL),
                             palette.secondary,
                         );
                     });
@@ -263,7 +263,7 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 for row in &rows {
                     history_row(app, ui, row, &mut actions);
                 }
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_M);
             });
     });
     app.actions.extend(actions);
@@ -280,7 +280,7 @@ pub fn filter_chip_id(filter: CallFilter) -> egui::Id {
 /// so Missed carries no count.
 pub fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
         for filter in CallFilter::EVERY {
@@ -428,9 +428,9 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     }
     let left = rect.left() + widgets::ROW_SIDE + 62.0;
     let right = button_rect.left() - 6.0;
-    let stamp_galley = ui
-        .painter()
-        .layout_no_wrap(stamp, theme::regular(11.5), palette.dim);
+    let stamp_galley =
+        ui.painter()
+            .layout_no_wrap(stamp, theme::regular(theme::TEXT_CAPTION), palette.dim);
     let name_top = rect.top() + 14.0;
     ui.painter().galley(
         pos2(right - stamp_galley.size().x, name_top + 2.0),
@@ -446,7 +446,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     let name_line = widgets::line(
         ui,
         &label,
-        theme::medium(14.5),
+        theme::medium(theme::TEXT_BODY),
         name_color,
         (right - stamp_galley.size().x - 8.0 - left).max(0.0),
         1,
@@ -467,7 +467,7 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     let detail = widgets::line(
         ui,
         &summary,
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
         (right - left - 21.0).max(0.0),
         1,
@@ -548,12 +548,12 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
                 if contacts.is_empty() {
-                    ui.add_space(12.0);
+                    ui.add_space(crate::theme::SPACE_M);
                     ui.vertical_centered(|ui| {
                         theme::text(
                             ui,
                             gettext(app.locale, "No matching contacts"),
-                            theme::regular(13.0),
+                            theme::regular(theme::TEXT_CONTROL),
                             palette.secondary,
                         );
                     });
@@ -565,7 +565,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                         person(app, ui, &contact.id, &mut actions);
                     });
                 }
-                ui.add_space(12.0);
+                ui.add_space(crate::theme::SPACE_M);
             });
     });
     if !actions.is_empty() {
@@ -575,7 +575,7 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,
@@ -584,7 +584,12 @@ fn section(ui: &mut egui::Ui, palette: &theme::Palette, label: &str) {
             bottom: 6,
         })
         .show(ui, |ui| {
-            theme::text(ui, label, theme::medium(13.0), palette.accent);
+            theme::text(
+                ui,
+                label,
+                theme::medium(theme::TEXT_CONTROL),
+                palette.accent,
+            );
         });
 }
 
@@ -603,8 +608,12 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         pos2(rect.right() - widgets::ROW_SIDE, rect.bottom()),
     );
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
-            widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+        let hover = super::chats::row_hover_amount(ui, response.id, response.hovered());
+        if hover > 0.0 {
+            ui.scope(|ui| {
+                ui.multiply_opacity(hover);
+                widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
+            });
         }
         let avatar_rect = Rect::from_center_size(
             pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
@@ -613,10 +622,24 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
         let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let width = (buttons.left() - 8.0 - left).max(0.0);
-        let name_line = widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
+        let name_line = widgets::line(
+            ui,
+            &name,
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+            width,
+            1,
+        );
         name_line.paint(ui, pos2(left, rect.top() + 14.0), palette.text);
         if let Some(phone) = crate::model::phone_of(id).map(crate::util::phone) {
-            let phone_line = widgets::line(ui, &phone, theme::regular(13.0), palette.dim, width, 1);
+            let phone_line = widgets::line(
+                ui,
+                &phone,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.dim,
+                width,
+                1,
+            );
             phone_line.paint(ui, pos2(left, rect.top() + 38.0), palette.dim);
         }
     }
@@ -638,7 +661,7 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
     {
         actions.push(Action::StartVideoCall(id.to_owned()));
     }
-    child.add_space(4.0);
+    child.add_space(crate::theme::SPACE_XS);
     let voice = gettext(locale, "Voice call {name}").replace("{name}", &name);
     if theme::icon_button(
         &mut child,
@@ -682,9 +705,14 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
         if response.clicked() {
             app.actions.push(Action::ShowNewCall(true));
         }
-        ui.add_space(10.0);
-        theme::text(ui, label.as_ref(), theme::semibold(15.0), palette.text);
-        ui.add_space(18.0);
+        ui.add_space(8.0);
+        theme::text(
+            ui,
+            label.as_ref(),
+            theme::semibold(theme::TEXT_SECTION),
+            palette.text,
+        );
+        ui.add_space(16.0);
         ui.set_max_width(360.0);
         ui.add(
             egui::Label::new(
@@ -692,7 +720,7 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
                     locale,
                     "Call one person by voice or video, or choose a call in the list to see it.",
                 ))
-                .font(theme::regular(13.5))
+                .font(theme::regular(theme::TEXT_BODY))
                 .color(palette.secondary),
             )
             .wrap()

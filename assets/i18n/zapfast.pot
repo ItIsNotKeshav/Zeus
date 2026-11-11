@@ -921,12 +921,12 @@ msgstr ""
 #: src/ui/dialogs.rs:338
 msgid ""
 "Choose a local code to open the Locked tab. It is separate from your phone's "
-"code. This hides chats in ZapFast, it does not add another encryption layer."
+"code. This hides chats in Zeus, it does not add another encryption layer."
 msgstr ""
 
 #: src/ui/dialogs.rs:343
 msgid ""
-"Enter your local ZapFast code. Leaving the Locked tab or closing the window "
+"Enter your local Zeus code. Leaving the Locked tab or closing the window "
 "locks it again."
 msgstr ""
 
@@ -966,7 +966,7 @@ msgstr ""
 msgid ""
 "This moves the chat to the Locked tab, hiding it from the normal chat list, "
 "search, unread badges, and notifications. The lock status also syncs to your "
-"phone. Open Locked with a separate local ZapFast code to read it. Sending "
+"phone. Open Locked with a separate local Zeus code to read it. Sending "
 "from locked chats is not supported yet."
 msgstr ""
 
@@ -2188,14 +2188,14 @@ msgstr ""
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
 "your phone."
 msgstr ""
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"{caller} is calling you and others. Zeus can't join group calls yet: "
 "answer on your phone."
 msgstr ""
 
@@ -2329,7 +2329,7 @@ msgid ""
 msgstr ""
 
 #: src/app.rs:4214 src/app.rs:6870
-msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgid "Zeus can't join group calls yet: open the link on your phone."
 msgstr ""
 
 #: src/app.rs:4305
@@ -3182,7 +3182,7 @@ msgstr ""
 
 #: src/ui/mod.rs:526
 #, rust-format
-msgid "ZapFast {version} is available"
+msgid "Zeus {version} is available"
 msgstr ""
 
 #: src/ui/mod.rs:543
@@ -3468,7 +3468,7 @@ msgid "Participant details are not available yet"
 msgstr ""
 
 #: src/ui/update.rs:25 src/ui/update.rs:38
-msgid "Update ZapFast"
+msgid "Update Zeus"
 msgstr ""
 
 #: src/ui/update.rs:49
@@ -3498,7 +3498,7 @@ msgstr ""
 
 #: src/ui/update.rs:113
 msgid ""
-"Finish any unsent messages or recordings before restarting. ZapFast will "
+"Finish any unsent messages or recordings before restarting. Zeus will "
 "briefly disconnect, then reconnect automatically."
 msgstr ""
 

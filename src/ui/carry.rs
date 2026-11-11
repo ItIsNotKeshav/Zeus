@@ -573,12 +573,7 @@ fn fade_glow(app: &App, ctx: &egui::Context, lit: Option<&Target>) {
         accepts: target.accepts,
     });
     let previous = ctx.data(|data| data.get_temp::<Glow>(glow_id()));
-    let strength = ctx.animate_bool_with_time_and_easing(
-        glow_id(),
-        now.is_some(),
-        theme::MOTION_QUICK,
-        theme::ease_out,
-    );
+    let strength = theme::animate(ctx, glow_id(), now.is_some(), theme::MOTION_QUICK);
     let Some(target) = now.or(previous) else {
         return;
     };
@@ -639,11 +634,11 @@ fn paint(
     let size = carry.origin.size();
     let rest = (CARD.x / size.x).min(CARD.y / size.y).clamp(SMALLEST, 1.0) * 0.94;
     let accepting = over.is_some_and(|target| target.accepts);
-    let shrink = ctx.animate_bool_with_time_and_easing(
+    let shrink = theme::animate(
+        ctx,
         carry_id().with("over"),
         accepting && matches!(carry.phase, Phase::Lifted { .. }),
         theme::MOTION_QUICK,
-        theme::ease_out,
     );
     let mut opacity = 1.0;
     let (at, scale) = match carry.phase {
@@ -763,7 +758,7 @@ fn paint(
             badge,
             Align2::CENTER_CENTER,
             count.to_string(),
-            theme::bold(12.0),
+            theme::bold(theme::TEXT_CAPTION),
             palette.on_accent,
         );
     }
@@ -788,7 +783,7 @@ fn label(ui: &egui::Ui, palette: &Palette, card: Rect, target: &Target) {
             palette.secondary,
         )
     };
-    let galley = painter.layout(text, theme::semibold(13.0), colour, 260.0);
+    let galley = painter.layout(text, theme::semibold(theme::TEXT_CONTROL), colour, 260.0);
     let height = 30.0;
     let width = 14.0 + 16.0 + 6.0 + galley.size().x + 14.0;
     let screen = ui.ctx().content_rect();

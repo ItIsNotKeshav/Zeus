@@ -1975,19 +1975,19 @@ msgstr "Panggilan masuk"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. ZapFast can't join group calls yet: answer on "
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
 "your phone."
 msgstr ""
-"{caller} sedang memanggil {group}. ZapFast belum bisa bergabung ke panggilan "
+"{caller} sedang memanggil {group}. Zeus belum bisa bergabung ke panggilan "
 "grup: jawab di ponselmu."
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. ZapFast can't join group calls yet: "
+"{caller} is calling you and others. Zeus can't join group calls yet: "
 "answer on your phone."
 msgstr ""
-"{caller} sedang memanggilmu dan orang lain. ZapFast belum bisa bergabung ke "
+"{caller} sedang memanggilmu dan orang lain. Zeus belum bisa bergabung ke "
 "panggilan grup: jawab di ponselmu."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
@@ -2126,9 +2126,9 @@ msgstr ""
 "Minta seseorang di grup untuk menelepon, lalu jawab di sini."
 
 #: src/app.rs:4106 src/app.rs:6697
-msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgid "Zeus can't join group calls yet: open the link on your phone."
 msgstr ""
-"ZapFast belum bisa bergabung ke panggilan grup: buka tautannya di ponselmu."
+"Zeus belum bisa bergabung ke panggilan grup: buka tautannya di ponselmu."
 
 #: src/app.rs:4176
 msgid "Connecting"

@@ -4,7 +4,7 @@ This note records the compatibility boundary for PR #113 and issue #28.
 
 ## Protocol support
 
-ZapFast uses the pinned whatsapp-rust sender. Its
+Zeus uses the pinned whatsapp-rust sender. Its
 [outgoing message classifier](https://github.com/oxidezap/whatsapp-rust/blob/ae3cefd86065872a577bbd0ad5ee21b60c86c616/wacore/src/send/classify.rs)
 explicitly handles template replies, button responses, list responses, and
 native-flow responses. The application constructs those library message types
@@ -17,7 +17,7 @@ original archived message before constructing its quoted response.
 
 ## Supported actions
 
-| Received action | ZapFast behavior |
+| Received action | Zeus behavior |
 | --- | --- |
 | Legacy response button | `ButtonsResponseMessage`, preserving selected id and display text |
 | Hydrated quick-reply template | `TemplateButtonReplyMessage`, preserving selected id and original index |
@@ -63,7 +63,7 @@ personal archive contents or screenshots belong in fixtures or documentation.
 
 ## Native interface
 
-| Type | ZapFast behavior |
+| Type | Zeus behavior |
 | --- | --- |
 | List | Centered dialog with a close control, section headings, descriptions, option selectors, full-row hover, keyboard activation, and a bounded scrolling area |
 | Poll | Ballot with persistent result tracks, a checkmark for the selected answer, and Show votes; the results dialog lists known participants and vote times, with an incomplete-history notice when needed |
