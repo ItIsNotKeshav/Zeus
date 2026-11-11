@@ -46,7 +46,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
         {
             app.actions.push(Action::NewGroupBack);
         }
-        theme::text(ui, label, theme::bold(18.0), palette.text);
+        theme::text(ui, label, theme::bold(theme::TEXT_TITLE), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if theme::icon_button(ui, Icon::X, 16.0, palette.secondary, palette.text, "Close")
                 .clicked()
@@ -55,7 +55,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, label: &str) {
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 fn choosing(app: &mut App, ui: &mut egui::Ui) {
@@ -78,7 +78,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
         .unwrap_or_default();
     if !members.is_empty() {
         chips(app, ui, &members);
-        ui.add_space(2.0);
+        ui.add_space(4.0);
     }
     let width = ui.available_width();
     let hint = crate::i18n::gettext(app.locale, "Search contacts");
@@ -93,7 +93,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
     if ui.memory(|memory| memory.focused().is_none()) {
         search.request_focus();
     }
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     let needle = crate::util::search_key(app.new_chat_search.trim());
     let mut contacts = super::dialogs::contact_choices(app, &needle);
     if let Some(draft) = app.new_group.as_ref() {
@@ -112,15 +112,15 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     if contacts.is_empty() {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(
             ui,
             crate::i18n::gettext(app.locale, "No matching contacts"),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.secondary,
         );
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let ready = app.new_group.as_ref().is_some_and(|draft| {
         if adding {
             draft.can_add()
@@ -141,7 +141,7 @@ fn choosing(app: &mut App, ui: &mut egui::Ui) {
                 members.len() as u32,
             )
             .replace("{count}", &members.len().to_string()),
-            theme::regular(13.5),
+            theme::regular(theme::TEXT_BODY),
             palette.secondary,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -177,7 +177,14 @@ fn chips(app: &mut App, ui: &mut egui::Ui, members: &[String]) {
             let name = app.display_name(id);
             let picture = app.avatar(id);
             let label = crate::i18n::gettext(app.locale, "Remove {name}").replace("{name}", &name);
-            let line = super::widgets::line(ui, &name, theme::medium(13.0), palette.text, 140.0, 1);
+            let line = super::widgets::line(
+                ui,
+                &name,
+                theme::medium(theme::TEXT_CONTROL),
+                palette.text,
+                140.0,
+                1,
+            );
             let avatar = 22.0;
             let size = vec2(4.0 + avatar + 6.0 + line.size().x + 6.0 + 12.0 + 8.0, 30.0);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -190,7 +197,8 @@ fn chips(app: &mut App, ui: &mut egui::Ui, members: &[String]) {
                 } else {
                     palette.surface
                 };
-                ui.painter().rect_filled(rect, CornerRadius::same(15), fill);
+                ui.painter()
+                    .rect_filled(rect, CornerRadius::from(rect.height() / 2.0), fill);
                 let face = Rect::from_center_size(
                     pos2(rect.left() + 4.0 + avatar / 2.0, rect.center().y),
                     egui::Vec2::splat(avatar),
@@ -255,11 +263,24 @@ fn member_row(app: &mut App, ui: &mut egui::Ui, id: &str, picked: bool) {
         let left = rect.left() + 50.0;
         let width = rect.width() - 90.0;
         let detail = crate::model::phone_of(id).map(crate::util::phone);
-        let line = super::widgets::line(ui, &name, theme::medium(14.5), palette.text, width, 1);
+        let line = super::widgets::line(
+            ui,
+            &name,
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+            width,
+            1,
+        );
         match detail.filter(|phone| *phone != name) {
             Some(phone) => {
-                let phone =
-                    super::widgets::line(ui, &phone, theme::regular(12.5), palette.dim, width, 1);
+                let phone = super::widgets::line(
+                    ui,
+                    &phone,
+                    theme::regular(theme::TEXT_CAPTION),
+                    palette.dim,
+                    width,
+                    1,
+                );
                 line.paint(ui, pos2(left, rect.top() + 8.0), palette.text);
                 phone.paint(ui, pos2(left, rect.top() + 29.0), palette.dim);
             }
@@ -287,7 +308,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
     let Some(draft) = app.new_group.clone() else {
         return;
     };
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     // The photo, optional: the group dialog's picking and cropping.
     ui.vertical_centered(|ui| {
         super::widgets::avatar(
@@ -299,7 +320,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             draft.picture.as_deref(),
         );
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let add = crate::i18n::gettext(app.locale, "Add group photo");
     let change = crate::i18n::gettext(app.locale, "Change photo");
     let remove = crate::i18n::gettext(app.locale, "Remove photo");
@@ -329,10 +350,10 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             }
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 
     let hint = crate::i18n::gettext(app.locale, "Group name (required)");
-    let format = egui::TextFormat::simple(theme::regular(16.0), palette.text);
+    let format = egui::TextFormat::simple(theme::regular(theme::TEXT_SECTION), palette.text);
     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
         crate::bidi::layout_field(ui, text.as_str(), &format, wrap)
     };
@@ -352,7 +373,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
                 let counter = super::widgets::line(
                     ui,
                     &format!("{typed}/{}", crate::model::GROUP_NAME_LIMIT),
-                    theme::regular(12.0),
+                    theme::regular(theme::TEXT_CAPTION),
                     palette.dim,
                     80.0,
                     1,
@@ -365,9 +386,9 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
                         .hint_text(
                             egui::RichText::new(hint.as_ref())
                                 .color(palette.dim)
-                                .font(theme::regular(16.0)),
+                                .font(theme::regular(theme::TEXT_SECTION)),
                         )
-                        .font(theme::regular(16.0))
+                        .font(theme::regular(theme::TEXT_SECTION))
                         .text_color(palette.text)
                         .frame(Frame::NONE)
                         .char_limit(crate::model::GROUP_NAME_LIMIT)
@@ -395,7 +416,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
     if let Some(edited) = app.new_group.as_mut() {
         edited.name = name;
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 
     let names: Vec<String> = draft
         .members
@@ -411,20 +432,20 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             names.len() as u32,
         )
         .replace("{count}", &names.len().to_string()),
-        theme::medium(13.5),
+        theme::medium(theme::TEXT_BODY),
         palette.text,
     );
     let list = super::widgets::line(
         ui,
         &names.join(", "),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.secondary,
         ui.available_width(),
         2,
     );
     let (spot, _) = ui.allocate_exact_size(list.size(), Sense::hover());
     list.paint(ui, spot.min, palette.secondary);
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
 
     let ready = app
         .new_group
@@ -436,7 +457,7 @@ fn naming(app: &mut App, ui: &mut egui::Ui) {
             theme::text(
                 ui,
                 crate::i18n::gettext(app.locale, "Creating the group…"),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
         }

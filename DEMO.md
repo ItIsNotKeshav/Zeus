@@ -1,6 +1,6 @@
 # Developing with the demo
 
-The `demo` feature builds ZapFast with offline sample chats, for development,
+The `demo` feature builds Zeus with offline sample chats, for development,
 screenshots, and recorded tours. `AGENTS.md` describes the architecture and
 the rules for changes; `CONTRIBUTING.md` lists the checks.
 
@@ -10,6 +10,7 @@ cargo run --features demo -- --demo-page login # or settings, pair, info, light,
 cargo run --features demo -- --demo-shot shot.png --demo-page chat,light
 cargo run --features demo -- --demo-tour      # Space starts/replays a 41-second tour
 cargo run --features demo -- --demo-tour --demo-tour-script whats-new # what 0.16 added
+cargo run --features demo -- --demo-tour --demo-tour-script setup # the first-run setup
 cargo run --features demo -- --demo-hover 900,400 # holds a fake pointer there
 cargo test --all-features                      # includes a headless layout of every screen
 cargo clippy --all-targets --all-features -- -D warnings
@@ -52,7 +53,7 @@ cargo build --locked --features demo
 ./target/debug/zapfast --demo-tour --demo-size 1280x800
 ```
 
-The **ZapFast Demo** window waits for **Space**. The 41-second tour starts with
+The **Zeus Demo** window waits for **Space**. The 41-second tour starts with
 search, switches chats with keyboard shortcuts, scrolls, right-clicks a message
 and selects Reply, types quickly, completes emoji and mentions, searches the GIF
 picker and sends a still sticker, opens group information and the shortcut list,
@@ -65,6 +66,10 @@ fixtures, and the remaining stickers come from the bundled Noto emoji font. The 
 sound and holds its final frame. Space rebuilds the sample and replays.
 For an automatic start, add `--demo-tour-delay 5000` (milliseconds).
 Use `--demo` instead of `--demo-tour` to explore the sample chats yourself.
+
+`--demo-tour-script setup` plays the first-run setup in 24 seconds: the card
+arriving, a mode, a theme, a font and doodles picked, the phone link, and a
+step back.
 
 `--demo-tour-script whats-new` plays an 86-second tour of what ZapFast 0.16
 added instead: the composer's plus menu and poll dialog, searching a chat and
@@ -103,7 +108,10 @@ ours and members'), and `call-entries` files the sample calls in a chat.
 Locked chats preview with `channel`, `locked`, `locked-open` (the code is
 `demo-code`), `locked-prompt`, `locked-setup`, and `keyring`; the app lock
 with `app-lock` (the password is `demo-password`), `app-lock-wrong`,
-`app-lock-forgot`, `app-lock-settings`, and `app-lock-setup`. `new-chat`,
+`app-lock-forgot`, `app-lock-settings`, and `app-lock-setup`. The first-run
+setup opens with `setup`, and each step with `setup-look`, `setup-personal`,
+`setup-notifications`, `setup-privacy` and `setup-link`; `connecting` shows
+the launch splash. `new-chat`,
 `new-contact`, `unnamed-group`, and `react-picker` show those dialogs
 (`new-contact-number` with a formatted number and no name); `new-group` New
 chat's New group with two people picked and a search, `new-group-name` the
@@ -137,7 +145,7 @@ content:
 ```
 
 On Omarchy, run `omarchy screenrecord`, select the demo window, then press Space
-in ZapFast. Recording has no audio unless you explicitly enable desktop or
+in Zeus. Recording has no audio unless you explicitly enable desktop or
 microphone audio. Stop with `omarchy screenrecord --stop-recording` after the
 tour finishes. The default capture records a fixed rectangle, so keep the demo
 window visible and stationary until recording stops.

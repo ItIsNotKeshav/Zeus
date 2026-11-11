@@ -1,6 +1,7 @@
-//! The benchmark: a photo-heavy chat scrolled through, chats opened in turn,
-//! the sticker picker, a minimized window, and idle stretches, on a fixed
-//! two-minute timetable. `scripts/bench/` launches it, reads the phase marks it
+//! The benchmark: a photo-heavy chat scrolled through, dozens of chats opened
+//! in turn (each with pictures and a video thumbnail), a grid of stickers in
+//! the picker, search queries typed and their results scrolled, a minimized window, and idle stretches, on a fixed timetable of
+//! about three minutes. `scripts/bench/` launches it, reads the phase marks it
 //! writes (`--demo-tour-marks`), and measures the process from outside.
 //!
 //! The timetable runs on the monotonic clock from the first frame. Between
@@ -18,26 +19,30 @@ use std::time::Duration;
 /// The photo-heavy chat, pinned at the top of the list.
 pub(super) const PHOTO_CHAT: &str = "15550002000@s.whatsapp.net";
 /// Pictures in the photo chat, each its own file, so each is its own texture.
-pub(super) const PHOTOS: usize = 240;
-/// Animated stickers among them.
-pub(super) const ANIMATED: usize = 4;
-/// Chats besides the photo chat, enough for the churn to open 20 new ones.
-pub(super) const OTHER_CHATS: usize = 24;
+pub(super) const PHOTOS: usize = 360;
+/// A video message with a thumbnail every this many pictures in the photo chat.
+const VIDEO_EVERY: usize = 30;
+/// Animated stickers among them, a grid of them on the picker's shelves.
+pub(super) const ANIMATED: usize = 12;
+/// Chats besides the photo chat, enough for the churn to open 50 new ones,
+/// each with pictures and a video with its thumbnail.
+pub(super) const OTHER_CHATS: usize = 60;
 /// The oldest and the newest message of the photo chat.
 pub(super) const FIRST: &str = "bench-photo-000";
 pub(super) const LAST: &str = "bench-last";
 
 /// Phases in order, each ended by the next. `scripts/bench` names them the same.
-pub const PHASES: [&str; 6] = [
+pub const PHASES: [&str; 7] = [
     "settle",
     "scroll",
     "churn",
     "picker",
+    "search",
     "minimized",
     "settle-again",
 ];
 /// The phases whose frame times are recorded.
-pub(super) const TIMED: [&str; 3] = ["scroll", "churn", "picker"];
+pub(super) const TIMED: [&str; 4] = ["scroll", "churn", "picker", "search"];
 /// The phase that finds nothing by its label, so its frames are the app's own.
 pub(super) const SCROLL: &str = "scroll";
 
@@ -49,7 +54,7 @@ const SWEEP: f32 = 8.0;
 /// Points a second the transcript moves. A sweep covers more than the photo
 /// chat's height once its pictures have loaded, so it reaches the end on any
 /// platform's fonts; the checks say whether it did.
-const SCROLLED: f32 = 14_400.0;
+const SCROLLED: f32 = 21_600.0;
 /// Points a second the tour's wheel events carry. They come in points, as a
 /// touchpad's do, and only Linux scales those up (to match a macOS
 /// touchpad), so elsewhere the events carry that much more: every platform
@@ -64,16 +69,35 @@ const PASSES: usize = 2;
 const PAUSE: f32 = 0.5;
 const SCROLL_START: f32 = SETTLE;
 const SCROLL_END: f32 = SCROLL_START + PASSES as f32 * 2.0 * (SWEEP + PAUSE);
-const CHURN_STEPS: usize = 20;
+pub(super) const CHURN_STEPS: usize = 50;
 const CHURN_STEP: f32 = 0.6;
 const CHURN_END: f32 = SCROLL_END + (CHURN_STEPS + 1) as f32 * CHURN_STEP;
-const PICKER_ROUNDS: usize = 5;
+pub(super) const PICKER_ROUNDS: usize = 8;
 const PICKER_ROUND: f32 = 2.2;
 const PICKER_END: f32 = CHURN_END + PICKER_ROUNDS as f32 * PICKER_ROUND;
+/// Search queries, each typed into the chat list's search, its results
+/// scrolled down and back, then cleared. All match many sample messages.
+pub(super) const QUERIES: [&str; 3] = ["the", "you", "are"];
+const SEARCH_ROUND: f32 = 6.5;
+const SEARCH_END: f32 = PICKER_END + QUERIES.len() as f32 * SEARCH_ROUND;
+/// Seconds between the keys of a query.
+const KEY_GAP: f32 = 0.12;
+/// Seconds the results are scrolled down, and again back up.
+const RESULTS_SCROLL: f32 = 2.0;
+/// Seconds between the wheel's events, a frame at 60 a second.
+const WHEEL_STEP: f32 = 0.016;
+/// Points a second the results move, in the same unit as `SPEED`.
+const RESULTS_SPEED: f32 = if cfg!(target_os = "linux") {
+    1_500.0 / fastframe_scroll::TOUCHPAD_SCALE
+} else {
+    1_500.0
+};
+/// Inside the chat list's results, clear of the rail and the chat pane.
+const RESULTS_POINT: (f32, f32) = (220.0, 420.0);
 const MINIMIZED: f32 = 10.0;
 /// The minimized phase is measured this long before the window comes back.
 const BEFORE_RESTORE: f32 = 1.0;
-const RESTORE: f32 = PICKER_END + MINIMIZED;
+const RESTORE: f32 = SEARCH_END + MINIMIZED;
 /// Past the 30 seconds after which a window left alone may let go of what it
 /// does not show.
 const SETTLE_AGAIN: f32 = 40.0;
@@ -115,14 +139,16 @@ pub fn prepare(app: &mut App) {
     photo_chat.pinned = true;
     photo_chat.pinned_at = now * 1000 + 1;
     photo_chat.last_activity = now - 30;
-    let photos = photo_messages(&dir, photo_chat.last_activity);
+    // One clip file, shared by every video message.
+    let clip = super::super::stock::save(&dir, "bench-clip.mp4", super::super::stock::VIDEO);
+    let photos = photo_messages(&dir, &clip, photo_chat.last_activity);
     add_chat(app, photo_chat, photos);
     for index in 0..OTHER_CHATS {
         let id = format!("1555010{index:04}@s.whatsapp.net");
         let mut chat = Chat::new(id.clone(), format!("Bench friend {:02}", index + 1));
         // Newer than every sample chat, so the churn stays among these.
         chat.last_activity = now - 60 - index as i64;
-        let rows = friend_messages(&dir, &id, index, chat.last_activity);
+        let rows = friend_messages(&dir, &clip, &id, index, chat.last_activity);
         add_chat(app, chat, rows);
     }
     // Animated stickers on the picker's shelves too.
@@ -147,7 +173,11 @@ pub fn prepare(app: &mut App) {
 
 /// The photo chat's messages, oldest first: a picture each minute, a line of
 /// text now and then, and a few animated stickers.
-fn photo_messages(dir: &std::path::Path, newest: i64) -> Vec<crate::model::Message> {
+fn photo_messages(
+    dir: &std::path::Path,
+    clip: &std::path::Path,
+    newest: i64,
+) -> Vec<crate::model::Message> {
     use super::super::{media, message, stock};
     let start = newest - PHOTOS as i64 * 60 - 120;
     let mut rows = Vec::new();
@@ -180,6 +210,16 @@ fn photo_messages(dir: &std::path::Path, newest: i64) -> Vec<crate::model::Messa
         );
         row.thumbnail = Some(stock::thumbnail_for(index as u32));
         rows.push(row);
+        if index % VIDEO_EVERY == VIDEO_EVERY - 1 {
+            rows.push(video_message(
+                PHOTO_CHAT,
+                &format!("bench-video-{index:03}"),
+                !from_me,
+                at + 40,
+                clip,
+                index as u32,
+            ));
+        }
         if index % 6 == 5 {
             rows.push(message(
                 PHOTO_CHAT,
@@ -226,8 +266,43 @@ fn photo_messages(dir: &std::path::Path, newest: i64) -> Vec<crate::model::Messa
 }
 
 /// A short chat with two pictures of its own.
+/// A video message with its thumbnail, the clip's file shared by all of them.
+fn video_message(
+    chat: &str,
+    id: &str,
+    from_me: bool,
+    at: i64,
+    clip: &std::path::Path,
+    seed: u32,
+) -> crate::model::Message {
+    use super::super::{media, message, stock};
+    let mut content = media(
+        "video/mp4",
+        stock::VIDEO.len() as u64,
+        Some(1280),
+        Some(720),
+    );
+    content.path = Some(clip.to_path_buf());
+    let mut row = message(
+        chat,
+        id,
+        from_me,
+        at,
+        Content::Video {
+            caption: None,
+            media: content,
+            seconds: Some(stock::CLIP_SECONDS),
+            gif: false,
+            note: false,
+        },
+    );
+    row.thumbnail = Some(stock::thumbnail_for(seed));
+    row
+}
+
 fn friend_messages(
     dir: &std::path::Path,
+    clip: &std::path::Path,
     chat: &str,
     index: usize,
     newest: i64,
@@ -275,6 +350,14 @@ fn friend_messages(
         row.thumbnail = Some(stock::thumbnail_for((index + picture) as u32));
         rows.push(row);
     }
+    rows.push(video_message(
+        chat,
+        &format!("bench-{index}-video"),
+        index.is_multiple_of(2),
+        newest - 30,
+        clip,
+        index as u32 + 2,
+    ));
     rows
 }
 
@@ -343,12 +426,48 @@ pub(super) fn script() -> Vec<Cue> {
         );
     }
     add(PICKER_END, Phase(PHASES[4]));
-    add(PICKER_END + 0.1, Minimize(true));
+    for (round, query) in QUERIES.iter().enumerate() {
+        let at = PICKER_END + round as f32 * SEARCH_ROUND;
+        add(
+            at + 0.1,
+            Key(K::K, super::command(), "Ctrl + K · Search chats"),
+        );
+        let typed = at + 0.4;
+        for (index, character) in query.chars().enumerate() {
+            add(typed + index as f32 * KEY_GAP, Text(character));
+        }
+        add(at + 1.6, Expect(Hits, "search: results listed"));
+        add(at + 1.7, Move(Point(RESULTS_POINT.0, RESULTS_POINT.1)));
+        let steps = (RESULTS_SCROLL / WHEEL_STEP) as usize;
+        for direction in [-1.0, 1.0] {
+            let from = at
+                + if direction < 0.0 {
+                    2.1
+                } else {
+                    2.1 + RESULTS_SCROLL + 0.1
+                };
+            for step in 0..steps {
+                add(
+                    from + step as f32 * WHEEL_STEP,
+                    Wheel(direction * RESULTS_SPEED * WHEEL_STEP),
+                );
+            }
+        }
+        // Clear the field with its own keys, then leave the search.
+        add(at + 6.0, Press(K::A, super::command()));
+        add(at + 6.05, Press(K::Backspace, Modifiers::NONE));
+        add(
+            at + 6.2,
+            Key(K::Escape, Modifiers::NONE, "Esc · Return to the chat"),
+        );
+    }
+    add(SEARCH_END, Phase(PHASES[5]));
+    add(SEARCH_END + 0.1, Minimize(true));
     add(
-        PICKER_END + 1.5,
+        SEARCH_END + 1.5,
         ExpectMinimized("minimized: window reports minimized"),
     );
-    add(RESTORE - BEFORE_RESTORE, Phase(PHASES[5]));
+    add(RESTORE - BEFORE_RESTORE, Phase(PHASES[6]));
     add(RESTORE, Minimize(false));
     add(DURATION.as_secs_f32(), End);
     cues.sort_by(|a, b| a.at.total_cmp(&b.at));

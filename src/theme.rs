@@ -52,7 +52,7 @@ pub fn theme_status(status: fastframe_theme::Status) -> &'static str {
             "The Omarchy palette could not be loaded. Keeping the last usable appearance. See the log for details."
         }
         Status::Problem(Problem::LoaderFailed | _) => {
-            "Custom themes could not be loaded. Run zapfast reload-themes to try again."
+            "Custom themes could not be loaded. Run zeus reload-themes to try again."
         }
     }
 }
@@ -343,19 +343,37 @@ impl Palette {
     /// which the text on the bubble is checked. `None` elsewhere.
     pub fn bubble_out_gradient(&self) -> Option<(Color32, Color32)> {
         (self.bubbles == BubbleStyle::Messages).then(|| {
-            let [_, bottom] = if self.dark {
+            let blue = if self.dark {
                 MESSAGES_BLUE_DARK
             } else {
                 MESSAGES_BLUE_LIGHT
+            };
+            // An accent of your own replaces the blue, and is the deeper end.
+            let bottom = if self.bubble_out == blue[0] {
+                blue[1]
+            } else {
+                self.accent
             };
             (self.bubble_out, bottom)
         })
     }
 
-    /// Whether this is the Messages theme's glass: a frosted header, glass
-    /// pills and tints, on every platform. Whether the desktop also shows
-    /// through the window is [`crate::backdrop::active`].
+    /// Whether the palette draws glass: a frosted header and composer, glass
+    /// pills and tints, on every platform. Zeus and Messages always do. The
+    /// WhatsApp look does too until Glass is Solid, which gives back its
+    /// solid header, composer and menus exactly as they were. Whether the
+    /// desktop also shows through the window is [`Palette::shows_desktop`].
     pub fn vibrant(&self) -> bool {
+        match self.bubbles {
+            BubbleStyle::Messages | BubbleStyle::Nothing => true,
+            BubbleStyle::WhatsApp => crate::backdrop::glass() < 1.0,
+        }
+    }
+
+    /// Whether the desktop may show through the window in this palette: only
+    /// Zeus and Messages, whose windows have a material to take. WhatsApp's
+    /// window stays opaque at every Glass, as it always was.
+    pub fn shows_desktop(&self) -> bool {
         matches!(self.bubbles, BubbleStyle::Messages | BubbleStyle::Nothing)
     }
 
@@ -364,7 +382,7 @@ impl Palette {
     pub fn sidebar(&self) -> Color32 {
         if self.bubbles == BubbleStyle::Nothing && crate::backdrop::active() {
             window_fill(self.panel, if self.dark { 210 } else { 230 })
-        } else if self.vibrant() && crate::backdrop::active() {
+        } else if self.shows_desktop() && crate::backdrop::active() {
             window_multiply(self.panel, SIDEBAR_TINT)
         } else {
             self.panel
@@ -376,7 +394,19 @@ impl Palette {
     /// translucent sidebar darkens the same way, with a little more of it
     /// opaque.
     pub fn rail(&self) -> Color32 {
-        let sidebar = self.sidebar();
+        self.shaded_rail(self.sidebar())
+    }
+
+    /// The window's title bar where the system draws it (Windows): the rail
+    /// as it is at Solid Glass, opaque whatever Glass says, so the bar is the
+    /// same solid colour with the desktop showing through the window or not.
+    pub fn titlebar(&self) -> Color32 {
+        let [r, g, b, _] = self.shaded_rail(self.panel).to_array();
+        Color32::from_rgb(r, g, b)
+    }
+
+    /// `sidebar` one shade darker, as [`Palette::rail`] lays it.
+    fn shaded_rail(&self, sidebar: Color32) -> Color32 {
         let shade = if self.dark {
             DARK_RAIL_SHADE
         } else {
@@ -747,20 +777,68 @@ pub const CLOSE: f32 = 0.7;
 /// How far a closing surface shrinks, about its anchor.
 pub const CLOSE_SCALE: f32 = 0.96;
 
-/// The one easing curve: quick to start, settling softly, no overshoot.
+/// The easing curve of things that arrive, [`crate::motion::Curve::ENTER`]:
+/// quick to start, gliding in, no overshoot.
 pub fn ease_out(t: f32) -> f32 {
-    egui::emath::easing::cubic_out(t.clamp(0.0, 1.0))
+    crate::motion::Curve::ENTER.at(t)
 }
 
-/// `ctx.animate_bool_with_time_and_easing` on [`ease_out`], at once while a
-/// screen reader is attached (see [`crate::motion`]).
+/// The curve of things that leave, [`crate::motion::Curve::EXIT`].
+pub fn ease_in(t: f32) -> f32 {
+    crate::motion::Curve::EXIT.at(t)
+}
+
+/// A toggle's progress, 0 to 1, on a critically damped spring that rests
+/// after about `seconds` (see [`crate::motion::Spring::settling_in`]). A
+/// change of `on` mid-move turns it round with the speed it has, so hovers
+/// and presses let go of halfway never jump. At once while a screen reader
+/// is attached.
 pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32 {
-    let seconds = if crate::motion::screen_reader_attached(ctx) {
+    if seconds <= 0.0 {
+        return if on { 1.0 } else { 0.0 };
+    }
+    crate::motion::spring_to(
+        ctx,
+        id,
+        if on { 1.0 } else { 0.0 },
+        crate::motion::Spring::settling_in(f64::from(seconds)),
+    )
+}
+
+/// Progress of something appearing, 0 to 1, from the first frame it is seen:
+/// [`animate`] toward `true` that starts at 0. Call [`forget_motion`] once it
+/// has gone, so its next appearance starts anew.
+pub fn appear(ctx: &egui::Context, id: egui::Id, seconds: f32) -> f32 {
+    if seconds <= 0.0 {
+        return 1.0;
+    }
+    crate::motion::spring_from(
+        ctx,
+        id,
+        1.0,
+        0.0,
+        crate::motion::Spring::settling_in(f64::from(seconds)),
+    )
+}
+
+/// Makes the next [`appear`] or [`animate`] of `id` start from the beginning.
+pub fn forget_motion(ctx: &egui::Context, id: egui::Id) {
+    crate::motion::forget(ctx, id);
+}
+
+/// `seconds`, or none at all while a screen reader is attached (see
+/// [`crate::motion`]): every animation takes its time through here.
+pub fn motion_time(ctx: &egui::Context, seconds: f32) -> f32 {
+    if crate::motion::screen_reader_attached(ctx) {
         0.0
     } else {
         seconds
-    };
-    ctx.animate_bool_with_time_and_easing(id, on, seconds, ease_out)
+    }
+}
+
+/// `ctx.animate_value_with_time` over [`motion_time`].
+pub fn animate_value(ctx: &egui::Context, id: egui::Id, value: f32, seconds: f32) -> f32 {
+    ctx.animate_value_with_time(id, value, motion_time(ctx, seconds))
 }
 
 /// How strong the tint of a field over a vibrant window is, and of a row
@@ -899,9 +977,68 @@ pub const RADIUS_MENU: u8 = 20;
 pub const RADIUS_CARD: u8 = 20;
 /// Dialogs and the larger surfaces that float over the window.
 pub const RADIUS_DIALOG: u8 = 28;
+
+/// The spacing scale, in points, from DESIGN.md. Every gap and padding in the
+/// interface is one of these; add a step here rather than a literal.
+pub const SPACE_HAIR: f32 = 2.0;
+pub const SPACE_XS: f32 = 4.0;
+pub const SPACE_S: f32 = 8.0;
+pub const SPACE_M: f32 = 12.0;
+pub const SPACE_L: f32 = 16.0;
+pub const SPACE_XL: f32 = 20.0;
+pub const SPACE_XXL: f32 = 24.0;
+pub const SPACE_SECTION: f32 = 32.0;
+pub const SPACE_MAJOR: f32 = 40.0;
+
+/// The gold of a starred message's mark in the footer.
+pub const STAR: Color32 = Color32::from_rgb(0xEA, 0xB3, 0x08);
+
+/// The hairline around the wallpaper page: a light rule over a dark wallpaper,
+/// a dark rule over a light one.
+pub fn wallpaper_rule(dark: bool) -> Color32 {
+    if dark {
+        Color32::from_rgba_unmultiplied(233, 237, 239, 32)
+    } else {
+        Color32::from_rgba_unmultiplied(10, 10, 10, 32)
+    }
+}
+
+/// The type scale, in points, from DESIGN.md. Every text size in the
+/// interface is one of these; add a step here rather than a literal size.
+pub const TYPE_DISPLAY: f32 = 24.0;
+/// Screen and dialog titles.
+pub const TYPE_TITLE: f32 = 20.0;
+/// Section headings within a screen.
+pub const TYPE_SECTION: f32 = 16.0;
+/// Messages, names and explanations.
+pub const TYPE_BODY: f32 = 14.0;
+/// Buttons, fields and other controls.
+pub const TYPE_CONTROL: f32 = 13.0;
+/// Timestamps and other secondary metadata.
+pub const TYPE_CAPTION: f32 = 12.0;
+/// The smallest text, for badges and fine print.
+pub const TYPE_MICRO: f32 = 11.0;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
+
+// The type scale, as DESIGN.md's Typography lists it. Views pass one of
+// these to `regular`, `medium`, `semibold` or `bold`; a size outside it
+// (an emoji glyph, a pairing code) says why where it is used.
+/// Badges, counts and the smallest labels.
+pub const TEXT_MICRO: f32 = 11.0;
+/// Timestamps and secondary metadata.
+pub const TEXT_CAPTION: f32 = 12.0;
+/// Controls, list previews and compact labels.
+pub const TEXT_CONTROL: f32 = 13.0;
+/// Messages, names in rows, and explanations.
+pub const TEXT_BODY: f32 = 14.0;
+/// Section headings and the open chat's name.
+pub const TEXT_SECTION: f32 = 16.0;
+/// A screen's or dialog's one title.
+pub const TEXT_TITLE: f32 = 20.0;
+/// The largest text: a call's name, the link screen's title.
+pub const TEXT_DISPLAY: f32 = 24.0;
 
 pub fn regular(size: f32) -> egui::FontId {
     fastframe_fonts::Weight::Regular.font_id(size)
@@ -1014,10 +1151,10 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     use egui::FontFamily::{Monospace, Proportional};
     use egui::{FontId, TextStyle};
     style.text_styles = [
-        (TextStyle::Small, FontId::new(11.5, Proportional)),
-        (TextStyle::Body, FontId::new(14.0, Proportional)),
-        (TextStyle::Button, FontId::new(14.0, Proportional)),
-        (TextStyle::Heading, FontId::new(22.0, Proportional)),
+        (TextStyle::Small, FontId::new(TEXT_CAPTION, Proportional)),
+        (TextStyle::Body, FontId::new(TEXT_BODY, Proportional)),
+        (TextStyle::Button, FontId::new(TEXT_BODY, Proportional)),
+        (TextStyle::Heading, FontId::new(TEXT_TITLE, Proportional)),
         (TextStyle::Monospace, FontId::new(13.0, Monospace)),
     ]
     .into();
@@ -1145,6 +1282,7 @@ fn install_fonts(ctx: &egui::Context) {
     }
     add_tabular(&mut fonts);
     add_atlas_marker(&mut fonts);
+    add_display(&mut fonts);
     text_rendering().apply_to(&mut fonts);
     ctx.set_fonts(fonts);
 }
@@ -1181,6 +1319,45 @@ pub fn rebuild_font_atlas(ctx: &egui::Context) {
     // New fonts take over on the next pass, which an unfocused window would
     // otherwise only run when the reader comes back.
     ctx.request_repaint();
+}
+
+/// The face for a few large titles, on the setup and the lock screen:
+/// Fraunces, cut for display sizes, soft and a touch above regular weight,
+/// set a little larger than the size asked for to match the interface's
+/// titles in height.
+pub fn display(size: f32) -> egui::FontId {
+    egui::FontId::new(size * 1.04, display_family())
+}
+
+fn display_family() -> egui::FontFamily {
+    egui::FontFamily::Name("zeus-display".into())
+}
+
+/// Registers the [`display`] family: the serif, then the interface's regular
+/// face behind it for the scripts the serif lacks.
+fn add_display(fonts: &mut egui::FontDefinitions) {
+    let mut family = Vec::new();
+    if !cfg!(test) {
+        let mut data = egui::FontData::from_static(include_bytes!("../assets/fonts/Fraunces.ttf"));
+        // Its display cut, fully soft, without the wonky alternates.
+        data.tweak.coords = egui::epaint::text::VariationCoords::new([
+            (b"opsz", 72.0),
+            (b"wght", 480.0),
+            (b"SOFT", 100.0),
+            (b"WONK", 0.0),
+        ]);
+        fonts
+            .font_data
+            .insert("zeus-display".to_owned(), std::sync::Arc::new(data));
+        family.push("zeus-display".to_owned());
+    }
+    if let Some(behind) = fonts
+        .families
+        .get(&fastframe_fonts::Weight::Regular.family())
+    {
+        family.extend(behind.iter().cloned());
+    }
+    fonts.families.insert(display_family(), family);
 }
 
 /// Puts a bundled variable font in front of each interface weight, with the
@@ -1304,6 +1481,8 @@ fastframe_icons::icons! {
         ChevronRight => lucide "chevron-right",
         ChevronUp => lucide "chevron-up",
         ListChecks => "list-checks",
+        Flask => "flask-conical",
+        Columns => "columns-2",
         CircleAlert => lucide "circle-alert",
         CircleCheck => lucide "circle-check",
         CircleX => lucide "circle-x",
@@ -1341,6 +1520,8 @@ fastframe_icons::icons! {
         Moon => lucide "moon",
         Music => "music",
         PanelLeft => lucide "panel-left",
+        PictureInPicture => "picture-in-picture-2",
+        Palette => "palette",
         Paperclip => "paperclip",
         Pause => lucide "pause",
         Pencil => lucide "pencil",
@@ -1364,6 +1545,7 @@ fastframe_icons::icons! {
         Settings => lucide "settings",
         Shield => "shield",
         ShieldOff => "shield-off",
+        ShieldCheck => "shield-check",
         Smartphone => lucide "smartphone",
         Smile => "smile",
         SquarePen => lucide "square-pen",
@@ -1385,6 +1567,7 @@ fastframe_icons::icons! {
         VolumeX => lucide "volume-x",
         WifiOff => "wifi-off",
         X => lucide "x",
+        Zap => "zap",
     }
 }
 
@@ -1419,16 +1602,22 @@ pub fn icon_button(
         egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
     });
     if ui.is_rect_visible(rect) {
-        let tint = if response.hovered() || response.has_focus() {
-            hover
-        } else {
-            color
-        };
-        let scale = if response.is_pointer_button_down_on() {
-            0.92
-        } else {
-            1.0
-        };
+        // The tint and the press shrink ease, as the circle buttons' do.
+        let ctx = ui.ctx();
+        let lit = animate(
+            ctx,
+            response.id.with("icon-hover"),
+            response.hovered() || response.has_focus(),
+            MOTION_QUICK,
+        );
+        let press = animate(
+            ctx,
+            response.id.with("icon-press"),
+            response.is_pointer_button_down_on(),
+            PRESS_SECONDS,
+        );
+        let tint = color.lerp_to_gamma(hover, lit);
+        let scale = 1.0 - 0.08 * press;
         paint_icon(ui, icon, rect, size * scale, tint);
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1614,8 +1803,15 @@ fn circle_body(
 /// Draws the app's mark as it ships: the lit disc and the ink bubble of
 /// `packaging/icons/zapfast.svg`, rendered once per pixel size.
 pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
-    let ctx = ui.ctx();
-    let pixels = (diameter * ctx.pixels_per_point()).round().max(1.0) as usize;
+    paint_mark(ui.painter(), center, diameter, diameter);
+}
+
+/// The mark drawn `diameter` across from its picture at `size`: a mark that
+/// grows or shrinks as it moves keeps one picture rather than rendering one
+/// for every size it passes through.
+pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, diameter: f32, size: f32) {
+    let ctx = painter.ctx();
+    let pixels = (size * ctx.pixels_per_point()).round().max(1.0) as usize;
     let id = egui::Id::new(("zapfast-mark", pixels));
     let texture = match ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
         Some(texture) => texture,
@@ -1633,7 +1829,7 @@ pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
     };
     let rect = egui::Rect::from_center_size(center, Vec2::splat(diameter));
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+    painter.image(texture.id(), rect, uv, Color32::WHITE);
 }
 
 /// Draws the logo's shape in two flat colours, for the empty conversation's
@@ -2417,6 +2613,44 @@ mod tests {
         stored["bubbles"] = "messages".into();
         let palette: Palette = serde_json::from_value(stored).unwrap();
         assert_eq!(palette.bubbles, BubbleStyle::WhatsApp);
+    }
+
+    /// WhatsApp's look draws glass (its frosted header, composer and menus)
+    /// while Glass is short of Solid, and its window stays opaque; Zeus and
+    /// Messages keep their window material.
+    #[test]
+    fn whatsapp_glass_follows_the_slider_and_keeps_its_window() {
+        let whatsapp = Palette::dark();
+        let zeus = Palette::nothing_dark();
+        let before = crate::backdrop::glass();
+        crate::backdrop::set_glass(crate::backdrop::GLASS_DEFAULT);
+        assert!(whatsapp.vibrant());
+        assert!(!whatsapp.shows_desktop());
+        assert!(zeus.vibrant() && zeus.shows_desktop());
+        crate::backdrop::set_glass(1.0);
+        assert!(!whatsapp.vibrant());
+        assert!(zeus.vibrant());
+        crate::backdrop::set_glass(before);
+    }
+
+    /// The system title bar's colour is opaque and the same at every Glass.
+    #[test]
+    fn titlebar_ignores_glass() {
+        for palette in [
+            Palette::dark(),
+            Palette::light(),
+            Palette::nothing_dark(),
+            Palette::nothing_light(),
+        ] {
+            let before = crate::backdrop::glass();
+            crate::backdrop::set_glass(0.0);
+            let clear = palette.titlebar();
+            crate::backdrop::set_glass(1.0);
+            let solid = palette.titlebar();
+            crate::backdrop::set_glass(before);
+            assert_eq!(clear, solid);
+            assert!(clear.is_opaque());
+        }
     }
 
     /// Bubble contents stay readable for every palette, custom ones included.

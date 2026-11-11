@@ -29,6 +29,17 @@ enum Change {
     Turn { clockwise: bool },
 }
 
+/// The cropper's layer.
+pub(crate) fn area_id() -> egui::Id {
+    egui::Id::new("picture-editor")
+}
+
+/// Where the cropper notes its "Keep this crop" button, which focus enters
+/// on when the keys or a screen reader opened it.
+pub(crate) fn keep_note_id() -> egui::Id {
+    egui::Id::new("picture-editor-keep")
+}
+
 /// Draws the cropper over the whole window and records whatever its controls
 /// asked for. The staged picture is left alone until the crop is kept.
 pub fn show(app: &mut App, ctx: &egui::Context) {
@@ -44,7 +55,13 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     let mut actions = Vec::new();
     let mut change = None;
-    egui::Area::new(egui::Id::new("picture-editor"))
+    // It covers the window, so it keeps the keyboard as the viewer does:
+    // Tab walks its own controls, never the chat hidden under it. The
+    // pointer already met only the cropper.
+    ctx.memory_mut(|memory| {
+        memory.set_modal_layer(egui::LayerId::new(egui::Order::Foreground, area_id()));
+    });
+    egui::Area::new(area_id())
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min)
         .show(ctx, |ui| {
@@ -69,7 +86,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             let moving = ui.interact(
                 to_screen(edit.crop, picture, scale),
                 ui.id().with("crop-inside"),
-                Sense::drag(),
+                // `Sense::DRAG` is not focusable: a drag needs the pointer,
+                // and a focusable area is a nameless Tab stop.
+                Sense::DRAG,
             );
             if moving.dragged() {
                 let delta = moving.drag_delta() / scale;
@@ -84,7 +103,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             for (edge, at) in handles(to_screen(edit.crop, picture, scale)) {
                 let grip = Rect::from_center_size(at, Vec2::splat(GRIP));
                 let response = ui
-                    .interact(grip, ui.id().with(("crop-edge", edge as u8)), Sense::drag())
+                    .interact(grip, ui.id().with(("crop-edge", edge as u8)), Sense::DRAG)
                     .on_hover_cursor(cursor(edge));
                 if response.dragged() {
                     let delta = response.drag_delta() / scale;
@@ -117,7 +136,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         actions.push(Action::CancelPictureEdit);
                     }
                     let keep = crate::i18n::gettext(locale, "Keep this crop");
-                    if theme::circle_button(
+                    let kept = theme::circle_button(
                         ui,
                         Icon::Check,
                         KEEP,
@@ -125,9 +144,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         palette.accent_hover,
                         palette.on_accent,
                         &keep,
-                    )
-                    .clicked()
-                    {
+                    );
+                    ui.ctx()
+                        .data_mut(|data| data.insert_temp(keep_note_id(), kept.id));
+                    if kept.clicked() {
                         actions.push(Action::ApplyPictureEdit);
                     }
                 },

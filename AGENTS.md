@@ -53,6 +53,25 @@ protocol. These notes are for coding agents and new contributors.
   level that ships (see the definition of done); treat existing
   captures of them the same way.
 
+## Code navigation with Graphify
+
+The Graphify MCP connector indexes this repository as a code graph. When it
+is connected, use it before editing to learn what does what, instead of
+reading files blindly:
+
+- Workspace `keshav-s-workspace`, repository `ItIsNotKeshav/Zeus`. Call
+  `set_workspace` with that handle if the session is not already on it.
+- `query_graph` for how something works or where a behavior lives, and
+  `graphify_find` for where a symbol is defined.
+- `graphify_callers` and `graphify_callees` for call relationships, and
+  `graphify_impact` or `impact_and_risk` for what a change can break.
+- `graphify_tests_for` to pick the tests that cover a symbol or file, so you
+  run only those.
+- The index is a snapshot of a commit, and results say which one. If a result
+  looks stale or empty, the file changed since indexing, or the connector is
+  unavailable, fall back to grep and read the current file. Use grep for
+  literal strings, config values, and unindexed files either way.
+
 ## Architecture
 
 - mimalloc is the global allocator (`#[global_allocator]` in `src/main.rs`)
@@ -105,6 +124,20 @@ protocol. These notes are for coding agents and new contributors.
   keyring key before moving it, and moves SQLite side files before their
   database. Removing an account deletes its folders after its backend has
   stopped, then its keyring entry.
+- Settings > Experimental holds features that are off until turned on:
+  Split view and Chat bubbles (`Settings::split_view`, `chat_bubbles`).
+  Split view (`app/split.rs`, `ui/split.rs`) puts a second chat beside the
+  open one and pops a chat out into an always-on-top window. The window grows
+  for the second pane the way it does for the info card (`ui/room.rs`: each
+  claim gives back only what it gained), and when it cannot (maximized,
+  tiled, the screen's edge) the list folds into the rail before the split
+  gives way. Chat bubbles (`app/bubbles.rs`, `ui/bubbles.rs`) keep up to
+  `MAX_BUBBLES` chats of the account on screen in a borderless, see-through,
+  always-on-top window; one opens into a card with its own transcript place,
+  text and attachments (picked, dropped or pasted), sent through
+  `App::send_staged` like the composer's. Neither touches the open chat's
+  composer. There is no update channel choice any more: every copy follows
+  stable releases, and settings version 5 moves an old Beta choice to Stable.
 - `src/archive.rs` is the SQLite store of chats, messages, contacts, and
   privacy-id mappings. The phone sends recent history at link time and can
   supply older history on request, but recovery is not guaranteed. Preserve
@@ -804,15 +837,15 @@ A release is not finished when the tag is pushed. Do these in order:
   `--demo-shot` to look at the result.
 - Update the docs site (`docs/`) when user-visible behaviour, settings,
   files, or network access changes. The README stays a short pointer to it.
-- In this fork, a routine change does not wait on the full suite: build it,
-  run `cargo fmt --all --check` and only the tests that directly cover the
-  change, then push to `main` and let GitHub CI (`ci.yml`) run the rest. If
-  CI fails, fix it forward. A test build installed on the maintainer's PC
-  needs no checks at all. The maintainer asked for this because waiting on
-  the full suite on their machine (15 to 20 minutes, and it can run out of
-  memory) cost more than it caught.
-- Run the full checks locally at most once a day, and before a major
-  release:
+- In this fork, run no tests or checks on the maintainer's machine: no
+  `cargo test`, `clippy`, `doc` or `fmt --all --check`. Push to `main` (or the
+  pull request branch) and let GitHub CI (`ci.yml`) run them; if CI fails, fix
+  it forward. Compile only when a build is wanted to try a change, with the
+  fast test build below. The full local suite is for a release, where a failure
+  is fixed before tagging. The maintainer asked for this because waiting on
+  checks on their machine (15 to 20 minutes, and it can run out of memory) cost
+  more than they caught.
+- Before a release, run the full checks locally (and only then):
 
   ```sh
   cargo fmt --all --check
@@ -844,7 +877,16 @@ maintainer's Windows machine:
   `dist/zeus-v<version>-x86_64-pc-windows-msvc-setup.exe` (the name the
   updater asks a release for). A warm release build takes about
   5 minutes; a cold one about 15.
-- Debug builds, tests and previews run from Git Bash with plain `cargo`: a
+- To try a change on the maintainer's PC, build it with
+  `packaging\windows\build-zeus.cmd test` (same environment and rules as the
+  release build, so not from Git Bash): the `fast` profile in `Cargo.toml`
+  (no LTO, 16 code generation units, incremental) leaves
+  `dist/test/zeus.exe` without an installer. The first build compiles the C
+  dependencies once, about as long as a cold release build; after that an
+  edit rebuilds much faster than a release build. Use `fast` only for
+  builds to try; releases and the installer keep `release`. Do not run tests
+  or checks around it on this machine.
+- Debug builds and previews run from Git Bash with plain `cargo`: a
   local, untracked `.cargo/config.toml` sets `target-nmake` and NMake.
 - To show the maintainer a change without their account, preview it with the
   synthetic demo: `cargo build --features demo`, then

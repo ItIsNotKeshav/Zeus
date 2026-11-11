@@ -135,9 +135,9 @@ pub fn surface(ctx: &Context, layer: LayerId, pivot: Pos2, seconds: f32) -> f32 
     });
     if !was_open {
         // Opening anew: from the beginning.
-        ctx.animate_bool_with_time(id, false, 0.0);
+        theme::forget_motion(ctx, id);
     }
-    let appear = theme::animate(ctx, id, true, seconds);
+    let appear = theme::appear(ctx, id, seconds);
     let scale = theme::CLOSE_SCALE + (1.0 - theme::CLOSE_SCALE) * appear;
     settle(ctx, layer, pivot, appear, scale);
     keep(ctx, layer, pivot, seconds, appear);

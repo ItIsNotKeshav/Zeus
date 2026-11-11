@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use serde::{Deserialize, Serialize};
 
 /// Verifying the locked-chat code costs about 20 ms, paid once per distinct
@@ -30,9 +30,9 @@ pub(crate) fn unhex(value: &str) -> Option<Vec<u8>> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeChoice {
-    #[default]
     Dark,
     Light,
+    #[default]
     System,
     /// macOS's greys, light or dark as the system is, with bubbles shaped as
     /// Messages draws them.
@@ -630,7 +630,7 @@ impl SwipeAction {
         crate::i18n::gettext(
             locale,
             match self {
-                Self::None => "Nothing",
+                Self::None => "No shortcut",
                 Self::Reply => "Reply to the message",
                 Self::OpenChat => "Open the chat",
                 Self::CloseChat => "Back to the chat list",
@@ -943,8 +943,16 @@ pub struct Settings {
     pub proxy: String,
     /// Ask GitHub every two hours whether a newer release exists.
     pub check_for_updates: bool,
-    /// Whether updates follow stable releases or betas too.
+    /// The update channel older releases offered. Every copy follows stable
+    /// releases now; the field stays so files from those releases still load,
+    /// and [`SETTINGS_VERSION`] 5 sets it back to Stable for them.
     pub update_channel: crate::updates::Channel,
+    /// Experimental: drag a chat beside the open one, and pop one out into a
+    /// window of its own.
+    pub split_view: bool,
+    /// Experimental: up to [`crate::app::MAX_BUBBLES`] chats as bubbles
+    /// floating over other windows, each opening into a small chat.
+    pub chat_bubbles: bool,
     /// Download verified updates in the background; restarting remains explicit.
     pub download_updates_automatically: bool,
     /// Voice and audio playback speed multiplier.
@@ -996,14 +1004,26 @@ pub struct Settings {
     pub window_y: Option<f32>,
     /// Whether the window was maximized when it last closed.
     pub window_maximized: bool,
+    /// Whether the first-run setup is behind us: set once an account links.
+    /// Until then an unlinked window opens on the welcome and the choices
+    /// before the phone link (`ui::setup`); after, only on the link. A file
+    /// written before the setup existed belongs to someone already set up.
+    #[serde(default = "set_up_before_setup_existed")]
+    pub setup_done: bool,
+}
+
+/// What a settings file from before the first-run setup says about it: the
+/// person is past it.
+fn set_up_before_setup_existed() -> bool {
+    true
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
-            legacy_theme: ThemeChoice::Dark,
-            chat_theme: ChatTheme::WhatsApp,
+            legacy_theme: ThemeChoice::NothingDark,
+            chat_theme: ChatTheme::Zeus,
             mode: Mode::Dark,
             accent: Accent::Theme,
             last_look: ChatTheme::WhatsApp,
@@ -1012,7 +1032,7 @@ impl Default for Settings {
             glass: crate::backdrop::GLASS_DEFAULT,
             always_show_time: false,
             messages_theme: false,
-            font: FontChoice::GoogleSansFlex,
+            font: FontChoice::PlusJakartaSans,
             interface_language: None,
             custom_theme: None,
             custom_theme_cache: None,
@@ -1056,6 +1076,8 @@ impl Default for Settings {
             proxy: String::new(),
             check_for_updates: true,
             update_channel: crate::updates::Channel::Stable,
+            split_view: false,
+            chat_bubbles: false,
             download_updates_automatically: false,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
@@ -1075,6 +1097,7 @@ impl Default for Settings {
             window_x: None,
             window_y: None,
             window_maximized: false,
+            setup_done: false,
         }
     }
 }
@@ -1086,7 +1109,9 @@ impl Default for Settings {
 ///    mode) become [`WallpaperColor::Theme`], the new default.
 /// 2. The one theme menu becomes a chat theme, a mode and an accent
 ///    ([`Settings::set_theme`]).
-pub const SETTINGS_VERSION: u32 = 5;
+/// 5. Halloween is gone; its doodles load as the classic ones.
+/// 6. The Beta update channel is gone: everyone follows stable releases.
+pub const SETTINGS_VERSION: u32 = 6;
 
 /// The key push to talk starts on.
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
@@ -1164,16 +1189,6 @@ impl Settings {
         }
     }
 
-    /// Whether the colours are a look made your own or a ready-made theme.
-    /// A theme file counts as a ready-made theme.
-    pub fn style(&self) -> Style {
-        if self.custom_theme.is_some() || !self.chat_theme.is_look() {
-            Style::Themes
-        } else {
-            Style::Custom
-        }
-    }
-
     /// Draws the window in `choice`, leaving any theme file, and remembers
     /// it for when its style is chosen again.
     pub fn choose_chat_theme(&mut self, choice: ChatTheme) {
@@ -1185,22 +1200,6 @@ impl Settings {
         } else {
             self.last_theme = choice;
         }
-    }
-
-    /// Switches to `style`, returning to the look or theme it last had.
-    /// Returns whether anything changed.
-    pub fn choose_style(&mut self, style: Style) -> bool {
-        if self.style() == style {
-            return false;
-        }
-        let choice = match style {
-            Style::Custom if self.last_look.is_look() => self.last_look,
-            Style::Custom => ChatTheme::WhatsApp,
-            Style::Themes if !self.last_theme.is_look() => self.last_theme,
-            Style::Themes => ChatTheme::Catppuccin,
-        };
-        self.choose_chat_theme(choice);
-        true
     }
 
     /// Whether the window's colours are light, dark, or the system's, for
@@ -1394,6 +1393,11 @@ impl Settings {
             if self.doodle_color == DoodleColor::Accent {
                 self.doodle_color = DoodleColor::Gray;
             }
+        }
+        if self.version < 6 {
+            // Settings no longer offers Beta; a copy that chose it follows
+            // stable releases, the one channel left.
+            self.update_channel = crate::updates::Channel::Stable;
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -1694,9 +1698,9 @@ mod tests {
     }
 
     #[test]
-    fn the_font_defaults_to_google_sans_flex_and_is_saved_by_name() {
+    fn the_font_defaults_to_plus_jakarta_sans_and_is_saved_by_name() {
         let older: Settings = serde_json::from_str(r#"{"theme":"light"}"#).unwrap();
-        assert_eq!(older.font, FontChoice::GoogleSansFlex);
+        assert_eq!(older.font, FontChoice::PlusJakartaSans);
         let chosen: Settings = serde_json::from_str(r#"{"font":"inter"}"#).unwrap();
         assert_eq!(chosen.font, FontChoice::Inter);
         let saved = serde_json::to_value(&chosen).unwrap();
@@ -1741,27 +1745,17 @@ mod tests {
     /// a chat theme, a mode and an accent, and an older release reading the
     /// file back finds the nearest theme it knows.
     #[test]
-    fn each_style_returns_to_the_look_or_theme_it_last_had() {
+    fn the_accent_stays_when_the_theme_changes() {
         let mut settings = Settings {
             accent: Accent::Red,
             ..Settings::default()
         };
-        assert_eq!(settings.style(), Style::Custom);
-        settings.choose_chat_theme(ChatTheme::Zeus);
-        assert!(settings.choose_style(Style::Themes));
-        assert_eq!(settings.chat_theme, ChatTheme::Catppuccin);
-        // A ready-made theme keeps its own accent; the chosen one waits.
+        settings.choose_chat_theme(ChatTheme::Dracula);
+        assert_eq!(settings.accent, Accent::Red);
         assert_eq!(
             settings.palette(true),
-            ChatTheme::Catppuccin.palette(true, Accent::Theme)
+            ChatTheme::Dracula.palette(true, Accent::Red)
         );
-        settings.choose_chat_theme(ChatTheme::Dracula);
-        assert!(!settings.choose_style(Style::Themes));
-        assert!(settings.choose_style(Style::Custom));
-        assert_eq!(settings.chat_theme, ChatTheme::Zeus);
-        assert_eq!(settings.accent, Accent::Red);
-        assert!(settings.choose_style(Style::Themes));
-        assert_eq!(settings.chat_theme, ChatTheme::Dracula);
     }
 
     #[test]
@@ -1806,6 +1800,18 @@ mod tests {
         assert_eq!(loaded.mode, Mode::Light);
         assert!(!loaded.blur);
         assert!(!loaded.vibrant_window());
+    }
+
+    #[test]
+    fn a_beta_channel_moves_to_stable() {
+        let (beta, _) = load_from(r#"{"version":4,"update_channel":"beta"}"#);
+        assert_eq!(beta.update_channel, crate::updates::Channel::Stable);
+        assert_eq!(beta.version, SETTINGS_VERSION);
+        let (fresh, _) = load_from("{}");
+        assert!(
+            !fresh.split_view && !fresh.chat_bubbles,
+            "experiments start off"
+        );
     }
 
     #[test]
@@ -1914,6 +1920,19 @@ mod tests {
         settings.save(&path).unwrap();
         let stored = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         (settings, stored)
+    }
+
+    /// A file from before the setup existed belongs to someone already set
+    /// up; only a new installation, with no file, opens on the setup, and a
+    /// setup left half way stays to be finished.
+    #[test]
+    fn only_a_new_installation_opens_on_the_setup() {
+        assert!(!Settings::default().setup_done);
+        let (settings, stored) = load_from(r#"{"version":4}"#);
+        assert!(settings.setup_done);
+        assert_eq!(stored["setup_done"], serde_json::json!(true));
+        let (settings, _) = load_from(r#"{"version":4,"setup_done":false}"#);
+        assert!(!settings.setup_done);
     }
 
     #[test]

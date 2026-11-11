@@ -1,6 +1,6 @@
 [package]
 name = "zeus"
-version = "0.40.0"
+version = "0.41.0"
 edition = "2024"
 rust-version = "1.98"
 license = "MIT"
@@ -35,8 +35,11 @@ aes = "0.9"
 cbc = { version = "0.2", features = ["alloc", "block-padding"] }
 hkdf = "0.13"
 hmac = "0.13"
-# Reads .wastickers zip archives.
+# Reads .wastickers and WhatsApp Lottie (.was) archives.
 zip = { version = "9", default-features = false, features = ["deflate"] }
+tempfile = "3"
+# In-process Lottie rasterizer; no GIF encoder or native rendering dependency.
+rasterlottie = { version = "0.2.4", default-features = false, features = ["images", "text"] }
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -72,16 +75,17 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # (#1763), which the call log prints. The sqlite-wasm-rs 0.6 edge that clashed
 # with rusqlite 0.40 (#1764) is behind a `js` feature since #1765. This is
 # upstream main with XOR FEC for 1:1 video, which an iPhone relies on since it
-# never NACKs (#1783), and dropping video queued before the relay allocates
-# (#1782). The crmne/whatsapp-rust fork (branch `voip-video-timing`) is
-# upstream main ac9d0df3 plus two open changes: interleaved video FEC against
-# burst loss (https://github.com/oxidezap/whatsapp-rust/pull/1789) and video
-# timed from capture, so a peer can lip-sync it
-# (https://github.com/oxidezap/whatsapp-rust/pull/1790). Back to upstream once
-# both merge, and to crates.io once released. `voip` is the call stack: signaling,
-# the sans-IO media engine with MLOW and libopus codecs, and the native UDP
-# relay transport.
-whatsapp-rust = { git = "https://github.com/crmne/whatsapp-rust", rev = "94f7c1376f8f6a77c55d85570a260600ad27de0b", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
+# never NACKs (#1783), dropping video queued before the relay allocates
+# (#1782), interleaved video FEC against burst loss (#1789), video timed from
+# capture so a peer can lip-sync it (#1790), and the native relay RTC stack on
+# 0.21.1 (#1847). It also fits two pulled offline batches in one chat's
+# receive queue (#1814, #1823): before that, a chat with more than 64 waiting
+# messages overflowed the queue on every connection, so a long catch-up loaded
+# a little, dropped the connection and waited out a growing backoff. Back to
+# crates.io once released. `voip` is the call stack:
+# signaling, the sans-IO media engine with MLOW and libopus codecs, and the
+# native UDP relay transport.
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "e634d245f71d66e2ae55f79ef714c4ca01615ed8", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Queue between the call's audio streams and the engine.
 async-channel = "2.5"
@@ -90,7 +94,7 @@ async-channel = "2.5"
 tokio-websockets = { version = "0.13.3", default-features = false, features = ["client"] }
 http = "1"
 # Encodes HTTP proxy credentials. Already included through several crates.
-base64 = "0.22"
+base64 = "0.23"
 # SQLCipher encrypts the archive; the device store shares the same library.
 # Bundle OpenSSL so all release platforms use the same encryption provider.
 rusqlite = { version = "0.40", features = ["bundled-sqlcipher-vendored-openssl"] }
@@ -134,7 +138,11 @@ openh264 = "0.9"
 # The encoder option a call's camera uses to change its bitrate mid-stream,
 # which openh264 does not wrap. Already included through openh264.
 openh264-sys2 = { version = "0.9", default-features = false }
-mp4 = "0.14"
+# crmne/mp4-rust is upstream's master, which reads a sample entry whose
+# avcC follows another box (pasp first, as some encoders write it); 0.14.0,
+# the last release, refuses such a video. Back to crates.io once a release
+# has it.
+mp4 = { git = "https://github.com/crmne/mp4-rust", rev = "35560e94f5e871a2b2d88bfe964013b39af131e8" }
 # rodio decodes and mixes; fastframe-audio plays and records, so neither of
 # rodio's own device features is on. The crmne/rodio fork (branch `zapfast`)
 # is upstream's master, which carries what no release has yet:
@@ -230,19 +238,21 @@ fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1"
 # (emilk/egui#8621, the group rename crash in #313), glow falls back to a
 # compatibility-profile context on old Windows drivers (#349,
 # emilk/egui#8655), and a saved window size keeps its zoom factor so a window
-# no longer shrinks each time it reopens (#293, emilk/egui#8656).
+# no longer shrinks each time it reopens (#293, emilk/egui#8656). Right-to-left
+# runs wrap in reading order with the caret, arrows and selection beside them
+# (crmne/egui#2), and winit's `Ime::DeleteSurrounding` reaches egui (crmne/egui#4).
 # Every egui crate comes from the same revision so they share one emath and
 # epaint. Drop this once egui releases all three.
-ecolor = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-eframe = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui-wgpu = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui-winit = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui_extras = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-egui_glow = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-emath = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-epaint = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
-epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6ce633ba5f7f64d19ef6d204f9377da560bb546b" }
+ecolor = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+eframe = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui-wgpu = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui-winit = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui_extras = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+egui_glow = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+emath = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+epaint = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
@@ -256,7 +266,9 @@ epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "6ce633ba5
 # windows close when its loop exits, preserving the macOS tray across hide
 # and recreation (rust-windowing/winit#4754, crmne/winit#2), and a first
 # window opens after the headless AppKit loop has already launched (#4770).
-winit = { git = "https://github.com/crmne/winit", rev = "0bed9dc0a7db02590a279fb8bac795fa39ee6948" }
+# Wayland clipboard MIME bytes are read on that one data device (crmne/winit#7),
+# and macOS's accent picker replaces the typed character (crmne/winit#5).
+winit = { git = "https://github.com/crmne/winit", rev = "59ebfb727b8c83fcd28f8ca59c3733e32b4b4e9b" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
@@ -310,7 +322,7 @@ windows-native-keyring-store = { version = "1.1", default-features = false }
 # Locale calls, the benchmark's readings of its window's process (memory,
 # CPU time, the GPU Engine counters) and of the computer, and the working set
 # for the opt-in memory probe.
-windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
+windows-sys = { version = "0.60", features = ["Win32_Foundation", "Win32_Globalization", "Win32_System_Performance", "Win32_System_Power", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 # Accesses the native window handle for the Messages theme's Mica backdrop.
 raw-window-handle = "0.6"
 # The camera for video calls, through Media Foundation.
@@ -330,7 +342,6 @@ default-features = false
 winresource = "0.1"
 
 [dev-dependencies]
-tempfile = "3"
 # Checks the default log filter the way fastframe-log's logger reads it.
 # Already in the tree through fastframe-log, at this version.
 env_logger = { version = "0.11", default-features = false }
@@ -359,6 +370,27 @@ strip = true
 # file as unsupported. Every other panic still ends the process at once; see
 # `contain_panics` in src/main.rs.
 panic = "unwind"
+
+# The quick build for trying a change on the maintainer's machine
+# (`packaging\windows\build-zeus.cmd test`): the release profile without thin
+# LTO and its single code generation unit, built incrementally, so a rebuild
+# after an edit links in a fraction of a release build. Releases and installers
+# keep `release`.
+[profile.fast]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 16
+incremental = true
+strip = false
+
+# Full debuginfo tripled link time and test-build time; CARGO_PROFILE_DEV_DEBUG=true restores it.
+[profile.dev]
+debug = "line-tables-only"
+
+# Matches dev so tempfile, a build and dev dependency, doesn't rebuild the protocol stack for tests.
+[profile.dev.build-override]
+debug = "line-tables-only"
 
 # Optimize dependencies in development for usable decryption and UI layout.
 # Keep the application crate incremental.

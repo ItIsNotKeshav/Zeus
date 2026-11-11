@@ -128,6 +128,57 @@ pub struct CreatedPoll {
 
 #[derive(Debug)]
 pub enum Command {
+    SetChatExportAllowed(bool),
+    ExportChat {
+        request: u64,
+        chat: ChatId,
+        include_media: bool,
+    },
+    CancelChatExport,
+    ChatExportTarget {
+        request: u64,
+        include_media: bool,
+        target: Option<PathBuf>,
+    },
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
+    /// Internal: a disappearing-timer change went out. `Ok` carries the sent
+    /// message's id and setting time, whose server ack decides whether the
+    /// timer is written. `session` identifies the account this completion
+    /// belongs to.
+    TimerSet {
+        chat: ChatId,
+        session: u64,
+        seconds: u32,
+        result: Result<(String, i64), String>,
+    },
+    FetchBlocklist,
+    SetBlocked {
+        chat: ChatId,
+        blocked: bool,
+    },
+    /// Internal replies from the library, bound to the requesting session.
+    BlocklistFetched {
+        generation: u64,
+        result: Result<Vec<ChatId>, ()>,
+    },
+    BlockedSet {
+        generation: u64,
+        chat: ChatId,
+        blocked: bool,
+        result: Result<(), ()>,
+    },
     RefreshPoll {
         chat: ChatId,
         message: String,
@@ -167,6 +218,13 @@ pub enum Command {
         text: String,
         quoting: Option<crate::model::ReplyTarget>,
         mentions: Vec<String>,
+        /// A preview built here for the first link in `text`.
+        preview: Option<crate::model::ComposedPreview>,
+    },
+    /// Reads the page behind a link in the composer; answered by
+    /// [`Event::LinkPreview`]. A newer request replaces an unfinished one.
+    FetchLinkPreview {
+        url: String,
     },
     SendLocation {
         chat: ChatId,
@@ -531,6 +589,10 @@ pub enum Command {
     FirstNamesRecovered {
         complete: bool,
     },
+    /// Internal: the one-time replay of the phone's stars finished.
+    StarsRecovered {
+        complete: bool,
+    },
     /// Internal: a favorite from the phone finished downloading.
     FavoriteFetched {
         hash: String,
@@ -581,6 +643,11 @@ pub enum Command {
     PickProfilePicture,
     /// Internal: a picked picture, cropped and encoded as JPEG.
     SetProfilePicture(Vec<u8>),
+    /// Changes a group's description on WhatsApp; empty removes it.
+    SetGroupDescription {
+        chat: ChatId,
+        description: String,
+    },
     /// Renames a group on WhatsApp, for everyone in it.
     SetGroupName {
         chat: ChatId,
@@ -1081,6 +1148,32 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
+    /// The phone's "Disable link previews", sent at start and on every change.
+    LinkPreviewsDisabled(bool),
+    /// What the page at `url` says about itself, or `None` when it said nothing.
+    LinkPreview {
+        url: String,
+        preview: Option<crate::model::ComposedPreview>,
+    },
+    /// A disappearing-timer change went to WhatsApp (`saving`), or WhatsApp
+    /// answered it, for a direct chat or a group. The chat keeps its current
+    /// timer until the answer.
+    TimerSaving {
+        chat: ChatId,
+        saving: bool,
+    },
+    Blocklist {
+        state: crate::blocking::Blocklist,
+        error: Option<crate::blocking::Failure>,
+    },
     /// How far an attachment on its way has got, in encrypted bytes.
     UploadProgress {
         chat: ChatId,
@@ -1461,6 +1554,10 @@ pub enum GroupEdit {
     Name(String),
     /// A new photo, or none.
     Picture { removed: bool },
+    /// A new description; empty removes it.
+    Description(String),
+    /// A new disappearing-message timer, in seconds; `0` turns it off.
+    Timer(u32),
 }
 
 /// WhatsApp's answer to a group management command, read on the runtime and
@@ -1537,6 +1634,8 @@ pub enum Refusal {
     QuoteUnavailable,
     /// View-once sends must be one photo, not a document or batch.
     UnsupportedViewOnce,
+    /// The contact is blocked; unblock them to send.
+    Blocked,
 }
 
 /// The content of a refused send.

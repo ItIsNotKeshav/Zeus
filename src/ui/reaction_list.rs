@@ -54,7 +54,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 "{total} {}",
                 gettext(locale, if total == 1 { "reaction" } else { "reactions" })
             ),
-            theme::semibold(12.5),
+            theme::semibold(theme::TEXT_CAPTION),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -72,7 +72,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let own = own_reaction(&message).map(str::to_owned);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
@@ -97,7 +97,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
             }
         }
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let height = list_height(ui.ctx(), message.reactions.len());
     egui::ScrollArea::vertical()
         .id_salt(("reaction-list", chat, id))
@@ -112,11 +112,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let (rect, response) =
                     ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
                 let own = reaction.from_me;
-                let hover = ui.ctx().animate_bool_with_time_and_easing(
+                let hover = theme::animate(
+                    ui.ctx(),
                     response.id,
                     own && response.hovered(),
                     theme::MOTION_QUICK,
-                    theme::ease_out,
                 );
                 if hover > 0.0 {
                     ui.painter().rect_filled(
@@ -140,7 +140,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let name_line = widgets::line(
                     ui,
                     &name,
-                    theme::regular(13.0),
+                    theme::regular(theme::TEXT_CONTROL),
                     palette.text,
                     rect.width() - 90.0,
                     1,
@@ -150,7 +150,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     let hint = widgets::line(
                         ui,
                         &gettext(locale, "Tap to remove"),
-                        theme::regular(11.0),
+                        theme::regular(theme::TEXT_MICRO),
                         palette.secondary,
                         rect.width() - 90.0,
                         1,
@@ -172,7 +172,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 let glyph = widgets::line(
                     ui,
                     &reaction.emoji,
-                    theme::regular(16.0),
+                    theme::regular(theme::TEXT_SECTION),
                     palette.text,
                     60.0,
                     1,
@@ -213,20 +213,34 @@ fn tab(
     const GAP: f32 = 6.0;
     let parts = label.map(|(emoji, count)| {
         (
-            widgets::line(ui, emoji, theme::regular(14.0), palette.text, 60.0, 1),
+            widgets::line(
+                ui,
+                emoji,
+                theme::regular(theme::TEXT_BODY),
+                palette.text,
+                60.0,
+                1,
+            ),
             widgets::line(
                 ui,
                 &count.to_string(),
-                theme::semibold(12.5),
+                theme::semibold(theme::TEXT_CAPTION),
                 palette.text,
                 60.0,
                 1,
             ),
         )
     });
-    let digit = widgets::line(ui, "0", theme::semibold(12.5), palette.text, 20.0, 1)
-        .size()
-        .x;
+    let digit = widgets::line(
+        ui,
+        "0",
+        theme::semibold(theme::TEXT_CAPTION),
+        palette.text,
+        20.0,
+        1,
+    )
+    .size()
+    .x;
     let width = parts.as_ref().map_or(44.0, |(emoji, count)| {
         let digits = count.size().x.max(digit);
         emoji.size().x + GAP + digits + 24.0
@@ -306,16 +320,7 @@ pub fn popup(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) {
     let shown = ctx
         .data(|data| data.get_temp::<bool>(area_id.with("shown")))
         .unwrap_or(false);
-    let appear = ctx.animate_bool_with_time_and_easing(
-        area_id.with("appear"),
-        true,
-        if crate::motion::screen_reader_attached(ctx) {
-            0.0
-        } else {
-            theme::MOTION_QUICK
-        },
-        theme::ease_out,
-    );
+    let appear = theme::appear(ctx, area_id.with("appear"), theme::MOTION_QUICK);
     let frost = super::widgets::Frost::reserve(
         ctx,
         egui::LayerId::new(egui::Order::Foreground, area_id),

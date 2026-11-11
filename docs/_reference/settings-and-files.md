@@ -6,7 +6,7 @@ nav_order: 0
 
 ## File locations
 
-ZapFast follows each platform's conventions. Each linked number has its own
+Zeus follows each platform's conventions. Each linked number has its own
 folder, `<id>` below, so files, caches, and keys never mix between numbers.
 On Linux:
 
@@ -25,8 +25,8 @@ On Linux:
 | Crash log | `~/.local/state/zapfast/panic.log` | Safe to delete |
 
 Back up the archive if you need its history. WhatsApp sends only recent
-history to a new device, although ZapFast can request some older messages from
-the phone. Clearing the media cache makes ZapFast download attachments again.
+history to a new device, although Zeus can request some older messages from
+the phone. Clearing the media cache makes Zeus download attachments again.
 Expired attachments may still be available through the phone.
 **Settings > Files > Storage used** shows how much space the account on screen
 has in its media cache, split into images, videos and GIFs, stickers, and other
@@ -51,16 +51,16 @@ On macOS, settings, state, and the logs are in
 running copy, so a second build can run beside the installed one. It links as
 a separate device: scan its code from the phone as for a new computer.
 
-On first start, ZapFast moves the corresponding `fastsapp` directories (or
+On first start, Zeus moves the corresponding `fastsapp` directories (or
 `fastwhatsapp` from earlier versions), including the session, archive, saved
-stickers, and window state. Existing ZapFast directories are never overwritten.
-Quit FastsApp first; launching ZapFast while it is running brings the existing
+stickers, and window state. Existing Zeus directories are never overwritten.
+Quit FastsApp first; launching Zeus while it is running brings the existing
 window forward. A single-number setup from before 0.19 moves into
 `accounts/1/` on first start, keyring key included; if that cannot finish (a
-locked keyring, or a folder already in the way), ZapFast stops without moving
+locked keyring, or a folder already in the way), Zeus stops without moving
 anything and says why in its log.
 
-On Linux and macOS, ZapFast restricts its configuration, state, and cache
+On Linux and macOS, Zeus restricts its configuration, state, and cache
 directories to your user (`0700`) and stops at startup if it cannot. Windows
 uses the permissions inherited from your user profile.
 
@@ -73,7 +73,7 @@ Credential Manager. Back up both the archive and its keyring entry: copying
 only `archive.db` to another computer is not enough.
 
 If the keyring is locked or unavailable, unlock it and click **Retry**;
-ZapFast keeps the archive intact and waits before connecting. It never saves
+Zeus keeps the archive intact and waits before connecting. It never saves
 a replacement plaintext archive.
 
 A missing key is different from a locked keyring. Restore the original
@@ -82,7 +82,7 @@ creating new credentials will not help: neither can decrypt the existing
 archive. If the key cannot come back, **Start over…** renames the unreadable
 archive to `archive-unreadable-<date>.db`, forgets the linked session, and
 shows the linking screen; linking again brings recent history back from your
-phone. Remove the old ZapFast entry under **Linked devices** on the phone
+phone. Remove the old Zeus entry under **Linked devices** on the phone
 afterwards.
 
 Only the archive and its SQLite journal are encrypted. Session keys,
@@ -159,18 +159,18 @@ name or description, in the interface language or in English.
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
 - **Fetch older history**: off by default, and set for
-  each number. When on, ZapFast asks the phone for older messages without you
+  each number. When on, Zeus asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently
   active ones (never channels). It sends at most one request every twenty
   seconds, and only while no other history request is waiting. Each chat is
-  asked for at most five pages each time ZapFast runs, and a chat the phone
+  asked for at most five pages each time Zeus runs, and a chat the phone
   does not answer goes to the back of the queue. Pages fetched this way go into
   the archive without moving the view. A chat the phone says has nothing older
   is not asked again.
 - **Keep chats archived**: on by default. When off, a new message, received or
   sent, brings an archived chat back to the list. Applies to all accounts here
   whose phone has not sent its own **Keep chats archived**; once a phone has,
-  ZapFast follows the phone for that account. It does not change the phone's
+  Zeus follows the phone for that account. It does not change the phone's
   setting.
 - **Pause other media while recording or playing**: pause music and videos in
   other apps while you record, or while a voice message, audio, or video plays
@@ -183,14 +183,14 @@ name or description, in the interface language or in English.
 - **Desktop notifications**: for chats you are not looking at. Muted chats stay
   quiet.
 - **Show message content in notifications**: on by default. When off, every
-  notification says only "New message" from ZapFast, without the chat, the
+  notification says only "New message" from Zeus, without the chat, the
   sender, the text, or a picture, as behind the app lock, and plays only the
   message sound. Clicking one still opens the message. Applies to every
   account.
 - **Message sound** and **Mention sound**: Pidgin's sounds, the system sound,
   none, or an audio file. On macOS, Pidgin's sounds and the system sound play
   with the notification, so Do Not Disturb, Focus, and the notification
-  settings for ZapFast silence them; an audio file of your own plays
+  settings for Zeus silence them; an audio file of your own plays
   regardless.
 - **Play sounds for group messages**: when off, only mentions and replies to
   you make a sound in groups.
@@ -215,7 +215,7 @@ name or description, in the interface language or in English.
   controls. The other side is not told, as it is with mute, and mute still
   wins over a held key.
 - **Push to talk key**: Space by default. Click the button and press the key
-  to use; Escape cancels. The key works while ZapFast is the window in
+  to use; Escape cancels. The key works while Zeus is the window in
   front. On the call screen any key works; with the call screen put aside and
   a message being typed, only the F keys and Insert do, so other keys still
   type.
@@ -231,13 +231,13 @@ name or description, in the interface language or in English.
 - **Last seen**, **Online**, **Profile photo**, **About**, **Groups**, **Read
   receipts**, **Calls**: your WhatsApp account privacy, stored on WhatsApp's
   servers and shared with your phone. They can be changed while connected.
-- **App lock**: hide ZapFast behind a password. See [App lock](#app-lock).
+- **App lock**: hide Zeus behind a password. See [App lock](#app-lock).
 
 **System**
 
-- **Keep running when the window closes**: keep ZapFast linked in the tray.
+- **Keep running when the window closes**: keep Zeus linked in the tray.
 - **Start at login**: start in the tray without a window, where the platform
-  supports it. If the desktop's tray is not up yet, ZapFast waits up to 30
+  supports it. If the desktop's tray is not up yet, Zeus waits up to 30
   seconds for it, then opens the window, since a desktop without a tray could
   not bring it back. On macOS this is a login item under System Settings >
   General > Login Items, which macOS may ask you to allow there; inside a
@@ -245,7 +245,7 @@ name or description, in the interface language or in English.
 - **Check for updates**: ask GitHub once a day whether a newer release exists.
 - **Download updates automatically**: download and verify a new release in the
   background; restarting stays your choice. Package managers and Flatpak update
-  ZapFast themselves.
+  Zeus themselves.
 - **Proxy**: for the WhatsApp connection, media, profile pictures, GIF search,
   Signal sticker imports, and update checks. It accepts `socks5h://host:port`
   (the proxy resolves names, as Tor expects), `socks5://host:port`, and
@@ -272,7 +272,7 @@ playback speed, and the chat list and search pane widths.
 Development builds also remember the window's size, position, and maximized
 state in `settings.json`, including when reopening from the tray or a
 notification. The window opens at the same size whatever the interface's
-zoom. On Wayland the compositor controls placement, so ZapFast keeps the size
+zoom. On Wayland the compositor controls placement, so Zeus keeps the size
 without choosing the position. These window changes and **Keep chats
 archived** are not yet included in 0.19.0.
 
@@ -289,10 +289,10 @@ the one above: it stays on only if both were on.
 ## App lock
 
 Like WhatsApp Web's screen lock, **Settings > Privacy > App lock** hides
-ZapFast behind a password of at least six characters. ZapFast then starts
+Zeus behind a password of at least six characters. Zeus then starts
 locked and locks again after 1 minute, 15 minutes (the default), or 1 hour
 without input, a choice under **Lock after**; time hidden in the tray counts.
-**Lock ZapFast** in the tray menu and `Ctrl+Shift+L` lock it at once.
+**Lock Zeus** in the tray menu and `Ctrl+Shift+L` lock it at once.
 
 While locked, the window shows only the lock screen. Messages keep arriving
 but stay unread, and notifications say only "New message", without the chat,
@@ -312,7 +312,7 @@ opens the other.
 
 ## Updates
 
-With **Check for updates** on, ZapFast asks GitHub once a day for a newer
+With **Check for updates** on, Zeus asks GitHub once a day for a newer
 release. **Update** in the status message at the bottom left downloads and verifies it, and **Restart to
 update** installs it when convenient. Downloads are checked against the
 release's SHA-256 checksums, whose manifest must carry a valid Ed25519
@@ -330,7 +330,7 @@ the new one.
 ## Performance benchmark
 
 **Settings > About > Run benchmark** opens a second Zeus window with the
-built-in sample chats, in a temporary folder, and plays a two-minute test in
+built-in sample chats, in a temporary folder, and plays a test of about three minutes in
 it: it settles, scrolls a chat full of photos, switches through chats, opens
 the sticker picker, minimizes and idles, then closes itself. Your archive,
 keys and WhatsApp connection are never opened, and nothing goes over the
@@ -356,7 +356,7 @@ it there, and the issue is public under your GitHub account.
 Each run starts `zapfast.log` afresh and records warnings and errors, never
 message contents, phone numbers, or keys. Include the end of this file when
 reporting an issue. **Settings > Files > Log > Open** shows it. The run before
-is kept beside it as `zapfast.previous.log`: if ZapFast froze and you had to
+is kept beside it as `zapfast.previous.log`: if Zeus froze and you had to
 restart it, that file holds what happened.
 
 During a call the log also records the call's numbers every few seconds: the
@@ -365,7 +365,7 @@ health. They are counts and sizes only.
 
 ### Saving a call's video for diagnosis
 
-To work on a video call's picture quality, start ZapFast with
+To work on a video call's picture quality, start Zeus with
 `ZAPFAST_CALL_VIDEO_DUMP` set to a folder. Each video call then writes the
 video it sends and the video it receives there, as raw H.264
 (`<time>-<call>-sent.h264` and `-received.h264`), which `ffmpeg` and media
@@ -375,7 +375,7 @@ agreed, and delete the files when you are done.
 
 ### Saving a call's audio for diagnosis
 
-To work on echo cancellation, start ZapFast with `ZAPFAST_CALL_AUDIO_DUMP` set
+To work on echo cancellation, start Zeus with `ZAPFAST_CALL_AUDIO_DUMP` set
 to a folder. Each call's microphone stream then writes four files there,
 `<time>-<stream>-reference.wav` (the other side's voice as your speaker played
 it), `-microphone.wav` (your microphone before any processing), `-output.wav`

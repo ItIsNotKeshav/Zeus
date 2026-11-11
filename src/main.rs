@@ -51,8 +51,9 @@ struct Cli {
     demo_tour_events: Option<std::path::PathBuf>,
 
     /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
-    /// added, 86 seconds), or `bench` (the benchmark's timed phases,
-    /// about 2 minutes, started at once; see scripts/bench).
+    /// added, 86 seconds), `bench` (the benchmark's timed phases, about 2
+    /// minutes, started at once; see scripts/bench), or `setup` (the
+    /// first-run setup, 24 seconds).
     #[cfg(feature = "demo")]
     #[arg(
         long,
@@ -600,7 +601,7 @@ fn is_graphics_failure(error: &eframe::Error) -> bool {
 fn startup_failure_text(graphics: bool, details: &str, log: &std::path::Path) -> String {
     let summary = if graphics {
         "Zeus could not start because the graphics driver does not offer \
-         OpenGL 2.1 or newer, which ZapFast needs to draw its window.\n\n\
+         OpenGL 2.1 or newer, which Zeus needs to draw its window.\n\n\
          Install the current driver from the maker of the graphics chip \
          (Intel, AMD or NVIDIA). The Microsoft Basic Display Adapter, some \
          virtual machines and some remote desktop sessions offer no usable \
