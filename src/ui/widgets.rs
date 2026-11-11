@@ -987,33 +987,6 @@ pub fn menu_separator(ui: &mut Ui, palette: &Palette) {
     );
 }
 
-/// Shows `frame` raised like a message bubble: the same soft lift shadow
-/// below it and the faint raised edge along its top, for surfaces that sit
-/// on the chat (the composer, and the strips above it).
-pub fn raised<R>(
-    ui: &mut Ui,
-    palette: &Palette,
-    frame: egui::Frame,
-    add: impl FnOnce(&mut Ui) -> R,
-) -> egui::InnerResponse<R> {
-    // Reserved before the frame paints, so the edge lies under its fill.
-    let edge_at = ui.painter().add(egui::Shape::Noop);
-    let (fill, radius) = (frame.fill, frame.corner_radius);
-    let shown = frame.shadow(palette.bubble_shadow()).show(ui, add);
-    ui.painter().set(
-        edge_at,
-        egui::Shape::rect_filled(
-            shown
-                .response
-                .rect
-                .translate(vec2(0.0, -theme::RAISED_EDGE)),
-            radius,
-            palette.raised_edge(fill),
-        ),
-    );
-    shown
-}
-
 /// The accent bar down the left edge of a quote or reply preview: the
 /// slice of `card`, a rectangle with corners rounded by `radius`, that lies
 /// within `width` of its left side. It follows the card's curve, so the
@@ -1867,21 +1840,14 @@ pub fn chip_scroll_row<R>(
     .inner
 }
 
-/// How far the shadow of a bar or panel reaches over the content beside it.
-const SHADOW_REACH: f32 = 9.0;
-
-/// A soft shadow cast downward from `edge`, for a bar that content scrolls
-/// under, beneath a hairline in the palette's outline colour. One gradient
-/// quad.
-pub fn paint_shadow_below(ui: &Ui, palette: &Palette, left: f32, right: f32, edge: f32) {
+/// A hairline in the palette's outline colour along the bottom `edge` of a
+/// bar that content scrolls under, inside the bar. Flat: no shadow below.
+pub fn paint_edge_below(ui: &Ui, palette: &Palette, left: f32, right: f32, edge: f32) {
     ui.painter().rect_filled(
         Rect::from_min_max(pos2(left, edge - 1.0), pos2(right, edge)),
         0.0,
         palette.outline,
     );
-    let rect = Rect::from_min_max(pos2(left, edge), pos2(right, edge + SHADOW_REACH));
-    ui.painter()
-        .add(shadow_mesh(palette, rect, [true, true, false, false]));
 }
 
 /// The hairline down the right edge of a panel beside content, in the
@@ -1897,25 +1863,6 @@ pub fn paint_edge_beside(ui: &Ui, palette: &Palette, panel: Rect) {
         0.0,
         palette.outline,
     );
-}
-
-/// One gradient quad over `rect`, dark at the corners marked in `dark`
-/// (left top, right top, right bottom, left bottom) and clear at the others.
-fn shadow_mesh(palette: &Palette, rect: Rect, dark: [bool; 4]) -> egui::Shape {
-    let shade = palette.lift_shadow().gamma_multiply(0.64);
-    let mut mesh = egui::Mesh::default();
-    let corners = [
-        rect.left_top(),
-        rect.right_top(),
-        rect.right_bottom(),
-        rect.left_bottom(),
-    ];
-    for (corner, dark) in corners.into_iter().zip(dark) {
-        mesh.colored_vertex(corner, if dark { shade } else { Color32::TRANSPARENT });
-    }
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    egui::Shape::mesh(mesh)
 }
 
 /// The side a message bubble's tail points to.
@@ -2438,16 +2385,7 @@ pub fn chip(ui: &mut Ui, palette: &Palette, label: &str) -> egui::Response {
         } else {
             palette.panel
         };
-        // Same flat treatment as a light bubble: no lift shadow.
-        if palette.dark {
-            ui.painter()
-                .add(palette.bubble_shadow().as_shape(rect, radius));
-        }
-        ui.painter().rect_filled(
-            rect.translate(vec2(0.0, -theme::RAISED_EDGE)),
-            radius,
-            palette.raised_edge(fill),
-        );
+        // Flat on the chat in either theme: no lift shadow, no raised edge.
         ui.painter().rect_filled(rect, radius, fill);
         ui.painter().galley(
             rect.center() - galley.size() / 2.0,
@@ -2847,46 +2785,6 @@ mod tests {
         assert_eq!(blurs(&open_menu_shapes(false)).len(), 1);
     }
 
-    /// The header's shadow and the chat list's are one shadow turned a
-    /// quarter: as dark at the edge casting it, clear as far into the content.
-    #[test]
-    fn a_panel_casts_beside_it_the_shadow_a_bar_casts_below() {
-        let palette = Palette::dark();
-        let mesh = |shape: egui::Shape| match shape {
-            egui::Shape::Mesh(mesh) => mesh,
-            other => panic!("not a mesh: {other:?}"),
-        };
-        let below = mesh(shadow_mesh(
-            &palette,
-            Rect::from_min_max(pos2(100.0, 50.0), pos2(400.0, 50.0 + SHADOW_REACH)),
-            [true, true, false, false],
-        ));
-        let beside = mesh(shadow_mesh(
-            &palette,
-            Rect::from_min_max(pos2(100.0, 50.0), pos2(100.0 + SHADOW_REACH, 300.0)),
-            [true, false, false, true],
-        ));
-        let shade = palette.lift_shadow().gamma_multiply(0.64);
-        assert_ne!(shade, Color32::TRANSPARENT);
-        for vertex in &below.vertices {
-            let at_edge = vertex.pos.y == 50.0;
-            assert_eq!(vertex.color == shade, at_edge, "{:?}", vertex.pos);
-            assert!(at_edge || vertex.color == Color32::TRANSPARENT);
-        }
-        for vertex in &beside.vertices {
-            let at_edge = vertex.pos.x == 100.0;
-            assert_eq!(vertex.color == shade, at_edge, "{:?}", vertex.pos);
-            assert!(at_edge || vertex.color == Color32::TRANSPARENT);
-        }
-        // Both reach equally far from their edge.
-        let reach = |mesh: &egui::Mesh, along: fn(&egui::epaint::Vertex) -> f32| {
-            let values: Vec<f32> = mesh.vertices.iter().map(along).collect();
-            values.iter().cloned().fold(f32::MIN, f32::max)
-                - values.iter().cloned().fold(f32::MAX, f32::min)
-        };
-        assert_eq!(reach(&below, |v| v.pos.y), reach(&beside, |v| v.pos.x));
-    }
-
     /// Sent shows one tick and delivered or read two, drawn from our own
     /// glyphs, where the second tick reaches as high as the first (#249).
     #[test]
@@ -2915,8 +2813,6 @@ mod tests {
         assert!(tops[1].0 > tops[0].0, "the second tick sits to the right");
     }
 
-    /// A raised frame lies on its edge: one point higher, under its fill, in
-    /// the palette's raised-edge colour, with the bubble's lift shadow.
     /// A line of Arabic cut to its width ends with the ellipsis where the
     /// text ends (its left, in a right-to-left line), inside the width, with
     /// whole words before it (#72).
@@ -2970,52 +2866,6 @@ mod tests {
     }
 
     #[test]
-    fn a_raised_frame_draws_its_edge_under_its_fill() {
-        let palette = Palette::dark();
-        let ctx = egui::Context::default();
-        let mut rect = Rect::NOTHING;
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            rect = raised(
-                ui,
-                &palette,
-                egui::Frame::new().fill(palette.surface).inner_margin(8),
-                |ui| ui.label("x"),
-            )
-            .response
-            .rect;
-        });
-        output.textures_delta.clear();
-        // In paint order, looking inside grouped shapes (a frame groups its
-        // shadow with its fill).
-        let mut fills: Vec<(Rect, Color32)> = Vec::new();
-        let mut pending: Vec<&egui::Shape> = output
-            .shapes
-            .iter()
-            .rev()
-            .map(|clipped| &clipped.shape)
-            .collect();
-        while let Some(shape) = pending.pop() {
-            match shape {
-                egui::Shape::Vec(shapes) => pending.extend(shapes.iter().rev()),
-                egui::Shape::Rect(shape) => fills.push((shape.rect, shape.fill)),
-                _ => {}
-            }
-        }
-        let edge = fills
-            .iter()
-            .position(|(at, fill)| {
-                *at == rect.translate(vec2(0.0, -theme::RAISED_EDGE))
-                    && *fill == palette.raised_edge(palette.surface)
-            })
-            .expect("the edge is drawn");
-        let body = fills
-            .iter()
-            .position(|(at, fill)| *at == rect && *fill == palette.surface)
-            .expect("the frame is drawn");
-        assert!(edge < body, "the edge lies under the fill");
-    }
-
-    #[test]
     fn a_tail_squares_its_corner_and_points_toward_the_sender() {
         assert_eq!(bubble_corners(None), CornerRadius::same(BUBBLE_RADIUS));
         let left = bubble_corners(Some(Side::Left));
@@ -3058,8 +2908,8 @@ mod tests {
         );
     }
 
-    /// A WhatsApp bubble casts no shadow in either theme, and a light date
-    /// chip casts none. A hovered or selected light list row is flat black
+    /// A WhatsApp bubble casts no shadow in either theme, and a date chip
+    /// casts none in either theme. A hovered or selected light list row is flat black
     /// at 5%, in either state; a dark row keeps the lift.
     #[test]
     fn light_messages_and_rows_are_flat() {
@@ -3067,7 +2917,6 @@ mod tests {
         crate::backdrop::set_glass(1.0);
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
         let light = Palette::light();
-        let shadow = light.bubble_shadow().color;
         let dark = Palette::dark();
         for palette in [&light, &dark] {
             for fill in [palette.bubble_out, palette.bubble_in] {
@@ -3082,21 +2931,24 @@ mod tests {
             }
         }
 
-        let ctx = egui::Context::default();
-        // Medium text uses the named inter-medium family, which exists only
-        // after the interface fonts are installed.
-        crate::theme::install(&ctx);
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            chip(ui, &light, "Thursday, 15 October 2026");
-        });
-        output.textures_delta.clear();
-        assert!(
-            output
-                .shapes
-                .iter()
-                .all(|clipped| !uses_color(&clipped.shape, shadow)),
-            "a light date chip casts a shadow"
-        );
+        for palette in [&light, &dark] {
+            let ctx = egui::Context::default();
+            // Medium text uses the named inter-medium family, which exists
+            // only after the interface fonts are installed.
+            crate::theme::install(&ctx);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                chip(ui, palette, "Thursday, 15 October 2026");
+            });
+            output.textures_delta.clear();
+            assert!(
+                output
+                    .shapes
+                    .iter()
+                    .all(|clipped| !uses_color(&clipped.shape, palette.bubble_shadow().color)),
+                "a date chip casts a shadow (dark: {})",
+                palette.dark
+            );
+        }
 
         let card = Rect::from_min_size(pos2(8.0, 8.0), vec2(240.0, 64.0));
         for color in [light.surface_hover, light.surface_active] {
