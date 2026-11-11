@@ -110,6 +110,35 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
     Ok(menu)
 }
 
+/// See [`crate::backdrop::keep_on_its_desktop`]. The window is found by its
+/// title among this app's own, and each one is told once.
+pub fn keep_on_its_desktop(title: &str) {
+    use objc2_app_kit::NSWindowCollectionBehavior as Behavior;
+    /// The window last told, by its number, so it is told once.
+    static TOLD: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+    // Layout tests use headless contexts on test threads, without an NSApp.
+    let Some(main) = objc2::MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(main);
+    for window in app.windows().iter() {
+        if window.title().to_string() != title {
+            continue;
+        }
+        let number = window.windowNumber();
+        if TOLD.swap(number, std::sync::atomic::Ordering::Relaxed) == number {
+            return;
+        }
+        // Managed: on one Space, as a normal window is. FullScreenNone: never
+        // in a full-screen Space, its own app's or another's. IgnoresCycle:
+        // not a stop for Cmd+`, as before.
+        window.setCollectionBehavior(
+            Behavior::Managed | Behavior::FullScreenNone | Behavior::IgnoresCycle,
+        );
+        return;
+    }
+}
+
 pub fn attach(ctx: &egui::Context, waker: &Waker) {
     ctx.add_plugin(MenuInput(Arc::clone(&EDIT_EVENTS)));
     // Layout tests use headless contexts on test threads, without an NSApp.
