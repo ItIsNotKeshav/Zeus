@@ -2095,14 +2095,6 @@ impl App {
         self.call_fullscreen = false;
     }
 
-    /// How strongly doodles show behind the open chat's bubbles, as a
-    /// multiple of the default, and the colour they are drawn over; none
-    /// when no doodles are drawn.
-    pub fn doodles_behind(&self) -> Option<(f32, egui::Color32)> {
-        let look = self.wallpaper();
-        (look.doodles && look.image.is_none()).then_some((look.intensity, look.color))
-    }
-
     /// What the conversation shows behind its bubbles, for the chat and the
     /// wallpaper preview alike.
     pub fn wallpaper(&self) -> crate::wallpaper::Look {

@@ -150,19 +150,12 @@ pub(super) fn overlay(
         .constrain(false)
         .show(ctx, |ui| {
             ui.set_clip_rect(rect.expand2(vec2(24.0, 0.0)));
-            Frame::new()
-                .fill(palette.panel)
-                .shadow(egui::epaint::Shadow {
-                    offset: [-4, 0],
-                    blur: 16,
-                    spread: 0,
-                    color: palette.shadow,
-                })
-                .show(ui, |ui| {
-                    ui.set_min_size(rect.size());
-                    ui.set_max_size(rect.size());
-                    contents(app, ui);
-                });
+            // Flat over the chat, parted from it by the hairline only.
+            Frame::new().fill(palette.panel).show(ui, |ui| {
+                ui.set_min_size(rect.size());
+                ui.set_max_size(rect.size());
+                contents(app, ui);
+            });
             ui.painter().vline(
                 rect.left(),
                 rect.y_range(),
