@@ -71,12 +71,23 @@ pub fn len(ctx: &egui::Context) -> usize {
         .len()
 }
 
+/// The frame an image is marked as drawn in: the main window's. Another
+/// window (a bubble, the pop-out) is drawn inside the main window's frame
+/// but counts frames of its own, from when it opened. Marked with those, a
+/// picture only that window draws looked long undrawn to [`sweep`], which
+/// runs in the main window: it was the first forgotten past the budget, and
+/// forgotten every frame once the main window had gone `IDLE` without
+/// input, so it was read again and again and never shown.
+fn frame_nr(ctx: &egui::Context) -> u64 {
+    ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
+}
+
 /// Registers `bytes` under `uri`, and marks the image as drawn this frame.
 ///
 /// Re-registers them after [`sweep`] has forgotten the image, or after egui
 /// has dropped them once the texture was uploaded.
 pub fn include(ctx: &egui::Context, uri: &str, bytes: &[u8]) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = frame_nr(ctx);
     let registry = registry(ctx);
     let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
     let fresh = match entries.get_mut(uri) {
@@ -103,7 +114,7 @@ pub fn include(ctx: &egui::Context, uri: &str, bytes: &[u8]) {
 
 /// Marks an image URI as drawn this frame.
 pub fn touch(ctx: &egui::Context, uri: &str) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = frame_nr(ctx);
     let registry = registry(ctx);
     let mut entries = registry.0.lock().unwrap_or_else(|p| p.into_inner());
     match entries.get_mut(uri) {
@@ -155,7 +166,7 @@ pub fn forget(ctx: &egui::Context, uri: &str) {
 /// a frame is asked for at that moment, so a window nobody touches still lets
 /// go of what scrolled away.
 pub fn sweep(ctx: &egui::Context) {
-    let frame = ctx.cumulative_frame_nr();
+    let frame = frame_nr(ctx);
     let idle_for = idle_for(ctx);
     let stale: Vec<String> = {
         let registry = registry(ctx);
@@ -1052,6 +1063,57 @@ mod tests {
         assert_eq!(kept(&ctx), 8, "not yet idle");
         draw_at(&ctx, &uris[..2], IDLE.as_secs_f64() + 0.5, false);
         assert_eq!(kept(&ctx), 2, "only what is on screen stays");
+    }
+
+    /// A bubble's window is drawn inside the main window's frame and has
+    /// drawn far fewer frames of its own. What only it shows stays, even
+    /// once the main window has been left alone.
+    #[test]
+    fn a_picture_only_another_window_draws_is_kept() {
+        let ctx = context();
+        let uris: Vec<String> = (0..4).map(uri).collect();
+        let other = egui::ViewportId::from_hash_of("another window");
+        // The main window draws `main`, and the other window draws `uris`
+        // inside that frame, as an immediate viewport does.
+        let draw = |time: f64, main: &[String]| {
+            let raw = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                for uri in main {
+                    include(ui.ctx(), uri, b"image bytes");
+                }
+                let mut viewports = egui::ViewportIdMap::default();
+                viewports.insert(other, egui::ViewportInfo::default());
+                let raw = egui::RawInput {
+                    viewport_id: other,
+                    viewports,
+                    time: Some(time),
+                    ..Default::default()
+                };
+                let mut inner = ui.ctx().run_ui(raw, |ui| {
+                    assert_eq!(ui.ctx().viewport_id(), other);
+                    for uri in &uris {
+                        include(ui.ctx(), uri, b"image bytes");
+                    }
+                });
+                inner.textures_delta.clear();
+                sweep(ui.ctx());
+            });
+            output.textures_delta.clear();
+        };
+        // The main window has drawn many frames before the other opens.
+        for _ in 0..20 {
+            frame(&ctx);
+        }
+        let main = [uri(100)];
+        draw(0.0, &main);
+        draw(IDLE.as_secs_f64() + 0.5, &main);
+        for uri in &uris {
+            assert!(registered(&ctx, uri), "{uri} was released");
+        }
+        assert!(registered(&ctx, &main[0]));
     }
 
     #[test]

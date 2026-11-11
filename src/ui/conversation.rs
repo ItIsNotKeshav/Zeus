@@ -17913,7 +17913,10 @@ enum PendingPoster {
 /// The poster of a staged video, started on first sight and picked up
 /// when the decode finishes. `None` while it is still loading or when the
 /// clip has no picture the app can decode.
-fn pending_poster(ctx: &egui::Context, path: &std::path::Path) -> Option<(egui::TextureId, Vec2)> {
+pub(super) fn pending_poster(
+    ctx: &egui::Context,
+    path: &std::path::Path,
+) -> Option<(egui::TextureId, Vec2)> {
     let id = egui::Id::new(("pending-poster", path));
     let slot = ctx
         .data_mut(|data| data.get_temp::<std::sync::Arc<std::sync::Mutex<PendingPoster>>>(id))

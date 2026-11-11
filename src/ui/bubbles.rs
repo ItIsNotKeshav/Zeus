@@ -665,6 +665,19 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect, settled: 
     }
 }
 
+/// The part of a picture `size` large that fills a square from its middle.
+fn square_uv(size: Vec2) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 {
+        return Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    }
+    let (across, down) = if size.x > size.y {
+        (size.y / size.x, 1.0)
+    } else {
+        (1.0, size.x / size.y)
+    };
+    Rect::from_center_size(pos2(0.5, 0.5), vec2(across, down))
+}
+
 /// What is attached, as thumbnails with a remove button each.
 fn thumbnails(app: &mut App, ui: &mut egui::Ui, chat: &Chat, strip: Rect) {
     let palette = app.palette;
@@ -701,11 +714,36 @@ fn thumbnails(app: &mut App, ui: &mut egui::Ui, chat: &Chat, strip: Rect) {
                     .paint_at(ui, rect);
             }
             Pending::File(path) | Pending::Document(path) => {
+                let video =
+                    crate::model::UploadKind::of(path, false) == crate::model::UploadKind::Video;
                 if crate::model::UploadKind::of(path, false) == crate::model::UploadKind::Image {
                     let uri = crate::image_cache::fit_uri(&ctx, path, Vec2::splat(THUMB));
                     egui::Image::new(uri)
                         .corner_radius(radius)
                         .paint_at(ui, rect);
+                } else if let Some((poster, size)) = video
+                    .then(|| conversation::pending_poster(&ctx, path))
+                    .flatten()
+                {
+                    // The clip's first frame, cropped to the tile's square
+                    // from its middle, under a play mark.
+                    egui::Image::new((poster, size))
+                        .uv(square_uv(size))
+                        .corner_radius(radius)
+                        .maintain_aspect_ratio(false)
+                        .paint_at(ui, rect);
+                    ui.painter().circle_filled(
+                        rect.center(),
+                        11.0,
+                        egui::Color32::from_black_alpha(140),
+                    );
+                    theme::paint_icon(
+                        ui,
+                        Icon::Play,
+                        Rect::from_center_size(rect.center(), Vec2::splat(11.0)),
+                        11.0,
+                        egui::Color32::WHITE,
+                    );
                 } else {
                     theme::paint_icon(
                         ui,
@@ -837,5 +875,16 @@ mod tests {
         assert_eq!(column_offset(&placement), CARD.x + CARD_GAP);
         placement.card_left = false;
         assert_eq!(column_offset(&placement), 0.0);
+    }
+
+    /// A clip's poster fills its square tile from the middle, undistorted.
+    #[test]
+    fn a_poster_is_cropped_to_a_square_from_its_middle() {
+        let wide = square_uv(vec2(1600.0, 900.0));
+        assert_eq!(wide.center(), pos2(0.5, 0.5));
+        assert!((wide.width() - 900.0 / 1600.0).abs() < 1e-6 && wide.height() == 1.0);
+        let tall = square_uv(vec2(900.0, 1600.0));
+        assert!(tall.width() == 1.0 && (tall.height() - 900.0 / 1600.0).abs() < 1e-6);
+        assert_eq!(square_uv(vec2(0.0, 0.0)).size(), vec2(1.0, 1.0));
     }
 }
