@@ -15,7 +15,7 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Create poll"),
-            theme::bold(18.0),
+            theme::bold(theme::TEXT_TITLE),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -33,12 +33,12 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             }
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     ui.add_enabled_ui(!app.poll_creating, |ui| {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Question"),
-            theme::medium(13.5),
+            theme::medium(theme::TEXT_BODY),
             palette.secondary,
         );
         let question_hint = crate::i18n::gettext(locale, "Ask a question");
@@ -48,11 +48,11 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
             .char_limit(255)
             .width(f32::INFINITY)
             .show(ui, &palette);
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Answers"),
-            theme::medium(13.5),
+            theme::medium(theme::TEXT_BODY),
             palette.secondary,
         );
         let height = (ui.ctx().content_rect().height() - 320.0).clamp(90.0, 330.0);
@@ -104,21 +104,21 @@ pub fn create(app: &mut App, ui: &mut egui::Ui, chat: &str) {
         {
             app.poll_draft.options.push(String::new());
         }
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         ui.horizontal(|ui| {
             widgets::switch(ui, &palette, &mut app.poll_draft.multiple);
             theme::text(
                 ui,
                 crate::i18n::gettext(locale, "Allow multiple answers"),
-                theme::regular(13.5),
+                theme::regular(theme::TEXT_BODY),
                 palette.text,
             );
         });
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let valid = app.poll_draft.validated();
     if let Err(error) = valid.as_ref() {
-        theme::text(ui, *error, theme::regular(12.0), palette.dim);
+        theme::text(ui, *error, theme::regular(theme::TEXT_CAPTION), palette.dim);
     }
     ui.horizontal(|ui| {
         if theme::soft_button(
@@ -176,7 +176,7 @@ pub fn ballot(
             let question = widgets::line(
                 ui,
                 question,
-                theme::semibold(14.0),
+                theme::semibold(theme::TEXT_BODY),
                 palette.text,
                 width,
                 usize::MAX,
@@ -192,16 +192,16 @@ pub fn ballot(
                 } else {
                     crate::i18n::gettext(locale, "Select answers")
                 },
-                theme::regular(11.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             for (index, option) in options.iter().enumerate() {
                 let selected = state.selected.contains(&index);
                 let label = widgets::line(
                     ui,
                     option,
-                    theme::regular(13.5),
+                    theme::regular(theme::TEXT_BODY),
                     palette.text,
                     (width - 58.0).max(50.0),
                     3,
@@ -245,7 +245,7 @@ pub fn ballot(
                         pos2(rect.right() - 5.0, center.y),
                         egui::Align2::RIGHT_CENTER,
                         count.to_string(),
-                        theme::regular(12.0),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.secondary,
                     );
                     let track = egui::Rect::from_min_size(
@@ -313,7 +313,7 @@ pub fn ballot(
             let line = widgets::line(
                 ui,
                 &detail,
-                theme::regular(11.0),
+                theme::regular(theme::TEXT_MICRO),
                 palette.dim,
                 width,
                 usize::MAX,
@@ -326,14 +326,14 @@ pub fn ballot(
                 widgets::rich_text(
                     ui,
                     &crate::i18n::gettext(locale, "Voting key unavailable · use your phone"),
-                    theme::regular(11.0),
+                    theme::regular(theme::TEXT_MICRO),
                     palette.dim,
                 );
             } else if !enabled {
                 theme::text(
                     ui,
                     crate::i18n::gettext(locale, "Reconnect to vote"),
-                    theme::regular(11.0),
+                    theme::regular(theme::TEXT_MICRO),
                     palette.dim,
                 );
             }
@@ -405,7 +405,7 @@ pub fn results_button(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         crate::i18n::gettext(locale, "Show votes"),
-        theme::medium(13.5),
+        theme::medium(theme::TEXT_BODY),
         if enabled {
             palette.link
         } else {
@@ -432,7 +432,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Poll results"),
-            theme::semibold(18.0),
+            theme::semibold(theme::TEXT_TITLE),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -459,7 +459,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         widgets::rich_text(
             ui,
             &crate::i18n::gettext(locale, "This poll is no longer available."),
-            theme::regular(14.0),
+            theme::regular(theme::TEXT_BODY),
             palette.secondary,
         );
         return;
@@ -473,7 +473,12 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         return;
     };
     ui.add_space(12.0);
-    widgets::rich_text(ui, question, theme::semibold(16.0), palette.text);
+    widgets::rich_text(
+        ui,
+        question,
+        theme::semibold(theme::TEXT_SECTION),
+        palette.text,
+    );
     if !state.history_complete {
         widgets::rich_text(
             ui,
@@ -481,7 +486,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                 locale,
                 "Earlier votes may still be missing. Results update as they arrive.",
             ),
-            theme::regular(12.0),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
         );
     }
@@ -494,14 +499,14 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
         .auto_shrink([false, true])
         .show(ui, |ui| {
             for (index, option) in options.iter().enumerate() {
-                ui.add_space(16.0);
+                ui.add_space(crate::theme::SPACE_L);
                 let count = state.counts.get(index).copied().unwrap_or(0);
                 let heading = ui.horizontal(|ui| {
                     let width = (ui.available_width() - 70.0).max(1.0);
                     let label = widgets::line(
                         ui,
                         option,
-                        theme::semibold(14.0),
+                        theme::semibold(theme::TEXT_BODY),
                         palette.text,
                         width,
                         usize::MAX,
@@ -513,7 +518,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                         ui,
                         crate::i18n::ngettext(locale, "{} vote", "{} votes", count as u32)
                             .replace("{}", &count.to_string()),
-                        theme::regular(12.0),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.secondary,
                     );
                 });
@@ -530,7 +535,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     .filter(|vote| vote.choices.contains(&index))
                     .collect();
                 for voter in &voters {
-                    ui.add_space(4.0);
+                    ui.add_space(crate::theme::SPACE_XS);
                     ui.horizontal(|ui| {
                         let picture = app.avatar(&voter.id);
                         widgets::avatar(
@@ -542,11 +547,16 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                             picture.as_deref(),
                         );
                         ui.vertical(|ui| {
-                            widgets::rich_text(ui, &voter.name, theme::regular(14.0), palette.text);
+                            widgets::rich_text(
+                                ui,
+                                &voter.name,
+                                theme::regular(theme::TEXT_BODY),
+                                palette.text,
+                            );
                             theme::text(
                                 ui,
                                 crate::util::moment_stamp(app.locale, voter.timestamp),
-                                theme::regular(12.0),
+                                theme::regular(theme::TEXT_CAPTION),
                                 palette.secondary,
                             );
                         });
@@ -556,7 +566,7 @@ pub fn results(app: &mut App, ui: &mut egui::Ui, chat: &str, id: &str) {
                     theme::text(
                         ui,
                         crate::i18n::gettext(locale, "Participant details are not available yet"),
-                        theme::regular(12.0),
+                        theme::regular(theme::TEXT_CAPTION),
                         palette.secondary,
                     );
                 }

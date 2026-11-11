@@ -1,6 +1,6 @@
 ---
 title: Download
-description: Get ZapFast for Linux, macOS, or Windows, with install instructions for each.
+description: Get Zeus for Linux, macOS, or Windows, with install instructions for each.
 nav_order: 1
 ---
 
@@ -9,9 +9,9 @@ nav_order: 1
 {% assign app = site.release_app_name %}
 {% assign base = "https://github.com/crmne/zapfast/releases/download/v" | append: v %}
 
-ZapFast was previously called FastsApp. Version 0.13.0 introduces the new
+Zeus was previously called FastsApp. Version 0.13.0 introduces the new
 package and executable names. Your existing session and local data move
-automatically when you first start ZapFast; quit FastsApp before upgrading.
+automatically when you first start Zeus; quit FastsApp before upgrading.
 
 The current version is **v{{ v }}**. SHA-256 checksums are in
 [checksums.txt]({{ base }}/checksums.txt). Older versions are on the
@@ -82,7 +82,7 @@ The app is signed with Developer ID and notarized by Apple. The DMG includes
 a validated notarization ticket.
 
 When upgrading from FastsApp, remove the old FastsApp application bundle
-after installing ZapFast.
+after installing Zeus.
 
 ## Windows
 

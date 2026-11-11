@@ -244,7 +244,7 @@ impl App {
     }
 
     /// A video call's newest pictures, from the account the call is on.
-    pub(super) fn handle_call_video(
+    pub(crate) fn handle_call_video(
         &mut self,
         local: Option<std::sync::Arc<egui::ColorImage>>,
         remote: Option<std::sync::Arc<egui::ColorImage>>,
@@ -384,6 +384,13 @@ impl App {
     /// and the worker's updates move it on once its offer is out. A group's
     /// chat starts a call in the group, drawn as a group call from the start.
     fn place_call(&mut self, chat: ChatId, video: bool) {
+        if self.blocklist.contains(&chat) {
+            self.toast_error(crate::i18n::gettext(
+                self.locale,
+                "Unblock this contact to call them.",
+            ));
+            return;
+        }
         let account = self.account().id.clone();
         self.try_begin_outgoing_call(account, video, PendingCallAccessKind::Place(chat));
     }
@@ -658,7 +665,7 @@ impl App {
         }
         let (title, body, picture) = if self.app_lock.is_locked() {
             (
-                "ZapFast".to_owned(),
+                "Zeus".to_owned(),
                 crate::i18n::gettext(self.locale, "Incoming call").into_owned(),
                 None,
             )
@@ -700,7 +707,7 @@ impl App {
         if crate::model::ChatKind::from_id(&update.chat) == crate::model::ChatKind::Group {
             crate::i18n::gettext(
                 self.locale,
-                "{caller} is calling {group}. ZapFast can't join group calls yet: answer on your phone.",
+                "{caller} is calling {group}. Zeus can't join group calls yet: answer on your phone.",
             )
             .replace("{caller}", &caller)
             .replace("{group}", &self.chat_title_of(&update.chat))
@@ -708,7 +715,7 @@ impl App {
             // A call among several people with no group behind it.
             crate::i18n::gettext(
                 self.locale,
-                "{caller} is calling you and others. ZapFast can't join group calls yet: answer on your phone.",
+                "{caller} is calling you and others. Zeus can't join group calls yet: answer on your phone.",
             )
             .replace("{caller}", &caller)
         }
@@ -1110,7 +1117,7 @@ mod tests {
             "nothing is declined: {sent:?}"
         );
         let said =
-            "Ada is calling Book club. ZapFast can't join group calls yet: answer on your phone.";
+            "Ada is calling Book club. Zeus can't join group calls yet: answer on your phone.";
         assert_eq!(app.notifications.shown.len(), 1);
         assert_eq!(app.notifications.shown[0].title, "Book club");
         assert_eq!(app.notifications.shown[0].body, said);

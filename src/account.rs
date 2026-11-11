@@ -47,6 +47,16 @@ pub struct Account {
     /// back when its chat opens again.
     pub(crate) phone_history: HashMap<ChatId, PhoneHistory>,
     pub open_chat: Option<ChatId>,
+    /// The server's blocklist for this account, read and changed through the worker.
+    pub blocklist: crate::blocking::Blocklist,
+    /// The chat export in progress, with its request number and counts.
+    pub chat_export: Option<(u64, crate::archive::chat_export::Counts)>,
+    pub(crate) chat_export_sequence: u64,
+    pub(crate) chat_export_allowed_sent: Option<bool>,
+    /// The phone's "Disable link previews"; also on until the phone has said.
+    pub link_previews_disabled: bool,
+    /// A second chat beside the open one in the chat panel.
+    pub split: Option<crate::app::Split>,
     /// The background-history state last sent to this account's worker: the
     /// switch and the chat on screen.
     pub(crate) prefetch_sent: Option<(bool, Option<ChatId>)>,
@@ -132,6 +142,8 @@ pub struct Account {
     pub account_privacy: crate::privacy::Snapshot,
     pub interactive_sending: HashSet<(ChatId, String)>,
     pub group_saving: HashSet<ChatId>,
+    /// Chats whose disappearing-message timer change is in flight.
+    pub timer_saving: HashSet<ChatId>,
     pub(crate) reported_online: Option<bool>,
     /// Chats this account may pin; WhatsApp Plus raises it once known.
     pub pin_limit: usize,
@@ -174,6 +186,11 @@ impl Account {
             dirs,
             settings,
             settings_dirty: false,
+            blocklist: Default::default(),
+            chat_export: None,
+            chat_export_sequence: 0,
+            chat_export_allowed_sent: None,
+            link_previews_disabled: false,
             backend,
             link: LinkStatus::Starting,
             syncing: false,
@@ -190,6 +207,7 @@ impl Account {
             left_pending: false,
             phone_history: HashMap::new(),
             open_chat,
+            split: None,
             prefetch_sent: None,
             scroll_chat_into_view: None,
             drafts: HashMap::new(),
@@ -249,6 +267,7 @@ impl Account {
             account_privacy: crate::privacy::Snapshot::default(),
             interactive_sending: HashSet::new(),
             group_saving: HashSet::new(),
+            timer_saving: HashSet::new(),
             reported_online: None,
             pin_limit: crate::backend::PINNED_CHATS,
             call_log: Vec::new(),

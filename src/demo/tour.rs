@@ -5,6 +5,7 @@ mod capture;
 mod marks;
 pub(super) mod media;
 mod session;
+mod setup;
 mod whats_new;
 
 pub use bench::{DURATION as BENCH_LENGTH, PHASES as BENCH_PHASES};
@@ -40,17 +41,20 @@ pub enum Script {
     /// The memory benchmark: timed phases over a photo-heavy chat, about 13
     /// minutes, that starts at once and closes the window when it ends.
     Bench,
+    /// The first-run setup, step by step, about 24 seconds.
+    Setup,
 }
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 3] = ["launch", "whats-new", "bench"];
+    pub const NAMES: [&str; 4] = ["launch", "whats-new", "bench", "setup"];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "launch" => Some(Self::Launch),
             "whats-new" => Some(Self::WhatsNew),
             "bench" => Some(Self::Bench),
+            "setup" => Some(Self::Setup),
             _ => None,
         }
     }
@@ -61,6 +65,7 @@ impl Script {
             Self::Launch => DURATION,
             Self::WhatsNew => whats_new::DURATION,
             Self::Bench => bench::DURATION,
+            Self::Setup => setup::DURATION,
         }
     }
 
@@ -70,6 +75,7 @@ impl Script {
             Self::Launch => prepare(app),
             Self::WhatsNew => whats_new::prepare(app),
             Self::Bench => bench::prepare(app),
+            Self::Setup => setup::prepare(app),
         }
     }
 
@@ -78,6 +84,7 @@ impl Script {
             Self::Launch => script(),
             Self::WhatsNew => whats_new::script(),
             Self::Bench => bench::script(),
+            Self::Setup => setup::script(),
         }
     }
 
@@ -87,6 +94,7 @@ impl Script {
             Self::Launch => &[(3.6, 4.6, 340.0)],
             Self::WhatsNew => &[],
             Self::Bench => &bench::SCROLLS,
+            Self::Setup => &[],
         }
     }
 
@@ -202,6 +210,10 @@ enum Target {
     /// Inside a bubble's lower corner, in its margin, clear of the text and
     /// media that take clicks for themselves.
     BubbleCorner(&'static str),
+    /// A message's time and ticks, which open its info and receipts.
+    Footer(&'static str),
+    /// The reply button that fades in beside a message's bubble.
+    Reply(&'static str),
     Picker,
     Gif,
     Sticker,
@@ -213,6 +225,10 @@ enum Target {
     OldestHit,
     /// A sticker shelf tab: 0 recent, 1 favorites, then the packs.
     Shelf(usize),
+    /// A fixed place in the window, for the pointer.
+    Point(f32, f32),
+    /// Present while the chat list's search lists message results.
+    Hits,
 }
 
 enum Gesture {
@@ -308,8 +324,18 @@ fn script() -> Vec<Cue> {
     );
     add(5.4, Move(Bubble("ada-voice")));
     add(5.8, Click(PointerButton::Secondary));
-    add(6.25, Move(Label("Reply")));
-    add(6.7, Click(left));
+    add(
+        6.2,
+        Key(
+            egui::Key::Escape,
+            Modifiers::NONE,
+            "Esc · Close the message menu",
+        ),
+    );
+    // Replying has no menu row any more: hover the bubble and press the reply
+    // button that fades in beside it, as on the phone.
+    add(6.6, Move(Reply("ada-voice")));
+    add(6.9, Click(left));
     add(
         8.1,
         Key(egui::Key::Enter, Modifiers::NONE, "Enter · Complete emoji"),
@@ -318,6 +344,9 @@ fn script() -> Vec<Cue> {
         8.7,
         Key(egui::Key::Enter, Modifiers::NONE, "Enter · Send reply"),
     );
+    // The pointer rests on the voice message still: its menu opens, and goes.
+    add(9.0, Click(PointerButton::Secondary));
+    add(9.2, Press(egui::Key::Escape, Modifiers::NONE));
     add(9.4, Move(Picker));
     add(9.8, Click(left));
     add(10.5, Move(Label("GIF")));
@@ -483,6 +512,11 @@ pub struct Tour {
     /// Whether the last frame asked for the next one at once, so the
     /// interval between them is a frame time and not a pause.
     continuous: bool,
+    /// When the last key of a benchmark search query was typed, until its
+    /// results have been on screen.
+    typed_at: Option<Instant>,
+    /// The results of a query were handed to the app; the next frame shows them.
+    results_pending: bool,
 }
 
 impl Tour {
@@ -534,6 +568,8 @@ impl Tour {
             sent_pointer: None,
             settling_until: 0.0,
             continuous: false,
+            typed_at: None,
+            results_pending: false,
         }
     }
 
@@ -614,6 +650,17 @@ impl Tour {
                 let rect = Self::bubble(app, ctx, message)?;
                 Some(rect.right_bottom() - vec2(5.0, 2.0))
             }
+            Target::Footer(message) => {
+                let chat = app.open_chat.as_deref()?;
+                let id = crate::ui::conversation::footer_id(chat, message);
+                ctx.data(|data| data.get_temp::<Rect>(id))
+                    .map(|rect| rect.center())
+            }
+            Target::Reply(message) => {
+                let chat = app.open_chat.as_deref()?;
+                let id = crate::ui::conversation::bubble_id(chat, message).with("reply");
+                ctx.read_response(id).map(|response| response.rect.center())
+            }
             Target::Picker => app.picker_anchor.map(|rect| rect.center()),
             Target::Gif => ctx
                 .read_response(egui::Id::new("gif-search"))
@@ -643,6 +690,8 @@ impl Tour {
                     .map(|(_, pos)| *pos)
                     .max_by(|a, b| a.y.total_cmp(&b.y))
             }
+            Target::Point(x, y) => Some(pos2(x, y)),
+            Target::Hits => (!app.search_hits.is_empty()).then_some(Pos2::ZERO),
             Target::Shelf(index) => {
                 let shelf = match index {
                     0 => StickerShelf::Recent,
@@ -720,7 +769,10 @@ impl Tour {
                     press(input, key, modifiers);
                     self.caption(at, label);
                 }
-                Gesture::Text(character) => input.events.push(Event::Text(character.to_string())),
+                Gesture::Text(character) => {
+                    input.events.push(Event::Text(character.to_string()));
+                    self.typed_at = Some(Instant::now());
+                }
                 Gesture::Wheel(points) => input.events.push(Event::MouseWheel {
                     unit: egui::MouseWheelUnit::Point,
                     delta: vec2(0.0, points),
@@ -916,7 +968,22 @@ impl Tour {
     /// Finds click targets in the actual painted UI; no view-specific hooks or
     /// hard-coded menu coordinates are needed. Called after frame_ui.
     pub fn observe(&mut self, app: &mut App, ctx: &egui::Context) {
-        session::respond(app);
+        // The frame after a query's results were handed over is the first to
+        // show them.
+        if std::mem::take(&mut self.results_pending)
+            && let Some(typed) = self.typed_at.take()
+        {
+            self.marks
+                .results_shown(typed.elapsed().as_secs_f32() * 1000.0);
+        }
+        let answered = session::respond_to(app, self.script == Script::Bench);
+        if answered
+            .iter()
+            .any(|query| bench::QUERIES.contains(&query.as_str()) && *query == app.search.trim())
+            && !app.search_hits.is_empty()
+        {
+            self.results_pending = true;
+        }
         // The scroll finds nothing by its label, and its frame times should
         // be the app's own.
         if self.marks.timing() {
@@ -1413,9 +1480,18 @@ mod tests {
         let locale = app.locale;
         let media_title = crate::i18n::gettext(locale, "Media, links and docs").to_string();
         click_sized(&mut app, &mut tour, &ctx, size, &media_title);
+        // The tab's list crossfades over 0.2 s per step; frames are 1/60 s
+        // apart. Let each list settle before reading its rows.
+        let settle = |app: &mut App, tour: &mut Tour| {
+            for _ in 0..40 {
+                frame_sized(app, tour, &ctx, size, Vec::new());
+            }
+        };
+        settle(&mut app, &mut tour);
         assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Media)));
         let docs = crate::ui::info::tab_label(&app, MediaTab::Docs);
         click_sized(&mut app, &mut tour, &ctx, size, &docs);
+        settle(&mut app, &mut tour);
         assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Docs)));
         // The bubble under the panel paints the same file name and title, so
         // the clicks land on the rows' detail lines, which carry the day.
@@ -1445,6 +1521,7 @@ mod tests {
         assert!(app.info.is_some(), "and the panel stays");
         let links = crate::ui::info::tab_label(&app, MediaTab::Links);
         click_sized(&mut app, &mut tour, &ctx, size, &links);
+        settle(&mut app, &mut tour);
         assert_eq!(view(&app), Some(InfoView::Media(MediaTab::Links)));
         // The newest link the listing found, whichever the tour's sample
         // put there.
@@ -1792,8 +1869,8 @@ mod tests {
             // The new poll springs in and the list glides up to meet it, and
             // only the picture moves, so labels read off it sit away from
             // their controls until both settle. Each frame is 1/60 s; the
-            // spring takes half a second.
-            for _ in 0..40 {
+            // spring takes half a second and the row wave runs after it.
+            for _ in 0..90 {
                 frame(&mut app, &mut tour, &ctx, Vec::new());
             }
             click(&mut app, &mut tour, &ctx, "Pizza");
@@ -1918,8 +1995,8 @@ mod tests {
     }
 
     #[test]
-    fn custom_and_themes_choose_looks_modes_accents_and_ready_made_themes() {
-        use crate::chat_themes::{Accent, ChatTheme, Style};
+    fn one_picker_chooses_a_theme_and_an_accent_for_any_theme() {
+        use crate::chat_themes::{Accent, ChatTheme};
         let mut app = super::super::tests::app();
         app.page = Page::Settings;
         let ctx = egui::Context::default();
@@ -1957,7 +2034,6 @@ mod tests {
                 );
             }
         };
-        assert_eq!(app.settings.style(), Style::Custom);
         show(&mut app, &mut tour, "Zeus");
         click(&mut app, &mut tour, &ctx, "Zeus");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
@@ -1973,27 +2049,12 @@ mod tests {
             app.palette.accent,
             egui::Color32::from_rgb(0xff, 0x45, 0x3a)
         );
-        // Themes swaps the look, mode and accent rows for the ready-made
-        // themes, which keep their own accent.
-        show(&mut app, &mut tour, "Themes");
-        click(&mut app, &mut tour, &ctx, "Themes");
-        assert_eq!(app.settings.style(), Style::Themes);
-        assert_eq!(app.settings.chat_theme, ChatTheme::Catppuccin);
-        assert_eq!(
-            app.palette,
-            ChatTheme::Catppuccin.palette(false, Accent::Theme)
-        );
+        // A theme keeps the accent chosen, drawn in its own style.
         show(&mut app, &mut tour, "Nord");
         click(&mut app, &mut tour, &ctx, "Nord");
         assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
-        // Custom comes back to the look and accent it had.
-        show(&mut app, &mut tour, "Custom");
-        click(&mut app, &mut tour, &ctx, "Custom");
-        assert_eq!(app.settings.chat_theme, ChatTheme::Zeus);
         assert_eq!(app.settings.accent, Accent::Red);
-        show(&mut app, &mut tour, "Themes");
-        click(&mut app, &mut tour, &ctx, "Themes");
-        assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
+        assert_eq!(app.palette, ChatTheme::Nord.palette(false, Accent::Red));
     }
 
     #[test]
@@ -2323,8 +2384,8 @@ mod tests {
     }
 
     /// The benchmark plays every phase through real input on its timetable:
-    /// the photo chat scrolls to both ends twice, the churn opens 20
-    /// other chats, the sticker picker opens five times, and the marks name
+    /// the photo chat scrolls to both ends twice, the churn opens every
+    /// other chat in turn, the sticker picker opens once per round, and the marks name
     /// each phase in order. Played on a stepped clock that skips the idle
     /// stretches; the window cannot minimize headless.
     #[test]
@@ -2389,15 +2450,30 @@ mod tests {
             .collect();
         assert_eq!(failed, ["minimized: window reports minimized"]);
         let checks = lines.iter().filter(|line| line["event"] == "check").count();
-        assert_eq!(checks, 6, "settle, four scroll ends, minimized");
+        assert_eq!(
+            checks, 9,
+            "settle, four scroll ends, three searches, minimized"
+        );
+        let search = lines
+            .iter()
+            .find(|line| line["event"] == "frames" && line["phase"] == "search")
+            .expect("the search phase is timed");
+        assert!(
+            search["first_results_ms"].is_number(),
+            "the queries' results were timed: {search}"
+        );
         let timed: Vec<_> = lines
             .iter()
             .filter(|line| line["event"] == "frames")
             .map(|line| line["phase"].as_str().unwrap())
             .collect();
         assert_eq!(timed, bench::TIMED);
-        assert!(opened.len() >= 21, "opened {} chats", opened.len());
-        assert_eq!(pickers, 5);
+        assert!(
+            opened.len() > bench::CHURN_STEPS,
+            "opened {} chats",
+            opened.len()
+        );
+        assert_eq!(pickers, bench::PICKER_ROUNDS);
         assert!(app.picker.is_none());
     }
 }

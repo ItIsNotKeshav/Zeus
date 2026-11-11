@@ -24,6 +24,67 @@ use std::time::Duration;
 /// second, which leaves the window's thread about as free as when idle.
 pub const STEP: Duration = Duration::from_millis(100);
 
+/// Leave an idle text cursor visible instead of repainting it indefinitely.
+const CURSOR_BLINK_IDLE: f64 = 5.0;
+
+#[derive(Clone, Default)]
+struct CursorActivity {
+    focus: Option<egui::Id>,
+    last_input: Option<f64>,
+}
+
+impl CursorActivity {
+    fn blinking(&mut self, now: f64, focus: Option<egui::Id>, input: bool) -> bool {
+        if focus.is_none() {
+            self.focus = None;
+            self.last_input = None;
+            return false;
+        }
+        if input || self.focus != focus || self.last_input.is_none() {
+            self.focus = focus;
+            self.last_input = Some(now);
+        }
+        now - self.last_input.unwrap_or(now) < CURSOR_BLINK_IDLE
+    }
+}
+
+/// Restores the context style after the frame, including on early returns.
+pub struct CursorStyleGuard(egui::Context);
+
+impl Drop for CursorStyleGuard {
+    fn drop(&mut self) {
+        self.0
+            .global_style_mut(|style| style.visuals.text_cursor.blink = true);
+    }
+}
+
+/// Stop blinking after inactivity, and restart on input or a focus change.
+/// The state belongs to the egui context so a replacement window starts fresh.
+/// Keep the returned guard alive while drawing, including top-level modals.
+pub fn idle_text_cursor(ui: &mut egui::Ui, user_input: bool) -> Option<CursorStyleGuard> {
+    if !ui.visuals().text_cursor.blink {
+        return None;
+    }
+    let ctx = ui.ctx().clone();
+    let (now, window_focused) = ctx.input(|input| (input.time, input.focused));
+    let focus = if window_focused {
+        ctx.memory(|memory| memory.focused())
+    } else {
+        None
+    };
+    let id = egui::Id::new("idle-text-cursor");
+    let mut activity = ctx.data_mut(|data| data.get_temp::<CursorActivity>(id).unwrap_or_default());
+    let blink = activity.blinking(now, focus, user_input);
+    ctx.data_mut(|data| data.insert_temp(id, activity));
+    ui.style_mut().visuals.text_cursor.blink = blink;
+    if !blink && ctx.global_style().visuals.text_cursor.blink {
+        ctx.global_style_mut(|style| style.visuals.text_cursor.blink = false);
+        Some(CursorStyleGuard(ctx))
+    } else {
+        None
+    }
+}
+
 /// Whether a screen reader, or another assistive client, reads the window.
 /// egui has no public flag, but it builds accessibility nodes only while
 /// AccessKit is active, and the root's node always exists then, so probing
@@ -225,9 +286,230 @@ impl Spring {
     }
 }
 
+impl Spring {
+    /// Controls that answer a touch: hovers, presses, toggles, menus. A hair
+    /// of bounce, like iOS's `.snappy`.
+    pub const SNAPPY: Spring = Spring::new(0.3, 0.12);
+    /// What most things move on: panels, cards, list changes. No bounce,
+    /// like iOS's `.smooth`.
+    pub const DEFAULT: Spring = Spring::new(0.45, 0.0);
+    /// Large, slow changes: whole-window moves, sheets.
+    pub const CALM: Spring = Spring::new(0.7, 0.0);
+
+    /// A critically damped spring that has come to rest after about
+    /// `seconds`, for moves that keep a fixed time but follow their
+    /// target's changes smoothly, with the velocity they have.
+    pub const fn settling_in(seconds: f64) -> Spring {
+        // A critically damped spring is within SETTLED of its target after
+        // about 1.46 of its durations.
+        Spring::new(seconds / 1.46, 0.0)
+    }
+}
+
+/// Where a [`spring_to`] value is, and how fast it moves.
+#[derive(Clone, Copy)]
+struct Follow {
+    value: f32,
+    velocity: f32,
+    time: f64,
+}
+
+/// Moves a value toward `target` on `spring` and returns where it is this
+/// frame. `id` names the value between frames. A new `target` mid-move turns
+/// the value around with the velocity it has, so a hover let go of halfway
+/// reverses smoothly instead of restarting. The first frame an id is seen it
+/// is already at `target`. While a screen reader is attached it is always
+/// there. Asks for frames until it has settled.
+pub fn spring_to(ctx: &egui::Context, id: egui::Id, target: f32, spring: Spring) -> f32 {
+    spring_from(ctx, id, target, target, spring)
+}
+
+/// [`spring_to`] for a value that starts at `start` the first frame its id is
+/// seen, so something that appears moves in from there. [`forget`] makes the
+/// next frame a first one again.
+pub fn spring_from(
+    ctx: &egui::Context,
+    id: egui::Id,
+    target: f32,
+    start: f32,
+    spring: Spring,
+) -> f32 {
+    if screen_reader_attached(ctx) {
+        ctx.data_mut(|data| data.remove::<Follow>(id));
+        return target;
+    }
+    let now = ctx.input(|input| input.time);
+    let mut follow = ctx
+        .data_mut(|data| data.get_temp::<Follow>(id))
+        .unwrap_or(Follow {
+            value: start,
+            velocity: 0.0,
+            time: now,
+        });
+    let (offset, velocity) = spring.advance(
+        follow.value - target,
+        follow.velocity,
+        (now - follow.time).max(0.0),
+    );
+    // Close and slow enough counts as there, so the last frame lands exactly.
+    let rest = offset.abs() < 5e-4 && velocity.abs() < 5e-3;
+    follow = if rest {
+        Follow {
+            value: target,
+            velocity: 0.0,
+            time: now,
+        }
+    } else {
+        Follow {
+            value: target + offset,
+            velocity,
+            time: now,
+        }
+    };
+    // A value at rest stays remembered, at its target: forgetting it would
+    // make the next frame a first one, and something that appears would
+    // start over from `start`, again and again.
+    ctx.data_mut(|data| data.insert_temp(id, follow));
+    if !rest {
+        ctx.request_repaint();
+    }
+    follow.value
+}
+
+/// Drops what [`spring_to`] holds for `id`, so its next frame starts anew.
+pub fn forget(ctx: &egui::Context, id: egui::Id) {
+    ctx.data_mut(|data| data.remove::<Follow>(id));
+}
+
+/// A cubic Bézier easing curve, as CSS and Core Animation write them: the
+/// control points `(x1, y1)` and `(x2, y2)` between `(0, 0)` and `(1, 1)`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Curve {
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+}
+
+impl Curve {
+    pub const fn new(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
+        Self { x1, y1, x2, y2 }
+    }
+
+    /// Entering: leaves fast and glides in, as iOS sheets and menus do.
+    pub const ENTER: Curve = Curve::new(0.32, 0.72, 0.0, 1.0);
+    /// Leaving: starts gently and picks up speed, so a surface that goes
+    /// away is out of the way quickly.
+    pub const EXIT: Curve = Curve::new(0.4, 0.0, 0.8, 0.4);
+    /// Pressing: nearly immediate, with a short settle.
+    pub const PRESS: Curve = Curve::new(0.2, 0.0, 0.0, 1.0);
+    /// Moving between two resting places: eases at both ends.
+    pub const STANDARD: Curve = Curve::new(0.4, 0.0, 0.2, 1.0);
+
+    fn axis(a: f32, b: f32, s: f32) -> f32 {
+        let u = 1.0 - s;
+        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
+    }
+
+    /// The eased progress at linear progress `t` (clamped to 0 to 1).
+    pub fn at(self, t: f32) -> f32 {
+        let t = t.clamp(0.0, 1.0);
+        if t == 0.0 || t == 1.0 {
+            return t;
+        }
+        // Find the curve parameter whose x is `t`: Newton, then bisection.
+        let mut s = t;
+        for _ in 0..8 {
+            let error = Self::axis(self.x1, self.x2, s) - t;
+            if error.abs() < 1e-5 {
+                return Self::axis(self.y1, self.y2, s);
+            }
+            let u = 1.0 - s;
+            let slope = 3.0 * u * u * self.x1
+                + 6.0 * u * s * (self.x2 - self.x1)
+                + 3.0 * s * s * (1.0 - self.x2);
+            if slope.abs() < 1e-6 {
+                break;
+            }
+            s -= error / slope;
+        }
+        let (mut low, mut high) = (0.0_f32, 1.0_f32);
+        s = t;
+        for _ in 0..24 {
+            let x = Self::axis(self.x1, self.x2, s);
+            if (x - t).abs() < 1e-5 {
+                break;
+            }
+            if x < t {
+                low = s;
+            } else {
+                high = s;
+            }
+            s = (low + high) / 2.0;
+        }
+        Self::axis(self.y1, self.y2, s)
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn idle_cursor_stays_visible_and_resumes_on_input_or_focus_change() {
+        let first = egui::Id::new("first");
+        let second = egui::Id::new("second");
+        let mut activity = CursorActivity::default();
+        assert!(!activity.blinking(0.0, None, false));
+        assert!(activity.blinking(1.0, Some(first), false));
+        assert!(activity.blinking(5.9, Some(first), false));
+        assert!(!activity.blinking(6.0, Some(first), false));
+        assert!(activity.blinking(7.0, Some(first), true));
+        assert!(!activity.blinking(12.0, Some(first), false));
+        assert!(activity.blinking(12.0, Some(second), false));
+        assert!(!activity.blinking(13.0, None, false));
+        assert!(activity.blinking(30.0, Some(second), false));
+    }
+
+    #[test]
+    fn idle_text_field_does_not_keep_requesting_cursor_repaints() {
+        let ctx = reading(false);
+        let field = egui::Id::new("idle-field");
+        ctx.memory_mut(|memory| memory.request_focus(field));
+        let mut text = String::new();
+        let mut draw = |ui: &mut egui::Ui| {
+            let _cursor_style = idle_text_cursor(ui, false);
+            ui.add(egui::TextEdit::singleline(&mut text).id(field));
+        };
+        let _ = delay_after(&ctx, 1.0, &mut draw);
+        let (idle, _) = delay_after(&ctx, 7.0, &mut draw);
+        assert!(idle > Duration::from_secs(1), "idle redraw in {idle:?}");
+
+        let (active, _) = delay_after(&ctx, 8.0, |ui| {
+            let _cursor_style = idle_text_cursor(ui, true);
+            ui.add(egui::TextEdit::singleline(&mut text).id(field));
+        });
+        assert!(active < Duration::from_secs(1), "cursor did not resume");
+    }
+
+    #[test]
+    fn idle_modal_field_stops_blinking_and_restores_the_context_style() {
+        let ctx = reading(false);
+        let field = egui::Id::new("modal-field");
+        let mut text = String::new();
+        let mut draw = |ui: &mut egui::Ui| {
+            let _cursor_style = idle_text_cursor(ui, false);
+            egui::Modal::new(egui::Id::new("modal")).show(ui.ctx(), |ui| {
+                ui.add(egui::TextEdit::singleline(&mut text).id(field));
+            });
+        };
+        ctx.memory_mut(|memory| memory.request_focus(field));
+        let _ = delay_after(&ctx, 1.0, &mut draw);
+        let _ = delay_after(&ctx, 2.0, &mut draw);
+        let (idle, _) = delay_after(&ctx, 7.0, &mut draw);
+        assert!(idle > Duration::from_secs(1), "modal redraw in {idle:?}");
+        assert!(ctx.global_style().visuals.text_cursor.blink);
+    }
 
     /// Runs one pass at `time` and returns how long egui asks the window to
     /// wait before the next one.
@@ -477,5 +759,79 @@ pub(crate) mod tests {
             assert!(rest.abs() < 1e-3 && still.abs() < 1e-3);
             assert_eq!(spring.advance(3.0, 4.0, 0.0), (3.0, 4.0));
         }
+    }
+
+    #[test]
+    fn curves_run_from_zero_to_one_and_enter_leads_exit() {
+        for curve in [Curve::ENTER, Curve::EXIT, Curve::PRESS, Curve::STANDARD] {
+            assert_eq!(curve.at(0.0), 0.0);
+            assert_eq!(curve.at(1.0), 1.0);
+            let mut last = 0.0;
+            for step in 1..=20 {
+                let y = curve.at(step as f32 / 20.0);
+                assert!(y >= last - 1e-4, "{curve:?} fell at {step}");
+                last = y;
+            }
+        }
+        assert!(Curve::ENTER.at(0.3) > 0.3);
+        assert!(Curve::EXIT.at(0.3) < 0.3);
+    }
+
+    #[test]
+    fn a_followed_value_keeps_its_velocity_when_turned_around() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("follow");
+        let at = |time: f64, target: f32| {
+            let mut value = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| value = spring_from(ui.ctx(), id, target, 0.0, Spring::SNAPPY),
+            );
+            output.textures_delta.clear();
+            value
+        };
+        assert_eq!(at(0.0, 1.0), 0.0);
+        let early = at(0.05, 1.0);
+        let mid = at(0.1, 1.0);
+        assert!(early > 0.0 && mid > early && mid < 1.0);
+        // Turned back, it carries on a little before it reverses.
+        let carried = at(0.12, 0.0);
+        assert!(carried > mid);
+        assert_eq!(at(3.0, 0.0), 0.0);
+        assert_eq!(at(6.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn something_that_appeared_stays_shown_and_stops_asking_for_frames() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("appear");
+        let mut shown = 0.0;
+        for step in 0..40 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(f64::from(step) * 0.05),
+                    ..Default::default()
+                },
+                |ui| shown = spring_from(ui.ctx(), id, 1.0, 0.0, Spring::SNAPPY),
+            );
+            output.textures_delta.clear();
+        }
+        assert_eq!(shown, 1.0);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                time: Some(5.0),
+                ..Default::default()
+            },
+            |ui| shown = spring_from(ui.ctx(), id, 1.0, 0.0, Spring::SNAPPY),
+        );
+        output.textures_delta.clear();
+        assert_eq!(shown, 1.0);
+        assert_eq!(
+            output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
+            Duration::MAX
+        );
     }
 }

@@ -35,6 +35,9 @@ pub(super) struct Marks {
     cost: Vec<f32>,
     /// The graphics chip, as its OpenGL driver names it.
     gpu: Option<String>,
+    /// Milliseconds from the last key of a search query to the frame that
+    /// first showed its results, one per query.
+    results: Vec<f32>,
 }
 
 impl Marks {
@@ -134,11 +137,13 @@ impl Marks {
             "missed": missed(&self.intervals),
             "jitter_ms": jitter(&self.intervals),
             "over_33ms": self.intervals.iter().filter(|&&ms| ms > 33.4).count(),
+            "first_results_ms": median(&self.results),
         });
         self.write(line);
         self.intervals.clear();
         self.work.clear();
         self.cost.clear();
+        self.results.clear();
         self.last_frame = None;
         self.frame_began = None;
     }
@@ -165,6 +170,13 @@ impl Marks {
         self.frame_began = Some(now);
     }
 
+    /// A search query's results first showed `milliseconds` after its last key.
+    pub(super) fn results_shown(&mut self, milliseconds: f32) {
+        if self.timing() {
+            self.results.push(milliseconds);
+        }
+    }
+
     pub(super) fn frame_cost(&mut self, seconds: Option<f32>) {
         if let Some(seconds) = seconds.filter(|_| self.timing()) {
             self.cost.push(seconds * 1000.0);
@@ -180,6 +192,16 @@ impl Marks {
 
 fn round(value: f32) -> f64 {
     (f64::from(value) * 100.0).round() / 100.0
+}
+
+/// The middle of the times, or null for none.
+fn median(times: &[f32]) -> Value {
+    if times.is_empty() {
+        return Value::Null;
+    }
+    let mut sorted = times.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    json!(round(sorted[sorted.len() / 2]))
 }
 
 /// Frames a second, from the mean interval.

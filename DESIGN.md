@@ -43,42 +43,42 @@ colors:
   dark-warning: "#F3C56B"
 typography:
   display:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 24px
     fontWeight: 600
     lineHeight: 1.2
   title:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 20px
     fontWeight: 600
     lineHeight: 1.25
   section:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 16px
     fontWeight: 600
     lineHeight: 1.35
   body:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 14px
     fontWeight: 400
     lineHeight: 1.45
   body-strong:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 14px
     fontWeight: 600
     lineHeight: 1.4
   control:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 13px
     fontWeight: 500
     lineHeight: 1.3
   caption:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 12px
     fontWeight: 400
     lineHeight: 1.35
   micro:
-    fontFamily: "Inter, system-ui"
+    fontFamily: "Plus Jakarta Sans, system-ui"
     fontSize: 11px
     fontWeight: 500
     lineHeight: 1.3
@@ -196,7 +196,11 @@ Treat light and dark variants as parallel themes with the same hierarchy. They d
 
 ## Typography
 
-Typography must make conversations easy to read for long periods and let the user scan lists quickly. Prefer the existing bundled/platform font system. Inter is a design reference where supported; do not introduce a new font dependency or replace platform font behavior merely to match this document.
+Typography must make conversations easy to read for long periods and let the user scan lists quickly. Prefer the existing bundled/platform font system. Plus Jakarta Sans is the bundled UI face (`assets/fonts/PlusJakartaSans.ttf`, the default in `FontChoice`). Display titles (login, setup, lock, empty-state titles) are to use Fraunces once its font file lands with PR #68; until then they use Plus Jakarta Sans. Do not introduce a new font dependency or replace platform font behavior merely to match this document.
+
+### Scale in code
+
+Views pass a size from `src/theme.rs` to `theme::regular`, `medium`, `semibold` or `bold`, never a literal: `TEXT_MICRO` 11, `TEXT_CAPTION` 12, `TEXT_CONTROL` 13, `TEXT_BODY` 14, `TEXT_SECTION` 16, `TEXT_TITLE` 20, `TEXT_DISPLAY` 24. A size outside the scale, such as an emoji glyph or the pairing code, carries a comment saying why.
 
 ### Hierarchy
 
@@ -285,7 +289,7 @@ Zeus rounds as generously as iOS 26's glass, and nests shapes the same way: a sh
 - **Card (20):** settings groups, call tiles, and previews.
 - **Panel (24):** the conversation card beside the list.
 - **Dialog (28):** dialogs, the emoji pickers, and other large surfaces that float over the window, over frosted glass.
-- Message bubbles: 10, and 18 for Nothing's grouped balloons (4 where two in a run meet); Messages keeps Apple's own balloon. Bubbles stay tighter than panels on purpose.
+- Message bubbles: 10 (`widgets::BUBBLE_RADIUS`). The grouped balloons of the legacy Nothing look use 18 (`widgets::NOTHING_BUBBLE_RADIUS`, 4 where two in a run meet), kept for saved settings. Messages keeps Apple's own balloon. Bubbles stay tighter than panels on purpose.
 - **Pill:** tags, compact status chips, or genuinely pill-shaped controls only. Do not make all buttons pill-shaped by default.
 - **Circle:** avatars and circular icon controls where established by the product or platform.
 

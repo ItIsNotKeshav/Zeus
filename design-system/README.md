@@ -57,16 +57,17 @@ Known contrast exceptions, kept on purpose: white on the Messages accent and own
 
 ## Typography
 
-- Set the interface in `--font-sans`: **Google Sans Flex** by default (`opsz` 14, `wdth` 100). Users may pick System, Inter, Geist, Figtree, Plus Jakarta Sans, Manrope or DM Sans; never hard-code a family in a widget.
+- Set the interface in `--font-sans`: **Plus Jakarta Sans** by default. Users may pick System, Inter, Geist, Google Sans Flex, Figtree, Manrope or DM Sans; never hard-code a family in a widget.
 - Variable faces are drawn 30 units lighter than their named weight: regular 370, medium 470, semibold 570, bold 670. The type styles carry those numbers.
 - Use the scale: `message` 14.5 for message text, `body` 14 for prose, `label` 14 medium for settings labels, `menu` 13.5 for menus, previews and toasts, `control` 13 semibold for buttons, `caption` 12.5 for descriptions, `meta` 12 for times, `small` 11.5, `badge` 11 semibold. Headings: `section` 16, `name` 15, `title` 20 bold, `heading` 22.
 - Counting timers use `timer` (Inter, whose figures are all one width) so they don't shift.
+- The setup's step titles and the lock screen's line use `hero`: **Fraunces** (`--font-serif`, `theme::display`) at `opsz` 72, weight 480, `SOFT` 100, `WONK` 0, set 1.04x larger than asked. Nowhere else; the interface font stays the reader's choice.
 - One title per screen or dialog. Hierarchy comes from weight and colour (`text` vs `secondary`) before size.
 - Lay text out with BiDi shaping (`crate::bidi`); names and previews end in an ellipsis, never clip.
 
 ## Spacing and layout
 
-- The scale: `space-2`, `space-4`, `space-6`, `space-8`, `space-10`, `space-12`, `space-14`, `space-16`, `space-20`, `space-22`, `space-24`, `space-32`, `space-48`. The most used are 8, 4, 6 and 10.
+- The scale: `space-2`, `space-4`, `space-8`, `space-12`, `space-16`, `space-20`, `space-24`, `space-32`, `space-40`, the same as `theme::SPACE_*` in `src/theme.rs` and the spacing block in DESIGN.md. The most used are 8, 12 and 4.
 - egui defaults: item spacing 8 x 6, button padding 12 x 6, interact size 40 x 28, menu margin 6, window margin 16.
 - Fixed sizes: chat rows `row-height` 68, headers `top-bar-height` 60, controls `control-height` 36 and `control-width` 220, menu items `menu-item-height` 28.
 - The window is a chat list beside a conversation card (`radius-panel`), 8 apart. A narrow window shows one at a time and slides between them (`duration-slide`).
@@ -168,7 +169,7 @@ The system ships as plain files in the Zeus repository under `design-system/`, s
 <html data-theme="dark"> … <button class="z-btn primary">Save</button>
 ```
 
-Load Google Sans Flex from Google Fonts or self-host the bundled file. Frost needs `backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation))`; give it a solid fallback (`overlay`) where `backdrop-filter` is unsupported or the user asked for reduced transparency.
+Load Plus Jakarta Sans from Google Fonts or self-host the bundled file. Frost needs `backdrop-filter: blur(var(--blur-menu)) saturate(var(--blur-saturation))`; give it a solid fallback (`overlay`) where `backdrop-filter` is unsupported or the user asked for reduced transparency.
 
 ### In other native toolkits
 

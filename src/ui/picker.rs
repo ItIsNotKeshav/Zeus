@@ -471,7 +471,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                                 theme::text(
                                     ui,
                                     gettext(app.locale, "React to message"),
-                                    theme::semibold(13.0),
+                                    theme::semibold(theme::TEXT_CONTROL),
                                     palette.text,
                                 );
                                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -493,7 +493,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                                 let line = widgets::line(
                                     ui,
                                     &format!("{name}: {summary}"),
-                                    theme::regular(12.0),
+                                    theme::regular(theme::TEXT_CAPTION),
                                     palette.secondary,
                                     width,
                                     1,
@@ -609,8 +609,14 @@ fn category_tabs(
                             palette.surface_hover,
                         );
                     }
-                    let line =
-                        widgets::line(ui, glyph, theme::regular(16.0), palette.text, cell, 1);
+                    let line = widgets::line(
+                        ui,
+                        glyph,
+                        theme::regular(theme::TEXT_SECTION),
+                        palette.text,
+                        cell,
+                        1,
+                    );
                     line.paint(ui, rect.center() - line.size() / 2.0, palette.text);
                     if selected {
                         ui.painter().hline(
@@ -787,7 +793,7 @@ fn emoji_grid(
                         pos2(rect.left() + 4.0, rect.bottom() - 8.0),
                         Align2::LEFT_BOTTOM,
                         *label,
-                        theme::semibold(12.5),
+                        theme::semibold(theme::TEXT_CAPTION),
                         palette.secondary,
                     );
                 }
@@ -821,7 +827,7 @@ fn emoji_grid(
                                 let line = widgets::line(
                                     ui,
                                     emoji,
-                                    theme::regular(24.0),
+                                    theme::regular(theme::TEXT_DISPLAY),
                                     palette.text,
                                     cell,
                                     1,
@@ -987,10 +993,15 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     // Ask for a key when none is set or GIPHY rejects it.
     let bad_key = app.gif_error.as_ref().is_some_and(|error| error.bad_key);
     if app.settings.effective_giphy_key().is_none() || bad_key {
-        ui.add_space(8.0);
+        ui.add_space(crate::theme::SPACE_S);
         if let Some(error) = app.gif_error.as_ref().filter(|error| error.bad_key) {
-            theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
-            ui.add_space(6.0);
+            theme::paragraph(
+                ui,
+                &error.message,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.danger,
+            );
+            ui.add_space(8.0);
         }
         theme::paragraph(
             ui,
@@ -999,14 +1010,14 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             } else {
                 "GIF search needs a GIPHY API key. Create a free key at developers.giphy.com and paste it here. It is saved in your settings."
             },
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.text,
         );
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         if theme::link(
             ui,
             "developers.giphy.com",
-            theme::medium(13.0),
+            theme::medium(theme::TEXT_CONTROL),
             palette.link,
         )
         .clicked()
@@ -1014,7 +1025,7 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             app.actions
                 .push(Action::OpenUrl("https://developers.giphy.com/".to_owned()));
         }
-        ui.add_space(6.0);
+        ui.add_space(8.0);
         let response = controls::Field::new(&mut app.settings.giphy_key)
             .hint("GIPHY API key")
             .width(f32::INFINITY)
@@ -1044,12 +1055,17 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
             theme::text(
                 ui,
                 gettext(app.locale, "Searching…"),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
         });
     } else if let Some(error) = &app.gif_error {
-        theme::paragraph(ui, &error.message, theme::regular(13.0), palette.danger);
+        theme::paragraph(
+            ui,
+            &error.message,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.danger,
+        );
     }
     let results = app.gif_results.clone();
     let columns = 3;
@@ -1096,12 +1112,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                 });
             }
             if results.is_empty() && !app.gif_pending && app.gif_error.is_none() {
-                ui.add_space(20.0);
+                ui.add_space(crate::theme::SPACE_XL);
                 ui.vertical_centered(|ui| {
                     theme::text(
                         ui,
                         gettext(app.locale, "Search for a GIF or browse trending results."),
-                        theme::regular(13.0),
+                        theme::regular(theme::TEXT_CONTROL),
                         palette.secondary,
                     );
                 });
@@ -1241,9 +1257,14 @@ fn shelf_strip(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
 
 /// A short centered note in place of an empty grid.
 fn shelf_hint(ui: &mut egui::Ui, palette: &Palette, text: &str) {
-    ui.add_space(24.0);
+    ui.add_space(crate::theme::SPACE_XXL);
     ui.vertical_centered(|ui| {
-        theme::paragraph(ui, text, theme::regular(13.0), palette.secondary);
+        theme::paragraph(
+            ui,
+            text,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.secondary,
+        );
     });
 }
 
@@ -1257,7 +1278,7 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         &gettext(locale, "Search by emoji, word, or pack"),
     );
     shelf_strip(app, ui, palette);
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     let query = app.sticker_search.trim().to_owned();
     let shelf = app.sticker_shelf.clone();
     if query.is_empty() && shelf == StickerShelf::Add {
@@ -1331,7 +1352,12 @@ fn sticker_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     return;
                 };
                 ui.horizontal(|ui| {
-                    theme::text(ui, &pack.name, theme::semibold(13.0), palette.text);
+                    theme::text(
+                        ui,
+                        &pack.name,
+                        theme::semibold(theme::TEXT_CONTROL),
+                        palette.text,
+                    );
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         let remove = theme::icon_button(
                             ui,
@@ -1441,11 +1467,11 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .id_salt("sticker-add")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             theme::text(
                 ui,
                 gettext(locale, "Import a pack"),
-                theme::semibold(13.0),
+                theme::semibold(theme::TEXT_CONTROL),
                 palette.text,
             );
             theme::paragraph(
@@ -1454,16 +1480,16 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     locale,
                     "Paste a signal.art link from signalstickers.org, or open a .wastickers file.",
                 ),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             import_row(app, ui, palette);
-            ui.add_space(14.0);
+            ui.add_space(16.0);
             theme::text(
                 ui,
                 gettext(locale, "Make your own"),
-                theme::semibold(13.0),
+                theme::semibold(theme::TEXT_CONTROL),
                 palette.text,
             );
             theme::paragraph(
@@ -1472,12 +1498,12 @@ fn add_page(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                     locale,
                     "Start a pack, then right-click any sticker to add it. Or turn a picture into a sticker.",
                 ),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             new_pack_row(app, ui, palette);
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             if theme::soft_button(
                 ui,
                 palette,
@@ -1557,13 +1583,13 @@ fn import_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         }
     });
     if app.sticker_import_pending {
-        ui.add_space(2.0);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             theme::spinner(ui, 14.0, palette.accent);
             theme::text(
                 ui,
                 gettext(locale, "Importing the pack…"),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
         });
@@ -1649,6 +1675,11 @@ fn sticker_grid(
                     .width(menu_width)
                     .frame(widgets::menu_frame(palette))
                     .show_frosted(ui.ctx(), |ui| {
+                        // Lottie is receive-only; picker send/favorite/pack
+                        // actions currently assume raw WebP bytes.
+                        if path.extension().is_some_and(|extension| extension == "was") {
+                            return;
+                        }
                         if shelf == Shelf::Favorites {
                             if widgets::menu_item(ui, palette, Some(Icon::StarOff), &remove_label) {
                                 choices.forget = Some(path.clone());
@@ -1679,6 +1710,7 @@ fn sticker_grid(
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
+                    && path.extension().is_none_or(|extension| extension != "was")
                 {
                     choices.send = Some(path.clone());
                     // The sticker flies from here into the chat.
@@ -1870,6 +1902,9 @@ pub(crate) fn moves(ctx: &egui::Context, path: &Path) -> bool {
 /// Returns `None` when the header cannot be read, so the caller can tell a read
 /// failure from a still image and retry instead of memoizing the failure.
 fn probe_motion(path: &Path) -> Option<bool> {
+    if path.extension().is_some_and(|extension| extension == "was") {
+        return Some(true);
+    }
     let mut head = [0u8; 64];
     let mut file = std::fs::File::open(path).ok()?;
     let read = std::io::Read::read(&mut file, &mut head).ok()?;

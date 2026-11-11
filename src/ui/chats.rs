@@ -217,6 +217,7 @@ fn show_rows_under(
     row_height: f32,
     total: usize,
     inset: f32,
+    stretch: f32,
     add_rows: impl FnOnce(&mut egui::Ui, std::ops::Range<usize>),
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     let spacing = ui.spacing().item_spacing.y;
@@ -232,7 +233,8 @@ fn show_rows_under(
         }
         let y_min = ui.max_rect().top() + inset + first as f32 * step;
         let y_max = ui.max_rect().top() + inset + last as f32 * step;
-        let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), y_min..=y_max);
+        let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), y_min..=y_max)
+            .translate(vec2(0.0, stretch));
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |rows_ui| {
             plain_rows(rows_ui);
             rows_ui.skip_ahead_auto_ids(first);
@@ -354,7 +356,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         header_title(
                             ui,
                             crate::i18n::gettext(app.locale, "Starred").as_ref(),
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                             buttons_width,
                         );
@@ -382,7 +384,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                             } else {
                                 "Archived"
                             },
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                             buttons_width,
                         );
@@ -392,7 +394,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
                         header_title(
                             ui,
                             &crate::i18n::gettext(app.locale, tab_title(&app.page)),
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                             buttons_width,
                         );
@@ -405,7 +407,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
 
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             search_and_filters(app, ui);
         });
 }
@@ -681,7 +683,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     header_title(
                         ui,
                         crate::i18n::gettext(app.locale, "Starred").as_ref(),
-                        theme::bold(16.0),
+                        theme::bold(theme::TEXT_SECTION),
                         palette.text,
                         header_buttons_width(ui, &buttons),
                     );
@@ -709,7 +711,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                         } else {
                             "Archived"
                         },
-                        theme::bold(16.0),
+                        theme::bold(theme::TEXT_SECTION),
                         palette.text,
                         header_buttons_width(ui, &buttons),
                     );
@@ -719,7 +721,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
                     header_title(
                         ui,
                         &crate::i18n::gettext(app.locale, tab_title(&app.page)),
-                        theme::bold(20.0),
+                        theme::bold(theme::TEXT_TITLE),
                         palette.text,
                         header_buttons_width(ui, &buttons),
                     );
@@ -730,7 +732,7 @@ fn macos_header(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             search_and_filters(app, ui);
         });
 }
@@ -746,7 +748,7 @@ pub fn filter_chip_id(filter: ChatFilter) -> egui::Id {
 }
 
 /// Width of the fade over the filter chips' right edge.
-pub(super) const CHIP_FADE: f32 = 16.0;
+pub(super) const CHIP_FADE: f32 = 32.0;
 
 /// Filter chips under the search field. Search lists every match, so the
 /// chips hide there.
@@ -759,7 +761,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         return;
     }
     let palette = app.palette;
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
     let output = widgets::chip_scroll_row(ui, "chat-filters", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 6.0);
@@ -818,7 +820,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
                     app.actions.push(Action::SetChatFilter(next));
                 }
             }
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
         })
     });
     // Chips cut off at the edge fade into the panel, which says the row
@@ -827,7 +829,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
     if hidden > 0.5 {
         // A translucent sidebar would show the fade as a band; the chips
         // are only cut there.
-        if !palette.vibrant() {
+        if !palette.shows_desktop() {
             widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.rail());
         }
     }
@@ -903,7 +905,7 @@ fn starred_row(
     let clock = widgets::line(
         ui,
         &crate::util::clock(message.timestamp),
-        theme::regular(11.0),
+        theme::regular(theme::TEXT_MICRO),
         palette.secondary,
         80.0,
         1,
@@ -917,7 +919,7 @@ fn starred_row(
     let body = widgets::line(
         ui,
         &words,
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.text,
         body_width,
         12,
@@ -949,7 +951,7 @@ fn starred_row(
     let name_line = widgets::line(
         ui,
         &name,
-        theme::medium(14.0),
+        theme::medium(theme::TEXT_BODY),
         palette.text,
         width - 140.0,
         1,
@@ -966,7 +968,7 @@ fn starred_row(
         pos2(rect.right() - 16.0, rect.top() + 14.0),
         egui::Align2::RIGHT_CENTER,
         when,
-        theme::regular(11.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
     // The message itself, as the bubble the chat shows: same fill, same side,
@@ -1111,7 +1113,10 @@ fn list(app: &mut App, ui: &mut egui::Ui) {
             };
             (title, "Choose All to see every chat.")
         } else if app.syncing {
-            ("Loading your chats", "Receiving history from your phone.")
+            let label = crate::i18n::gettext(app.locale, "Loading your chats");
+            let detail = crate::i18n::gettext(app.locale, "Receiving history from your phone.");
+            super::skeleton::list(ui, &palette, label.as_ref(), detail.as_ref());
+            return;
         } else {
             (
                 "No chats yet",
@@ -1192,114 +1197,143 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
     } else {
         0.0
     };
-    let output = show_rows_under(scroll_area, ui, row_height, total, inset, |ui, range| {
-        if carried != 0.0 {
-            ui.scroll_with_delta_animation(
-                vec2(0.0, carried),
-                egui::style::ScrollAnimation::none(),
-            );
-        }
-        if !copy {
-            remember_rows(
-                ui,
-                list_id,
-                view,
-                &app.chats,
-                &chats[range.clone()],
-                range.start,
-            );
-        }
-        let motion = !copy && !crate::motion::screen_reader_attached(ui.ctx());
-        let now = ui.input(|input| input.time);
-        let origin = ui.max_rect().top() - inset - range.start as f32 * step;
-        let before = if motion {
-            ui.ctx()
-                .data(|data| data.get_temp::<RowFlips>(list_id.with("flips")))
-                .filter(|flips| flips.view == view)
-        } else {
-            None
-        };
-        let mut flips = RowFlips {
-            view,
-            born: before.as_ref().map_or(now, |flips| flips.born),
-            first: range.start,
-            last: range.end,
-            rows: std::collections::HashMap::new(),
-        };
-        let mut animating = false;
-        for index in range {
-            let Some(chat) = app.chats.get(chats[index]).cloned() else {
-                continue;
+    // A touchpad swipe past either end of the list stretches it and it
+    // springs back, as the chat's messages do (`overscroll`).
+    let list_rect = ui.available_rect_before_wrap();
+    let mut overscroll = super::overscroll::Overscroll::load(ui.ctx(), "chat-list");
+    if copy || !ui.is_enabled() || crate::motion::screen_reader_attached(ui.ctx()) {
+        overscroll.clear();
+    } else {
+        let wheel = ui.input(|input| super::overscroll::read_wheel(input, list_rect));
+        overscroll.advance(ui.input(|input| input.time), wheel);
+    }
+    let stretch = overscroll.position();
+    let output = show_rows_under(
+        scroll_area,
+        ui,
+        row_height,
+        total,
+        inset,
+        stretch,
+        |ui, range| {
+            if carried != 0.0 {
+                ui.scroll_with_delta_animation(
+                    vec2(0.0, carried),
+                    egui::style::ScrollAnimation::none(),
+                );
+            }
+            if !copy {
+                remember_rows(
+                    ui,
+                    list_id,
+                    view,
+                    &app.chats,
+                    &chats[range.clone()],
+                    range.start,
+                );
+            }
+            let motion = !copy && !crate::motion::screen_reader_attached(ui.ctx());
+            let now = ui.input(|input| input.time);
+            let origin = ui.max_rect().top() - inset - range.start as f32 * step;
+            let before = if motion {
+                ui.ctx()
+                    .data(|data| data.get_temp::<RowFlips>(list_id.with("flips")))
+                    .filter(|flips| flips.view == view)
+            } else {
+                None
             };
-            let natural = origin + inset + index as f32 * step;
-            let previous = before.as_ref().and_then(|flips| flips.rows.get(&chat.id));
-            if motion {
-                ui.ctx().data_mut(|data| {
-                    data.insert_temp(chat_row_id(&chat.id).with("live"), previous.is_some())
-                });
-            }
-            let mark = super::swipe::mark(ui);
-            // Key by chat so an open menu survives list reordering.
-            let response = ui
-                .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
-                .inner;
-            if motion {
-                let mut flip = match previous {
-                    Some(flip) => *flip,
-                    None => RowFlip {
-                        top: natural,
-                        origin,
-                        from: 0.0,
-                        start: f64::NEG_INFINITY,
-                        shift: 0.0,
-                        born: before
-                            .as_ref()
-                            .filter(|flips| {
-                                now - flips.born > 0.5 && (flips.first..flips.last).contains(&index)
-                            })
-                            .map_or(f64::NEG_INFINITY, |_| now),
-                    },
+            let mut flips = RowFlips {
+                view,
+                born: before.as_ref().map_or(now, |flips| flips.born),
+                first: range.start,
+                last: range.end,
+                rows: std::collections::HashMap::new(),
+            };
+            let mut animating = false;
+            for index in range {
+                let Some(chat) = app.chats.get(chats[index]).cloned() else {
+                    continue;
                 };
-                // Where the row was last drawn, in this frame's scroll.
-                let drawn = flip.top + (origin - flip.origin) + flip.shift;
-                if previous.is_some() && (drawn - flip.shift - natural).abs() > 0.5 {
-                    flip.from = drawn - natural;
-                    flip.start = now;
+                let natural = origin + inset + index as f32 * step;
+                let previous = before.as_ref().and_then(|flips| flips.rows.get(&chat.id));
+                if motion {
+                    ui.ctx().data_mut(|data| {
+                        data.insert_temp(chat_row_id(&chat.id).with("live"), previous.is_some())
+                    });
                 }
-                flip.top = natural;
-                flip.origin = origin;
-                flip.shift = row_flip_shift(flip.from, (now - flip.start) as f32);
-                let age = (now - flip.born) as f32;
-                let appear = row_appear(age);
-                if flip.shift != 0.0 || appear.is_some() {
-                    let (opacity, scale) = appear.unwrap_or((1.0, 1.0));
-                    shift_row(ui, mark, flip.shift, opacity, scale, response.rect.center());
-                    animating = true;
+                let mark = super::swipe::mark(ui);
+                // Key by chat so an open menu survives list reordering.
+                let response = ui
+                    .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
+                    .inner;
+                if motion {
+                    let mut flip = match previous {
+                        Some(flip) => *flip,
+                        None => RowFlip {
+                            top: natural,
+                            origin,
+                            from: 0.0,
+                            start: f64::NEG_INFINITY,
+                            shift: 0.0,
+                            born: before
+                                .as_ref()
+                                .filter(|flips| {
+                                    now - flips.born > 0.5
+                                        && (flips.first..flips.last).contains(&index)
+                                })
+                                .map_or(f64::NEG_INFINITY, |_| now),
+                        },
+                    };
+                    // Where the row was last drawn, in this frame's scroll.
+                    let drawn = flip.top + (origin - flip.origin) + flip.shift;
+                    if previous.is_some() && (drawn - flip.shift - natural).abs() > 0.5 {
+                        flip.from = drawn - natural;
+                        flip.start = now;
+                    }
+                    flip.top = natural;
+                    flip.origin = origin;
+                    flip.shift = row_flip_shift(flip.from, (now - flip.start) as f32);
+                    let age = (now - flip.born) as f32;
+                    let appear = row_appear(age);
+                    if flip.shift != 0.0 || appear.is_some() {
+                        let (opacity, scale) = appear.unwrap_or((1.0, 1.0));
+                        shift_row(ui, mark, flip.shift, opacity, scale, response.rect.center());
+                        animating = true;
+                    }
+                    flips.rows.insert(chat.id.clone(), flip);
                 }
-                flips.rows.insert(chat.id.clone(), flip);
+                // Store the row rect for interaction tests.
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
+                #[cfg(test)]
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(chat_row_id(&chat.id).with("widget"), response.id);
+                });
+                if response.clicked() && !app.show_archived {
+                    app.actions.push(Action::KeepUnread(chat.id.clone()));
+                }
             }
-            // Store the row rect for interaction tests.
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(chat_row_id(&chat.id), response.rect));
-            #[cfg(test)]
-            ui.ctx().data_mut(|data| {
-                data.insert_temp(chat_row_id(&chat.id).with("widget"), response.id);
-            });
-            if response.clicked() && !app.show_archived {
-                app.actions.push(Action::KeepUnread(chat.id.clone()));
+            if motion {
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(list_id.with("flips"), flips));
+                if animating {
+                    ui.ctx().request_repaint();
+                }
             }
-        }
-        if motion {
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(list_id.with("flips"), flips));
-            if animating {
-                ui.ctx().request_repaint();
-            }
-        }
-    });
+        },
+    );
     if !copy {
         ui.ctx()
             .data_mut(|data| data.insert_temp(shared_offset_id(), output.state.offset.y));
+        overscroll.set_edges(super::overscroll::Edges::of(
+            output.state.offset.y,
+            output.inner_rect.height(),
+            output.content_size.y,
+        ));
+        if overscroll.moving() {
+            crate::motion::request_frame(ui.ctx());
+        }
+        overscroll.store(ui.ctx(), "chat-list");
     }
     app.scroll_route
         .place(crate::app::ScrollPane::Chats, output.inner_rect);
@@ -1566,14 +1600,14 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
             pos2(rect.left() + widgets::ROW_SIDE + 62.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             "Locked chats",
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
         );
         ui.painter().text(
             pos2(rect.right() - widgets::ROW_SIDE, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             count.to_string(),
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.accent,
         );
     }
@@ -1629,12 +1663,13 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
             theme::ROW_HEIGHT,
             chats.len(),
             inset,
+            0.0,
             |ui, range| {
                 for &index in &chats[range] {
                     let Some(chat) = app.chats.get(index).cloned() else {
                         continue;
                     };
-                    ui.push_id(("chat", &chat.id), |ui| row(app, ui, &chat));
+                    ui.push_id(("chat", &chat.id), |ui| self::row(app, ui, &chat));
                 }
             },
         );
@@ -1660,21 +1695,142 @@ fn row_scroll_offset(
     }
 }
 
-/// Search results grouped into chats, messages, and contacts.
-fn results(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    // Chats and hits are positions: each row copies its own while it draws,
-    // so no frame holds a second copy of every result.
+/// One row of the search results' flat list.
+#[derive(Clone, Copy)]
+enum ResultRow {
+    Section(&'static str),
+    Chat(usize),
+    Hit(usize),
+    Myself,
+    Contact(usize),
+}
+
+/// How tall a section title's row is: the space above, the label, the space
+/// below.
+const SECTION_HEIGHT: f32 = 38.0;
+
+/// The search results laid out as one flat list, built when the query or the
+/// data it reads changes and reused by every frame between, so scrolling
+/// costs the visible rows alone: no matching, sorting or cloning per frame.
+struct ResultView {
+    key: u64,
+    rows: Vec<ResultRow>,
+    /// The top of each row; one more entry ends the last.
+    tops: Vec<f32>,
+    contacts: Vec<String>,
+}
+
+impl ResultView {
+    fn height(row: ResultRow) -> f32 {
+        match row {
+            ResultRow::Section(_) => SECTION_HEIGHT,
+            _ => theme::ROW_HEIGHT,
+        }
+    }
+
+    /// The rows from the first lying below `top` to the last above `bottom`.
+    fn visible(&self, top: f32, bottom: f32) -> std::ops::Range<usize> {
+        let count = self.rows.len();
+        let first = self
+            .tops
+            .partition_point(|&edge| edge <= top)
+            .saturating_sub(1)
+            .min(count);
+        let last = self.tops.partition_point(|&edge| edge < bottom).min(count);
+        first..last.max(first)
+    }
+}
+
+/// What the results depend on, cheap to compute every frame: the query, the
+/// filters, and the fields of each chat the list reads. A change anywhere
+/// else (a new message in a chat, a rename) changes one of these.
+fn result_key(app: &App) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    app.search.trim().hash(&mut hasher);
+    app.open_chat.hash(&mut hasher);
+    app.show_archived.hash(&mut hasher);
+    app.locked_folder_open().hash(&mut hasher);
+    app.chats.len().hash(&mut hasher);
+    app.contacts.values().count().hash(&mut hasher);
+    app.me.hash(&mut hasher);
+    for chat in &app.chats {
+        (
+            chat.last_activity,
+            chat.pinned,
+            chat.archived,
+            chat.locked,
+            chat.name.len(),
+            chat.last.as_ref().map(|last| last.summary.len()),
+        )
+            .hash(&mut hasher);
+    }
+    app.search_hits.len().hash(&mut hasher);
+    if let (Some(first), Some(last)) = (app.search_hits.first(), app.search_hits.last()) {
+        (&first.id, &last.id).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn result_view(app: &App, ctx: &egui::Context) -> std::sync::Arc<ResultView> {
+    let key = result_key(app);
+    let id = egui::Id::new("search-result-view");
+    if let Some(view) = ctx.data(|data| data.get_temp::<std::sync::Arc<ResultView>>(id))
+        && view.key == key
+    {
+        return view;
+    }
     let chats = app.visible_chat_indices();
-    let hits = app.search_hits.len();
-    let contacts: Vec<Contact> = app.matching_contacts().into_iter().cloned().collect();
+    let contacts: Vec<String> = app
+        .matching_contacts()
+        .into_iter()
+        .map(|contact| contact.id.clone())
+        .collect();
     let needle = crate::util::search_key(app.search.trim());
     let offer_self = !needle.is_empty()
         && app.offers_self(&needle)
         && !chats
             .iter()
             .any(|&index| app.me.as_deref() == Some(app.chats[index].id.as_str()));
-    if chats.is_empty() && hits == 0 && contacts.is_empty() && !offer_self {
+    let mut rows = Vec::with_capacity(chats.len() + app.search_hits.len() + contacts.len() + 4);
+    if !chats.is_empty() {
+        rows.push(ResultRow::Section("Chats"));
+        rows.extend(chats.into_iter().map(ResultRow::Chat));
+    }
+    if !app.search_hits.is_empty() {
+        rows.push(ResultRow::Section("Messages"));
+        rows.extend((0..app.search_hits.len()).map(ResultRow::Hit));
+    }
+    if !contacts.is_empty() || offer_self {
+        rows.push(ResultRow::Section("Contacts"));
+        if offer_self {
+            rows.push(ResultRow::Myself);
+        }
+        rows.extend((0..contacts.len()).map(ResultRow::Contact));
+    }
+    let mut tops = Vec::with_capacity(rows.len() + 1);
+    let mut y = 0.0;
+    for &row in &rows {
+        tops.push(y);
+        y += ResultView::height(row);
+    }
+    tops.push(y);
+    let view = std::sync::Arc::new(ResultView {
+        key,
+        rows,
+        tops,
+        contacts,
+    });
+    ctx.data_mut(|data| data.insert_temp(id, view.clone()));
+    view
+}
+
+/// Search results grouped into chats, messages, and contacts. The rows are
+/// one flat list of which only the visible ones are laid out and drawn.
+fn results(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let view = result_view(app, ui.ctx());
+    if view.rows.is_empty() {
         widgets::empty_state(
             ui,
             &palette,
@@ -1686,53 +1842,87 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.spacing_mut().item_spacing.y = 0.0;
     under_header(ui, |ui, inset| {
-        scroll_area(ui, inset)
-            .id_salt("search-results")
-            .show(ui, |ui| {
-                plain_rows(ui);
-                ui.add_space(inset);
-                if !chats.is_empty() {
-                    section(ui, &palette, "Chats");
-                    for &index in &chats {
-                        let Some(chat) = app.chats.get(index).cloned() else {
-                            continue;
-                        };
-                        let reveal = ui.is_enabled()
-                            && app.scroll_chat_into_view.as_deref() == Some(chat.id.as_str());
-                        let response = ui
-                            .push_id(("chat", &chat.id), |ui| row(app, ui, &chat))
-                            .inner;
-                        if reveal {
-                            response.scroll_to_me(None);
-                            app.scroll_chat_into_view = None;
+        let mut area = scroll_area(ui, inset).id_salt("search-results");
+        // Arrow keys reveal the reached chat: its row's place is known
+        // without laying out the rows above it.
+        let target = app.scroll_chat_into_view.as_ref().and_then(|target| {
+            view.rows.iter().position(|row| {
+                matches!(row, ResultRow::Chat(index)
+                    if app.chats.get(*index).is_some_and(|chat| chat.id == *target))
+            })
+        });
+        if let Some(position) = target.filter(|_| ui.is_enabled()) {
+            let id = ui.make_persistent_id(egui::IdSalt::new("search-results"));
+            let current = egui::scroll_area::State::load(ui.ctx(), id)
+                .unwrap_or_default()
+                .offset
+                .y;
+            let height = ui.available_height() - inset;
+            let (top, bottom) = (view.tops[position], view.tops[position + 1]);
+            let offset = if top < current {
+                top
+            } else if bottom > current + height {
+                (bottom - height).max(0.0)
+            } else {
+                current
+            };
+            area = area.vertical_scroll_offset(offset);
+            app.scroll_chat_into_view = None;
+        }
+        area.show_viewport(ui, |ui, viewport| {
+            let total = view.tops.last().copied().unwrap_or(0.0) + 8.0;
+            ui.set_height(inset + total);
+            let range = view.visible(viewport.min.y - inset, viewport.max.y - inset);
+            let origin = ui.max_rect().top() + inset;
+            let x_range = ui.max_rect().x_range();
+            for index in range {
+                let row = view.rows[index];
+                let rect = Rect::from_x_y_ranges(
+                    x_range,
+                    origin + view.tops[index]..=origin + view.tops[index + 1],
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    plain_rows(ui);
+                    ui.skip_ahead_auto_ids(index);
+                    match row {
+                        ResultRow::Section(label) => section(ui, &palette, label),
+                        ResultRow::Chat(position) => {
+                            let Some(chat) = app.chats.get(position).cloned() else {
+                                return;
+                            };
+                            ui.push_id(("chat", &chat.id), |ui| self::row(app, ui, &chat));
+                        }
+                        ResultRow::Hit(position) => {
+                            let Some(hit) = app.search_hits.get(position).cloned() else {
+                                return;
+                            };
+                            ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, &hit));
+                        }
+                        ResultRow::Myself => {
+                            ui.push_id("self", |ui| self_row(app, ui));
+                        }
+                        ResultRow::Contact(position) => {
+                            let Some(contact) = view
+                                .contacts
+                                .get(position)
+                                .and_then(|id| app.contacts.get(id))
+                                .cloned()
+                            else {
+                                return;
+                            };
+                            ui.push_id(("contact", &contact.id), |ui| {
+                                contact_row(app, ui, &contact, false)
+                            });
                         }
                     }
-                }
-                if hits > 0 {
-                    section(ui, &palette, "Messages");
-                    for index in 0..hits {
-                        let Some(hit) = app.search_hits.get(index).cloned() else {
-                            continue;
-                        };
-                        ui.push_id(("hit", &hit.chat, &hit.id), |ui| hit_row(app, ui, &hit));
-                    }
-                }
-                if !contacts.is_empty() || offer_self {
-                    section(ui, &palette, "Contacts");
-                    if offer_self {
-                        ui.push_id("self", |ui| self_row(app, ui));
-                    }
-                    for contact in &contacts {
-                        ui.push_id(("contact", &contact.id), |ui| contact_row(app, ui, contact));
-                    }
-                }
-                ui.add_space(8.0);
-            });
+                });
+            }
+        });
     });
 }
 
 fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     Frame::new()
         .inner_margin(Margin {
             left: widgets::ROW_SIDE as i8,
@@ -1741,7 +1931,12 @@ fn section(ui: &mut egui::Ui, palette: &Palette, label: &str) {
             bottom: 10,
         })
         .show(ui, |ui| {
-            theme::text(ui, label, theme::semibold(12.5), palette.accent);
+            theme::text(
+                ui,
+                label,
+                theme::semibold(theme::TEXT_CAPTION),
+                palette.accent,
+            );
         });
 }
 
@@ -1778,7 +1973,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let right = rect.right() - widgets::ROW_SIDE;
         let stamp_galley = ui.painter().layout_no_wrap(
             crate::util::chat_stamp(app.locale, hit.timestamp),
-            theme::regular(11.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.dim,
         );
         let name_top = rect.top() + 14.0;
@@ -1788,7 +1983,14 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             palette.dim,
         );
         let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
-        let name = widgets::line(ui, &title, theme::medium(14.5), palette.text, name_width, 1);
+        let name = widgets::line(
+            ui,
+            &title,
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+            name_width,
+            1,
+        );
         name.paint(ui, pos2(left, name_top), palette.text);
         // Show the sender for group messages.
         let line_y = rect.top() + 38.0;
@@ -1797,7 +1999,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             let who = widgets::line(
                 ui,
                 "You: ",
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.dim,
                 (right - x) * 0.5,
                 1,
@@ -1810,7 +2012,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             let who = widgets::line(
                 ui,
                 &format!("{first}: "),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.dim,
                 (right - x) * 0.5,
                 1,
@@ -1821,7 +2023,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
         let words = widgets::line(
             ui,
             &app.preview_line(&hit.summary_in(app.locale), hit),
-            theme::regular(13.0),
+            theme::regular(theme::TEXT_CONTROL),
             palette.dim,
             (right - x).max(0.0),
             1,
@@ -1838,10 +2040,10 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
 }
 
 /// A contact without a chat. Clicking starts one.
-pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact) {
+pub(super) fn contact_row(app: &mut App, ui: &mut egui::Ui, contact: &Contact, selected: bool) {
     let name = app.display_name(&contact.id);
     let detail = crate::model::phone_of(&contact.id).map(crate::util::phone);
-    if person_row(app, ui, &contact.id, &name, detail.as_deref()).clicked() {
+    if person_row(app, ui, &contact.id, &name, detail.as_deref(), selected).clicked() {
         app.actions.push(Action::StartChat {
             id: contact.id.clone(),
             name,
@@ -1857,9 +2059,14 @@ pub(super) fn self_row(app: &mut App, ui: &mut egui::Ui) {
     };
     let name = app.self_title();
     let detail = crate::i18n::gettext(app.locale, "Message yourself");
-    if person_row(app, ui, &me, &name, Some(detail.as_ref())).clicked() {
+    if person_row(app, ui, &me, &name, Some(detail.as_ref()), false).clicked() {
         app.actions.push(Action::MessageYourself);
     }
+}
+
+/// The contact whose row New chat last scrolled into view as its first match.
+pub(super) fn revealed_row_id() -> egui::Id {
+    egui::Id::new("person-row-revealed")
 }
 
 /// A row that starts something, drawn like a person's: an icon on the
@@ -1888,7 +2095,7 @@ pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) 
         let line = widgets::line(
             ui,
             label,
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
             rect.right() - widgets::ROW_SIDE - left,
             1,
@@ -1908,6 +2115,7 @@ fn person_row(
     id: &str,
     name: &str,
     detail: Option<&str>,
+    selected: bool,
 ) -> egui::Response {
     let palette = app.palette;
     let (rect, response) = ui.allocate_exact_size(
@@ -1915,8 +2123,33 @@ fn person_row(
         Sense::click(),
     );
     theme::reveal_focus(&response);
+    // The highlighted row is scrolled into view once each time it changes, so
+    // Enter never opens a chat the list has scrolled past. Scrolling again
+    // every frame would fight the reader.
+    let revealed = revealed_row_id();
+    if selected {
+        if ui
+            .ctx()
+            .data(|data| data.get_temp::<String>(revealed))
+            .as_deref()
+            != Some(id)
+        {
+            response.scroll_to_me(Some(egui::Align::Center));
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(revealed, id.to_owned()));
+        }
+    } else if ui
+        .ctx()
+        .data(|data| data.get_temp::<String>(revealed))
+        .as_deref()
+        == Some(id)
+    {
+        ui.ctx().data_mut(|data| data.remove::<String>(revealed));
+    }
     if ui.is_rect_visible(rect) {
-        if response.hovered() {
+        if selected {
+            widgets::row_highlight(ui, &palette, rect, palette.surface_active);
+        } else if response.hovered() {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let avatar_rect = Rect::from_center_size(
@@ -1929,7 +2162,7 @@ fn person_row(
         let name_line = widgets::line(
             ui,
             name,
-            theme::medium(14.5),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
             rect.right() - widgets::ROW_SIDE - left,
             1,
@@ -1939,7 +2172,7 @@ fn person_row(
             let phone_line = widgets::line(
                 ui,
                 detail,
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.dim,
                 rect.right() - widgets::ROW_SIDE - left,
                 1,
@@ -1972,7 +2205,7 @@ fn approach_hover(amount: f32, on: bool, dt: f32) -> (f32, bool) {
 
 /// The row's hover fill, eased. A screen reader gets it at once: the
 /// animation would otherwise ask for a frame every step of the way.
-fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
+pub(crate) fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
     if crate::motion::screen_reader_attached(ui.ctx()) {
         return if on { 1.0 } else { 0.0 };
     }
@@ -2058,9 +2291,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         } else {
             palette.dim
         };
-        let stamp_galley = ui
-            .painter()
-            .layout_no_wrap(stamp, theme::regular(11.5), stamp_color);
+        let stamp_galley =
+            ui.painter()
+                .layout_no_wrap(stamp, theme::regular(theme::TEXT_CAPTION), stamp_color);
         let name_top = rect.top() + 14.0;
         ui.painter().galley(
             pos2(right - stamp_galley.size().x, name_top + 1.0),
@@ -2069,9 +2302,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         );
         let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
         let name_font = if unread {
-            theme::semibold(14.5)
+            theme::semibold(theme::TEXT_BODY)
         } else {
-            theme::medium(14.5)
+            theme::medium(theme::TEXT_BODY)
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
         name.paint(ui, pos2(left, name_top), palette.text);
@@ -2142,7 +2375,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::line(
                 ui,
                 &who,
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.accent,
                 badge_right - x,
                 1,
@@ -2153,7 +2386,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             let label = widgets::line(
                 ui,
                 &label,
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.accent,
                 (badge_right - x) * 0.5,
                 1,
@@ -2164,7 +2397,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::line(
                 ui,
                 &draft,
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 preview_color,
                 (badge_right - x).max(0.0),
                 1,
@@ -2193,7 +2426,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 let sender = widgets::line(
                     ui,
                     &prefix,
-                    theme::regular(13.0),
+                    theme::regular(theme::TEXT_CONTROL),
                     preview_color,
                     (badge_right - x) * 0.5,
                     1,
@@ -2208,7 +2441,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                     &app.resolve_mention_tokens(&last.summary_in(app.locale)),
                     &[],
                 ),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 preview_color,
                 (badge_right - x).max(0.0),
                 1,
@@ -2224,7 +2457,14 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             }
             words
         } else {
-            widgets::line(ui, "", theme::regular(13.0), preview_color, 1.0, 1)
+            widgets::line(
+                ui,
+                "",
+                theme::regular(theme::TEXT_CONTROL),
+                preview_color,
+                1.0,
+                1,
+            )
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
     }
@@ -2291,6 +2531,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         ) + 24.0,
     )
     .max(190.0);
+    if app.settings.split_view {
+        super::split::watch(ui, response.rect, &chat.id, || app.chat_title(chat));
+    }
     let popup = egui::Popup::context_menu(&response)
         .width(menu_width)
         .frame(widgets::menu_frame(&menu_palette));
@@ -2364,7 +2607,7 @@ fn full_preview_tooltip(
             let line = widgets::line(
                 ui,
                 text.trim_end(),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 color,
                 FULL_PREVIEW_WIDTH,
                 FULL_PREVIEW_ROWS,
@@ -2519,7 +2762,7 @@ pub(super) fn compact_list(app: &mut App, ui: &mut egui::Ui) {
     // Avatars cut off at either end fade into the rail, which says the
     // column scrolls on. A translucent rail would show the fade as a band.
     let palette = app.palette;
-    if !palette.vibrant() {
+    if !palette.shows_desktop() {
         let rect = output.inner_rect;
         let offset = output.state.offset.y;
         if offset > 0.5 {
@@ -2647,6 +2890,9 @@ fn compact_row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response 
         .data_mut(|data| data.insert_temp(compact_chat_id(&chat.id), response.rect));
     if super::carry::carrying(ui.ctx()) {
         super::carry::target(ui, rect, chat, &title, rect.center());
+    }
+    if app.settings.split_view {
+        super::split::watch(ui, response.rect, &chat.id, || title.clone());
     }
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -2796,6 +3042,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
         });
     }
+    super::blocking::menu(app, ui, &chat.id);
     widgets::menu_separator(ui, palette);
     if let Some(phone) = chat.phone()
         && widgets::menu_item(
@@ -2806,6 +3053,39 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         )
     {
         app.actions.push(Action::CopyText(format!("+{phone}")));
+    }
+    let beside = app.settings.split_view
+        && app.current_chat().is_some_and(|open| open.id != chat.id)
+        && !super::narrow(ui.ctx());
+    let beside_label = crate::i18n::gettext(app.locale, "Open beside");
+    if beside && widgets::menu_item(ui, palette, Some(Icon::Columns), beside_label.as_ref()) {
+        app.actions.push(Action::OpenSplit {
+            chat: chat.id.clone(),
+            side: crate::app::Side::Right,
+        });
+    }
+    let pop_label = crate::i18n::gettext(app.locale, "Pop out chat");
+    if app.settings.split_view
+        && widgets::menu_item(
+            ui,
+            palette,
+            Some(Icon::PictureInPicture),
+            pop_label.as_ref(),
+        )
+    {
+        app.actions.push(Action::PopOut(chat.id.clone()));
+    }
+    let bubble_label = crate::i18n::gettext(app.locale, "Open as bubble");
+    if app.settings.chat_bubbles
+        && !chat.locked
+        && widgets::menu_item(
+            ui,
+            palette,
+            Some(Icon::MessageCircle),
+            bubble_label.as_ref(),
+        )
+    {
+        app.actions.push(Action::Bubble(chat.id.clone()));
     }
     if widgets::menu_item(
         ui,
@@ -3222,7 +3502,7 @@ mod tests {
     }
 
     #[test]
-    fn a_search_finds_a_name_with_letters_left_out_after_the_exact_matches() {
+    fn a_search_finds_only_names_that_contain_the_text() {
         let (_directory, mut app, _ids, _ctx) = rail_app(0);
         for (id, name, activity) in [
             ("1@s.whatsapp.net", "John Smith", 1),
@@ -3233,13 +3513,14 @@ mod tests {
             chat.last_activity = activity;
             app.chats.push(chat);
         }
+        // No fuzzy matching: "jhn" is not found inside "John Smith".
         app.search = "jhn".into();
         let titles: Vec<String> = app
             .visible_chats()
             .into_iter()
             .map(|chat| chat.name.clone())
             .collect();
-        assert_eq!(titles, ["Jhn Doe", "John Smith"]);
+        assert_eq!(titles, ["Jhn Doe"]);
     }
 
     #[test]

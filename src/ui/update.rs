@@ -36,7 +36,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 theme::text(
                     ui,
                     crate::i18n::gettext(locale, "Update Zeus"),
-                    theme::bold(20.0),
+                    theme::bold(theme::TEXT_TITLE),
                     palette.text,
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -51,14 +51,14 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     .clicked();
                 });
             });
-            ui.add_space(4.0);
+            ui.add_space(crate::theme::SPACE_XS);
             theme::text(
                 ui,
                 format!("{} → {}", env!("CARGO_PKG_VERSION"), release.version),
-                theme::regular(14.0),
+                theme::regular(theme::TEXT_BODY),
                 palette.secondary,
             );
-            ui.add_space(20.0);
+            ui.add_space(crate::theme::SPACE_XL);
             let mut action = None;
             let mut release_link = crate::i18n::gettext(locale, "Release notes");
             match &app.update_download {
@@ -71,17 +71,17 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         } else {
                             crate::i18n::gettext(locale, "Downloading update…")
                         },
-                        theme::medium(14.0),
+                        theme::medium(theme::TEXT_BODY),
                         palette.text,
                     );
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     if *total > 0 {
                         ui.add(
                             egui::ProgressBar::new(*received as f32 / *total as f32)
                                 .fill(palette.accent)
                                 .desired_height(6.0),
                         );
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                         let progress_text = crate::i18n::gettext(locale, "{received} of {total} MB")
                             .replace(
                                 "{received}",
@@ -91,7 +91,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         theme::text(
                             ui,
                             progress_text,
-                            theme::regular(12.0),
+                            theme::regular(theme::TEXT_CAPTION),
                             palette.secondary,
                         );
                     } else {
@@ -102,17 +102,17 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     theme::text(
                         ui,
                         crate::i18n::gettext(locale, "Ready to install"),
-                        theme::semibold(14.0),
+                        theme::semibold(theme::TEXT_BODY),
                         palette.text,
                     );
-                    ui.add_space(6.0);
+                    ui.add_space(8.0);
                     ui.add(
                         egui::Label::new(
                             RichText::new(crate::i18n::gettext(
                                 locale,
                                 "Finish any unsent messages or recordings before restarting. Zeus will briefly disconnect, then reconnect automatically.",
                             ))
-                            .font(theme::regular(14.0))
+                            .font(theme::regular(theme::TEXT_BODY))
                             .color(palette.secondary),
                         )
                         .wrap(),
@@ -128,7 +128,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         theme::text(
                             ui,
                             crate::i18n::gettext(locale, "Preparing to restart…"),
-                            theme::regular(14.0),
+                            theme::regular(theme::TEXT_BODY),
                             palette.text,
                         );
                     });
@@ -136,7 +136,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 DownloadState::Idle | DownloadState::Failed(_) => {
                     if let DownloadState::Failed(error) = &app.update_download {
                         message(ui, error, palette.danger);
-                        ui.add_space(8.0);
+                        ui.add_space(crate::theme::SPACE_S);
                     }
                     match &app.update_support {
                         None => {
@@ -159,7 +159,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     }
                 }
             }
-            ui.add_space(16.0);
+            ui.add_space(crate::theme::SPACE_L);
             ui.horizontal(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if let Some((label, action)) = action
@@ -167,10 +167,10 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     {
                         app.actions.push(action);
                     }
-                    ui.add_space(8.0);
+                    ui.add_space(crate::theme::SPACE_S);
                     ui.add(egui::Hyperlink::from_label_and_url(
                         RichText::new(release_link)
-                            .font(theme::medium(13.0))
+                            .font(theme::medium(theme::TEXT_CONTROL))
                             .color(palette.secondary),
                         &release.url,
                     ));
@@ -186,7 +186,7 @@ fn message(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
     let line = super::widgets::line(
         ui,
         text,
-        theme::regular(14.0),
+        theme::regular(theme::TEXT_BODY),
         color,
         ui.available_width(),
         usize::MAX,

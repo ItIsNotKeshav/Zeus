@@ -8,7 +8,7 @@ use egui::{
 
 use super::controls;
 use crate::app::App;
-use crate::chat_themes::{Accent, ChatTheme, Mode, Style};
+use crate::chat_themes::{Accent, ChatTheme, Mode};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
@@ -273,12 +273,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         {
                             app.actions.push(Action::Open(Page::Chats));
                         }
-                        theme::text(ui, heading.as_ref(), theme::bold(24.0), palette.text);
+                        theme::text(
+                            ui,
+                            heading.as_ref(),
+                            theme::bold(theme::TEXT_DISPLAY),
+                            palette.text,
+                        );
                     });
-                    ui.add_space(14.0);
+                    ui.add_space(16.0);
                     if !beside {
                         search(app, ui);
-                        ui.add_space(6.0);
+                        ui.add_space(8.0);
                     }
                     let filter = Filter::new(&app.settings_search);
                     let mut found = false;
@@ -289,12 +294,12 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         found |= section.show(ui, app, &filter, one.is_none());
                     }
                     if !found {
-                        ui.add_space(24.0);
+                        ui.add_space(crate::theme::SPACE_XXL);
                         theme::paragraph(
                             ui,
                             crate::i18n::gettext(locale, "No settings match “{query}”.")
                                 .replace("{query}", app.settings_search.trim()),
-                            theme::regular(14.0),
+                            theme::regular(theme::TEXT_BODY),
                             palette.secondary,
                         );
                     }
@@ -319,6 +324,7 @@ fn category_icon(source: &str) -> Icon {
         "System" => Icon::Monitor,
         "Account" => Icon::User,
         "Files" => Icon::Download,
+        "Experimental" => Icon::Flask,
         "About" => Icon::Info,
         _ => Icon::Settings,
     }
@@ -354,15 +360,15 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::text(
                             ui,
                             crate::i18n::gettext(app.locale, "Settings"),
-                            theme::bold(20.0),
+                            theme::bold(theme::TEXT_TITLE),
                             palette.text,
                         );
                     },
                 );
-                ui.add_space(8.0);
+                ui.add_space(crate::theme::SPACE_S);
                 search(app, ui);
             });
-        ui.add_space(4.0);
+        ui.add_space(crate::theme::SPACE_XS);
         let searching = !app.settings_search.trim().is_empty();
         let titles: Vec<Text> = sections(app)
             .into_iter()
@@ -391,8 +397,16 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::focus_outline(ui, response.id, rect, 12.0);
                         if selected {
                             ui.painter().rect_filled(rect, 12.0, palette.surface);
-                        } else if response.hovered() {
-                            ui.painter().rect_filled(rect, 12.0, palette.surface_hover);
+                        } else {
+                            let hover =
+                                super::chats::row_hover_amount(ui, response.id, response.hovered());
+                            if hover > 0.0 {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    12.0,
+                                    palette.surface_hover.gamma_multiply(hover),
+                                );
+                            }
                         }
                         let color = if selected {
                             palette.text
@@ -413,7 +427,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                             pos2(rect.left() + 50.0, rect.center().y),
                             egui::Align2::LEFT_CENTER,
                             title.shown.as_ref(),
-                            theme::medium(15.0),
+                            theme::medium(theme::TEXT_SECTION),
                             if selected { palette.text } else { color },
                         );
                         response.widget_info(|| {
@@ -489,49 +503,22 @@ fn sections(app: &App) -> Vec<Section> {
         chat_preview,
     );
     appearance.row(
-        translated(locale, "Colours"),
-        translated(
-            locale,
-            "Make your own from a look, a mode and an accent, or pick a ready-made theme.",
-        ),
-        style_picker,
+        translated(locale, "Mode"),
+        if app.custom_themes.follows_omarchy() {
+            translated(locale, "Follow system uses your Omarchy colours.")
+        } else {
+            translated(locale, "Light, dark, or as the system is.")
+        },
+        mode_picker,
     );
-    match app.settings.style() {
-        Style::Custom => {
-            appearance.block(
-                vec![translated(locale, "Look"), translated(locale, "Theme")],
-                look_cards,
-            );
-            appearance.row(
-                translated(locale, "Mode"),
-                if app.custom_themes.follows_omarchy() {
-                    translated(locale, "Follow system uses your Omarchy colours.")
-                } else {
-                    translated(locale, "Light, dark, or as the system is.")
-                },
-                mode_picker,
-            );
-            appearance.block(
-                vec![translated(locale, "Accent"), translated(locale, "Colour")],
-                accent_picker,
-            );
-        }
-        Style::Themes => {
-            appearance.row(
-                translated(locale, "Mode"),
-                translated(locale, "Each theme comes in light and dark."),
-                mode_picker,
-            );
-            appearance.block(
-                vec![
-                    translated(locale, "Themes"),
-                    translated(locale, "Theme"),
-                    "Agent Orchestrator".into(),
-                ],
-                theme_cards,
-            );
-        }
-    }
+    appearance.block(
+        vec![translated(locale, "Themes"), translated(locale, "Theme")],
+        theme_cards,
+    );
+    appearance.block(
+        vec![translated(locale, "Accent"), translated(locale, "Colour")],
+        accent_picker,
+    );
     appearance.row(
         translated(locale, "Glass"),
         translated(
@@ -598,7 +585,7 @@ fn sections(app: &App) -> Vec<Section> {
             theme::text(
                 ui,
                 format!("{:.0}%", app.settings.zoom * 100.0),
-                theme::medium(13.5),
+                theme::medium(theme::TEXT_BODY),
                 palette.text,
             );
             if theme::icon_button(
@@ -805,6 +792,23 @@ fn sections(app: &App) -> Vec<Section> {
         |settings| &mut settings.send_typing,
     );
     app_lock_rows(app, &mut privacy);
+    privacy.row(
+        translated(locale, "Blocked contacts"),
+        "",
+        move |ui, app| {
+            if theme::pill_button(
+                ui,
+                &app.palette,
+                &crate::i18n::gettext(locale, "Manage"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions
+                    .push(Action::ShowDialog(Dialog::BlockedContacts));
+            }
+        },
+    );
     // The account values live on the phone: they are shown once fetched and
     // edited only while connected with a fresh snapshot.
     let editable = app.is_connected() && app.account_privacy.editable();
@@ -828,8 +832,13 @@ fn sections(app: &App) -> Vec<Section> {
     };
     if let Some(note) = note {
         privacy.block(Vec::new(), move |ui, _app| {
-            widgets::rich_text(ui, &note, theme::regular(12.5), palette.secondary);
-            ui.add_space(10.0);
+            widgets::rich_text(
+                ui,
+                &note,
+                theme::regular(theme::TEXT_CAPTION),
+                palette.secondary,
+            );
+            ui.add_space(8.0);
         });
     }
     for kind in PrivacyKind::ALL {
@@ -1092,6 +1101,24 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
+    let mut experimental = Section::new(translated(locale, "Experimental"));
+    experimental.toggle(
+        translated(locale, "Split view"),
+        translated(
+            locale,
+            "Drag a chat from the list onto the open one to read two side by side, or pop a chat out into a small window above the others. The window grows to fit both chats when it can.",
+        ),
+        |settings| &mut settings.split_view,
+    );
+    experimental.toggle(
+        translated(locale, "Chat bubbles"),
+        translated(
+            locale,
+            "Keep up to three chats as bubbles floating over your other windows. Click one to open a small chat where you can reply, and attach, paste or drop pictures and files. Start one from a chat's menu with Open as bubble.",
+        ),
+        |settings| &mut settings.chat_bubbles,
+    );
+
     let mut about_section = Section::new(translated(locale, "About"));
     about_section.block(
         vec![
@@ -1121,6 +1148,7 @@ fn sections(app: &App) -> Vec<Section> {
         system,
         account_section,
         files,
+        experimental,
         about_section,
     ]
 }
@@ -1336,7 +1364,7 @@ fn microphone_check(ui: &mut egui::Ui, app: &mut App) {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Could not hear this microphone"),
-            theme::medium(12.5),
+            theme::medium(theme::TEXT_CAPTION),
             palette.danger,
         );
         return;
@@ -1345,7 +1373,7 @@ fn microphone_check(ui: &mut egui::Ui, app: &mut App) {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Opening…"),
-            theme::medium(12.5),
+            theme::medium(theme::TEXT_CAPTION),
             palette.secondary,
         );
         return;
@@ -1356,7 +1384,7 @@ fn microphone_check(ui: &mut egui::Ui, app: &mut App) {
 /// A horizontal bar filled to `level`, from 0 to 1.
 fn level_meter(ui: &mut egui::Ui, palette: &Palette, level: f32) {
     let (rect, response) = ui.allocate_exact_size(vec2(120.0, 6.0), Sense::hover());
-    let radius = CornerRadius::same(3);
+    let radius = CornerRadius::from(rect.height() / 2.0);
     ui.painter()
         .rect_filled(rect, radius, palette.surface_active);
     if level > 0.0 {
@@ -1479,7 +1507,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
     let mode = form.mode;
     let busy = form.busy;
     let mut submit = false;
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
     theme::text(
         ui,
         match mode {
@@ -1487,7 +1515,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
             FormMode::Change => gettext(locale, "Change the app lock password"),
             FormMode::TurnOff => gettext(locale, "Turn off the app lock"),
         },
-        theme::semibold(14.0),
+        theme::semibold(theme::TEXT_BODY),
         palette.text,
     );
     let count = MIN_PASSWORD_CHARS.to_string();
@@ -1538,7 +1566,12 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
         FormError::WrongCurrent => gettext(locale, "Wrong password. Try again.").into_owned(),
     });
     if let Some(error) = error {
-        widgets::rich_text(ui, &error, theme::regular(12.5), palette.danger);
+        widgets::rich_text(
+            ui,
+            &error,
+            theme::regular(theme::TEXT_CAPTION),
+            palette.danger,
+        );
     }
     ui.horizontal(|ui| {
         let confirm = match mode {
@@ -1556,7 +1589,7 @@ fn app_lock_form(ui: &mut egui::Ui, app: &mut App) {
             app.actions.push(Action::AppLockForm(None));
         }
     });
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     if submit && !busy {
         app.actions.push(Action::SubmitAppLockForm);
     }
@@ -1575,13 +1608,13 @@ fn keyed(text: Text) -> Text {
 /// too wide to sit beside their name.
 fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description: &str) {
     if !title.is_empty() {
-        widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
+        widgets::rich_text(ui, title, theme::medium(theme::TEXT_BODY), palette.text);
     }
     if !description.is_empty() {
         let description = widgets::line(
             ui,
             description,
-            theme::regular(12.5),
+            theme::regular(theme::TEXT_CAPTION),
             palette.secondary,
             ui.available_width(),
             usize::MAX,
@@ -1591,7 +1624,7 @@ fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description:
             description.paint(ui, rect.min, palette.secondary);
         }
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
 }
 
 /// How tall the live preview of a conversation is.
@@ -1606,7 +1639,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
     let locale = app.locale;
     let (rect, _) =
         ui.allocate_exact_size(vec2(ui.available_width(), PREVIEW_HEIGHT), Sense::hover());
-    ui.add_space(14.0);
+    ui.add_space(16.0);
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -1638,28 +1671,29 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         avatar,
         egui::Align2::CENTER_CENTER,
         "A",
-        theme::semibold(13.0),
+        theme::semibold(theme::TEXT_CONTROL),
         Color32::WHITE,
     );
     painter.text(
         pos2(avatar.x + 22.0, header.center().y - 8.0),
         egui::Align2::LEFT_CENTER,
         "Ava",
-        theme::semibold(13.5),
+        theme::semibold(theme::TEXT_BODY),
         palette.text,
     );
     painter.text(
         pos2(avatar.x + 22.0, header.center().y + 8.0),
         egui::Align2::LEFT_CENTER,
         text("online"),
-        theme::regular(11.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
     );
 
     // Messages: theirs on the left, ours on the right with its ticks.
     let bubble = |top: f32, label: String, own: bool| -> f32 {
         let colours = palette.on_bubble(own);
-        let galley = painter.layout_no_wrap(label, theme::regular(13.0), colours.text);
+        let galley =
+            painter.layout_no_wrap(label, theme::regular(theme::TEXT_CONTROL), colours.text);
         let meta = if own { 30.0 } else { 0.0 };
         let size = galley.size() + vec2(28.0 + meta, 18.0);
         let left = if own {
@@ -1716,7 +1750,7 @@ fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
         pos2(field.left() + 16.0, field.center().y),
         egui::Align2::LEFT_CENTER,
         text("Message"),
-        theme::regular(13.0),
+        theme::regular(theme::TEXT_CONTROL),
         palette.dim,
     );
     let send = pos2(rect.right() - PREVIEW_PAD - 14.0, field.center().y);
@@ -1815,7 +1849,7 @@ fn segmented<T: Copy + PartialEq>(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             label.as_ref(),
-            theme::medium(13.0),
+            theme::medium(theme::TEXT_CONTROL),
             color,
         );
         response.widget_info(|| {
@@ -1834,21 +1868,6 @@ fn segmented<T: Copy + PartialEq>(
         }
     }
     clicked
-}
-
-/// Custom or Themes: a look made your own, or a ready-made theme.
-fn style_picker(ui: &mut egui::Ui, app: &mut App) {
-    let options: Vec<_> = Style::ALL
-        .into_iter()
-        .map(|style| (style, crate::i18n::gettext(app.locale, style.label())))
-        .collect();
-    let selected = Some(app.settings.style());
-    if let Some(style) = segmented(ui, &app.palette, "style", &options, selected, 88.0) {
-        if let Some(origin) = ui.ctx().pointer_interact_pos() {
-            app.actions.push(Action::RevealThemeFrom(origin));
-        }
-        app.actions.push(Action::SetStyle(style));
-    }
 }
 
 /// Light, dark or system, as three segments of one control.
@@ -1882,23 +1901,28 @@ const SWATCH: f32 = 26.0;
 fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let locale = app.locale;
-    let chat_theme = app.settings.chat_theme;
     let custom = app.settings.custom_theme.is_some();
-    let description = if !chat_theme.takes_accent() {
-        crate::i18n::gettext(locale, "Messages keeps the system blue.")
-    } else {
-        crate::i18n::gettext(
-            locale,
-            "Buttons, links, ticks and your own messages take this colour.",
-        )
-    };
+    let description = crate::i18n::gettext(
+        locale,
+        "Buttons, links, ticks and your own messages take this colour in any theme.",
+    );
     block_heading(
         ui,
         &palette,
         &crate::i18n::gettext(locale, "Accent"),
         &description,
     );
-    let enabled = !custom && chat_theme.takes_accent();
+    let enabled = !custom;
+    accent_swatches(ui, app, enabled);
+    ui.add_space(crate::theme::SPACE_L);
+}
+
+/// The accent swatches alone, the theme's own first: Settings' Accent and
+/// the first-run setup's. Dimmed and inert unless `enabled`.
+pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let chat_theme = app.settings.chat_theme;
     ui.add_enabled_ui(enabled, |ui| {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 10.0;
@@ -1919,11 +1943,19 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                     color.gamma_multiply(0.4)
                 };
                 let center = rect.center();
-                if on {
+                let start = super::arrive::painted(ui);
+                let t = ui.ctx().animate_bool_with_time_and_easing(
+                    response.id,
+                    on,
+                    theme::MOTION_QUICK,
+                    theme::ease_out,
+                );
+                if t > 0.0 {
+                    // The ring eases in from the swatch's edge.
                     ui.painter().circle_stroke(
                         center,
-                        SWATCH / 2.0 + 2.5,
-                        Stroke::new(2.0, palette.text),
+                        SWATCH / 2.0 + 2.5 * t,
+                        Stroke::new(2.0, palette.text.gamma_multiply(t)),
                     );
                 } else if response.hovered() {
                     ui.painter().circle_stroke(
@@ -1943,8 +1975,9 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                         Stroke::new(1.0, palette.outline),
                     );
                 }
-                if on && accent != Accent::Theme {
-                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0);
+                if t > 0.0 && accent != Accent::Theme {
+                    let tick = theme::readable_on(color, Color32::WHITE, Color32::BLACK, 3.0)
+                        .gamma_multiply(t);
                     theme::paint_icon(
                         ui,
                         Icon::Check,
@@ -1953,6 +1986,7 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
                         tick,
                     );
                 }
+                super::arrive::spring(ui, start, &response, on);
                 let label = crate::i18n::gettext(locale, accent.label());
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
@@ -1972,7 +2006,6 @@ fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
             }
         });
     });
-    ui.add_space(16.0);
 }
 
 /// The least width of a theme card.
@@ -2003,24 +2036,7 @@ fn chat_theme_cards(ui: &mut egui::Ui, app: &mut App, salt: &str, choices: &[Cha
     card_grid(ui, app, salt, cards);
 }
 
-/// The looks the Custom style starts from.
-fn look_cards(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(app.locale, "Look"),
-        &crate::i18n::gettext(
-            app.locale,
-            "Zeus's monochrome glass, WhatsApp's greens, or the bubbles of Messages.",
-        ),
-    );
-    ui.add_space(2.0);
-    chat_theme_cards(ui, app, "look", &ChatTheme::LOOKS);
-    ui.add_space(4.0);
-}
-
-/// The ready-made themes as cards, each in the mode on screen.
+/// Every theme as a card, each in the mode on screen with the accent chosen.
 fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     block_heading(
@@ -2029,16 +2045,12 @@ fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
         &crate::i18n::gettext(app.locale, "Themes"),
         &crate::i18n::gettext(
             app.locale,
-            "Ported from Agent Orchestrator, each with its own accent.",
+            "Pick a theme, then an accent below: every theme wears it in its own style.",
         ),
     );
-    ui.add_space(2.0);
-    let themes: Vec<ChatTheme> = ChatTheme::ALL
-        .into_iter()
-        .filter(|choice| !choice.is_look())
-        .collect();
-    chat_theme_cards(ui, app, "chat-theme", &themes);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_HAIR);
+    chat_theme_cards(ui, app, "chat-theme", &ChatTheme::ALL);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// Theme cards in as many columns as fit, widened to fill the row.
@@ -2065,7 +2077,7 @@ fn card_grid(
         ),
         Sense::hover(),
     );
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     for (index, (label, colours, selected, action)) in cards.into_iter().enumerate() {
         let rect = Rect::from_min_size(
             area.min
@@ -2109,7 +2121,7 @@ fn card_grid(
 
 /// One theme card: its conversation with a bubble each way, over its name
 /// on its own list colour, with its accent beside the name.
-fn theme_card(
+pub(super) fn theme_card(
     ui: &egui::Ui,
     palette: &Palette,
     rect: Rect,
@@ -2162,7 +2174,7 @@ fn theme_card(
     let name = widgets::line(
         ui,
         label,
-        theme::medium(12.5),
+        theme::medium(theme::TEXT_CAPTION),
         colours.text,
         footer.width() - 36.0,
         1,
@@ -2277,7 +2289,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                     .with_main_align(Align::Min),
                             ),
                         |ui| {
-                            ui.add_space(24.0);
+                            ui.add_space(crate::theme::SPACE_XXL);
                             if theme::icon_button(
                                 ui,
                                 Icon::ArrowLeft,
@@ -2290,7 +2302,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                             {
                                 app.actions.push(Action::Open(Page::Settings));
                             }
-                            theme::text(ui, "Set chat wallpaper", theme::bold(18.0), palette.text);
+                            theme::text(ui, "Set chat wallpaper", theme::bold(theme::TEXT_TITLE), palette.text);
                         },
                     );
 
@@ -2316,9 +2328,9 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             "Your own picture replaces the colour and doodles.",
                                         ),
                                     );
-                                    ui.add_space(8.0);
+                                    ui.add_space(crate::theme::SPACE_S);
                                     image_buttons(app, ui);
-                                    ui.add_space(22.0);
+                                    ui.add_space(24.0);
                                     block_heading(
                                         ui,
                                         &palette,
@@ -2328,7 +2340,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             "Pick the background. Doodles are chosen under Appearance.",
                                         ),
                                     );
-                                    ui.add_space(10.0);
+                                    ui.add_space(8.0);
                                     let selected = app.settings.wallpaper_color_for(palette.dark);
                                     let gap = 10.0;
                                     let columns = ((palette_width + gap) / (COLOR_SWATCH + gap))
@@ -2364,7 +2376,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                                             app.actions.push(Action::SetWallpaperColor(*color));
                                         }
                                     }
-                                    ui.add_space(20.0);
+                                    ui.add_space(crate::theme::SPACE_XL);
                                 });
                         },
                     );
@@ -2386,7 +2398,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                         header.center(),
                         egui::Align2::CENTER_CENTER,
                         "Wallpaper preview",
-                        theme::bold(18.0),
+                        theme::bold(theme::TEXT_TITLE),
                         palette.text,
                     );
                     let preview = Rect::from_min_size(
@@ -2480,12 +2492,7 @@ fn wallpaper_color_button(
     let radius = f32::from(theme::RADIUS_CARD);
     theme::focus_outline(ui, response.id, rect, radius);
     if ui.is_rect_visible(rect) {
-        let t = ui.ctx().animate_bool_with_time_and_easing(
-            response.id,
-            chosen,
-            theme::MOTION_QUICK,
-            theme::ease_out,
-        );
+        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
         let painter = ui.painter_at(rect.expand(6.0));
         painter.rect_filled(rect, radius, fill);
         // Theme follows the palette, so its swatch names itself.
@@ -2494,7 +2501,7 @@ fn wallpaper_color_button(
                 rect.center(),
                 egui::Align2::CENTER_CENTER,
                 &label,
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.text,
             );
         }
@@ -2548,7 +2555,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             "The pattern drawn over the wallpaper colour in your chats.",
         ),
     );
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     // Each card shows its whole tile, whatever the density: thinning every
     // style at every step of the slider would draw seven tiles for each.
     let look = wallpaper::Look {
@@ -2566,7 +2573,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         DOODLE_PREVIEW + CARD_LABEL,
     );
     let rows = tiles.div_ceil(columns);
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     let (area, _) = ui.allocate_exact_size(
         vec2(width, rows as f32 * (tile.y + gap) - gap),
         Sense::hover(),
@@ -2595,12 +2602,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, radius);
         if ui.is_rect_visible(rect) {
-            let t = ui.ctx().animate_bool_with_time_and_easing(
-                response.id,
-                chosen,
-                theme::MOTION_QUICK,
-                theme::ease_out,
-            );
+            let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
             let painter = ui.painter_at(rect.expand(6.0));
             let r = radius as u8;
             let preview = Rect::from_min_size(rect.min, vec2(rect.width(), DOODLE_PREVIEW));
@@ -2640,7 +2642,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
             let name = widgets::line(
                 ui,
                 &label,
-                theme::medium(12.5),
+                theme::medium(theme::TEXT_CAPTION),
                 if chosen { palette.accent } else { palette.text },
                 footer.width() - 20.0,
                 1,
@@ -2688,7 +2690,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
     }
     ui.add_space(PAGE_ROW_GAP + 4.0);
     doodle_ink_controls(ui, app);
-    ui.add_space(4.0);
+    ui.add_space(crate::theme::SPACE_XS);
 }
 
 /// The space a doodle control's row leaves under itself, beyond the ten
@@ -2788,7 +2790,7 @@ fn doodle_slider(
                 theme::text(
                     ui,
                     crate::i18n::gettext(locale, high).into_owned(),
-                    theme::medium(12.5),
+                    theme::medium(theme::TEXT_CAPTION),
                     palette.secondary,
                 );
                 let slider = widgets::glass_slider(ui, &palette, &mut value, range, 150.0);
@@ -2798,7 +2800,7 @@ fn doodle_slider(
                 theme::text(
                     ui,
                     crate::i18n::gettext(locale, low).into_owned(),
-                    theme::medium(12.5),
+                    theme::medium(theme::TEXT_CAPTION),
                     palette.secondary,
                 );
                 if slider.changed() {
@@ -2827,7 +2829,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
         theme::text(
             ui,
             crate::i18n::gettext(locale, "Storage used"),
-            theme::medium(14.0),
+            theme::medium(theme::TEXT_BODY),
             palette.text,
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -2848,13 +2850,13 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
                 theme::text(
                     ui,
                     crate::util::bytes(total),
-                    theme::semibold(14.0),
+                    theme::semibold(theme::TEXT_BODY),
                     palette.text,
                 );
             }
         });
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     // Each number has a cache of its own: say whose this is.
     let account = app.account().display_label(locale);
     let hint = widgets::line(
@@ -2864,7 +2866,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
             "Photos, videos, stickers and files {account} downloaded to this computer. Clearing them keeps your messages; attachments download again when you open them.",
         )
         .replace("{account}", &account),
-        theme::regular(12.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.secondary,
         ui.available_width(),
         usize::MAX,
@@ -2876,7 +2878,7 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
     if !measured {
         return;
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     // Other only shows when there is something in it.
     for (label, count, bytes, always) in [
         (
@@ -2965,12 +2967,12 @@ fn storage_bar_row(
     total: u64,
 ) {
     ui.horizontal(|ui| {
-        theme::text(ui, label, theme::medium(14.0), palette.text);
+        theme::text(ui, label, theme::medium(theme::TEXT_BODY), palette.text);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             theme::text(
                 ui,
                 format!("{count} · {}", crate::util::bytes(bytes)),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
         });
@@ -2988,7 +2990,7 @@ fn storage_bar_row(
             );
         }
     }
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 }
 
 /// A titled group of settings on a rounded card, or untitled on the page.
@@ -3009,7 +3011,7 @@ fn section(
         })
     } else {
         ui.add_space(12.0);
-        theme::text(ui, title, theme::bold(18.0), palette.text);
+        theme::text(ui, title, theme::bold(theme::TEXT_SECTION), palette.text);
         ui.add_space(8.0);
         Frame::new()
             .fill(theme::blend(palette.panel, palette.surface, 0.5))
@@ -3027,7 +3029,7 @@ fn section(
         ui.set_width(ui.available_width());
         add_contents(ui);
     });
-    ui.add_space(8.0);
+    ui.add_space(crate::theme::SPACE_S);
 }
 
 /// Our WhatsApp profile, which can be edited in place, and unlinking.
@@ -3071,7 +3073,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     &crate::i18n::gettext(app.locale, "Your name"),
                     25,
                 );
-                ui.add_space(6.0);
+                ui.add_space(8.0);
                 submitted |= profile_field(
                     ui,
                     &palette,
@@ -3088,7 +3090,12 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     name.clone().into()
                 };
-                theme::text(ui, shown, theme::semibold(16.0), palette.text);
+                theme::text(
+                    ui,
+                    shown,
+                    theme::semibold(theme::TEXT_SECTION),
+                    palette.text,
+                );
                 if theme::icon_button(
                     ui,
                     Icon::Pencil,
@@ -3102,9 +3109,19 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     draft = Some((name.clone(), app.me_about.clone().unwrap_or_default()));
                 }
             });
-            theme::text(ui, &phone, theme::regular(13.0), palette.secondary);
+            theme::text(
+                ui,
+                &phone,
+                theme::regular(theme::TEXT_CONTROL),
+                palette.secondary,
+            );
             if let Some(about) = &app.me_about {
-                theme::paragraph(ui, about, theme::regular(13.0), palette.secondary);
+                theme::paragraph(
+                    ui,
+                    about,
+                    theme::regular(theme::TEXT_CONTROL),
+                    palette.secondary,
+                );
             }
         });
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -3149,7 +3166,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     if let Some((draft_name, draft_about)) = &draft {
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         let mut done = false;
         ui.horizontal(|ui| {
             ui.add_space(56.0 + 14.0);
@@ -3178,7 +3195,7 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             draft = None;
         }
     }
-    ui.add_space(10.0);
+    ui.add_space(8.0);
     ui.data_mut(|data| {
         if let Some(draft) = draft {
             data.insert_temp(draft_id, draft);
@@ -3197,7 +3214,12 @@ fn profile_field(
     label: &str,
     limit: usize,
 ) -> bool {
-    theme::text(ui, label, theme::medium(12.5), palette.secondary);
+    theme::text(
+        ui,
+        label,
+        theme::medium(theme::TEXT_CAPTION),
+        palette.secondary,
+    );
     let response = controls::Field::new(value)
         .char_limit(limit)
         .width(f32::INFINITY)
@@ -3216,7 +3238,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             theme::text(
                 ui,
                 format!("Zeus {}", env!("CARGO_PKG_VERSION")),
-                theme::semibold(16.0),
+                theme::semibold(theme::TEXT_SECTION),
                 palette.text,
             );
             theme::paragraph(
@@ -3225,12 +3247,12 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
                     app.locale,
                     "A native WhatsApp client built with Rust, egui, and whatsapp-rust.",
                 ),
-                theme::regular(13.0),
+                theme::regular(theme::TEXT_CONTROL),
                 palette.secondary,
             );
         });
     });
-    ui.add_space(12.0);
+    ui.add_space(crate::theme::SPACE_M);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         if let Some(update) = &app.update {
@@ -3291,52 +3313,14 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
             crate::updates::Check::Idle | crate::updates::Check::Checking => None,
         };
         if let Some((text, color)) = status {
-            ui.add_space(10.0);
-            theme::paragraph(ui, text, theme::regular(13.0), color);
+            ui.add_space(8.0);
+            theme::paragraph(ui, text, theme::regular(theme::TEXT_CONTROL), color);
         }
     }
-    if crate::brand::UPDATES {
-        ui.add_space(12.0);
-        update_channel_picker(app, ui);
-    }
-    ui.add_space(14.0);
+    ui.add_space(16.0);
     if let Some(url) = widgets::credit(ui, &palette, app.locale) {
         app.actions.push(Action::OpenUrl(url.to_owned()));
     }
-}
-
-/// Stable or Beta: which releases About offers.
-fn update_channel_picker(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    let locale = app.locale;
-    let options: Vec<_> = crate::updates::Channel::ALL
-        .into_iter()
-        .map(|channel| (channel, crate::i18n::gettext(locale, channel.label())))
-        .collect();
-    let selected = Some(app.settings.update_channel);
-    ui.horizontal(|ui| {
-        theme::text(
-            ui,
-            crate::i18n::gettext(locale, "Update channel"),
-            theme::medium(13.0),
-            palette.secondary,
-        );
-        ui.add_space(6.0);
-        if let Some(channel) = segmented(ui, &palette, "channel", &options, selected, 88.0) {
-            app.actions.push(Action::SetUpdateChannel(channel));
-        }
-    });
-    let note = match app.settings.update_channel {
-        crate::updates::Channel::Stable => "Tested releases only.",
-        crate::updates::Channel::Beta => "Early builds first. They may have rough edges.",
-    };
-    ui.add_space(6.0);
-    theme::paragraph(
-        ui,
-        crate::i18n::gettext(locale, note),
-        theme::regular(12.0),
-        palette.secondary,
-    );
 }
 
 /// Asks GitHub for a newer release now; a newer one opens the update window.
@@ -3349,7 +3333,7 @@ fn check_for_updates(app: &mut App, ui: &mut egui::Ui) {
             theme::text(
                 ui,
                 crate::i18n::gettext(app.locale, "Checking for updates…"),
-                theme::medium(13.0),
+                theme::medium(theme::TEXT_CONTROL),
                 palette.secondary,
             );
         });
@@ -3406,7 +3390,7 @@ fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
             theme::text(
                 ui,
                 solid.into_owned(),
-                theme::medium(12.5),
+                theme::medium(theme::TEXT_CAPTION),
                 palette.secondary,
             );
             let slider = widgets::glass_slider(ui, &palette, &mut tint, 0.0..=1.0, 150.0);
@@ -3416,7 +3400,7 @@ fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
             theme::text(
                 ui,
                 clear.into_owned(),
-                theme::medium(12.5),
+                theme::medium(theme::TEXT_CAPTION),
                 palette.secondary,
             );
             if slider.changed() {

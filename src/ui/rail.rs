@@ -433,7 +433,19 @@ fn destination_button(
         )
     });
     if ui.is_rect_visible(plate) {
-        let hovered = response.hovered() || response.has_focus();
+        let ctx = ui.ctx().clone();
+        let hover = theme::animate(
+            &ctx,
+            response.id.with("rail-hover"),
+            (response.hovered() || response.has_focus()) && !lit,
+            theme::MOTION_QUICK,
+        );
+        let press = theme::animate(
+            &ctx,
+            response.id.with("rail-press"),
+            response.is_pointer_button_down_on(),
+            theme::MOTION_QUICK,
+        );
         if lit {
             // The selected destination is tinted with the accent.
             widgets::highlight_card(ui, palette, plate, palette.surface_active);
@@ -442,21 +454,20 @@ fn destination_button(
                 egui::CornerRadius::same(theme::RADIUS),
                 palette.accent.gamma_multiply(0.18),
             );
-        } else if hovered {
+        } else if hover > 0.0 {
+            // Not a scope: an empty child ui would still advance the rail's
+            // cursor by an item spacing.
+            let opacity = ui.opacity();
+            ui.multiply_opacity(hover);
             widgets::highlight_card(ui, palette, plate, palette.surface_hover);
+            ui.set_opacity(opacity);
         }
         let tint = if lit {
             palette.accent
-        } else if hovered {
-            palette.text
         } else {
-            palette.secondary
+            palette.secondary.lerp_to_gamma(palette.text, hover)
         };
-        let scale = if response.is_pointer_button_down_on() {
-            0.92
-        } else {
-            1.0
-        };
+        let scale = 1.0 - 0.08 * press;
         theme::paint_icon(ui, icon, plate, ICON * scale, tint);
         if badge > 0 {
             widgets::unread_indicator(

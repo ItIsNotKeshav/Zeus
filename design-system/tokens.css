@@ -270,22 +270,19 @@
   --accent-pink: #ff378f;
   --accent-purple: #bf5af2;
   --accent-yellow: #ffd60a;
-  --font-sans: "Google Sans Flex", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Fraunces", Georgia, serif;
   --font-tabular: "Inter", "Google Sans Flex", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
   --space-2: 2px;
   --space-4: 4px;
-  --space-6: 6px;
   --space-8: 8px;
-  --space-10: 10px;
   --space-12: 12px;
-  --space-14: 14px;
   --space-16: 16px;
   --space-20: 20px;
-  --space-22: 22px;
   --space-24: 24px;
   --space-32: 32px;
-  --space-48: 48px;
+  --space-40: 40px;
   --radius-bubble-join: 4px;
   --radius-small: 8px;
   --radius-bubble: 10px;
@@ -336,6 +333,7 @@
   --blur-saturation: 1.3;
 }
 
+.zeus-hero { font-family: var(--font-serif); font-size: 33px; line-height: 40px; font-weight: 480; font-variation-settings: "opsz" 72, "SOFT" 100, "WONK" 0; }
 .zeus-display { font-family: var(--font-sans); font-size: 24px; line-height: 30px; font-weight: 670; }
 .zeus-heading { font-family: var(--font-sans); font-size: 22px; line-height: 28px; font-weight: 570; }
 .zeus-title { font-family: var(--font-sans); font-size: 20px; line-height: 26px; font-weight: 670; }
