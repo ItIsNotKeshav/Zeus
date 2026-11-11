@@ -214,9 +214,10 @@ fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
             .inner;
         let list = area.with_min_y(bar.top());
         // A strip opening over the field slides the messages up with it, so
-        // the last one is never left behind it. The reply strip's room moves
-        // on its own spring, which the messages follow exactly.
-        let reply = reply_room(ui.ctx());
+        // the last one is never left behind it. The strips over the field
+        // (reply, edit, link preview, attachments) open and close on their
+        // own springs, which the messages follow exactly.
+        let reply = strip_room(ui.ctx(), &chat.id);
         let over = theme::animate_value(
             ui.ctx(),
             ui.id().with("composer-over"),
@@ -1773,17 +1774,29 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let unsent_voice = app
                 .unsent_voice
                 .as_ref()
-                .filter(|(unsent, _)| *unsent == chat.id)
-                .map(|(_, samples)| samples.len());
-            if let Some(samples) = unsent_voice
-                && app.editing.is_none()
+                .filter(|(unsent, _)| *unsent == chat.id && app.editing.is_none())
+                .map(|(_, samples)| unsent_seconds(samples.len()));
+            reveal_strip(
+                ui,
+                calm,
+                egui::Id::new("unsent-voice-reveal"),
+                &chat.id,
+                unsent_voice.as_ref(),
+                |strip, seconds| unsent_voice_strip(app, strip, *seconds),
+            );
+            // Editing and replying trade places: one strip sinks as the
+            // other rises.
+            let editing = app.editing.is_some();
+            reveal_strip(
+                ui,
+                calm,
+                egui::Id::new("edit-reveal"),
+                &chat.id,
+                editing.then_some(&()),
+                |strip, _| edit_strip(app, strip),
+            );
             {
-                unsent_voice_strip(app, ui, samples);
-            }
-            if app.editing.is_some() {
-                edit_strip(app, ui);
-            } else {
-                let card = match app.reply_to.clone() {
+                let card = match app.reply_to.clone().filter(|_| !editing) {
                     Some(reply_id) => match app.reply_preview(&reply_id, &chat.id) {
                         Some(quoted) => Some(ReplyCard::of(app, quoted)),
                         // Losing the source page must never silently turn a
@@ -1802,9 +1815,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 reply_strip(app, ui, &chat.id, card);
             }
             // Nearest the pill, under a reply. A caption goes without one.
-            if app.pending.is_empty() && app.recording.is_none() {
-                link_preview_strip(app, ui);
-            }
+            link_preview_strip(app, ui, &chat.id, calm);
             app.prepare_composer_undo(ui.ctx());
             let id = egui::Id::new("composer-text");
             let has_focus = ui.memory(|memory| memory.has_focus(id));
@@ -1819,9 +1830,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 (has_focus && typed(":"), has_focus && typed("@"))
             });
             forget_pending_posters(ui.ctx(), app);
-            if !app.pending.is_empty() {
-                pending_strip(app, ui);
-            }
+            attachment_strip(app, ui, &chat.id, calm);
             if app.recording.is_some() {
                 composer_glass(ui, &palette, |ui| recording_strip(app, ui));
                 return;
@@ -1870,7 +1879,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let button_width = line;
             let view_once = app.editing.is_none()
                 && (app.pending_supports_view_once() || app.pending_view_once);
-            let view_once_width = if view_once { COMPOSER_CONTROL + ui.spacing().item_spacing.x } else { 0.0 };
+            // The view-once toggle grows into the row as a single photo is
+            // staged and shrinks away once it is not, so the field narrows
+            // and widens smoothly beside it.
+            let view_once_shown = theme::animate(
+                ui.ctx(),
+                egui::Id::new(("view-once-shown", chat.id.as_str())),
+                view_once,
+                theme::MOTION_QUICK,
+            );
+            let view_once_width =
+                (COMPOSER_CONTROL + ui.spacing().item_spacing.x) * view_once_shown;
             let field_margin = ((line - line_height) / 2.0).round().max(0.0);
             // Measure this frame's draft at the text column's width, so the
             // field and the panel holding it grow on the keystroke that wraps
@@ -2224,10 +2243,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         ui.add_space(bottom);
                         });
                     });
-                if view_once
-                    && last_line(ui, line, |ui| view_once_button(app, ui))
+                if view_once_shown > 0.0
+                    && last_line(ui, line, |ui| view_once_button(app, ui, view_once_shown))
                         .tab_stop(Stop::ViewOnce)
                         .clicked()
+                    && view_once
                 {
                     app.actions.push(Action::SetPendingViewOnce(!app.pending_view_once));
                 }
@@ -2689,17 +2709,44 @@ fn strip_frame(palette: &Palette) -> Frame {
 
 /// The link preview that goes with the message being written: "Loading
 /// preview…" while it is fetched, then the card with an X that sends the
-/// message without it. Nothing once dismissed.
-fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
+/// message without it. Nothing once dismissed, or while an attachment or a
+/// recording takes its place. It opens out of the field and sinks back
+/// into it ([`reveal_strip`]).
+fn link_preview_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
     let palette = app.palette;
-    let Some(shown) = app.shown_preview() else {
-        return;
-    };
+    let locale = app.locale;
+    let shown = app
+        .shown_preview()
+        .filter(|shown| !matches!(shown.state, LinkPreviewState::Dismissed))
+        .filter(|_| app.pending.is_empty() && app.recording.is_none());
+    let mut dismiss = false;
+    reveal_strip(
+        ui,
+        calm,
+        egui::Id::new("link-preview-reveal"),
+        chat,
+        shown,
+        |strip, shown| dismiss = link_preview_card(strip, &palette, locale, shown),
+    );
+    if dismiss {
+        app.actions.push(Action::DismissLinkPreview);
+    }
+}
+
+/// Draws the link preview's card, the gap under it included, and returns
+/// whether its X was clicked.
+fn link_preview_card(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    locale: crate::i18n::Locale,
+    shown: &crate::app::ComposerPreview,
+) -> bool {
+    let palette = *palette;
     let mut dismiss = false;
     let strip = match &shown.state {
-        LinkPreviewState::Dismissed => return,
+        LinkPreviewState::Dismissed => return false,
         LinkPreviewState::Loading => {
-            let loading = crate::i18n::gettext(app.locale, "Loading preview…");
+            let loading = crate::i18n::gettext(locale, "Loading preview…");
             strip_frame(&palette).show(ui, |ui| {
                 ui.set_width(ui.available_width().max(0.0));
                 ui.horizontal(|ui| {
@@ -2710,7 +2757,7 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
             })
         }
         LinkPreviewState::Ready(composed) => {
-            let remove = crate::i18n::gettext(app.locale, "Remove link preview");
+            let remove = crate::i18n::gettext(locale, "Remove link preview");
             // The card has no message: its picture is named by its chat and
             // link instead, the same each frame.
             let image = composer_thumbnail_id(&composed.preview.url);
@@ -2757,10 +2804,8 @@ fn link_preview_strip(app: &mut App, ui: &mut egui::Ui) {
     };
     ui.ctx()
         .data_mut(|data| data.insert_temp(link_preview_strip_id(), strip.response.rect));
-    if dismiss {
-        app.actions.push(Action::DismissLinkPreview);
-    }
     strip_gap(ui);
+    dismiss
 }
 
 /// The image id of the composer card's thumbnail for `url`.
@@ -2790,11 +2835,15 @@ const SUGGESTION_INSET: i8 = 4;
 /// A suggestion row's corners, concentric with the list's.
 const SUGGESTION_ROW_RADIUS: f32 = (STRIP_RADIUS as i8 - SUGGESTION_INSET) as f32;
 
-fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, samples: usize) {
-    let palette = app.palette;
-    let seconds = (samples as f64 / f64::from(crate::voice::RATE))
+/// How long a refused voice message of `samples` lasts, in whole seconds.
+fn unsent_seconds(samples: usize) -> u32 {
+    (samples as f64 / f64::from(crate::voice::RATE))
         .round()
-        .max(1.0) as u32;
+        .max(1.0) as u32
+}
+
+fn unsent_voice_strip(app: &mut App, ui: &mut egui::Ui, seconds: u32) {
+    let palette = app.palette;
     let label = crate::i18n::gettext(app.locale, "Voice message ({duration}) not sent")
         .replace("{duration}", &crate::util::duration(seconds));
     let discard = crate::i18n::gettext(app.locale, "Discard voice message");
@@ -2882,124 +2931,222 @@ impl ReplyCard {
     }
 }
 
-/// The spring the reply strip opens on: critically damped, since its room
-/// moves the field and the messages, and a reversal mid-way carries on
-/// from where it is.
-const REPLY_OPEN: crate::motion::Spring = crate::motion::Spring::new(0.35, 0.0);
+/// The spring a strip over the composer opens on: critically damped, since
+/// its room moves the field and the messages, and a reversal mid-way
+/// carries on from where it is. A strip that grows or shrinks while open,
+/// and an attachment tile sliding to a new place, move on it too.
+const STRIP_OPEN: crate::motion::Spring = crate::motion::Spring::new(0.35, 0.0);
 /// The spring it closes on, quicker, as surfaces close.
-const REPLY_CLOSE: crate::motion::Spring =
+const STRIP_CLOSE: crate::motion::Spring =
     crate::motion::Spring::new(0.35 * theme::CLOSE as f64, 0.0);
-/// The share of the way open by which the strip is fully opaque: it fades
-/// in over the start of its rise and out over the end of its fall.
-const REPLY_FADE: f32 = 0.4;
+/// The share of the way open by which a strip is fully opaque: it fades in
+/// over the start of its rise and out over the end of its fall.
+const STRIP_FADE: f32 = 0.4;
 
-/// Where the reply strip over the composer stands as it opens and closes.
-/// Kept in the context's memory and brought up to date once a pass by
-/// [`reply_strip`].
+/// Where one strip over the composer stands as it opens and closes. Kept
+/// in the context's memory under the strip's own id and brought up to date
+/// once a pass by [`reveal_strip`].
 #[derive(Clone)]
-struct ReplyReveal {
+struct Reveal<T> {
     chat: String,
-    /// The card shown: the open reply's, or the last one while it closes.
-    card: Option<ReplyCard>,
+    /// What the strip shows: the open one's, or the last while it closes.
+    card: Option<std::sync::Arc<T>>,
     /// How far open the strip is, 0 closed and 1 open, with its speed per
     /// second.
     shown: f32,
     velocity: f32,
     /// The strip's height with the gap under it, as last laid out.
     height: f32,
-    /// The room it took in the pass it was last drawn.
-    room: f32,
+    /// The height its room follows on [`STRIP_OPEN`], with its speed, so a
+    /// strip that grows or shrinks while open moves the messages smoothly.
+    tall: f32,
+    tall_velocity: f32,
     /// When it was last brought up to date, and the pass it was.
     time: f64,
     pass: u64,
 }
 
-fn reply_reveal_id() -> egui::Id {
-    egui::Id::new("reply-reveal")
+/// The room the strips over a chat's composer took in a pass.
+#[derive(Clone, Copy, Default)]
+struct StripRooms {
+    pass: u64,
+    total: f32,
 }
 
-/// The room the reply strip takes over the field in this pass, while it
-/// opens, closes or shows: 0 when it was not drawn.
-fn reply_room(ctx: &egui::Context) -> f32 {
-    ctx.data(|data| data.get_temp::<ReplyReveal>(reply_reveal_id()))
-        .filter(|reveal| reveal.pass == ctx.cumulative_pass_nr())
-        .map_or(0.0, |reveal| reveal.room)
+fn strip_rooms_id(chat: &str) -> egui::Id {
+    egui::Id::new(("composer-strip-rooms", chat))
 }
 
-/// The strip over the composer that quotes the message being replied to,
-/// `card`, or `None` while no reply is open. It opens out of the field: its
-/// room grows on [`REPLY_OPEN`] while the strip rises from behind the field
-/// and fades in, lifting the messages with it, and it sinks back the same
-/// way on [`REPLY_CLOSE`] once the reply is sent or cancelled, turning
-/// around from where it is. With a screen reader, in a background window,
-/// or in a chat just opened it is in place at once.
-fn reply_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, card: Option<ReplyCard>) {
+/// The room the strips over `chat`'s composer take in this pass, while they
+/// open, close or show: 0 when none was drawn. The messages rise and sink
+/// with it exactly.
+fn strip_room(ctx: &egui::Context, chat: &str) -> f32 {
+    ctx.data(|data| data.get_temp::<StripRooms>(strip_rooms_id(chat)))
+        .filter(|rooms| rooms.pass == ctx.cumulative_pass_nr())
+        .map_or(0.0, |rooms| rooms.total)
+}
+
+/// Moves a spring at `position` with `velocity` toward `target` over `dt`
+/// seconds, landing on it once it is all but there.
+fn spring_toward(
+    spring: crate::motion::Spring,
+    position: f32,
+    velocity: f32,
+    target: f32,
+    dt: f64,
+) -> (f32, f32) {
+    let (offset, velocity) = spring.advance(position - target, velocity, dt);
+    if offset.abs() <= 1e-3 && velocity.abs() <= 1e-2 {
+        (target, 0.0)
+    } else {
+        (target + offset, velocity)
+    }
+}
+
+/// A strip over `chat`'s composer that shows `card`, or `None` while there
+/// is nothing to show. It opens out of the field: its room grows on
+/// [`STRIP_OPEN`] while the strip rises from behind the field and fades in,
+/// lifting the messages with it, and it sinks back the same way on
+/// [`STRIP_CLOSE`] once `card` goes, drawing the last card meanwhile and
+/// turning around from where it is. A strip that changes height while open
+/// grows out from behind the field or settles down onto it. `draw` lays
+/// the card out, the gap under it included. When `calm` (a screen reader, a
+/// background window) or in a chat just opened, it is in place at once.
+/// Returns whether anything was drawn.
+fn reveal_strip<T: Clone + PartialEq + Send + Sync + 'static>(
+    ui: &mut egui::Ui,
+    calm: bool,
+    id: egui::Id,
+    chat: &str,
+    card: Option<&T>,
+    draw: impl FnOnce(&mut egui::Ui, &T),
+) -> bool {
     let ctx = ui.ctx().clone();
-    let id = reply_reveal_id();
+    let id = id.with(chat);
     let now = ctx.input(|input| input.time);
     let pass = ctx.cumulative_pass_nr();
-    let calm = selection_calm(&ctx, app.window_focused);
     let open = card.is_some();
     let target = if open { 1.0 } else { 0.0 };
-    let mut reveal = match ctx.data(|data| data.get_temp::<ReplyReveal>(id)) {
+    let mut moving = false;
+    let mut reveal = match ctx.data(|data| data.get_temp::<Reveal<T>>(id)) {
         // Drawn in the pass before for the same chat: it moves on.
         Some(mut reveal) if !calm && reveal.chat == chat && reveal.pass + 1 >= pass => {
-            let spring = if open { REPLY_OPEN } else { REPLY_CLOSE };
+            let spring = if open { STRIP_OPEN } else { STRIP_CLOSE };
             let dt = (now - reveal.time).max(0.0);
-            let (offset, velocity) = spring.advance(reveal.shown - target, reveal.velocity, dt);
-            if offset.abs() <= 1e-3 && velocity.abs() <= 1e-2 {
-                (reveal.shown, reveal.velocity) = (target, 0.0);
-            } else {
-                (reveal.shown, reveal.velocity) = (target + offset, velocity);
-            }
+            (reveal.shown, reveal.velocity) =
+                spring_toward(spring, reveal.shown, reveal.velocity, target, dt);
+            (reveal.tall, reveal.tall_velocity) = spring_toward(
+                STRIP_OPEN,
+                reveal.tall,
+                reveal.tall_velocity,
+                reveal.height,
+                dt,
+            );
+            moving = true;
             reveal
         }
-        previous => ReplyReveal {
-            chat: chat.to_owned(),
-            card: None,
-            shown: target,
-            velocity: 0.0,
-            height: previous.map_or(0.0, |reveal| reveal.height),
-            room: 0.0,
-            time: now,
-            pass,
-        },
+        previous => {
+            let height = previous.map_or(0.0, |reveal| reveal.height);
+            Reveal {
+                chat: chat.to_owned(),
+                card: None,
+                shown: target,
+                velocity: 0.0,
+                height,
+                tall: height,
+                tall_velocity: 0.0,
+                time: now,
+                pass,
+            }
+        }
     };
-    if card.is_some() {
-        reveal.card = card;
-    } else if reveal.shown == 0.0 && reveal.velocity == 0.0 {
-        reveal.card = None;
+    // A strip opening from nothing takes its height at once: its room grows
+    // on the opening spring alone.
+    let from_nothing = reveal.card.is_none() || !moving;
+    match card {
+        Some(card) if reveal.card.as_deref() != Some(card) => {
+            reveal.card = Some(std::sync::Arc::new(card.clone()));
+        }
+        Some(_) => {}
+        None if reveal.shown == 0.0 && reveal.velocity == 0.0 => reveal.card = None,
+        None => {}
     }
-    reveal.room = 0.0;
-    if let Some(card) = reveal.card.clone() {
+    let mut room = 0.0;
+    let drawn = reveal.card.clone();
+    if let Some(card) = &drawn {
         let top = ui.cursor().min;
+        let shown = reveal.shown.clamp(0.0, 1.0);
+        // A strip shorter than its room rests on the field, its top
+        // settling down; a taller one is laid out where it rests below the
+        // top of its room and cut off where the field starts, so it rises
+        // from behind it.
+        let tall = if from_nothing {
+            reveal.height
+        } else {
+            reveal.tall
+        };
+        let settle = (tall - reveal.height).max(0.0) * shown;
         let mut strip = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(ui.available_rect_before_wrap())
+                .max_rect(ui.available_rect_before_wrap().translate(vec2(0.0, settle)))
                 .layout(Layout::top_down(Align::Min)),
         );
-        let shown = reveal.shown.clamp(0.0, 1.0);
-        if shown < 1.0 {
-            // Laid out where it rests, below the top of its room, and cut
-            // off where the field starts, so it rises from behind it.
+        // One in place at once has no room to keep to yet: its height is
+        // measured as it is drawn.
+        if !(from_nothing && shown >= 1.0) {
             let mut clip = strip.clip_rect();
-            clip.max.y = clip.max.y.min(top.y + reveal.height * shown);
+            clip.max.y = clip.max.y.min(top.y + tall * shown);
             strip.set_clip_rect(clip);
-            strip.multiply_opacity((shown / REPLY_FADE).min(1.0));
         }
-        let rect = reply_card(app, &mut strip, &card);
-        strip_gap(&mut strip);
-        reveal.height = strip.cursor().min.y - top.y;
-        reveal.room = reveal.height * shown;
-        ctx.data_mut(|data| data.insert_temp(reply_strip_id(), rect));
-        ui.add_space(reveal.room);
+        if shown < 1.0 {
+            strip.multiply_opacity((shown / STRIP_FADE).min(1.0));
+        }
+        draw(&mut strip, card);
+        reveal.height = strip.cursor().min.y - top.y - settle;
+        if from_nothing {
+            (reveal.tall, reveal.tall_velocity) = (reveal.height, 0.0);
+        }
+        room = reveal.tall * shown;
+        ui.add_space(room);
     }
-    if reveal.shown != target || reveal.velocity != 0.0 {
+    if reveal.shown != target
+        || reveal.velocity != 0.0
+        || (drawn.is_some() && (reveal.tall != reveal.height || reveal.tall_velocity != 0.0))
+    {
         crate::motion::request_frame(&ctx);
     }
     reveal.time = now;
     reveal.pass = pass;
-    ctx.data_mut(|data| data.insert_temp(id, reveal));
+    ctx.data_mut(|data| {
+        data.insert_temp(id, reveal);
+        let rooms = data.get_temp_mut_or_default::<StripRooms>(strip_rooms_id(chat));
+        if rooms.pass != pass {
+            *rooms = StripRooms { pass, total: 0.0 };
+        }
+        rooms.total += room;
+    });
+    drawn.is_some()
+}
+
+/// The strip over the composer that quotes the message being replied to,
+/// `card`, or `None` while no reply is open, opening out of the field and
+/// sinking back into it as [`reveal_strip`] does.
+fn reply_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, card: Option<ReplyCard>) {
+    let calm = selection_calm(ui.ctx(), app.window_focused);
+    reveal_strip(
+        ui,
+        calm,
+        egui::Id::new("reply-reveal"),
+        chat,
+        card.as_ref(),
+        |strip, card| {
+            let rect = reply_card(app, strip, card);
+            strip_gap(strip);
+            strip
+                .ctx()
+                .data_mut(|data| data.insert_temp(reply_strip_id(), rect));
+        },
+    );
 }
 
 /// Draws the reply strip's card in `ui` and returns where it lies.
@@ -15456,6 +15603,62 @@ fn progress_ring(
 
 #[cfg(test)]
 mod tests {
+    /// A strip over the composer is in place at once in a calm window,
+    /// opens out of nothing over the frames after it is asked for, and
+    /// sinks back once it is not; the messages get its room all the way.
+    #[test]
+    fn a_composer_strip_opens_and_sinks_on_its_spring() {
+        let ctx = egui::Context::default();
+        let mut time = 0.0;
+        let mut frame = |card: Option<u8>, calm: bool| {
+            time += 1.0 / 60.0;
+            let mut room = 0.0;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(time),
+                    ..Default::default()
+                },
+                |ui| {
+                    super::reveal_strip(
+                        ui,
+                        calm,
+                        egui::Id::new("test-strip"),
+                        "chat",
+                        card.as_ref(),
+                        |strip, _| {
+                            strip.allocate_space(super::vec2(100.0, 40.0));
+                        },
+                    );
+                    room = super::strip_room(ui.ctx(), "chat");
+                },
+            );
+            output.textures_delta.clear();
+            room
+        };
+        let full = frame(Some(1), true);
+        assert!(full >= 40.0, "in place at once: {full}");
+        assert_eq!(frame(None, true), 0.0, "gone at once");
+        assert_eq!(frame(None, false), 0.0);
+        let opening = frame(Some(1), false);
+        assert!(opening > 0.0 && opening < full / 2.0, "opening: {opening}");
+        let mut last = opening;
+        for _ in 0..60 {
+            let room = frame(Some(1), false);
+            assert!(
+                room >= last - 1e-3,
+                "it never turns back: {room} after {last}"
+            );
+            last = room;
+        }
+        assert!((last - full).abs() < 1e-3, "open: {last} of {full}");
+        let closing = frame(None, false);
+        assert!(closing > 0.0 && closing < full, "sinking: {closing}");
+        for _ in 0..60 {
+            last = frame(None, false);
+        }
+        assert_eq!(last, 0.0, "closed");
+    }
+
     #[test]
     fn recording_breath_stays_in_range_and_loops() {
         for step in 0..240 {
@@ -17834,7 +18037,7 @@ enum PendingPoster {
 /// The poster of a staged video, started on first sight and picked up
 /// when the decode finishes. `None` while it is still loading or when the
 /// clip has no picture the app can decode.
-fn pending_poster(ctx: &egui::Context, path: &std::path::Path) -> Option<(egui::TextureId, Vec2)> {
+fn pending_poster(ctx: &egui::Context, path: &std::path::Path) -> Option<egui::TextureHandle> {
     let id = egui::Id::new(("pending-poster", path));
     let slot = ctx
         .data_mut(|data| data.get_temp::<std::sync::Arc<std::sync::Mutex<PendingPoster>>>(id))
@@ -17879,7 +18082,7 @@ fn pending_poster(ctx: &egui::Context, path: &std::path::Path) -> Option<(egui::
         };
     }
     match &*state {
-        PendingPoster::Ready(handle) => Some((handle.id(), handle.size_vec2())),
+        PendingPoster::Ready(handle) => Some(handle.clone()),
         _ => None,
     }
 }
@@ -17953,8 +18156,158 @@ fn pending_media_size(native: Vec2, bounds: Vec2) -> Vec2 {
 /// Side of the square a document or an undecoded attachment shows as.
 const PENDING_TILE: f32 = 72.0;
 
-/// Pending attachment tiles above the composer.
-fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
+/// The spring a tile added to a strip already open pops in on, from
+/// [`TILE_POP_FROM`] of its size: a touch of bounce, as a control answers.
+const TILE_POP: crate::motion::Spring = crate::motion::Spring::SNAPPY;
+/// The size a popping tile starts from: never from nothing.
+const TILE_POP_FROM: f32 = 0.92;
+/// How long a popping tile takes to become opaque.
+const TILE_FADE_IN: f64 = 0.15;
+/// How long after the one before it each tile added together pops in. The
+/// fourth and later go with the fourth, so a batch is in within 0.3 s.
+const TILE_STAGGER: f64 = 0.04;
+const TILE_STAGGER_MAX: usize = 3;
+
+/// A staged attachment's tile as it was drawn, kept to paint it as it
+/// leaves the strip or while the strip closes: its picture and name
+/// (without the hover shade or the remove button) relative to the strip's
+/// top left, and the textures they show, held so the pictures outlive the
+/// attachment for as long as its tile is seen.
+#[derive(Clone)]
+struct TileGhost {
+    id: crate::app::AttachmentId,
+    place: Rect,
+    shapes: Vec<egui::Shape>,
+    _textures: Vec<egui::TextureHandle>,
+}
+
+/// How one staged attachment's tile moves.
+#[derive(Clone, Copy)]
+struct TileMotion {
+    id: crate::app::AttachmentId,
+    /// Where it lay last pass, relative to the strip's top left.
+    place: Rect,
+    /// How far from its place it is drawn as it slides into a new one,
+    /// and how fast that shrinks, per second.
+    offset: Vec2,
+    velocity: Vec2,
+    /// When it pops in, for one added to a strip already open, until it
+    /// has.
+    pops: Option<f64>,
+}
+
+/// The attachment strip's tiles as they move, kept in the context's memory
+/// per chat and brought up to date once a pass by [`pending_strip`].
+#[derive(Clone, Default)]
+struct TileMotions {
+    chat: String,
+    tiles: Vec<TileMotion>,
+    /// Every tile drawn last pass, and those leaving with when they went.
+    ghosts: std::sync::Arc<Vec<TileGhost>>,
+    leaving: Vec<(TileGhost, f64)>,
+    /// How tall the strip was laid out, the space under it included.
+    height: f32,
+    time: f64,
+    pass: u64,
+}
+
+fn tile_motions_id(chat: &str) -> egui::Id {
+    egui::Id::new(("pending-tiles", chat))
+}
+
+/// The staged tiles of `chat`'s strip as they move, for tests: each one's
+/// id, whether it is still popping in, and how far from its place it is
+/// drawn; and how many tiles are leaving.
+#[cfg(test)]
+pub(crate) fn tile_motion(
+    ctx: &egui::Context,
+    chat: &str,
+) -> (Vec<(crate::app::AttachmentId, bool, Vec2)>, usize) {
+    ctx.data(|data| data.get_temp::<TileMotions>(tile_motions_id(chat)))
+        .map_or_else(
+            || (Vec::new(), 0),
+            |motions| {
+                (
+                    motions
+                        .tiles
+                        .iter()
+                        .map(|tile| (tile.id, tile.pops.is_some(), tile.offset))
+                        .collect(),
+                    motions.leaving.len(),
+                )
+            },
+        )
+}
+
+/// What the attachment strip shows as it closes: the tiles drawn last.
+#[derive(Clone, Default)]
+struct PendingCard {
+    height: f32,
+    ghosts: std::sync::Arc<Vec<TileGhost>>,
+}
+
+impl PartialEq for PendingCard {
+    fn eq(&self, other: &Self) -> bool {
+        self.height == other.height && std::sync::Arc::ptr_eq(&self.ghosts, &other.ghosts)
+    }
+}
+
+/// The strip of attachments staged in `chat`'s composer, opening out of the
+/// field as the first is added and sinking back once they are sent or
+/// removed ([`reveal_strip`]). While it is open, each tile added pops in,
+/// one removed fades and shrinks where it was without holding its room,
+/// and the rest slide to their new places.
+fn attachment_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
+    let id = tile_motions_id(chat);
+    let card = (!app.pending.is_empty()).then(|| {
+        ui.ctx()
+            .data(|data| data.get_temp::<TileMotions>(id))
+            .filter(|motions| motions.chat == chat)
+            .map(|motions| PendingCard {
+                height: motions.height,
+                ghosts: motions.ghosts,
+            })
+            .unwrap_or_default()
+    });
+    let live = card.is_some();
+    let drawn = reveal_strip(
+        ui,
+        calm,
+        egui::Id::new("pending-reveal"),
+        chat,
+        card.as_ref(),
+        |strip, card| {
+            if live {
+                pending_strip(app, strip, chat, calm);
+            } else {
+                paint_tile_ghosts(strip, card);
+            }
+        },
+    );
+    if !drawn {
+        // Lets go of the kept pictures once nothing shows them.
+        ui.ctx().data_mut(|data| data.remove::<TileMotions>(id));
+    }
+}
+
+/// Paints the tiles the strip last showed, as it closes.
+fn paint_tile_ghosts(ui: &mut egui::Ui, card: &PendingCard) {
+    let origin = egui::emath::TSTransform::from_translation(ui.cursor().min.to_vec2());
+    let shapes = card
+        .ghosts
+        .iter()
+        .flat_map(|ghost| ghost.shapes.iter().cloned())
+        .map(|mut shape| {
+            shape.transform(origin);
+            shape
+        })
+        .collect();
+    ui.painter().add(egui::Shape::Vec(shapes));
+    ui.add_space(card.height);
+}
+
+/// Pending attachment tiles above the composer, as they move.
+fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
     let palette = app.palette;
     let mut remove = None;
     let mut open = None;
@@ -17964,6 +18317,26 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
     } else {
         theme::MOTION_QUICK
     };
+    let motions_id = tile_motions_id(chat);
+    let now = ui.input(|input| input.time);
+    let pass = ui.ctx().cumulative_pass_nr();
+    // Drawn in the pass before for the same chat, the tiles move on; else
+    // they are in place at once.
+    let before = ui
+        .ctx()
+        .data(|data| data.get_temp::<TileMotions>(motions_id))
+        .filter(|motions| !calm && motions.chat == chat && motions.pass + 1 >= pass);
+    let dt = before
+        .as_ref()
+        .map_or(0.0, |motions| (now - motions.time).max(0.0));
+    let origin = ui.cursor().min;
+    let layer = ui.layer_id();
+    // Under the tiles: those leaving fade where they were.
+    let leaving_slot = ui.painter().add(egui::Shape::Noop);
+    let mut tiles = Vec::new();
+    let mut ghosts = Vec::new();
+    let mut added = 0;
+    let mut moving = false;
     // One attachment gets most of the panel, so a photo can be seen before it
     // goes out. Several share the width in pairs. Neither is a fixed size: the
     // picture's own ratio decides the shape inside these bounds.
@@ -18010,7 +18383,9 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                 crate::app::Pending::File(path) if crate::image_preview::is_video(path) => {
                     let poster = pending_poster(&ctx, path);
                     // Until the frame arrives the clip holds a landscape slot.
-                    let native = poster.map_or(vec2(16.0, 9.0), |(_, size)| size);
+                    let native = poster
+                        .as_ref()
+                        .map_or(vec2(16.0, 9.0), |handle| handle.size_vec2());
                     (poster, Some(native))
                 }
                 _ => (None, None),
@@ -18034,6 +18409,9 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
             if size != target {
                 ctx.request_repaint();
             }
+            let start = super::swipe::mark(ui);
+            let mut face_end = start;
+            let mut textures: Vec<egui::TextureHandle> = poster.iter().cloned().collect();
             let (rect, response) = ui.allocate_exact_size(size, sense);
             if ui.is_rect_visible(rect) {
                 // Flat on the chat like a bubble, with a bubble's corners;
@@ -18098,6 +18476,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                         egui::Image::from_texture((handle.id(), media.size()))
                             .corner_radius(inner_radius)
                             .paint_at(ui, media);
+                        textures.push(handle.clone());
                     }
                     crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
                         if !document && crate::app::Pending::is_picture_file(path) {
@@ -18111,8 +18490,8 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                                 inner_radius,
                                 palette.shadow.gamma_multiply(1.4),
                             );
-                            if let Some((texture, _)) = poster {
-                                egui::Image::from_texture((texture, media.size()))
+                            if let Some(handle) = &poster {
+                                egui::Image::from_texture((handle.id(), media.size()))
                                     .corner_radius(inner_radius)
                                     .paint_at(ui, media);
                             }
@@ -18153,6 +18532,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 }
+                face_end = super::swipe::mark(ui);
                 if editable && response.hovered() {
                     // A picture that can be cropped says so, rather than
                     // looking like every other tile.
@@ -18183,6 +18563,88 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
                     open = Some(item.id);
                 }
             }
+            let end = super::swipe::mark(ui);
+            // Where it lies now against where it lay: one that moved slides
+            // from where it was drawn, and one new to a strip already open
+            // pops in after those added just before it.
+            let place = rect.translate(-origin.to_vec2());
+            let previous = before
+                .as_ref()
+                .and_then(|motions| motions.tiles.iter().find(|tile| tile.id == item.id));
+            let mut tile = match (&before, previous) {
+                (Some(_), Some(previous)) => TileMotion {
+                    place,
+                    offset: previous.offset + (previous.place.min - place.min),
+                    ..*previous
+                },
+                (Some(motions), None) if !motions.tiles.is_empty() => {
+                    let pops = now + TILE_STAGGER * added.min(TILE_STAGGER_MAX) as f64;
+                    added += 1;
+                    TileMotion {
+                        id: item.id,
+                        place,
+                        offset: Vec2::ZERO,
+                        velocity: Vec2::ZERO,
+                        pops: Some(pops),
+                    }
+                }
+                _ => TileMotion {
+                    id: item.id,
+                    place,
+                    offset: Vec2::ZERO,
+                    velocity: Vec2::ZERO,
+                    pops: None,
+                },
+            };
+            let (x, vx) = spring_toward(STRIP_OPEN, tile.offset.x, tile.velocity.x, 0.0, dt);
+            let (y, vy) = spring_toward(STRIP_OPEN, tile.offset.y, tile.velocity.y, 0.0, dt);
+            (tile.offset, tile.velocity) = (vec2(x, y), vec2(vx, vy));
+            let (scale, opacity) = match tile.pops {
+                Some(at) if now < at => (TILE_POP_FROM, 0.0),
+                Some(at) if TILE_POP.settled(now - at) => {
+                    tile.pops = None;
+                    (1.0, 1.0)
+                }
+                Some(at) => (
+                    TILE_POP_FROM + (1.0 - TILE_POP_FROM) * TILE_POP.value(now - at),
+                    theme::ease_out(((now - at) / TILE_FADE_IN).min(1.0) as f32),
+                ),
+                None => (1.0, 1.0),
+            };
+            let transform = egui::emath::TSTransform::from_translation(tile.offset)
+                * scale_about(rect.center(), scale);
+            if tile.offset != Vec2::ZERO || tile.pops.is_some() {
+                moving = true;
+                ctx.graphics_mut(|graphics| {
+                    let list = graphics.entry(layer);
+                    for index in start.0..end.0 {
+                        list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                            clipped.shape.transform(transform);
+                            fade_shape(&mut clipped.shape, opacity);
+                        });
+                    }
+                });
+            }
+            let shapes = ctx.graphics(|graphics| {
+                graphics.get(layer).map_or_else(Vec::new, |list| {
+                    list.all_entries()
+                        .skip(start.0)
+                        .take(face_end.0.saturating_sub(start.0))
+                        .map(|clipped| {
+                            let mut shape = clipped.shape.clone();
+                            shape.translate(-origin.to_vec2());
+                            shape
+                        })
+                        .collect()
+                })
+            });
+            ghosts.push(TileGhost {
+                id: item.id,
+                place: transform.mul_rect(rect).translate(-origin.to_vec2()),
+                shapes,
+                _textures: textures,
+            });
+            tiles.push(tile);
         }
     });
     if let Some(index) = remove {
@@ -18192,15 +18654,72 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui) {
         app.actions.push(Action::EditPicture(target));
     }
     ui.add_space(crate::theme::SPACE_XS);
+    // Tiles removed since the pass before fade and shrink where they were,
+    // taking no room, while the rest slide into what they left.
+    let mut leaving = before
+        .as_ref()
+        .map_or_else(Vec::new, |motions| motions.leaving.clone());
+    if let Some(before) = &before {
+        for ghost in before
+            .ghosts
+            .iter()
+            .filter(|ghost| !app.pending.iter().any(|staged| staged.id == ghost.id))
+        {
+            leaving.push((ghost.clone(), now));
+        }
+    }
+    let leave = f64::from(theme::MOTION_PANEL);
+    leaving.retain(|(_, since)| now - since < leave);
+    if !leaving.is_empty() {
+        moving = true;
+        let shapes: Vec<egui::Shape> = leaving
+            .iter()
+            .flat_map(|(ghost, since)| {
+                let gone = theme::ease_out(((now - since) / leave) as f32);
+                let scale = 1.0 - (1.0 - theme::CLOSE_SCALE) * gone;
+                let transform = scale_about(ghost.place.center() + origin.to_vec2(), scale)
+                    * egui::emath::TSTransform::from_translation(origin.to_vec2());
+                ghost.shapes.iter().map(move |shape| {
+                    let mut shape = shape.clone();
+                    shape.transform(transform);
+                    fade_shape(&mut shape, 1.0 - gone);
+                    shape
+                })
+            })
+            .collect();
+        ui.painter().set(leaving_slot, egui::Shape::Vec(shapes));
+    }
+    if moving {
+        crate::motion::request_frame(ui.ctx());
+    }
+    let height = ui.cursor().min.y - origin.y;
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            motions_id,
+            TileMotions {
+                chat: chat.to_owned(),
+                tiles,
+                ghosts: std::sync::Arc::new(ghosts),
+                leaving,
+                height,
+                time: now,
+                pass,
+            },
+        );
+    });
 }
 
 /// A photo's view-once choice stays beside its caption and Send, with the
 /// same dashed-circle mark as on the phone. Its state is exposed to readers
 /// and keyboard users as a checkbox, even though it is drawn as an icon.
-fn view_once_button(app: &App, ui: &mut egui::Ui) -> egui::Response {
+fn view_once_button(app: &App, ui: &mut egui::Ui, shown: f32) -> egui::Response {
     let palette = app.palette;
     let selected = app.pending_view_once;
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(COMPOSER_CONTROL), Sense::click());
+    // `shown` of the way into the row: its room and the space after it
+    // open together, so the row takes exactly that share of both.
+    let spacing = ui.spacing().item_spacing.x;
+    let width = ((COMPOSER_CONTROL + spacing) * shown - spacing).clamp(0.0, COMPOSER_CONTROL);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, COMPOSER_CONTROL), Sense::click());
     theme::reveal_focus(&response);
     theme::focus_outline(ui, response.id, rect, COMPOSER_CONTROL / 2.0);
     response.widget_info(|| {
@@ -18224,14 +18743,19 @@ fn view_once_button(app: &App, ui: &mut egui::Ui) -> egui::Response {
         } else {
             Color32::TRANSPARENT
         };
+        // From a little under its size, fading in as it grows.
+        let scale = 0.9 + 0.1 * shown;
+        let old_opacity = ui.opacity();
+        ui.multiply_opacity(shown);
         ui.painter()
-            .circle_filled(rect.center(), COMPOSER_CONTROL / 2.0, fill);
+            .circle_filled(rect.center(), COMPOSER_CONTROL / 2.0 * scale, fill);
         let color = if selected {
             palette.on_accent
         } else {
             palette.secondary
         };
-        theme::paint_icon(ui, Icon::ViewOnce, rect, 24.0, color);
+        theme::paint_icon(ui, Icon::ViewOnce, rect, 24.0 * scale, color);
+        ui.set_opacity(old_opacity);
     }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
