@@ -4431,7 +4431,15 @@ mod tests {
             .prefix("zapfast-demo-")
             .tempdir()
             .unwrap();
-        let (mut app, _events) = App::headless(AppDirs::under(root.path()), Settings::default());
+        // These tests measure the WhatsApp look with Glass at Solid: the
+        // time and ticks inside the bubble, a solid header and composer.
+        // The ones about the Zeus look or about glass ask for it by name.
+        let mut settings = Settings {
+            chat_theme: crate::chat_themes::ChatTheme::WhatsApp,
+            ..Settings::default()
+        };
+        settings.set_glass(1.0);
+        let (mut app, _events) = App::headless(AppDirs::under(root.path()), settings);
         ROOTS.with(|roots| roots.borrow_mut().push(root));
         populate(&mut app);
         app
@@ -7892,8 +7900,9 @@ mod tests {
         );
         let ctx = egui::Context::default();
         app.attach(&ctx);
+        // Tall enough for the member rows under the panel's other rows.
         let shapes = (0..3)
-            .map(|_| frame_sized(&mut app, &ctx, 780.0, Vec::new()))
+            .map(|_| frame_sized(&mut app, &ctx, 1100.0, Vec::new()))
             .last()
             .unwrap();
         let mut drawn = Vec::new();
@@ -7906,9 +7915,9 @@ mod tests {
     }
 
     /// The timer line says what WhatsApp says: a duration for a chat with one,
-    /// "Off" for a chat the phone turned it off for, and nothing at all for a
-    /// chat nobody has mentioned a timer for, which includes a frame where the
-    /// row was drawn a moment ago and the chat changed under it.
+    /// "Off" for a chat the phone turned it off for, and for a chat nobody has
+    /// mentioned a timer for, the plain row that sets one where we may change
+    /// it and nothing at all where we may not.
     #[test]
     fn chat_info_says_the_timer_and_hides_what_it_does_not_know() {
         use crate::ui::dialogs::disappearing_timer_id;
@@ -7922,8 +7931,11 @@ mod tests {
                 Some("Disappearing messages: 7 days"),
             ),
             ("disappearing-off,info", Some("Disappearing messages: Off")),
-            ("group-info", None),
-            ("info", None),
+            // A chat whose timer nobody has mentioned offers the row to set
+            // one where we may; a group locked for us draws nothing.
+            ("group-info", Some("Disappearing messages")),
+            ("info", Some("Disappearing messages")),
+            ("group-info-locked", None),
         ] {
             let mut app = app();
             let ctx = egui::Context::default();
@@ -7952,7 +7964,7 @@ mod tests {
         }
     }
 
-    /// A chat whose timer is not known draws no row, even in the same context
+    /// A chat that has no timer draws no row, even in the same context
     /// that just drew one: the marker records each frame, so the last frame's
     /// row cannot be read back as this frame's.
     #[test]
@@ -7974,9 +7986,14 @@ mod tests {
             Some("Disappearing messages: Off".to_owned())
         );
 
-        // The same panel, now a chat whose timer nobody has mentioned.
-        app.open_chat = Some(SAMPLES[3].id.to_owned());
-        info_sample(&mut app, SAMPLES[3].id, InfoView::Overview);
+        // The same panel, now a channel, which has no timer to show or set.
+        let channel = SAMPLES
+            .iter()
+            .find(|sample| sample.id.ends_with("@newsletter"))
+            .expect("a channel sample")
+            .id;
+        app.open_chat = Some(channel.to_owned());
+        info_sample(&mut app, channel, InfoView::Overview);
         render(&mut app, &ctx);
 
         assert!(

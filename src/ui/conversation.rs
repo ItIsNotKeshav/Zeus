@@ -2277,6 +2277,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     // Smaller than the band it sits in, so it clears the
                     // field's rounded corner without making the field taller.
                     let breathing = SEND_CLEARANCE;
+                    // The band keeps its full width, so the button sits as
+                    // far from the field's end as from its top and bottom.
+                    ui.set_min_width(button_width);
                     ui.add_space(breathing);
                     let send = theme::circle_button_morph(
                         ui,
@@ -16947,9 +16950,15 @@ mod tests {
     #[test]
     fn an_edit_in_place_keeps_its_bubble_and_lifts_it_over_the_chat() {
         let root = tempfile::tempdir().unwrap();
+        // Measured in the WhatsApp look with Glass at Solid, where the time
+        // sits in the bubble and the composer is not a pane of glass.
+        crate::backdrop::set_glass(1.0);
         let mut app = crate::app::App::headless(
             crate::paths::AppDirs::under(root.path()),
-            crate::settings::Settings::default(),
+            crate::settings::Settings {
+                chat_theme: crate::chat_themes::ChatTheme::WhatsApp,
+                ..crate::settings::Settings::default()
+            },
         )
         .0;
         app.link = crate::backend::LinkStatus::Connected;

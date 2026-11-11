@@ -12,7 +12,14 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 /// [`glass`]'s bits.
+#[cfg(not(test))]
 static GLASS: AtomicU32 = AtomicU32::new(GLASS_DEFAULT.to_bits());
+#[cfg(test)]
+thread_local! {
+    /// Each test runs on a thread of its own, so one test's Glass cannot
+    /// change what another one draws.
+    static GLASS: AtomicU32 = const { AtomicU32::new(GLASS_DEFAULT.to_bits()) };
+}
 
 /// Settings' Glass where it starts: the see-through surfaces as they always
 /// were. 0 is Clear, 1 Solid.
@@ -23,7 +30,11 @@ const CLEAREST: f32 = 0.6;
 /// How tinted glass is, from 0 (Clear) to 1 (Solid), as Settings' Glass
 /// says, or Solid while the system asks for less transparency.
 pub fn glass() -> f32 {
-    f32::from_bits(GLASS.load(Ordering::Relaxed))
+    #[cfg(not(test))]
+    let bits = GLASS.load(Ordering::Relaxed);
+    #[cfg(test)]
+    let bits = GLASS.with(|glass| glass.load(Ordering::Relaxed));
+    f32::from_bits(bits)
 }
 
 /// Whether glass is frosted: anything short of Solid. At Solid the frosted
@@ -40,7 +51,11 @@ pub fn blur() -> bool {
 
 /// Records Settings' Glass for [`glass`]; the app does so every frame.
 pub fn set_glass(tint: f32) {
-    GLASS.store(tint.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    let bits = tint.clamp(0.0, 1.0).to_bits();
+    #[cfg(not(test))]
+    GLASS.store(bits, Ordering::Relaxed);
+    #[cfg(test)]
+    GLASS.with(|glass| glass.store(bits, Ordering::Relaxed));
 }
 
 /// `alpha`, how opaque a see-through fill is at [`GLASS_DEFAULT`] (0 to 1),

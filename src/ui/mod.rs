@@ -1020,6 +1020,8 @@ mod idle_tests {
 
     #[test]
     fn settings_uses_panel_background_not_wallpaper_color() {
+        // Solid Glass: a frosted window's panel is see-through instead.
+        crate::backdrop::set_glass(1.0);
         let root = tempfile::tempdir().unwrap();
         let mut app = App::headless(
             crate::paths::AppDirs::under(root.path()),
