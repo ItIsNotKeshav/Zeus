@@ -9397,7 +9397,7 @@ dependencies = [
 
 [[package]]
 name = "zeus"
-version = "0.40.0"
+version = "0.41.0"
 dependencies = [
  "aes 0.9.3",
  "anyhow",
