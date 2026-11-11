@@ -119,6 +119,9 @@ of ours.
 
 ## Guides
 
+New to Zeus? The [user guide](USER-GUIDE.md) covers installing, linking your
+phone and everyday use.
+
 Zeus shares ZapFast's behaviour, so the
 [ZapFast guides](https://zapfast.rocks/) apply: how linking works, settings
 and stored files, shortcuts, and making your own theme. Their screenshots show
