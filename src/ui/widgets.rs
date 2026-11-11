@@ -3063,6 +3063,8 @@ mod tests {
     /// at 5%, in either state; a dark row keeps the lift.
     #[test]
     fn light_messages_and_rows_are_flat() {
+        // The solid look: at any other Glass these rows are glass tints.
+        crate::backdrop::set_glass(1.0);
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
         let light = Palette::light();
         let shadow = light.bubble_shadow().color;
@@ -3134,6 +3136,8 @@ mod tests {
     /// avatar and trailing text further in than the card.
     #[test]
     fn elevated_row_clears_the_list_edges() {
+        // The solid look: at any other Glass these rows are glass tints.
+        crate::backdrop::set_glass(1.0);
         let ctx = egui::Context::default();
         let dark = Palette::dark();
         let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(300.0, theme::ROW_HEIGHT));
