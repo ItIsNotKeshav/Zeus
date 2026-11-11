@@ -2,8 +2,9 @@
 //! floats above every other one and holds a column of round chat pictures.
 //! Clicking one opens its chat in a small card beside the column, growing out
 //! of the bubble with the theme's motion, and clicking it again (or Escape)
-//! folds the card back into it. Dragging a bubble moves the whole column
-//! about the screen; the card opens toward the middle of the screen.
+//! folds the card back into it. Dragging a bubble, or the open card by its
+//! header, moves the whole column about the screen; the card opens toward
+//! the middle of the screen.
 //!
 //! The window is only as large as what it shows: the column alone while
 //! every bubble is closed, the column and the card while one is open, so the
@@ -138,6 +139,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     if let Some(spawn) = placement.spawn {
         builder = builder.with_position(spawn);
     }
+    // On the desktop it was put on, not following into other Spaces or
+    // over an app in full screen.
+    crate::backdrop::keep_on_its_desktop(title.as_ref());
     let before = app.actions.len();
     ctx.show_viewport_immediate(viewport_id(), builder, |ui, class| {
         if class == egui::ViewportClass::Immediate
@@ -525,6 +529,24 @@ fn card_header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect) {
     {
         app.actions.push(Action::CollapseBubbles);
     }
+    // The rest of the header is the open card's handle, as a window's title
+    // bar is: the bubble beside it is a small thing to find and hold. It
+    // stops short of the buttons, so a press on one is never a drag.
+    let handle = ui.interact(
+        Rect::from_min_max(
+            rect.min,
+            pos2(buttons.min_rect().left() - 4.0, rect.bottom()),
+        ),
+        egui::Id::new(("bubble-card-handle", chat.id.as_str())),
+        Sense::drag(),
+    );
+    if handle.drag_started() {
+        // The platform moves the window with the pointer from here.
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    if handle.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
     let room = (buttons.min_rect().left() - avatar.right() - 18.0).max(40.0);
     let name = super::widgets::line(ui, &title, theme::semibold(15.0), palette.text, room, 1);
     name.paint(
@@ -810,6 +832,70 @@ mod tests {
         app.actions.push(Action::DismissBubble(chat));
         run(&mut app, 0.6, Vec::new());
         assert!(app.bubbles.is_empty());
+    }
+
+    /// Dragging the open card's header moves the window; its buttons still
+    /// take their clicks.
+    #[test]
+    fn the_open_card_is_dragged_by_its_header() {
+        let root = std::env::temp_dir().join(format!("zeus-bubble-drag-{}", std::process::id()));
+        let (mut app, _events) = App::headless(
+            crate::paths::AppDirs::under(&root),
+            crate::settings::Settings::default(),
+        );
+        let chat = crate::model::Chat::new("1@s.whatsapp.net".into(), "Ada".into());
+        app.chats.push(chat.clone());
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let header = Rect::from_min_size(pos2(20.0, 20.0), vec2(CARD.x, HEADER));
+        // Runs one frame with `events`, and says whether the window was
+        // asked to follow the pointer.
+        let frame = |app: &mut App, time: f64, events: Vec<egui::Event>| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(500.0, 300.0))),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |ui| card_header(app, ui, &chat, header),
+            );
+            output.textures_delta.clear();
+            output.viewport_output.values().any(|viewport| {
+                viewport
+                    .commands
+                    .iter()
+                    .any(|command| matches!(command, egui::ViewportCommand::StartDrag))
+            })
+        };
+        let press = |at: Pos2, pressed: bool| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        // On the name, well left of the buttons.
+        let name = pos2(header.left() + 120.0, header.center().y);
+        frame(&mut app, 0.0, vec![egui::Event::PointerMoved(name)]);
+        // Nothing else there takes a click, so it drags from the press, as
+        // a title bar does.
+        let pressed = frame(&mut app, 0.1, vec![press(name, true)]);
+        let moved = egui::Event::PointerMoved(name + vec2(24.0, 10.0));
+        let dragged = frame(&mut app, 0.2, vec![moved]);
+        assert!(pressed || dragged, "the header drags the window");
+        frame(&mut app, 0.3, vec![press(name + vec2(24.0, 10.0), false)]);
+        assert!(app.actions.is_empty(), "a drag is not a click on anything");
+
+        // A click on the rightmost button, Remove bubble, is still its own.
+        let button = pos2(header.right() - 28.0, header.center().y);
+        frame(&mut app, 1.0, vec![egui::Event::PointerMoved(button)]);
+        assert!(!frame(&mut app, 1.1, vec![press(button, true)]));
+        assert!(!frame(&mut app, 1.2, vec![press(button, false)]));
+        assert!(
+            matches!(app.actions.as_slice(), [Action::DismissBubble(id)] if *id == chat.id),
+            "{:?}",
+            app.actions.len()
+        );
     }
 
     #[test]
