@@ -830,10 +830,18 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         // A translucent sidebar would show the fade as a band; the chips
         // are only cut there.
         if !palette.shows_desktop() {
-            widgets::fade_right(ui, output.inner_rect, CHIP_FADE, palette.rail());
+            widgets::fade_right(ui, chip_band(&output), CHIP_FADE, palette.rail());
         }
     }
     labels::chip_row(app, ui, &palette);
+}
+
+/// The band a chip row's chips take up. Its scroll area's inner rect can
+/// run on down the panel, and a fade over all of it would darken the right
+/// edge of every chat row under the chips.
+pub(super) fn chip_band<R>(output: &egui::scroll_area::ScrollAreaOutput<R>) -> Rect {
+    let rect = output.inner_rect;
+    rect.with_max_y(rect.bottom().min(rect.top() + output.content_size.y))
 }
 
 /// Stable id for a starred row, so its menu can be addressed by the demo,

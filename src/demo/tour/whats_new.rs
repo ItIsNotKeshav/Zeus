@@ -14,15 +14,15 @@ use std::time::Duration;
 /// Length of the tour, excluding its optional start delay.
 pub const DURATION: Duration = Duration::from_secs(86);
 
-/// Messages the script points at, filed in Grace Hopper's chat.
+/// Messages the script points at, filed in Rafi Okafor's chat.
 pub(super) const VIDEO: &str = "tour-video";
 pub(super) const NOTE: &str = "tour-note";
 
-/// Sets up the opening shot: Ada's chat in the dark theme, in English, with
-/// labels, stickers, and two videos in Grace Hopper's chat.
+/// Sets up the opening shot: Luna's chat in the dark theme, in English, with
+/// labels, stickers, and two videos in Rafi Okafor's chat.
 pub fn prepare(app: &mut App) {
     super::common_setup(app);
-    // The tour opens Rust Berlin at its newest messages, not at the sample's
+    // The tour opens Launch Squad at its newest messages, not at the sample's
     // unread mention.
     for chat in &mut app.chats {
         chat.unread_mention = None;
@@ -32,14 +32,14 @@ pub fn prepare(app: &mut App) {
     super::show_photos(
         app,
         super::super::stock::ENGINE,
-        "The difference engine, finally assembled",
+        "Built a rocket guidance computer. Out of brass ⚙️",
     );
     super::super::labels_sample(app);
     app.label_filter = None;
     app.chat_filter = crate::model::ChatFilter::All;
     // Ctrl+B folds the list to avatars, with badges on chats the tour never
     // opens.
-    for (name, unread) in [("Section 8 Berlin", 3), ("Family", 5)] {
+    for (name, unread) in [("Karaoke Night", 3), ("Family", 5)] {
         if let Some(chat) = app.chats.iter_mut().find(|chat| chat.name == name) {
             chat.unread = unread;
         }
@@ -60,7 +60,7 @@ pub fn prepare(app: &mut App) {
     app.video.silence();
 }
 
-/// A video from Grace and a round video message of our own, both downloaded.
+/// A video from Rafi and a round video message of our own, both downloaded.
 fn videos(app: &mut App) {
     let grace = super::super::SAMPLES[2].id;
     let dir = app.dirs.media_cache_dir();
@@ -184,7 +184,7 @@ pub(super) fn script() -> Vec<Cue> {
     add(21.0, esc("Esc · Close the preview"));
 
     // Videos play in their bubble, round video messages in their circle.
-    add(21.6, Move(Label("Grace Hopper")));
+    add(21.6, Move(Label("Rafi Okafor")));
     add(22.0, Click(left));
     add(22.9, Move(Bubble(VIDEO)));
     add(23.3, Click(left));
@@ -208,7 +208,7 @@ pub(super) fn script() -> Vec<Cue> {
     // Who read a group message. The message menu has no Message info row, so
     // the message's own time and ticks open the receipts, as they do on the
     // phone.
-    add(41.0, Move(Label("Rust Berlin")));
+    add(41.0, Move(Label("Launch Squad")));
     add(41.4, Click(left));
     add(42.2, Move(Footer("group-poll")));
     add(42.6, Click(left));
@@ -221,7 +221,7 @@ pub(super) fn script() -> Vec<Cue> {
     add(49.4, Click(left));
     add(50.6, Move(Label("All")));
     add(51.0, Click(left));
-    add(51.6, Move(Label("Katherine Johnson")));
+    add(51.6, Move(Label("Bianca Rossi")));
     add(52.0, Click(right));
     add(52.8, Move(Label("Labels")));
     add(55.0, esc("Esc · Close the menu"));
@@ -291,7 +291,7 @@ pub(super) fn script() -> Vec<Cue> {
     add(83.2, esc("Esc · Back to chats"));
 
     for (start, text) in [
-        (6.1, "engine"),
+        (6.1, "rocket"),
         (36.9, "🐸"),
         (38.6, "bom dia"),
         (77.6, "privacy"),

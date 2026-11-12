@@ -91,6 +91,8 @@ def main():
     parser.add_argument('--start', type=float, default=0, help='Seconds to trim before the tour starts')
     parser.add_argument('--scale', type=float, default=1,
                         help='Output pixels per logical point, e.g. 1.5 for 1920 wide from a 1280-point window')
+    parser.add_argument('--fps', type=int, default=30,
+                        help='Output frame rate; match --demo-fps, e.g. 60 for a smoother video')
     args = parser.parse_args()
     trace = json.loads(args.events.read_text())
     if not trace.get('complete'):
@@ -109,7 +111,7 @@ def main():
             '-t', str(trace['duration']), '-map', '0:v:0', '-an', '-sn',
             '-vf', f'scale={out_width}:{out_height}:flags=lanczos,'
                    f'pad=iw:ih+{band}:0:0:color=0x0b1519,ass={ass}',
-            '-r', '30', '-c:v', 'libx264', '-preset', 'slow', '-crf', '18',
+            '-r', str(args.fps), '-c:v', 'libx264', '-preset', 'slow', '-crf', '18',
             '-pix_fmt', 'yuv420p', '-map_metadata', '-1', '-movflags', '+faststart', str(args.output),
         ], check=True)
     info = json.loads(subprocess.check_output([
