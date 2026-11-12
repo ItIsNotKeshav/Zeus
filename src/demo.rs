@@ -17096,6 +17096,32 @@ mod tests {
         false
     }
 
+    /// One frame 1/60 s after the last, at 1180 by 780 points. Its passes
+    /// share one input time, as eframe's do, so a pass the composer lays
+    /// out again (its bottom panel takes the height of the pass before)
+    /// finds the strips where the first one left them. Without a time,
+    /// egui moves the clock on in every pass and the strips with it.
+    fn steady_frame(app: &mut App, ctx: &egui::Context) -> Vec<egui::epaint::ClippedShape> {
+        let time = ctx.input(|input| input.time) + 1.0 / 60.0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 780.0),
+                )),
+                time: Some(time),
+                ..Default::default()
+            },
+            |ui| {
+                let ctx = ui.ctx().clone();
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+            },
+        );
+        output.textures_delta.clear();
+        output.shapes
+    }
+
     /// Replying opens the strip out of the field rather than at once: its
     /// room grows over the next frames while the field stays where it is,
     /// and once the reply is cancelled it sinks back before it goes.
@@ -17105,7 +17131,7 @@ mod tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         render(&mut app, &ctx);
-        frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        steady_frame(&mut app, &ctx);
         let field = ctx
             .data(|data| data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id()))
             .expect("the composer");
@@ -17116,9 +17142,9 @@ mod tests {
             .and_then(|conversation| conversation.messages.last())
             .map(|message| message.id.clone().into());
         // A few frames in, about a tenth of a second.
-        frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        frame_sized(&mut app, &ctx, 780.0, Vec::new());
-        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        steady_frame(&mut app, &ctx);
+        steady_frame(&mut app, &ctx);
+        let shapes = steady_frame(&mut app, &ctx);
         assert!(paints_reply_strip(&shapes), "the strip is opening");
         let (strip, pill) = reply_strip_and_pill(&ctx);
         assert!(
@@ -17131,7 +17157,7 @@ mod tests {
             "the strip is still partly behind the field: {gap}"
         );
         for _ in 0..60 {
-            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+            steady_frame(&mut app, &ctx);
         }
         let (strip, pill) = reply_strip_and_pill(&ctx);
         assert!((pill.top() - field.top()).abs() < 1.0);
@@ -17141,12 +17167,12 @@ mod tests {
             "open, the strip ends {gap} above the composer"
         );
         app.reply_to = None;
-        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let shapes = steady_frame(&mut app, &ctx);
         assert!(paints_reply_strip(&shapes), "the strip sinks back");
         for _ in 0..60 {
-            frame_sized(&mut app, &ctx, 780.0, Vec::new());
+            steady_frame(&mut app, &ctx);
         }
-        let shapes = frame_sized(&mut app, &ctx, 780.0, Vec::new());
+        let shapes = steady_frame(&mut app, &ctx);
         assert!(!paints_reply_strip(&shapes), "the strip has gone");
     }
 
