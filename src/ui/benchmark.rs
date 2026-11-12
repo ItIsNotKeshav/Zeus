@@ -1,4 +1,4 @@
-//! The benchmark in Settings > About: a button that runs it in a second
+//! The benchmark in Settings > General > About: a button that runs it in a second
 //! window, its progress, the results, saving them, and sharing them as a
 //! prefilled GitHub issue after showing exactly what the issue will hold.
 

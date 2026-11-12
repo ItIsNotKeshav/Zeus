@@ -1,5 +1,5 @@
 name: Benchmark results
-description: Results from Settings > About > Performance benchmark.
+description: Results from Settings > General > About > Performance benchmark.
 title: "Benchmark: "
 labels: [benchmark]
 body:

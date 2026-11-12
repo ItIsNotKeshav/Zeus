@@ -176,6 +176,27 @@ impl Section {
         self.entries.push((row, Control::Block(Box::new(draw))));
     }
 
+    /// Another section's rows at the foot of this one, under its name as a
+    /// subheading. A search for that name still finds all of them.
+    fn absorb(&mut self, other: Section) {
+        let shown = other.title.shown.clone();
+        self.block(vec![other.title.clone()], move |ui, app| {
+            ui.add_space(crate::theme::SPACE_M);
+            theme::text(
+                ui,
+                shown.as_ref(),
+                theme::semibold(theme::TEXT_SECTION),
+                app.palette.text,
+            );
+            ui.add_space(crate::theme::SPACE_XS);
+        });
+        self.entries
+            .extend(other.entries.into_iter().map(|(mut row, control)| {
+                row.keywords.push(other.title.clone());
+                (row, control)
+            }));
+    }
+
     /// The rows the search leaves, in order.
     fn visible(self, filter: &Filter) -> (Text, Vec<(Row, Control)>) {
         let entries = self
@@ -319,12 +340,9 @@ fn category_icon(source: &str) -> Icon {
         "Chats" => Icon::MessageCircle,
         "Calls and voice" => Icon::Phone,
         "Notifications" => Icon::Bell,
-        "Privacy" => Icon::Lock,
-        "System" => Icon::Monitor,
         "Account" => Icon::User,
-        "Files" => Icon::Download,
-        "Experimental" => Icon::Flask,
-        "About" => Icon::Info,
+        "Storage" => Icon::Download,
+        "General" => Icon::Settings,
         _ => Icon::Settings,
     }
 }
@@ -537,7 +555,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Always show time"),
         translated(
             locale,
-            "The time and ticks inside every message, as WhatsApp shows them. Off, Zeus's look shows them below a message you click.",
+            "When off, click a message to see its time.",
         ),
         |settings| &mut settings.always_show_time,
     );
@@ -609,10 +627,7 @@ fn sections(app: &App) -> Vec<Section> {
     let mut chats = Section::new(translated(locale, "Chats"));
     chats.toggle(
         translated(locale, "Open the last chat"),
-        translated(
-            locale,
-            "When off, quitting and opening Zeus again starts with no chat open.",
-        ),
+        "",
         |settings| &mut settings.restore_last_chat,
     );
     chats.toggle(
@@ -624,7 +639,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Download files automatically"),
         translated(
             locale,
-            "Files up to 64 MiB download as they come into view.",
+            "Files up to 64 MiB.",
         ),
         |settings| &mut settings.auto_download,
     );
@@ -632,7 +647,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Fetch older history"),
         translated(
             locale,
-            "Asks your phone in the background for older messages in the open, pinned and ten most recent chats.",
+            "Asks your phone for older messages in recent chats.",
         ),
         |settings| &mut settings.history_prefetch,
     );
@@ -640,7 +655,7 @@ fn sections(app: &App) -> Vec<Section> {
     if crate::media_pause::SUPPORTED {
         chats.toggle(
             translated(locale, "Pause other media while recording or playing"),
-            translated(locale, "Music and videos in other apps resume afterwards."),
+            "",
             |settings| &mut settings.pause_other_media,
         );
     }
@@ -648,7 +663,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Keep chats archived"),
         translated(
             locale,
-            "When off, a new message brings an archived chat back to the list.",
+            "When off, a new message unarchives the chat.",
         ),
         move |ui, app| {
             let mut keep = app.settings.keep_chats_archived;
@@ -672,7 +687,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Locked chats code"),
         translated(
             locale,
-            "Opens the Locked tab on this computer. It hides chats, it does not encrypt them.",
+            "Hides chats. It does not encrypt them.",
         ),
         move |ui, app| {
             // The buffer lives in egui memory: the hash is the only
@@ -700,7 +715,7 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
-    swipe_rows(locale, &mut chats);
+    chats.absorb(swipe_section(locale));
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
@@ -776,7 +791,7 @@ fn sections(app: &App) -> Vec<Section> {
     let receipts_note = if app.account_receipts_off {
         translated(locale, "Off for your account, so only groups get them.")
     } else {
-        translated(locale, "Let people see when you read their messages.")
+        Text::default()
     };
     privacy.account_toggle(
         translated(locale, "Send read receipts"),
@@ -870,7 +885,7 @@ fn sections(app: &App) -> Vec<Section> {
         });
     }
 
-    let mut system = Section::new(translated(locale, "System"));
+    let mut system = Section::new(translated(locale, "General"));
     system.toggle(
         translated(locale, "Keep running when the window closes"),
         "",
@@ -927,7 +942,7 @@ fn sections(app: &App) -> Vec<Section> {
         }
         None => translated(
             locale,
-            "For WhatsApp, media, and updates. Empty uses ALL_PROXY or HTTPS_PROXY.",
+            "Empty uses ALL_PROXY or HTTPS_PROXY.",
         ),
     };
     system.row(translated(locale, "Proxy"), description, move |ui, app| {
@@ -950,12 +965,12 @@ fn sections(app: &App) -> Vec<Section> {
         if crate::settings::BUILT_IN_GIPHY_KEY.is_some() {
             translated(
                 locale,
-                "For GIF search. Replaces the key this build includes.",
+                "For GIF search. Replaces the built-in key.",
             )
         } else {
             translated(
                 locale,
-                "For GIF search. Get a free key at developers.giphy.com.",
+                "For GIF search. Free at developers.giphy.com.",
             )
         },
         move |ui, app| {
@@ -984,13 +999,13 @@ fn sections(app: &App) -> Vec<Section> {
         |ui, app| account(app, ui),
     );
 
-    let mut files = Section::new(translated(locale, "Files"));
+    let mut files = Section::new(translated(locale, "Storage"));
     // The account on screen: each number keeps its own archive and media.
     let state = app.account().dirs.state.clone();
     let open_folder = crate::i18n::gettext(locale, "Open folder");
     files.row(
         translated(locale, "Message archive"),
-        app.account().dirs.archive_db().display().to_string(),
+        "",
         {
             let open_folder = open_folder.clone();
             move |ui, app| {
@@ -1064,7 +1079,7 @@ fn sections(app: &App) -> Vec<Section> {
         cache_limit_picker,
     );
     let log = app.dirs.log_file();
-    files.row(
+    system.row(
         translated(locale, "Log"),
         "",
         move |ui, app| {
@@ -1087,7 +1102,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Split view"),
         translated(
             locale,
-            "Drag a chat from the list onto the open one to read two side by side, or pop a chat out into a small window above the others. The window grows to fit both chats when it can.",
+            "Drag a chat onto the open one to read both side by side.",
         ),
         |settings| &mut settings.split_view,
     );
@@ -1095,7 +1110,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Chat bubbles"),
         translated(
             locale,
-            "Keep up to three chats as bubbles floating over your other windows. Click one to open a small chat where you can reply, and attach, paste or drop pictures and files. Start one from a chat's menu with Open as bubble.",
+            "Up to three chats float over other windows. Start one from a chat's menu.",
         ),
         |settings| &mut settings.chat_bubbles,
     );
@@ -1119,46 +1134,36 @@ fn sections(app: &App) -> Vec<Section> {
         );
     }
 
+    // Privacy belongs to the account; Experimental and About are rare
+    // visits, kept at the foot of General.
+    account_section.absorb(privacy);
+    system.absorb(experimental);
+    system.absorb(about_section);
+
     vec![
         appearance,
         chats,
         notifications,
         voice,
-        privacy,
-        system,
         account_section,
         files,
-        experimental,
-        about_section,
+        system,
     ]
 }
 
-/// What each two-finger touchpad swipe does, one drop-down per swipe, under
-/// a heading of their own at the foot of Chats.
-fn swipe_rows(locale: Locale, chats: &mut Section) {
+/// What each two-finger touchpad swipe does, one drop-down per swipe. It
+/// sits at the foot of Chats.
+fn swipe_section(locale: Locale) -> Section {
     use crate::settings::SwipeSlot;
-    let heading = translated(locale, "Touchpad swipes");
-    let shown = heading.shown.clone();
-    chats.block(
-        vec![heading, translated(locale, "Swipe")],
-        move |ui, app| {
-            ui.add_space(crate::theme::SPACE_M);
-            theme::text(
-                ui,
-                shown.as_ref(),
-                theme::semibold(theme::TEXT_SECTION),
-                app.palette.text,
-            );
-            ui.add_space(crate::theme::SPACE_XS);
-        },
-    );
+    let mut swipes = Section::new(translated(locale, "Touchpad swipes"));
     for slot in SwipeSlot::ALL {
-        chats.row(
+        swipes.row(
             translated(locale, slot.label()),
             "",
             move |ui, app| swipe_picker(ui, app, slot),
         );
     }
+    swipes
 }
 
 fn swipe_picker(ui: &mut egui::Ui, app: &mut App, slot: crate::settings::SwipeSlot) {
@@ -1248,7 +1253,7 @@ fn voice_section(app: &App) -> Section {
             translated(locale, "Push to talk key"),
             translated(
                 locale,
-                "Works while Zeus is in front. While you type a message, use an F key or open the call screen.",
+                "Works while Zeus is in front. Use an F key while typing.",
             ),
             push_to_talk_key,
         );
@@ -1412,7 +1417,7 @@ fn app_lock_rows(app: &App, privacy: &mut Section) {
         translated(locale, "App lock"),
         translated(
             locale,
-            "Asks for a password at start and after a while unused. It keeps people using this computer out of your chats and encrypts nothing more. A forgotten password means unlinking.",
+            "Asks for a password to open Zeus. Forgetting it means linking again.",
         ),
         move |ui, app| {
             use crate::i18n::gettext;
@@ -1447,7 +1452,7 @@ fn app_lock_rows(app: &App, privacy: &mut Section) {
             translated(locale, "Lock after"),
             keyed(translated(
                 locale,
-                "Time without using Zeus, also counted while it is in the tray. Ctrl+Shift+L locks it at once.",
+                "Ctrl+Shift+L locks now.",
             )),
             move |ui, app| {
                 let selected = app.settings.app_lock_after;

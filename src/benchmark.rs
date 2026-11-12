@@ -1,4 +1,4 @@
-//! The benchmark in Settings > About. It plays the same two-minute scenario
+//! The benchmark in Settings > General > About. It plays the same two-minute scenario
 //! as `scripts/bench` (`--demo-tour --demo-tour-script bench`) in a second
 //! Zeus window, a demo with built-in sample chats in a throwaway folder, and
 //! measures that process from outside as the scripts do: memory, CPU and GPU

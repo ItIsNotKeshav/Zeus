@@ -124,7 +124,7 @@ reading files blindly:
   keyring key before moving it, and moves SQLite side files before their
   database. Removing an account deletes its folders after its backend has
   stopped, then its keyring entry.
-- Settings > Experimental holds features that are off until turned on:
+- Settings > General > Experimental holds features that are off until turned on:
   Split view and Chat bubbles (`Settings::split_view`, `chat_bubbles`).
   Split view (`app/split.rs`, `ui/split.rs`) puts a second chat beside the
   open one and pops a chat out into an always-on-top window. The window grows

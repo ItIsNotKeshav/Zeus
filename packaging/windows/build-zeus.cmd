@@ -50,7 +50,7 @@ if /i "%~1"=="bench" (
   exit /b 0
 )
 
-rem The demo feature carries the benchmark Settings > About runs.
+rem The demo feature carries the benchmark Settings > General > About runs.
 cargo build --release --locked --features demo || exit /b 1
 
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DVersion=%VERSION% /DArch=x86_64 ^

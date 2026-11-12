@@ -28,12 +28,12 @@ Back up the archive if you need its history. WhatsApp sends only recent
 history to a new device, although Zeus can request some older messages from
 the phone. Clearing the media cache makes Zeus download attachments again.
 Expired attachments may still be available through the phone.
-**Settings > Files > Storage used** shows how much space the account on screen
-has in its media cache, split into images, videos and GIFs, stickers, and other
+**Settings > Storage > Storage used** shows how much space the account on
+screen has in its media cache, split into images, videos and GIFs, stickers, and other
 files. **Clear…** there deletes that account's cached attachments after asking:
 its messages, its other caches, and the other accounts' files stay, and so do
 files in a download folder you chose.
-**Settings > Files > Change…** sends new downloads to another folder, leaving
+**Settings > Storage > Change…** sends new downloads to another folder, leaving
 earlier ones in place. There, documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
@@ -178,6 +178,9 @@ name or description, in the interface language or in English.
 - **Locked chats code**: the local code that opens the **Locked** tab. It hides
   chats and adds no encryption beyond the encrypted message archive.
 
+*Touchpad swipes*, at the end of Chats, chooses what each of the four
+swipes does.
+
 **Notifications**
 
 - **Desktop notifications**: for chats you are not looking at. Muted chats stay
@@ -220,7 +223,10 @@ name or description, in the interface language or in English.
   a message being typed, only the F keys and Insert do, so other keys still
   type.
 
-**Privacy**
+**Account**
+
+The account block edits your WhatsApp name, About, and picture, and
+unlinks this computer. Below it, **Privacy**:
 
 - **Send read receipts**: the blue ticks others see, subject to the account
   setting below. When account read receipts are off, read ticks are also hidden
@@ -233,7 +239,11 @@ name or description, in the interface language or in English.
   servers and shared with your phone. They can be changed while connected.
 - **App lock**: hide Zeus behind a password. See [App lock](#app-lock).
 
-**System**
+**Storage** (called Files before) shows the archive, the downloads folder
+(which you can change; earlier downloads stay where they are), the storage
+used, and the cache size limit.
+
+**General**
 
 - **Keep running when the window closes**: keep Zeus linked in the tray.
 - **Start at login**: start in the tray without a window, where the platform
@@ -257,10 +267,13 @@ name or description, in the interface language or in English.
 - **GIPHY API key**: for GIF search, unless the build includes one. Set
   `ZAPFAST_GIPHY_KEY` at compile time to include a default key. The earlier
   `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.
+- **Log**: **Open** shows this run's log. See [The log](#the-log).
 
-**Account** edits your WhatsApp name, About, and picture, and unlinks this
-computer. **Files** shows the archive, the downloads folder (which you can
-change; earlier downloads stay where they are), and this run's log.
+*Experimental*: **Split view** and **Chat bubbles**, both off until turned
+on.
+
+*About*: the version, **Keyboard shortcuts**, the source code, and the
+[performance benchmark](#performance-benchmark).
 
 Some choices are made where they are used and remembered in `settings.json`:
 the shortcut hints bar under the composer (its × hides it, and **Show shortcut
@@ -287,8 +300,8 @@ the one above: it stays on only if both were on.
 
 ## App lock
 
-Like WhatsApp Web's screen lock, **Settings > Privacy > App lock** hides
-Zeus behind a password of at least six characters. Zeus then starts
+Like WhatsApp Web's screen lock, **Settings > Account > Privacy > App
+lock** hides Zeus behind a password of at least six characters. Zeus then starts
 locked and locks again after 1 minute, 15 minutes (the default), or 1 hour
 without input, a choice under **Lock after**; time hidden in the tray counts.
 **Lock Zeus** in the tray menu and `Ctrl+Shift+L` lock it at once.
@@ -328,8 +341,8 @@ the new one.
 
 ## Performance benchmark
 
-**Settings > About > Run benchmark** opens a second Zeus window with the
-built-in sample chats, in a temporary folder, and plays a test of about three minutes in
+**Settings > General > About > Run benchmark** opens a second Zeus window
+with the built-in sample chats, in a temporary folder, and plays a test of about three minutes in
 it: it settles, scrolls a chat full of photos, switches through chats, opens
 the sticker picker, minimizes and idles, then closes itself. Your archive,
 keys and WhatsApp connection are never opened, and nothing goes over the
@@ -354,7 +367,7 @@ it there, and the issue is public under your GitHub account.
 
 Each run starts `zapfast.log` afresh and records warnings and errors, never
 message contents, phone numbers, or keys. Include the end of this file when
-reporting an issue. **Settings > Files > Log > Open** shows it. The run before
+reporting an issue. **Settings > General > Log > Open** shows it. The run before
 is kept beside it as `zapfast.previous.log`: if Zeus froze and you had to
 restart it, that file holds what happened.
 

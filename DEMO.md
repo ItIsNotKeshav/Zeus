@@ -38,8 +38,8 @@ the frame times of the busy phases.
 The scripts in `scripts/bench/` run it and measure the process from outside;
 see `scripts/bench/README.md`. `--demo-shot` stops the clock at a fixed
 moment, so screenshots of two builds compare pixel for pixel.
-Settings > About runs the same scenario from a release build (which includes
-the `demo` feature for this) and measures it in Rust (`src/benchmark.rs`,
+Settings > General > About runs the same scenario from a release build (which
+includes the `demo` feature for this) and measures it in Rust (`src/benchmark.rs`,
 `src/benchmark/probe.rs`), writing the same results file as the scripts.
 
 ## Recording a demo
