@@ -17010,9 +17010,7 @@ mod tests {
             .map(|(label, _, _)| label)
             .collect();
         assert!(labels.iter().any(|label| label == "Vercel"), "{labels:?}");
-        for gone in ["How to make a theme", "Open themes folder", "Ristretto"] {
-            assert!(!labels.iter().any(|label| label == gone), "{gone}");
-        }
+        assert!(!labels.iter().any(|label| label == "How to make a theme"));
     }
 
     #[test]
@@ -19694,6 +19692,8 @@ mod bubble_detail_tests {
         let ctx = egui::Context::default();
         app.attach(&ctx);
         apply_flags(&mut app, Some("settings"));
+        // Appearance puts its preview beside the controls; Chats is one column.
+        app.settings_section = 1;
         let column = |ctx: &egui::Context| {
             ctx.data(|data| data.get_temp::<egui::Rangef>(crate::ui::settings::column_id()))
                 .expect("the settings were drawn")

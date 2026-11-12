@@ -1218,7 +1218,7 @@ pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
 
 /// The font a Settings tile shows `font` in, at `size`: the family of that
 /// typeface at the regular weight. Each is registered with the others (see
-/// [`add_previews`]); epaint reads a family's fonts only once text asks for
+/// `add_previews`); epaint reads a family's fonts only once text asks for
 /// it, so the ones never drawn cost nothing.
 pub fn preview_font(font: crate::settings::FontChoice, size: f32) -> egui::FontId {
     egui::FontId::new(

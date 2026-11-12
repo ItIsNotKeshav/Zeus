@@ -254,7 +254,13 @@ fn mode_icons(ui: &mut egui::Ui, app: &mut App) {
             outer.min + vec2(3.0 + segment.x * index as f32, 3.0),
             segment,
         );
-        let response = ui.interact(rect, ui.id().with(("mode-icon", index)), Sense::click());
+        // Fixed ids, so the demo tour can point at them.
+        let id = match mode {
+            Mode::System => "settings-mode-auto",
+            Mode::Light => "settings-mode-light",
+            Mode::Dark => "settings-mode-dark",
+        };
+        let response = ui.interact(rect, egui::Id::new(id), Sense::click());
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
         let lit = slide.is_some_and(|position| (position - index as f32).abs() < 0.5);
@@ -626,11 +632,12 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
         let center = pos2(x, row.center().y);
         x += SWATCH + SWATCH_GAP;
         let rect = Rect::from_center_size(center, Vec2::splat(SWATCH + 6.0));
-        let response = ui.interact(
-            rect,
-            ui.id().with(("theme-swatch", page, index)),
-            Sense::click(),
-        );
+        // Built-in themes by name, so the demo tour can point at them.
+        let id = match &swatch {
+            Swatch::Theme(choice) => egui::Id::new(format!("settings-theme-{}", choice.label())),
+            _ => ui.id().with(("theme-swatch", page, index)),
+        };
+        let response = ui.interact(rect, id, Sense::click());
         theme::reveal_focus(&response);
         theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
         let painter = ui.painter();

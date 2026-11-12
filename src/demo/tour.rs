@@ -410,11 +410,9 @@ fn script() -> Vec<Cue> {
         32.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(33.0, Move(Label("Zeus")));
+    add(33.0, Move(Widget("settings-theme-Zeus")));
     add(33.35, Click(left));
-    // The mode sits below the theme cards: bring it up.
-    add(33.4, Wheel(-200.0));
-    add(33.65, Move(Label("Light")));
+    add(33.65, Move(Widget("settings-mode-light")));
     add(34.05, Click(left));
     add(
         34.5,
@@ -432,7 +430,7 @@ fn script() -> Vec<Cue> {
         37.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(38.0, Move(Label("Dark")));
+    add(38.0, Move(Widget("settings-mode-dark")));
     add(38.35, Click(left));
     add(
         39.2,
@@ -1045,6 +1043,31 @@ mod tests {
             tour.observe(app, ctx);
         });
         output.textures_delta.clear();
+    }
+    /// Clicks the widget registered under `id`.
+    fn click_widget(app: &mut App, tour: &mut Tour, ctx: &egui::Context, id: &str) {
+        let pos = ctx
+            .read_response(egui::Id::new(id))
+            .unwrap_or_else(|| panic!("missing {id}"))
+            .rect
+            .center();
+        for pressed in [true, false] {
+            frame(
+                app,
+                tour,
+                ctx,
+                vec![
+                    Event::PointerMoved(pos),
+                    Event::PointerButton {
+                        pos,
+                        button: PointerButton::Primary,
+                        pressed,
+                        modifiers: Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        frame(app, tour, ctx, Vec::new());
     }
     fn click(app: &mut App, tour: &mut Tour, ctx: &egui::Context, label: &str) {
         let pos = *tour
@@ -2005,40 +2028,9 @@ mod tests {
         for _ in 0..3 {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
-        // Scrolls the page until `label` is on screen.
-        let show = |app: &mut App, tour: &mut Tour, label: &str| {
-            let middle = Pos2::new(700.0, 400.0);
-            for _ in 0..60 {
-                let spot = tour.labels.get(label).copied();
-                if spot.is_some_and(|spot| (80.0..700.0).contains(&spot.y)) {
-                    return;
-                }
-                let delta = if spot.is_some_and(|spot| spot.y < 80.0) {
-                    40.0
-                } else {
-                    -40.0
-                };
-                frame(
-                    app,
-                    tour,
-                    &ctx,
-                    vec![
-                        Event::PointerMoved(middle),
-                        Event::MouseWheel {
-                            unit: egui::MouseWheelUnit::Point,
-                            delta: vec2(0.0, delta),
-                            modifiers: Modifiers::NONE,
-                            phase: egui::TouchPhase::Move,
-                        },
-                    ],
-                );
-            }
-        };
-        show(&mut app, &mut tour, "Zeus");
-        click(&mut app, &mut tour, &ctx, "Zeus");
+        click_widget(&mut app, &mut tour, &ctx, "settings-theme-Zeus");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
-        show(&mut app, &mut tour, "Light");
-        click(&mut app, &mut tour, &ctx, "Light");
+        click_widget(&mut app, &mut tour, &ctx, "settings-mode-light");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingLight);
         assert_eq!(app.palette, crate::theme::Palette::nothing_light());
         // The swatches carry no text to find; pick one as their click does.
@@ -2050,8 +2042,7 @@ mod tests {
             egui::Color32::from_rgb(0xff, 0x45, 0x3a)
         );
         // A theme keeps the accent chosen, drawn in its own style.
-        show(&mut app, &mut tour, "Nord");
-        click(&mut app, &mut tour, &ctx, "Nord");
+        click_widget(&mut app, &mut tour, &ctx, "settings-theme-Nord");
         assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
         assert_eq!(app.settings.accent, Accent::Red);
         assert_eq!(app.palette, ChatTheme::Nord.palette(false, Accent::Red));
