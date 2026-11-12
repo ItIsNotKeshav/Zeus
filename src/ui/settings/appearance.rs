@@ -373,6 +373,17 @@ fn current_place(app: &App) -> CustomAccent {
     )
 }
 
+/// Whether the theme's own accent is in use, so the swatch below shows as
+/// chosen and the wheel shows no knob. The wheel and the swatches are one
+/// choice or the other, never both.
+fn own_accent(app: &App) -> bool {
+    app.settings.accent == Accent::Theme
+        && app
+            .settings
+            .custom_accent
+            .is_none_or(|custom| custom.strength <= CustomAccent::CENTRE)
+}
+
 /// What a pick at `place` becomes once let go: the theme's own in the
 /// middle, a named accent close to one, or the colour itself.
 fn settle(place: CustomAccent, rect: Rect) -> Action {
@@ -458,7 +469,7 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
             painter.circle_filled(at, 3.0 + 2.5 * near, color);
         }
     }
-    if enabled {
+    if enabled && (picked.is_some() || !own_accent(app)) {
         let active = theme::animate(
             ui.ctx(),
             response.id,
@@ -540,13 +551,15 @@ const CHEVRON: f32 = 24.0;
 fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let custom = app.settings.custom_theme.clone();
+    // A colour from the wheel is the choice then; no swatch shows chosen.
+    let own = own_accent(app);
     let mut items: Vec<(Swatch, Option<Palette>, bool, String)> = ChatTheme::ALL
         .into_iter()
         .map(|choice| {
             (
                 Swatch::Theme(choice),
                 Some(choice.palette(palette.dark, Accent::Theme)),
-                custom.is_none() && app.settings.chat_theme == choice,
+                own && custom.is_none() && app.settings.chat_theme == choice,
                 choice.label().to_owned(),
             )
         })
@@ -560,7 +573,7 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
         items.push((
             Swatch::File(file.filename.clone()),
             Some(file.palette),
-            custom.as_deref() == Some(file.filename.as_str()),
+            own && custom.as_deref() == Some(file.filename.as_str()),
             name,
         ));
     }
@@ -686,10 +699,13 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
         {
             match swatch {
                 Swatch::Theme(choice) => {
+                    // A theme comes in its own accent, leaving the wheel's.
+                    app.actions.push(Action::SetAccent(Accent::Theme));
                     app.actions.push(Action::RevealThemeFrom(center));
                     app.actions.push(Action::SetChatTheme(choice));
                 }
                 Swatch::File(filename) => {
+                    app.actions.push(Action::SetAccent(Accent::Theme));
                     app.actions.push(Action::RevealThemeFrom(center));
                     app.actions.push(Action::SetCustomTheme(filename));
                 }
