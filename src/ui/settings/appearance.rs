@@ -4,7 +4,7 @@
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
-use super::{block_heading, language_picker, segmented, slide_position};
+use super::{block_heading, language_picker, segmented};
 use crate::app::App;
 use crate::chat_themes::{Accent, ChatTheme, CustomAccent, Mode};
 use crate::model::Action;
@@ -228,30 +228,29 @@ pub(super) fn theme_card(ui: &mut egui::Ui, app: &mut App) {
     ui.add_space(theme::SPACE_S);
 }
 
-/// Auto, light and dark as three icons in one pill, the chosen one filled
-/// with the accent.
+/// Auto, light and dark as three filled icons, the chosen one on a brighter
+/// rounded square and drawn in the text colour.
 fn mode_icons(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let custom = app.settings.custom_theme.is_some();
     let selected = (!custom).then_some(app.settings.mode);
-    let segment = vec2(52.0, 32.0);
+    let segment = vec2(48.0, 40.0);
+    let gap = 8.0;
     let (outer, _) = ui.allocate_exact_size(
-        vec2(segment.x * Mode::ALL.len() as f32 + 6.0, segment.y + 6.0),
+        vec2(
+            segment.x * Mode::ALL.len() as f32 + gap * (Mode::ALL.len() - 1) as f32,
+            segment.y,
+        ),
         Sense::hover(),
     );
-    ui.painter()
-        .rect_filled(outer, outer.height() / 2.0, palette.surface);
-    let slide = selected
-        .and_then(|mode| Mode::ALL.iter().position(|option| *option == mode))
-        .map(|index| slide_position(ui, ui.id().with("mode-icons-slide"), index as f32));
-    if let Some(position) = slide {
-        let fill = Rect::from_min_size(outer.min + vec2(3.0 + segment.x * position, 3.0), segment);
-        ui.painter()
-            .rect_filled(fill, fill.height() / 2.0, palette.accent);
-    }
+    let lit = if palette.dark {
+        Color32::from_white_alpha(28)
+    } else {
+        palette.surface_active
+    };
     for (index, mode) in Mode::ALL.into_iter().enumerate() {
         let rect = Rect::from_min_size(
-            outer.min + vec2(3.0 + segment.x * index as f32, 3.0),
+            outer.min + vec2((segment.x + gap) * index as f32, 0.0),
             segment,
         );
         // Fixed ids, so the demo tour can point at them.
@@ -262,20 +261,21 @@ fn mode_icons(ui: &mut egui::Ui, app: &mut App) {
         };
         let response = ui.interact(rect, egui::Id::new(id), Sense::click());
         theme::reveal_focus(&response);
-        theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
-        let lit = slide.is_some_and(|position| (position - index as f32).abs() < 0.5);
-        if !lit && response.hovered() {
+        theme::focus_outline(ui, response.id, rect, 10.0);
+        let on = selected == Some(mode);
+        let t = theme::animate(ui.ctx(), response.id, on, theme::MOTION_QUICK);
+        if t > 0.0 {
+            ui.painter().rect_filled(rect, 10.0, lit.gamma_multiply(t));
+        } else if response.hovered() {
             ui.painter()
-                .rect_filled(rect, rect.height() / 2.0, palette.surface_hover);
+                .rect_filled(rect, 10.0, lit.gamma_multiply(0.5));
         }
         let icon = match mode {
-            Mode::System => Icon::Sparkles,
-            Mode::Light => Icon::Sun,
-            Mode::Dark => Icon::Moon,
+            Mode::System => Icon::SparklesFill,
+            Mode::Light => Icon::SunFill,
+            Mode::Dark => Icon::MoonFill,
         };
-        let color = if lit {
-            palette.on_accent
-        } else if response.hovered() {
+        let color = if on || response.hovered() {
             palette.text
         } else {
             palette.secondary
@@ -283,12 +283,11 @@ fn mode_icons(ui: &mut egui::Ui, app: &mut App) {
         theme::paint_icon(
             ui,
             icon,
-            Rect::from_center_size(rect.center(), Vec2::splat(18.0)),
-            18.0,
+            Rect::from_center_size(rect.center(), Vec2::splat(20.0)),
+            20.0,
             color,
         );
         let label = crate::i18n::gettext(app.locale, mode.label());
-        let on = selected == Some(mode);
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::RadioButton,
