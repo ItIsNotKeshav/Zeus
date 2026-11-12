@@ -2948,6 +2948,9 @@ struct View<'a> {
     account_receipts_off: bool,
     poll_voting: &'a HashSet<(ChatId, String)>,
     interactive_pending: &'a HashSet<(ChatId, String)>,
+    /// Our messages that say their state (see [`status_rows`]); `None`
+    /// lets every one of them say it, as a row outside the chat does.
+    status_rows: Option<&'a HashSet<String>>,
     /// Whether this chat is selecting whole messages.
     selecting: bool,
     /// The ids of the selected messages, when selecting.
@@ -3629,6 +3632,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let keyboard_navigation = std::cell::Cell::new(false);
     let scrims = std::cell::RefCell::new(Vec::new());
     let row_tops = std::cell::RefCell::new(Vec::new());
+    let status_rows = status_rows(&conversation.messages, chat.kind, app.account_receipts_off);
     let view = View {
         palette,
         locale: app.locale,
@@ -3692,6 +3696,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         doodles: app.doodles_behind(),
         scrims: Some(&scrims),
         rows: Some(&row_tops),
+        status_rows: Some(&status_rows),
     };
     let mut actions = Vec::new();
     let mut anchored = false;
@@ -6545,7 +6550,13 @@ fn bubble_row(
             })
         });
         let metadata_id = id.with("metadata-visible");
-        let default_visible = last_outgoing && message.from_me;
+        // The newest of ours shows its time, and any older one of ours
+        // that still says a state the newer ones have not reached.
+        let default_visible = message.from_me
+            && (last_outgoing
+                || view
+                    .status_rows
+                    .is_some_and(|rows| rows.contains(&message.id)));
         let mut visible = ui
             .ctx()
             .data(|data| data.get_temp::<bool>(metadata_id))
@@ -6806,7 +6817,9 @@ const STATUS_STAMP_AFTER: i64 = 5 * 60;
 /// "Read".
 fn status_word(locale: crate::i18n::Locale, status: Delivery) -> Option<String> {
     let word = match status {
-        Delivery::Sent => "Sent",
+        // Sent is what every message is once it leaves: it says nothing a
+        // reader needs, so it has no word.
+        Delivery::Sent => return None,
         Delivery::Delivered => "Delivered",
         Delivery::Read => "Read",
         Delivery::Played => "Played",
@@ -6816,16 +6829,13 @@ fn status_word(locale: crate::i18n::Locale, status: Delivery) -> Option<String> 
 }
 
 /// When a state was reached, if that was late enough to say: more than
-/// [`STATUS_STAMP_AFTER`] seconds after the message was sent. A message
-/// still only sent that long after it left has no later state to name, so it
-/// gives the time it was sent.
-fn status_stamp(message: &Message, shown: Delivery, now: i64) -> Option<i64> {
+/// [`STATUS_STAMP_AFTER`] seconds after the message was sent.
+fn status_stamp(message: &Message, shown: Delivery) -> Option<i64> {
     let sent = message.timestamp;
     let at = match shown {
-        Delivery::Sent => return (now - sent > STATUS_STAMP_AFTER).then_some(sent),
         Delivery::Delivered => message.delivered_at?,
         Delivery::Read | Delivery::Played => message.read_at?,
-        Delivery::None | Delivery::Pending | Delivery::Failed => return None,
+        Delivery::None | Delivery::Sent | Delivery::Pending | Delivery::Failed => return None,
     };
     (at - sent > STATUS_STAMP_AFTER).then_some(at)
 }
@@ -6833,30 +6843,72 @@ fn status_stamp(message: &Message, shown: Delivery, now: i64) -> Option<i64> {
 /// What our message's status says in place of ticks, such as "Read" or
 /// "Delivered • 11:01 AM"; `None` for a message that is not ours and for the
 /// states that keep their glyph (sending, failed).
-fn status_text(
-    locale: crate::i18n::Locale,
-    message: &Message,
-    shown: Delivery,
-    now: i64,
-) -> Option<String> {
+fn status_text(locale: crate::i18n::Locale, message: &Message, shown: Delivery) -> Option<String> {
     if !message.from_me {
         return None;
     }
     let word = status_word(locale, shown)?;
-    Some(match status_stamp(message, shown, now) {
+    Some(match status_stamp(message, shown) {
         Some(at) => format!("{word} • {}", crate::util::clock(at)),
         None => word,
     })
 }
 
-/// [`status_text`] as a view draws it.
+/// [`status_text`] as a view draws it: only on the messages that carry
+/// their state (see [`status_rows`]).
 fn message_status_text(view: &View<'_>, message: &Message) -> Option<String> {
-    status_text(
-        view.locale,
-        message,
-        shown_delivery(view, message),
-        crate::util::now(),
-    )
+    if view
+        .status_rows
+        .is_some_and(|rows| !rows.contains(&message.id))
+    {
+        return None;
+    }
+    status_text(view.locale, message, shown_delivery(view, message))
+}
+
+/// How far a state has got, for [`status_rows`]: delivered, then read (or
+/// played). Sending, sent and failed carry no word.
+fn status_rank(status: Delivery) -> Option<u8> {
+    match status {
+        Delivery::Delivered => Some(1),
+        Delivery::Read | Delivery::Played => Some(2),
+        Delivery::None | Delivery::Pending | Delivery::Sent | Delivery::Failed => None,
+    }
+}
+
+/// Which of our messages say their state: said once, under the newest
+/// message that reached it, as the phone does. An older message shows its
+/// word only when no newer one of ours has got as far, such as "Delivered"
+/// above a newest message that is only sent.
+fn status_rows(
+    messages: &[Message],
+    chat_kind: crate::model::ChatKind,
+    account_receipts_off: bool,
+) -> HashSet<String> {
+    let mut rows = HashSet::new();
+    let mut furthest = 0;
+    for message in messages.iter().rev().filter(|message| {
+        message.from_me
+            && !matches!(
+                message.content,
+                Content::Revoked | Content::DisappearingTimer { .. }
+            )
+    }) {
+        let shown = display_delivery(message.status, true, chat_kind, account_receipts_off);
+        if let Some(rank) = status_rank(shown)
+            && rank > furthest
+        {
+            furthest = rank;
+            rows.insert(message.id.clone());
+        }
+    }
+    rows
+}
+
+/// Whether our message keeps a glyph beside its clock: while it is sending,
+/// and when it failed. Every other state is a word, or nothing.
+fn keeps_glyph(message: &Message) -> bool {
+    message.from_me && matches!(message.status, Delivery::Pending | Delivery::Failed)
 }
 
 /// The colour of a status word: the read colour once it is read, `plain`
@@ -8876,7 +8928,7 @@ fn footer_width_with(
     let marks =
         if starred { FOOTER_MARK_SLOT } else { 0.0 } + if pinned { FOOTER_MARK_SLOT } else { 0.0 };
     // A word takes the place of the ticks, and of the clock beside them.
-    let ticks = if message.from_me && status.is_none() {
+    let ticks = if status.is_none() && keeps_glyph(message) {
         19.0
     } else {
         0.0
@@ -9186,7 +9238,7 @@ fn footer_over_picture(
             Color32::WHITE,
         )
     });
-    let tick_width = if message.from_me && status.is_none() {
+    let tick_width = if status.is_none() && keeps_glyph(message) {
         19.0
     } else {
         0.0
@@ -9223,7 +9275,7 @@ fn footer_over_picture(
             .rect_filled(scrim, scrim.height() / 2.0, Color32::from_black_alpha(110));
     }
     let mut x = row.right();
-    if message.from_me && status.is_none() {
+    if status.is_none() && keeps_glyph(message) {
         let ticks = Rect::from_center_size(pos2(x - 7.5, row.center().y), Vec2::splat(15.0));
         // Pops as the status advances, like the ticks under a bubble's text.
         tick_motion(ui, view, message, shown, ticks, Color32::WHITE);
@@ -9389,7 +9441,7 @@ fn footer(
             palette.text,
         )
     });
-    let tick_width = if message.from_me && status.is_none() {
+    let tick_width = if status.is_none() && keeps_glyph(message) {
         19.0
     } else {
         0.0
@@ -9413,7 +9465,7 @@ fn footer(
         );
     });
     let mut x = rect.right();
-    if message.from_me && status.is_none() {
+    if status.is_none() && keeps_glyph(message) {
         let ticks = Rect::from_center_size(pos2(x - 7.5, rect.center().y), Vec2::splat(15.0));
         tick_motion(ui, view, message, shown, ticks, view.palette.secondary);
         x -= tick_width;
@@ -9866,6 +9918,7 @@ pub(crate) fn list_menu(
         connected: app.link.is_connected(),
         poll_voting: &app.poll_voting,
         interactive_pending: &app.interactive_sending,
+        status_rows: None,
         // Nothing scrolls, highlights, or selects in a list row.
         anchor: None,
         open_menu: None,
@@ -16793,6 +16846,7 @@ mod tests {
             connected: false,
             poll_voting: &app.poll_voting,
             interactive_pending: &app.interactive_sending,
+            status_rows: None,
             anchor: None,
             open_menu: None,
             reaction: None,
@@ -17095,9 +17149,10 @@ mod tests {
             widths.push(footer_width(ui, &message, false, false));
             message.status = Delivery::Failed;
             widths.push(footer_width(ui, &message, false, false));
-            // Only our own messages can fail to send.
+            // Only our own messages can fail to send. A sent one shows its
+            // clock alone, as an incoming one does: no ticks, no word.
             message.from_me = false;
-            widths.push(footer_width(ui, &message, false, false) + 19.0);
+            widths.push(footer_width(ui, &message, false, false));
         });
         output.textures_delta.clear();
         assert!(widths[1] > widths[0] + 30.0, "{widths:?}");
@@ -17345,14 +17400,10 @@ mod reaction_tests {
     fn status_words_name_the_time_only_when_a_state_came_late() {
         use crate::i18n::Locale::English;
         let mut message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 1_000, true);
-        let text = |message: &Message, shown, now| status_text(English, message, shown, now);
+        let text = |message: &Message, shown, _now: i64| status_text(English, message, shown);
         // Back to back: the word alone, whatever the clock says.
         message.delivered_at = Some(1_000 + 60);
         message.read_at = Some(1_000 + STATUS_STAMP_AFTER);
-        assert_eq!(
-            text(&message, Delivery::Sent, 1_010).as_deref(),
-            Some("Sent")
-        );
         assert_eq!(
             text(&message, Delivery::Delivered, 2_000).as_deref(),
             Some("Delivered")
@@ -17379,16 +17430,61 @@ mod reaction_tests {
             text(&message, Delivery::Read, 9_999).as_deref(),
             Some(late(Delivery::Read, 1_000 + 3_600).as_str())
         );
-        // A message still only sent after five minutes gives its own time.
+        // Sent says nothing, however long ago; nor do sending, failed, and
+        // other people's messages.
+        assert_eq!(text(&message, Delivery::Sent, 1_010), None);
         assert_eq!(
-            text(&message, Delivery::Sent, 1_000 + STATUS_STAMP_AFTER + 1).as_deref(),
-            Some(late(Delivery::Sent, 1_000).as_str())
+            text(&message, Delivery::Sent, 1_000 + STATUS_STAMP_AFTER + 1),
+            None
         );
-        // Sending, failed, and other people's messages keep no word.
         assert_eq!(text(&message, Delivery::Pending, 1_010), None);
         assert_eq!(text(&message, Delivery::Failed, 1_010), None);
         message.from_me = false;
         assert_eq!(text(&message, Delivery::Read, 1_010), None);
+    }
+
+    #[test]
+    fn a_state_is_said_once_under_the_newest_message_that_reached_it() {
+        use crate::model::ChatKind::Direct;
+        let ours = |id: &str, status| {
+            let mut message = crate::archive::tests::message("1@s.whatsapp.net", id, 0, true);
+            message.status = status;
+            message
+        };
+        let ids = |messages: &[Message]| {
+            let mut rows: Vec<String> = status_rows(messages, Direct, false).into_iter().collect();
+            rows.sort();
+            rows
+        };
+        // All delivered: only the newest says so.
+        let all = [
+            ours("a", Delivery::Delivered),
+            ours("b", Delivery::Delivered),
+        ];
+        assert_eq!(ids(&all), ["b"]);
+        // The newest only sent: it says nothing, and the one before it keeps
+        // "Delivered".
+        let behind = [
+            ours("a", Delivery::Delivered),
+            ours("b", Delivery::Delivered),
+            ours("c", Delivery::Sent),
+        ];
+        assert_eq!(ids(&behind), ["b"]);
+        // Read further up, delivered at the end: each says its own once.
+        let mixed = [
+            ours("a", Delivery::Read),
+            ours("b", Delivery::Read),
+            ours("c", Delivery::Delivered),
+        ];
+        assert_eq!(ids(&mixed), ["b", "c"]);
+        // A newer read message covers an older delivered one.
+        let covered = [ours("a", Delivery::Delivered), ours("b", Delivery::Read)];
+        assert_eq!(ids(&covered), ["b"]);
+        // Read receipts off in a DM: read shows as delivered.
+        let hidden = [ours("a", Delivery::Read), ours("b", Delivery::Delivered)];
+        let mut rows: Vec<String> = status_rows(&hidden, Direct, true).into_iter().collect();
+        rows.sort();
+        assert_eq!(rows, ["b"]);
     }
 
     #[test]
