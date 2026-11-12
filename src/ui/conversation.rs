@@ -3259,6 +3259,26 @@ fn reply_card(app: &mut App, ui: &mut egui::Ui, card: &ReplyCard) -> Rect {
                 {
                     app.actions.push(Action::CancelReply);
                 }
+                // The photo or video being replied to, beside its caption.
+                if matches!(
+                    quoted.content,
+                    Content::Image { .. } | Content::Video { .. }
+                ) && let Some(bytes) = quoted
+                    .thumbnail
+                    .as_deref()
+                    .filter(|bytes| !bytes.is_empty())
+                {
+                    let (slot, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                    let uri = thumbnail_uri(ui.ctx(), &quoted.chat, &quoted.id, bytes);
+                    if let Ok(egui::load::TexturePoll::Ready { texture }) =
+                        egui::Image::new(uri).load_for_size(ui.ctx(), slot.size())
+                    {
+                        egui::Image::from_texture(texture)
+                            .uv(crate::video::square_uv(texture.size.x, texture.size.y))
+                            .corner_radius(6.0)
+                            .paint_at(ui, slot);
+                    }
+                }
             });
         });
     });
@@ -3281,6 +3301,8 @@ struct View<'a> {
     palette: Palette,
     locale: crate::i18n::Locale,
     chat: &'a Chat,
+    /// The loaded messages, where a quote finds the picture it quotes.
+    messages: &'a [Message],
     me: Option<&'a str>,
     auto_download: bool,
     connected: bool,
@@ -3960,6 +3982,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         palette,
         locale: app.locale,
         chat,
+        messages: &conversation.messages,
         me: app.me.as_deref(),
         auto_download: app.account().settings.auto_download,
         connected: app.link.is_connected(),
@@ -5825,10 +5848,16 @@ fn reaction_affordance(
     });
     theme::reveal_focus(&response);
     // Reply sits one step further out, where the chat accepts messages.
+    // View-once media can be replied to, as on the phone; the quote names its
+    // kind and carries none of it.
     let can_reply = view.chat.can_send()
         && !matches!(
             message.content,
-            Content::Revoked | Content::PhoneOnly { .. }
+            Content::Revoked
+                | Content::PhoneOnly {
+                    view_once: false,
+                    ..
+                }
         );
     let step = REACTION_AFFORDANCE_SIZE + 4.0;
     let outward = if rect.center().x < bubble.rect.center().x {
@@ -8590,6 +8619,27 @@ const QUOTE_BAR: f32 = 4.0;
 const QUOTE_SIDE: i8 = 10;
 /// Corner radius of a quote.
 const QUOTE_RADIUS: u8 = 12;
+/// Room between a quote's text and the picture it quotes.
+const QUOTE_PICTURE_GAP: f32 = 8.0;
+
+/// The thumbnail of the photo or video a quote points at, when that message
+/// is loaded in this chat, as WhatsApp shows it beside the quoted words.
+fn quoted_picture<'a>(view: &View<'a>, quoted: &crate::model::Quoted) -> Option<&'a [u8]> {
+    if quoted.chat.is_some() {
+        return None;
+    }
+    let original = view.messages.iter().rev().find(|row| row.id == quoted.id)?;
+    if !matches!(
+        original.content,
+        Content::Image { .. } | Content::Video { .. }
+    ) {
+        return None;
+    }
+    original
+        .thumbnail
+        .as_deref()
+        .filter(|bytes| !bytes.is_empty())
+}
 /// The even ring a Nothing bubble keeps around a card at its edge.
 const CARD_RING: i8 = 6;
 
@@ -8693,11 +8743,19 @@ fn quote_block(
         )
     });
     let (bleed, radius) = edge_card(ui, &palette, QUOTE_RADIUS);
+    let picture = quoted_picture(view, quoted);
+    // The picture takes a square at the card's right edge, as tall as the
+    // two lines of text with their padding.
+    let picture_side = 6.0 + 7.0 + 2.0 * theme::regular(12.5).size * 1.25;
     // The same room on both sides of the text: after the bar and before the
-    // card's right edge.
+    // card's right edge, or the picture.
     let padding = Margin {
         left: QUOTE_BAR as i8 + QUOTE_SIDE,
-        right: QUOTE_SIDE,
+        right: if picture.is_some() {
+            (picture_side + QUOTE_PICTURE_GAP).round() as i8
+        } else {
+            QUOTE_SIDE
+        },
         top: 6,
         bottom: 7,
     };
@@ -8733,6 +8791,26 @@ fn quote_block(
         })
         .response;
     let card = response.rect - bleed;
+    if let Some(bytes) = picture {
+        let side = card.height();
+        let slot = Rect::from_min_size(pos2(card.max.x - side, card.min.y), vec2(side, side));
+        // The same key the photo's own bubble draws with, so both share a texture.
+        let uri = thumbnail_uri(ui.ctx(), &view.chat.id, &quoted.id, bytes);
+        if let Ok(egui::load::TexturePoll::Ready { texture }) =
+            egui::Image::new(uri).load_for_size(ui.ctx(), slot.size())
+        {
+            // Cropped to the middle square rather than squeezed into it.
+            egui::Image::from_texture(texture)
+                .uv(crate::video::square_uv(texture.size.x, texture.size.y))
+                .corner_radius(CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: radius,
+                    se: radius,
+                })
+                .paint_at(ui, slot);
+        }
+    }
     // The bar is the card's own left edge, cut to its rounded corners.
     widgets::quote_bar(
         ui.painter(),
@@ -10061,6 +10139,7 @@ pub(crate) fn list_menu(
         palette: app.palette,
         locale: app.locale,
         chat,
+        messages: &[],
         me: app.me.as_deref(),
         auto_download: app.settings.auto_download,
         connected: app.link.is_connected(),
@@ -17047,6 +17126,7 @@ mod tests {
             palette: Palette::dark(),
             locale: app.locale,
             chat: &chat,
+            messages: &[],
             me: None,
             auto_download: app.settings.auto_download,
             connected: false,
