@@ -941,7 +941,8 @@ pub struct Settings {
     /// Proxy for WhatsApp, media, and updates, such as
     /// `socks5h://127.0.0.1:9050`. Empty follows `ALL_PROXY` / `HTTPS_PROXY`.
     pub proxy: String,
-    /// Ask GitHub every two hours whether a newer release exists.
+    /// Ask GitHub whether a newer release exists. Settings no longer shows
+    /// it: every copy checks, and the field stays so older files still load.
     pub check_for_updates: bool,
     /// The update channel older releases offered. Every copy follows stable
     /// releases now; the field stays so files from those releases still load,
@@ -1078,7 +1079,7 @@ impl Default for Settings {
             update_channel: crate::updates::Channel::Stable,
             split_view: false,
             chat_bubbles: false,
-            download_updates_automatically: false,
+            download_updates_automatically: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,
             microphone: None,
@@ -1111,7 +1112,9 @@ impl Default for Settings {
 ///    ([`Settings::set_theme`]).
 /// 5. Halloween is gone; its doodles load as the classic ones.
 /// 6. The Beta update channel is gone: everyone follows stable releases.
-pub const SETTINGS_VERSION: u32 = 6;
+/// 7. Check for updates is no longer a choice, and automatic update
+///    downloads are on: both switch on once.
+pub const SETTINGS_VERSION: u32 = 7;
 
 /// The key push to talk starts on.
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
@@ -1398,6 +1401,13 @@ impl Settings {
             // Settings no longer offers Beta; a copy that chose it follows
             // stable releases, the one channel left.
             self.update_channel = crate::updates::Channel::Stable;
+        }
+        if self.version < 7 {
+            // Settings no longer shows Check for updates, so every copy
+            // checks; automatic downloads became the default and older files
+            // stored the old default.
+            self.check_for_updates = true;
+            self.download_updates_automatically = true;
         }
         self.version = self.version.max(SETTINGS_VERSION);
     }
@@ -1835,7 +1845,7 @@ mod tests {
         assert_eq!(parsed.legacy_theme, ThemeChoice::Light);
         assert!(parsed.enter_sends);
         assert!(parsed.check_for_updates);
-        assert!(!parsed.download_updates_automatically);
+        assert!(parsed.download_updates_automatically);
         assert!(parsed.show_wallpaper);
         assert_eq!(parsed.wallpaper_color, WallpaperColor::Theme);
         assert!(parsed.pause_other_media);
@@ -2116,6 +2126,16 @@ mod tests {
         assert_eq!(Settings::load(&settings_path), settings);
         assert_eq!(AccountSettings::load(&account_path), account);
         assert_eq!(AccountRoster::load(&roster_path).unwrap(), roster);
+    }
+
+    #[test]
+    fn version_six_update_switches_load_on() {
+        let (settings, stored) = load_from(
+            r#"{"version":6,"check_for_updates":false,"download_updates_automatically":false}"#,
+        );
+        assert!(settings.check_for_updates);
+        assert!(settings.download_updates_automatically);
+        assert_eq!(stored["version"], SETTINGS_VERSION);
     }
 
     #[test]

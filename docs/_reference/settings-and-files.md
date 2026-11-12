@@ -112,8 +112,8 @@ name or description, in the interface language or in English.
     glass), **WhatsApp**, or **Messages**, which draws bubbles shaped, spaced
     and coloured as Messages on the Mac draws them (yours in iMessage blue,
     shading deeper down the window), the Mac's system blue for buttons and
-    highlights, and photos without a bubble. **Mode** is **System**,
-    **Light** or **Dark**; System follows the operating system's appearance
+    highlights, and photos without a bubble. **Appearance** is **Auto**,
+    **Light** or **Dark**; Auto follows the operating system's appearance
     (on Linux, the desktop portal's, and Omarchy's colours with the Zeus
     look). **Accent** is the look's own, or red, orange, yellow, green, teal,
     blue, purple or pink, for buttons, switches, links, ticks and your own
@@ -242,10 +242,9 @@ name or description, in the interface language or in English.
   not bring it back. On macOS this is a login item under System Settings >
   General > Login Items, which macOS may ask you to allow there; inside a
   Flatpak the desktop's background portal asks first.
-- **Check for updates**: ask GitHub once a day whether a newer release exists.
-- **Download updates automatically**: download and verify a new release in the
-  background; restarting stays your choice. Package managers and Flatpak update
-  Zeus themselves.
+- **Download updates automatically** (on by default): download and verify a
+  new release in the background; restarting stays your choice. Package
+  managers and Flatpak update Zeus themselves.
 - **Proxy**: for the WhatsApp connection, media, profile pictures, GIF search,
   Signal sticker imports, and update checks. It accepts `socks5h://host:port`
   (the proxy resolves names, as Tor expects), `socks5://host:port`, and
@@ -312,9 +311,9 @@ opens the other.
 
 ## Updates
 
-With **Check for updates** on, Zeus asks GitHub once a day for a newer
-release. **Update** in the status message at the bottom left downloads and verifies it, and **Restart to
-update** installs it when convenient. Downloads are checked against the
+Zeus asks GitHub once a day for a newer release, sending only its
+version; there is no switch for it. **Update** in the status message at the
+bottom left downloads and verifies it, and **Restart to update** installs it when convenient. Downloads are checked against the
 release's SHA-256 checksums, whose manifest must carry a valid Ed25519
 publisher signature; a missing or invalid signature stops the update. The
 updater keeps a backup and restores it if the new version cannot start.

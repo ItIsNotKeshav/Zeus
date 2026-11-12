@@ -375,6 +375,15 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
             .map(|section| section.title)
             .collect();
         let current = app.settings_section.min(titles.len().saturating_sub(1));
+        // WhatsApp's light look lifts the picked category to pure white.
+        let selected_fill = if !palette.dark
+            && app.settings.custom_theme.is_none()
+            && app.settings.chat_theme == ChatTheme::WhatsApp
+        {
+            Color32::WHITE
+        } else {
+            palette.surface
+        };
         egui::ScrollArea::vertical()
             .id_salt("settings-categories")
             .auto_shrink([false, false])
@@ -396,7 +405,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::reveal_focus(&response);
                         theme::focus_outline(ui, response.id, rect, 12.0);
                         if selected {
-                            ui.painter().rect_filled(rect, 12.0, palette.surface);
+                            ui.painter().rect_filled(rect, 12.0, selected_fill);
                         } else {
                             let hover =
                                 super::chats::row_hover_amount(ui, response.id, response.hovered());
@@ -503,28 +512,26 @@ fn sections(app: &App) -> Vec<Section> {
         chat_preview,
     );
     appearance.row(
-        translated(locale, "Mode"),
+        translated(locale, "Appearance"),
         if app.custom_themes.follows_omarchy() {
-            translated(locale, "Follow system uses your Omarchy colours.")
+            translated(locale, "Auto uses your Omarchy colours.")
         } else {
-            translated(locale, "Light, dark, or as the system is.")
+            Text::default()
         },
         mode_picker,
     );
     appearance.block(
-        vec![translated(locale, "Themes"), translated(locale, "Theme")],
-        theme_cards,
-    );
-    appearance.block(
-        vec![translated(locale, "Accent"), translated(locale, "Colour")],
-        accent_picker,
+        vec![
+            translated(locale, "Themes"),
+            translated(locale, "Theme"),
+            translated(locale, "Accent"),
+            translated(locale, "Colour"),
+        ],
+        theme_accordion,
     );
     appearance.row(
         translated(locale, "Glass"),
-        translated(
-            locale,
-            "How much shows through the frosted chat header, message field and menus, and the desktop through the window where the system allows. Solid keeps every surface opaque, as it is while the system reduces transparency.",
-        ),
+        "",
         glass_slider,
     );
     appearance.toggle(
@@ -537,7 +544,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     appearance.row(
         translated(locale, "Font"),
-        translated(locale, "Choose the desktop font."),
+        "",
         font_picker,
     );
     appearance.row(
@@ -565,10 +572,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     appearance.row(
         translated(locale, "Zoom"),
-        keyed(translated(
-            locale,
-            "Ctrl+Plus and Ctrl+Minus work anywhere, and Ctrl+0 resets it.",
-        )),
+        "",
         move |ui, app| {
             if theme::icon_button(
                 ui,
@@ -702,17 +706,14 @@ fn sections(app: &App) -> Vec<Section> {
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
         translated(locale, "Desktop notifications"),
-        translated(
-            locale,
-            "For chats you are not looking at. Muted chats stay quiet.",
-        ),
+        "",
         |settings| &mut settings.notifications,
     );
     if app.account().settings.notifications {
         let (title, description) = sound_text(locale, false);
         notifications.toggle(
             translated(locale, "Show message content in notifications"),
-            translated(locale, "When off, they say only “New message”."),
+            "",
             |settings| &mut settings.notification_content,
         );
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
@@ -720,7 +721,7 @@ fn sections(app: &App) -> Vec<Section> {
             translated(locale, "Notification cooldown"),
             translated(
                 locale,
-                "When many messages arrive at once, such as when the app opens, only the first makes a sound and each chat notifies once.",
+                "Only one sound when many messages arrive at once.",
             ),
             |settings| &mut settings.notification_cooldown,
         );
@@ -728,7 +729,7 @@ fn sections(app: &App) -> Vec<Section> {
             translated(locale, "Limit repeat notifications"),
             translated(
                 locale,
-                "After one notification, a chat stays quiet for 10 minutes. Opening the chat resets this. In groups, mentions and replies to you still notify.",
+                "A chat stays quiet for 10 minutes after it notifies. Mentions and replies still notify.",
             ),
             |ui, app| {
                 let palette = app.palette;
@@ -763,10 +764,7 @@ fn sections(app: &App) -> Vec<Section> {
         );
         notifications.toggle(
             translated(locale, "Play sounds for group messages"),
-            translated(
-                locale,
-                "When off, only mentions and replies to you make a sound.",
-            ),
+            translated(locale, "Off: only mentions and replies make a sound."),
             |settings| &mut settings.group_sounds,
         );
         let (title, description) = sound_text(locale, true);
@@ -876,13 +874,13 @@ fn sections(app: &App) -> Vec<Section> {
     let mut system = Section::new(translated(locale, "System"));
     system.toggle(
         translated(locale, "Keep running when the window closes"),
-        keyed(translated(locale, "Quit from the tray or with Ctrl+Q.")),
+        "",
         |settings| &mut settings.keep_running_in_background,
     );
     if app.start_with_system.is_some() {
         system.row(
             translated(locale, "Start at login"),
-            translated(locale, "Starts in the tray, without a window."),
+            "",
             move |ui, app| {
                 let Some(mut enabled) = app.start_with_system else {
                     return;
@@ -904,22 +902,12 @@ fn sections(app: &App) -> Vec<Section> {
             },
         );
     }
-    // Only a build with a release feed of its own has anything to check.
+    // Only a build with a release feed of its own has anything to fetch.
+    // Checking itself is always on, with no switch.
     if crate::brand::UPDATES {
         system.toggle(
-            translated(locale, "Check for updates"),
-            translated(
-                locale,
-                "Asks GitHub once a day, sending only the Zeus version.",
-            ),
-            |settings| &mut settings.check_for_updates,
-        );
-        system.toggle(
             translated(locale, "Download updates automatically"),
-            translated(
-                locale,
-                "You still choose when to restart. Package managers and Flatpak update Zeus themselves.",
-            ),
+            "",
             |settings| &mut settings.download_updates_automatically,
         );
     }
@@ -1068,24 +1056,18 @@ fn sections(app: &App) -> Vec<Section> {
     );
     files.row(
         translated(locale, "Remove unopened files"),
-        translated(
-            locale,
-            "Downloaded attachments you have not opened for this long are deleted from this computer. They download again when you open them.",
-        ),
+        "",
         cache_age_picker,
     );
     files.row(
         translated(locale, "Cache size limit"),
-        translated(
-            locale,
-            "When downloads take more than this, the ones opened longest ago are deleted first.",
-        ),
+        "",
         cache_limit_picker,
     );
     let log = app.dirs.log_file();
     files.row(
         translated(locale, "Log"),
-        log.display().to_string(),
+        "",
         move |ui, app| {
             if theme::soft_button(
                 ui,
@@ -1158,17 +1140,9 @@ fn swipe_section(locale: Locale) -> Section {
     use crate::settings::SwipeSlot;
     let mut swipes = Section::new(translated(locale, "Touchpad swipes"));
     for slot in SwipeSlot::ALL {
-        let description = match slot {
-            SwipeSlot::ListLeft => "Two fingers sliding left over a chat in the list.",
-            SwipeSlot::ListRight => "Two fingers sliding right over a chat in the list.",
-            SwipeSlot::ChatLeft => {
-                "Two fingers sliding left across the open chat. A reply goes to the message under them."
-            }
-            SwipeSlot::ChatRight => "Two fingers sliding right across the open chat.",
-        };
         swipes.row(
             translated(locale, slot.label()),
-            translated(locale, description),
+            "",
             move |ui, app| swipe_picker(ui, app, slot),
         );
     }
@@ -1220,7 +1194,7 @@ fn voice_section(app: &App) -> Section {
                 source: text.source.replace("{name}", &device.name).into(),
             }
         }
-        None => translated(locale, "The input device for calls and voice messages."),
+        None => Text::default(),
     };
     voice.row(
         translated(locale, "Microphone"),
@@ -1229,17 +1203,14 @@ fn voice_section(app: &App) -> Section {
     );
     voice.row(
         translated(locale, "Check your microphone"),
-        translated(
-            locale,
-            "Speak and watch the level. Nothing is recorded or sent.",
-        ),
+        translated(locale, "Nothing is recorded or sent."),
         microphone_check,
     );
     voice.row(
         translated(locale, "Push to talk"),
         translated(
             locale,
-            "During calls your microphone stays silent until you hold a key, or the talk button on the call screen.",
+            "Your microphone stays silent in calls until you hold a key.",
         ),
         |ui, app| {
             let palette = app.palette;
@@ -1897,26 +1868,6 @@ fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
 /// How wide an accent swatch is.
 const SWATCH: f32 = 26.0;
 
-/// The accent swatches: the theme's own, then the colours.
-fn accent_picker(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let locale = app.locale;
-    let custom = app.settings.custom_theme.is_some();
-    let description = crate::i18n::gettext(
-        locale,
-        "Buttons, links, ticks and your own messages take this colour in any theme.",
-    );
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(locale, "Accent"),
-        &description,
-    );
-    let enabled = !custom;
-    accent_swatches(ui, app, enabled);
-    ui.add_space(crate::theme::SPACE_L);
-}
-
 /// The accent swatches alone, the theme's own first: Settings' Accent and
 /// the first-run setup's. Dimmed and inert unless `enabled`.
 pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
@@ -2036,20 +1987,95 @@ fn chat_theme_cards(ui: &mut egui::Ui, app: &mut App, salt: &str, choices: &[Cha
     card_grid(ui, app, salt, cards);
 }
 
-/// Every theme as a card, each in the mode on screen with the accent chosen.
-fn theme_cards(ui: &mut egui::Ui, app: &mut App) {
+/// How tall the Theme accordion's own row is.
+const ACCORDION_ROW: f32 = 40.0;
+
+/// Theme and accent folded under one row that names the theme on screen.
+/// Opened, it shows every theme as a card (in the mode on screen with the
+/// accent chosen), then the accent swatches. A search opens it, so a theme
+/// or accent it finds is in sight.
+fn theme_accordion(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(app.locale, "Themes"),
-        &crate::i18n::gettext(
-            app.locale,
-            "Pick a theme, then an accent below: every theme wears it in its own style.",
-        ),
+    let locale = app.locale;
+    let custom = app.settings.custom_theme.clone();
+    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
+        ui.ctx(),
+        egui::Id::new("settings-theme-accordion"),
+        false,
     );
-    ui.add_space(crate::theme::SPACE_HAIR);
-    chat_theme_cards(ui, app, "chat-theme", &ChatTheme::ALL);
+    if !app.settings_search.trim().is_empty() && !state.is_open() {
+        state.set_open(true);
+    }
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), ACCORDION_ROW), Sense::click());
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, 12.0);
+    let title = crate::i18n::gettext(locale, "Theme");
+    if ui.is_rect_visible(rect) {
+        ui.painter().text(
+            pos2(rect.left(), rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            title.as_ref(),
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+        );
+        let chevron = if state.is_open() {
+            Icon::ChevronDown
+        } else {
+            Icon::ChevronRight
+        };
+        let chevron_rect = Rect::from_center_size(
+            pos2(rect.right() - 10.0, rect.center().y),
+            Vec2::splat(18.0),
+        );
+        theme::paint_icon(
+            ui,
+            chevron,
+            chevron_rect,
+            18.0,
+            if response.hovered() {
+                palette.text
+            } else {
+                palette.secondary
+            },
+        );
+        // The theme on screen, and its accent beside it.
+        let dot = pos2(chevron_rect.left() - 14.0, rect.center().y);
+        ui.painter().circle_filled(dot, 6.0, palette.accent);
+        let name = custom
+            .as_deref()
+            .unwrap_or_else(|| app.settings.chat_theme.label());
+        ui.painter().text(
+            pos2(dot.x - 14.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            name,
+            theme::regular(theme::TEXT_CONTROL),
+            palette.secondary,
+        );
+    }
+    let open = state.is_open();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::CollapsingHeader,
+            ui.is_enabled(),
+            open,
+            title.as_ref(),
+        )
+    });
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        state.toggle(ui);
+    }
+    state.show_body_unindented(ui, |ui| {
+        ui.add_space(crate::theme::SPACE_S);
+        chat_theme_cards(ui, app, "chat-theme", &ChatTheme::ALL);
+        ui.add_space(crate::theme::SPACE_L);
+        block_heading(ui, &palette, &crate::i18n::gettext(locale, "Accent"), "");
+        accent_swatches(ui, app, custom.is_none());
+        ui.add_space(crate::theme::SPACE_S);
+    });
     ui.add_space(crate::theme::SPACE_XS);
 }
 
@@ -2550,10 +2576,7 @@ fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
         ui,
         &palette,
         &crate::i18n::gettext(app.locale, "Doodles"),
-        &crate::i18n::gettext(
-            app.locale,
-            "The pattern drawn over the wallpaper colour in your chats.",
-        ),
+        "",
     );
     ui.add_space(4.0);
     // Each card shows its whole tile, whatever the density: thinning every
@@ -2711,10 +2734,7 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
         ui,
         &palette,
         &crate::i18n::gettext(locale, "Doodle colour"),
-        &crate::i18n::gettext(
-            locale,
-            "Gray stands out softly from the wallpaper; Accent tints the doodles with your accent colour.",
-        ),
+        "",
         |ui| {
             if let Some(color) =
                 segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0)
@@ -2734,10 +2754,7 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
     if let Some(percent) = doodle_slider(
         ui,
         app,
-        (
-            "Doodle intensity",
-            "How strongly the doodles stand out from the wallpaper.",
-        ),
+        "Doodle intensity",
         ("Subtle", "Strong"),
         intensity / range.end(),
         range.start() / range.end()..=1.0,
@@ -2755,7 +2772,7 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
     if let Some(density) = doodle_slider(
         ui,
         app,
-        ("Doodle density", "How many doodles fill the wallpaper."),
+        "Doodle density",
         ("Sparse", "Dense"),
         density,
         range,
@@ -2765,12 +2782,12 @@ fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
 }
 
 /// One of the doodle sliders, laid out as Glass's is: a row with its
-/// description and, on the right, the slider between its two ends' names.
+/// name and, on the right, the slider between its two ends' names.
 /// `value` is a multiple of 1.0, and what the slider moves to is returned.
 fn doodle_slider(
     ui: &mut egui::Ui,
     app: &App,
-    (label, description): (&'static str, &'static str),
+    label: &'static str,
     (low, high): (&'static str, &'static str),
     value: f32,
     range: std::ops::RangeInclusive<f32>,
@@ -2782,7 +2799,7 @@ fn doodle_slider(
         ui,
         &palette,
         &crate::i18n::gettext(locale, label),
-        &crate::i18n::gettext(locale, description),
+        "",
         |ui| {
             let mut value = value;
             // As in `glass_slider`: the row lays its first item last.
@@ -2857,24 +2874,6 @@ fn storage_usage(ui: &mut egui::Ui, app: &mut App) {
         });
     });
     ui.add_space(4.0);
-    // Each number has a cache of its own: say whose this is.
-    let account = app.account().display_label(locale);
-    let hint = widgets::line(
-        ui,
-        &crate::i18n::gettext(
-            locale,
-            "Photos, videos, stickers and files {account} downloaded to this computer. Clearing them keeps your messages; attachments download again when you open them.",
-        )
-        .replace("{account}", &account),
-        theme::regular(theme::TEXT_CAPTION),
-        palette.secondary,
-        ui.available_width(),
-        usize::MAX,
-    );
-    let (rect, _) = ui.allocate_exact_size(hint.size(), Sense::hover());
-    if ui.is_rect_visible(rect) {
-        hint.paint(ui, rect.min, palette.secondary);
-    }
     if !measured {
         return;
     }
@@ -3442,7 +3441,7 @@ fn sound_text(locale: Locale, mention: bool) -> (Text, Text) {
     if mention {
         (
             translated(locale, "Mention sound"),
-            translated(locale, "When a group mentions you or replies to you."),
+            translated(locale, "For mentions and replies in groups."),
         )
     } else {
         (translated(locale, "Message sound"), Text::default())

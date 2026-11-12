@@ -45,7 +45,7 @@ features:
     details: Link more than one WhatsApp number and switch between them from your picture at the foot of the rail beside the chat list.
   - icon: 🎨
     title: Themes
-    details: Light, dark, or the system's appearance, custom colour themes, and on Omarchy your desktop theme.
+    details: Light, dark, or automatic appearance, custom colour themes, and on Omarchy your desktop theme.
     link: /themes/
     link_text: Make a theme
   - icon: ⌨️

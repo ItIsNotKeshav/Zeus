@@ -160,7 +160,7 @@ impl Mode {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::System => "System",
+            Self::System => "Auto",
             Self::Light => "Light",
             Self::Dark => "Dark",
         }
