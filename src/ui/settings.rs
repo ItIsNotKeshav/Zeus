@@ -13,12 +13,14 @@ use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
 use crate::settings::{
-    DOODLE_DENSITY, DOODLE_INTENSITY, DoodleColor, DoodleStyle, Settings, WallpaperColor,
+    Settings, WallpaperColor,
 };
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
 use super::widgets;
+
+mod appearance;
 
 /// The settings search field, which Ctrl+F focuses on this page.
 pub const SEARCH_ID: &str = "settings-search";
@@ -197,6 +199,14 @@ impl Section {
             }));
     }
 
+    /// The section without the blocks found by `keyword` (by its English
+    /// source).
+    fn without(mut self, keyword: &str) -> Self {
+        self.entries
+            .retain(|(row, _)| !row.keywords.iter().any(|found| found.source == keyword));
+        self
+    }
+
     /// The rows the search leaves, in order.
     fn visible(self, filter: &Filter) -> (Text, Vec<(Row, Control)>) {
         let entries = self
@@ -251,6 +261,31 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .ctx()
         .data(|data| data.get_temp::<bool>(super::side_columns_id()))
         .unwrap_or(false);
+    let searching = !app.settings_search.trim().is_empty();
+    let all = sections(app);
+    let section = app.settings_section.min(all.len().saturating_sub(1));
+    // Appearance on a wide page keeps its preview in a column of its own on
+    // the right, still while the controls scroll, so every change shows
+    // without scrolling back up to it.
+    let page = ui.available_rect_before_wrap();
+    let split = beside
+        && !searching
+        && all.get(section).is_some_and(|one| one.title.source == "Appearance")
+        && page.width() >= SPLIT_WIDTH;
+    let (controls, preview) = if split {
+        let left = (page.width() * 0.55).clamp(SPLIT_CONTROLS.0, SPLIT_CONTROLS.1);
+        let preview = Rect::from_min_max(
+            pos2(page.left() + left + SPLIT_GAP, page.top() + TOP_MARGIN),
+            pos2(page.right() - SIDE_MARGIN, page.bottom() - TOP_MARGIN),
+        );
+        (
+            Rect::from_min_max(page.min, pos2(page.left() + left, page.bottom())),
+            Some(preview),
+        )
+    } else {
+        (page, None)
+    };
+    ui.scope_builder(egui::UiBuilder::new().max_rect(controls), |ui| {
     egui::ScrollArea::vertical()
         .id_salt("settings")
         .auto_shrink([false, false])
@@ -271,9 +306,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                     .layout(Layout::top_down(Align::Min)),
                 |ui| {
                     ui.set_width(width);
-                    let searching = !app.settings_search.trim().is_empty();
-                    let all = sections(app);
-                    let section = app.settings_section.min(all.len().saturating_sub(1));
                     // Beside its categories the page shows the one picked,
                     // under its own name, or what a search finds.
                     let one = beside.then_some(section).filter(|_| !searching);
@@ -312,6 +344,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                         if one.is_some_and(|one| one != index) {
                             continue;
                         }
+                        let section = if split {
+                            section.without("Preview")
+                        } else {
+                            section
+                        };
                         found |= section.show(ui, app, &filter, one.is_none());
                     }
                     if !found {
@@ -328,7 +365,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             );
             ui.add_space(TOP_MARGIN);
         });
+    });
+    if let Some(rect) = preview {
+        appearance::preview(ui, app, rect);
+    }
 }
+
+/// The least page width that puts Appearance's preview beside its controls.
+const SPLIT_WIDTH: f32 = 860.0;
+/// How wide Appearance's controls column grows, least and most, beside the
+/// preview.
+const SPLIT_CONTROLS: (f32, f32) = (440.0, 600.0);
+/// The space between Appearance's controls and its preview.
+const SPLIT_GAP: f32 = 8.0;
 
 /// How tall a category row in the settings list is.
 const CATEGORY_ROW: f32 = 44.0;
@@ -521,107 +570,55 @@ fn sections(app: &App) -> Vec<Section> {
     let palette = app.palette;
 
     let mut appearance = Section::new(translated(locale, "Appearance"));
-    // The language first: it is what a reader who cannot read the rest
-    // looks for.
-    appearance.row(translated(locale, "Language"), "", language_picker);
+    // Beside the controls on a wide page, the preview leaves this list for a
+    // column of its own (see `show`).
     appearance.block(
-        vec![translated(locale, "Preview"), translated(locale, "Theme")],
-        chat_preview,
-    );
-    appearance.row(
-        translated(locale, "Appearance"),
-        if app.custom_themes.follows_omarchy() {
-            translated(locale, "Auto uses your Omarchy colours.")
-        } else {
-            Text::default()
+        vec![translated(locale, "Preview")],
+        |ui, app| {
+            let (rect, _) = ui.allocate_exact_size(
+                vec2(ui.available_width(), appearance::PREVIEW_HEIGHT),
+                Sense::hover(),
+            );
+            appearance::preview(ui, app, rect);
+            ui.add_space(crate::theme::SPACE_L);
         },
-        mode_picker,
     );
     appearance.block(
         vec![
-            translated(locale, "Themes"),
             translated(locale, "Theme"),
+            translated(locale, "Themes"),
             translated(locale, "Accent"),
             translated(locale, "Colour"),
+            translated(locale, "Auto"),
+            translated(locale, "Light"),
+            translated(locale, "Dark"),
+            translated(locale, "Glass"),
+            translated(locale, "Tint the wallpaper"),
         ],
-        theme_accordion,
-    );
-    appearance.row(
-        translated(locale, "Glass"),
-        "",
-        glass_slider,
-    );
-    appearance.toggle(
-        translated(locale, "Always show time"),
-        translated(
-            locale,
-            "When off, click a message to see its time.",
-        ),
-        |settings| &mut settings.always_show_time,
-    );
-    appearance.row(
-        translated(locale, "Font"),
-        "",
-        font_picker,
-    );
-    appearance.row(
-        translated(locale, "Wallpaper"),
-        Text::default(),
-        move |ui, app| {
-            let label = if app.account().settings.wallpaper_image.is_some() {
-                crate::i18n::gettext(app.locale, "Image").into_owned()
-            } else {
-                wallpaper_label(app.locale, app.settings.wallpaper_color_for(palette.dark))
-            };
-            // What is chosen shows in the accent, as a selected chip does.
-            if theme::soft_button(ui, &palette, Some(Icon::ChevronRight), &label, true).clicked() {
-                app.actions.push(Action::Open(Page::Wallpaper));
-            }
-        },
+        appearance::theme_card,
     );
     appearance.block(
         vec![
             translated(locale, "Doodles"),
             translated(locale, "Wallpaper"),
-            translated(locale, "Doodle density"),
+            translated(locale, "Photo"),
+            translated(locale, "Density"),
+            translated(locale, "Strength"),
+            translated(locale, "Doodle colour"),
         ],
-        doodle_cards,
+        appearance::doodles,
     );
-    appearance.row(
-        translated(locale, "Zoom"),
-        "",
-        move |ui, app| {
-            if theme::icon_button(
-                ui,
-                Icon::Plus,
-                16.0,
-                palette.secondary,
-                palette.text,
-                &crate::i18n::gettext(app.locale, "Larger"),
-            )
-            .clicked()
-            {
-                app.actions.push(Action::ZoomBy(0.1));
-            }
-            theme::text(
-                ui,
-                format!("{:.0}%", app.settings.zoom * 100.0),
-                theme::medium(theme::TEXT_BODY),
-                palette.text,
-            );
-            if theme::icon_button(
-                ui,
-                Icon::Minus,
-                16.0,
-                palette.secondary,
-                palette.text,
-                &crate::i18n::gettext(app.locale, "Smaller"),
-            )
-            .clicked()
-            {
-                app.actions.push(Action::ZoomBy(-0.1));
-            }
-        },
+    appearance.block(vec![translated(locale, "Font")], appearance::fonts);
+    appearance.block(vec![translated(locale, "Zoom")], appearance::zoom);
+    appearance.block(
+        vec![
+            translated(locale, "More"),
+            translated(locale, "Language"),
+            translated(locale, "Animations"),
+            translated(locale, "Always show time"),
+            translated(locale, "Wallpaper colour"),
+        ],
+        appearance::more,
     );
 
     let mut chats = Section::new(translated(locale, "Chats"));
@@ -1648,148 +1645,7 @@ fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description:
     ui.add_space(8.0);
 }
 
-/// How tall the live preview of a conversation is.
-const PREVIEW_HEIGHT: f32 = 248.0;
-/// The room between the preview's edge and what is drawn in it.
-const PREVIEW_PAD: f32 = 20.0;
 
-/// A small conversation drawn in the colours on screen, so a change of
-/// theme, mode, accent or blur shows here as it does in the chats.
-fn chat_preview(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let locale = app.locale;
-    let (rect, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), PREVIEW_HEIGHT), Sense::hover());
-    ui.add_space(16.0);
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    let text = |source: &'static str| crate::i18n::gettext(locale, source).into_owned();
-    let painter = ui.painter_at(rect);
-    let radius = f32::from(super::chats::CARD_RADIUS);
-    painter.rect_filled(rect, radius, app.wallpaper().color);
-    // The header, as the chat draws it: solid, or a veil over the messages
-    // easing out under it.
-    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 58.0));
-    let header_fill = if palette.vibrant() {
-        palette.vibrant_header(palette.chat)
-    } else {
-        palette.panel
-    };
-    painter.rect_filled(
-        header,
-        CornerRadius {
-            nw: radius as u8,
-            ne: radius as u8,
-            sw: 0,
-            se: 0,
-        },
-        header_fill,
-    );
-    let avatar = pos2(header.left() + PREVIEW_PAD + 14.0, header.center().y);
-    painter.circle_filled(avatar, 14.0, palette.avatar(0.58));
-    painter.text(
-        avatar,
-        egui::Align2::CENTER_CENTER,
-        "A",
-        theme::semibold(theme::TEXT_CONTROL),
-        Color32::WHITE,
-    );
-    painter.text(
-        pos2(avatar.x + 22.0, header.center().y - 8.0),
-        egui::Align2::LEFT_CENTER,
-        "Ava",
-        theme::semibold(theme::TEXT_BODY),
-        palette.text,
-    );
-    painter.text(
-        pos2(avatar.x + 22.0, header.center().y + 8.0),
-        egui::Align2::LEFT_CENTER,
-        text("online"),
-        theme::regular(theme::TEXT_CAPTION),
-        palette.secondary,
-    );
-
-    // Messages: theirs on the left, ours on the right with its ticks.
-    let bubble = |top: f32, label: String, own: bool| -> f32 {
-        let colours = palette.on_bubble(own);
-        let galley =
-            painter.layout_no_wrap(label, theme::regular(theme::TEXT_CONTROL), colours.text);
-        let meta = if own { 30.0 } else { 0.0 };
-        let size = galley.size() + vec2(28.0 + meta, 18.0);
-        let left = if own {
-            rect.right() - PREVIEW_PAD - size.x
-        } else {
-            rect.left() + PREVIEW_PAD
-        };
-        let shape = Rect::from_min_size(pos2(left, top), size);
-        let fill = if own {
-            palette.bubble_out
-        } else {
-            palette.bubble_in
-        };
-        painter.rect_filled(shape, theme::RADIUS, fill);
-        painter.galley(shape.min + vec2(14.0, 9.0), galley, colours.text);
-        if own {
-            let ticks = Rect::from_center_size(
-                pos2(shape.right() - 22.0, shape.center().y),
-                Vec2::splat(14.0),
-            );
-            widgets::ticks_in(
-                ui,
-                &colours,
-                ticks,
-                crate::model::Delivery::Read,
-                colours.secondary,
-            );
-        }
-        shape.bottom()
-    };
-    let mut y = header.bottom() + 16.0;
-    y = bubble(y, text("Did you see the new themes?"), false) + 6.0;
-    y = bubble(y, text("Trying them all right now"), true) + 6.0;
-    bubble(y, text("Pick one with a light mode too"), false);
-
-    // The message field, on glass or a solid pill.
-    let field = Rect::from_min_max(
-        pos2(
-            rect.left() + PREVIEW_PAD - 4.0,
-            rect.bottom() - PREVIEW_PAD - 30.0,
-        ),
-        pos2(
-            rect.right() - PREVIEW_PAD - 40.0,
-            rect.bottom() - PREVIEW_PAD + 2.0,
-        ),
-    );
-    let field_fill = if palette.vibrant() {
-        palette.glass()
-    } else {
-        palette.surface
-    };
-    painter.rect_filled(field, field.height() / 2.0, field_fill);
-    painter.text(
-        pos2(field.left() + 16.0, field.center().y),
-        egui::Align2::LEFT_CENTER,
-        text("Message"),
-        theme::regular(theme::TEXT_CONTROL),
-        palette.dim,
-    );
-    let send = pos2(rect.right() - PREVIEW_PAD - 14.0, field.center().y);
-    painter.circle_filled(send, 16.0, palette.accent);
-    theme::paint_icon(
-        ui,
-        Icon::Send,
-        Rect::from_center_size(send, Vec2::splat(16.0)),
-        16.0,
-        palette.on_accent,
-    );
-    painter.rect_stroke(
-        rect,
-        radius,
-        Stroke::new(1.0, palette.outline),
-        egui::StrokeKind::Inside,
-    );
-}
 
 /// Seconds the pill's fill takes to reach a new segment.
 const SLIDE_SECONDS: f64 = theme::MOTION_PANEL as f64;
@@ -1891,29 +1747,6 @@ fn segmented<T: Copy + PartialEq>(
     clicked
 }
 
-/// Light, dark or system, as three segments of one control.
-fn mode_picker(ui: &mut egui::Ui, app: &mut App) {
-    let custom = app.settings.custom_theme.is_some();
-    let selected = (!custom).then_some(app.settings.mode);
-    let options: Vec<_> = Mode::ALL
-        .into_iter()
-        .map(|mode| (mode, crate::i18n::gettext(app.locale, mode.label())))
-        .collect();
-    if let Some(mode) = segmented(ui, &app.palette, "mode", &options, selected, 72.0) {
-        app.actions.push(Action::SetMode(mode));
-        if custom {
-            // A theme file has one mode of its own: leave it for the
-            // ready-made theme last used, in the mode asked for.
-            let theme = app.settings.chat_theme;
-            let theme = if theme.is_look() {
-                app.settings.last_theme
-            } else {
-                theme
-            };
-            app.actions.push(Action::SetChatTheme(theme));
-        }
-    }
-}
 
 /// How wide an accent swatch is.
 const SWATCH: f32 = 26.0;
@@ -2009,191 +1842,10 @@ pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
     });
 }
 
-/// The least width of a theme card.
-const CARD_WIDTH: f32 = 128.0;
-/// How tall the coloured part of a theme card is.
-const CARD_PREVIEW: f32 = 62.0;
-/// How tall the name under it is.
-const CARD_LABEL: f32 = 30.0;
-/// The space between cards.
-const CARD_GAP: f32 = 10.0;
 
-/// The chat theme cards for `choices`, each in the mode on screen with the
-/// accent it would take.
-fn chat_theme_cards(ui: &mut egui::Ui, app: &mut App, salt: &str, choices: &[ChatTheme]) {
-    let palette = app.palette;
-    let custom = app.settings.custom_theme.is_some();
-    let cards: Vec<(String, Palette, bool, Action)> = choices
-        .iter()
-        .map(|&choice| {
-            (
-                choice.label().to_owned(),
-                choice.palette(palette.dark, app.settings.accent),
-                !custom && app.settings.chat_theme == choice,
-                Action::SetChatTheme(choice),
-            )
-        })
-        .collect();
-    card_grid(ui, app, salt, cards);
-}
 
-/// How tall the Theme accordion's own row is.
-const ACCORDION_ROW: f32 = 40.0;
 
-/// Theme and accent folded under one row that names the theme on screen.
-/// Opened, it shows every theme as a card (in the mode on screen with the
-/// accent chosen), then the accent swatches. A search opens it, so a theme
-/// or accent it finds is in sight.
-fn theme_accordion(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let locale = app.locale;
-    let custom = app.settings.custom_theme.clone();
-    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        egui::Id::new("settings-theme-accordion"),
-        false,
-    );
-    if !app.settings_search.trim().is_empty() && !state.is_open() {
-        state.set_open(true);
-    }
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), ACCORDION_ROW), Sense::click());
-    theme::reveal_focus(&response);
-    theme::focus_outline(ui, response.id, rect, 12.0);
-    let title = crate::i18n::gettext(locale, "Theme");
-    if ui.is_rect_visible(rect) {
-        ui.painter().text(
-            pos2(rect.left(), rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            title.as_ref(),
-            theme::medium(theme::TEXT_BODY),
-            palette.text,
-        );
-        let chevron = if state.is_open() {
-            Icon::ChevronDown
-        } else {
-            Icon::ChevronRight
-        };
-        let chevron_rect = Rect::from_center_size(
-            pos2(rect.right() - 10.0, rect.center().y),
-            Vec2::splat(18.0),
-        );
-        theme::paint_icon(
-            ui,
-            chevron,
-            chevron_rect,
-            18.0,
-            if response.hovered() {
-                palette.text
-            } else {
-                palette.secondary
-            },
-        );
-        // The theme on screen, and its accent beside it.
-        let dot = pos2(chevron_rect.left() - 14.0, rect.center().y);
-        ui.painter().circle_filled(dot, 6.0, palette.accent);
-        let name = custom
-            .as_deref()
-            .unwrap_or_else(|| app.settings.chat_theme.label());
-        ui.painter().text(
-            pos2(dot.x - 14.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            name,
-            theme::regular(theme::TEXT_CONTROL),
-            palette.secondary,
-        );
-    }
-    let open = state.is_open();
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::CollapsingHeader,
-            ui.is_enabled(),
-            open,
-            title.as_ref(),
-        )
-    });
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        state.toggle(ui);
-    }
-    state.show_body_unindented(ui, |ui| {
-        ui.add_space(crate::theme::SPACE_S);
-        chat_theme_cards(ui, app, "chat-theme", &ChatTheme::ALL);
-        ui.add_space(crate::theme::SPACE_L);
-        block_heading(ui, &palette, &crate::i18n::gettext(locale, "Accent"), "");
-        accent_swatches(ui, app, custom.is_none());
-        ui.add_space(crate::theme::SPACE_S);
-    });
-    ui.add_space(crate::theme::SPACE_XS);
-}
 
-/// Theme cards in as many columns as fit, widened to fill the row.
-fn card_grid(
-    ui: &mut egui::Ui,
-    app: &mut App,
-    salt: &str,
-    cards: Vec<(String, Palette, bool, Action)>,
-) {
-    let width = ui.available_width();
-    // A short row, like the three looks, widens to fill the line.
-    let columns = (((width + CARD_GAP) / (CARD_WIDTH + CARD_GAP)).floor() as usize)
-        .min(cards.len())
-        .max(1);
-    let card = vec2(
-        (width - CARD_GAP * (columns - 1) as f32) / columns as f32,
-        CARD_PREVIEW + CARD_LABEL,
-    );
-    let rows = cards.len().div_ceil(columns);
-    let (area, _) = ui.allocate_exact_size(
-        vec2(
-            width,
-            rows as f32 * card.y + rows.saturating_sub(1) as f32 * CARD_GAP,
-        ),
-        Sense::hover(),
-    );
-    ui.add_space(crate::theme::SPACE_M);
-    for (index, (label, colours, selected, action)) in cards.into_iter().enumerate() {
-        let rect = Rect::from_min_size(
-            area.min
-                + vec2(
-                    (index % columns) as f32 * (card.x + CARD_GAP),
-                    (index / columns) as f32 * (card.y + CARD_GAP),
-                ),
-            card,
-        );
-        let response = ui.interact(rect, ui.id().with((salt, index)), Sense::click());
-        theme::reveal_focus(&response);
-        theme::focus_outline(ui, response.id, rect, f32::from(theme::RADIUS_CARD));
-        if ui.is_rect_visible(rect) {
-            theme_card(
-                ui,
-                &app.palette,
-                rect,
-                &label,
-                &colours,
-                selected,
-                response.hovered(),
-            );
-        }
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(
-                egui::WidgetType::RadioButton,
-                ui.is_enabled(),
-                selected,
-                &label,
-            )
-        });
-        if response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            app.actions.push(Action::RevealThemeFrom(rect.center()));
-            app.actions.push(action);
-        }
-    }
-}
 
 /// One theme card: its conversation with a bubble each way, over its name
 /// on its own list colour, with its accent beside the name.
@@ -2273,32 +1925,6 @@ pub(super) fn theme_card(
     painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Outside);
 }
 
-/// The interface language menu.
-fn font_picker(ui: &mut egui::Ui, app: &mut App) {
-    use crate::settings::FontChoice;
-    let palette = app.palette;
-    let selected = app.settings.font;
-    // Font family names stay in their own branding.
-    let label = |choice: FontChoice| match choice {
-        FontChoice::System => crate::i18n::gettext(app.locale, choice.label()).into_owned(),
-        _ => choice.label().to_owned(),
-    };
-    controls::dropdown(
-        ui,
-        &palette,
-        "interface_font",
-        "Font",
-        &label(selected),
-        controls::WIDTH,
-        |ui| {
-            for choice in FontChoice::ALL {
-                if controls::option(ui, &palette, &label(choice), selected == choice) {
-                    app.actions.push(Action::SetFont(choice));
-                }
-            }
-        },
-    );
-}
 
 fn language_picker(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
@@ -2619,270 +2245,10 @@ fn wallpaper_color_button(
         .clicked()
 }
 
-/// The doodle patterns, as tiles of the wallpaper each draws, and none.
-fn doodle_cards(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(app.locale, "Doodles"),
-        "",
-    );
-    ui.add_space(4.0);
-    // Each card shows its whole tile, whatever the density: thinning every
-    // style at every step of the slider would draw seven tiles for each.
-    let look = wallpaper::Look {
-        density: 1.0,
-        ..app.wallpaper()
-    };
-    let shown = app.settings.show_wallpaper;
-    let current = app.settings.doodle_style;
-    let width = ui.available_width();
-    let gap = 10.0;
-    let tiles = DoodleStyle::ALL.len() + 1;
-    let columns = (((width + gap) / (DOODLE_TILE + gap)).floor() as usize).clamp(1, tiles);
-    let tile = vec2(
-        (width - gap * (columns - 1) as f32) / columns as f32,
-        DOODLE_PREVIEW + CARD_LABEL,
-    );
-    let rows = tiles.div_ceil(columns);
-    ui.add_space(crate::theme::SPACE_M);
-    let (area, _) = ui.allocate_exact_size(
-        vec2(width, rows as f32 * (tile.y + gap) - gap),
-        Sense::hover(),
-    );
-    let radius = f32::from(theme::RADIUS_CARD);
-    for index in 0..tiles {
-        // The first tile is none; the rest follow DoodleStyle::ALL.
-        let style = index.checked_sub(1).map(|index| DoodleStyle::ALL[index]);
-        let chosen = match style {
-            None => !shown,
-            Some(style) => shown && style == current,
-        };
-        let label = match style {
-            None => crate::i18n::pgettext(app.locale, "doodles", "None").into_owned(),
-            Some(style) => crate::i18n::gettext(app.locale, style.label()).into_owned(),
-        };
-        let rect = Rect::from_min_size(
-            area.min
-                + vec2(
-                    (index % columns) as f32 * (tile.x + gap),
-                    (index / columns) as f32 * (tile.y + gap),
-                ),
-            tile,
-        );
-        let response = ui.interact(rect, ui.id().with(("doodle-tile", index)), Sense::click());
-        theme::reveal_focus(&response);
-        theme::focus_outline(ui, response.id, rect, radius);
-        if ui.is_rect_visible(rect) {
-            let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
-            let painter = ui.painter_at(rect.expand(6.0));
-            let r = radius as u8;
-            let preview = Rect::from_min_size(rect.min, vec2(rect.width(), DOODLE_PREVIEW));
-            let footer = Rect::from_min_max(pos2(rect.left(), preview.bottom()), rect.max);
-            painter.rect_filled(
-                footer,
-                CornerRadius {
-                    nw: 0,
-                    ne: 0,
-                    sw: r,
-                    se: r,
-                },
-                palette.surface,
-            );
-            // The wallpaper's own colour, with this pattern over it.
-            painter.rect_filled(
-                preview,
-                CornerRadius {
-                    nw: r,
-                    ne: r,
-                    sw: 0,
-                    se: 0,
-                },
-                look.color,
-            );
-            if let Some(style) = style {
-                wallpaper::paint_doodles(ui, preview, &look, style);
-            } else {
-                theme::paint_icon(
-                    ui,
-                    Icon::Ban,
-                    Rect::from_center_size(preview.center(), Vec2::splat(26.0)),
-                    24.0,
-                    palette.secondary,
-                );
-            }
-            let name = widgets::line(
-                ui,
-                &label,
-                theme::medium(theme::TEXT_CAPTION),
-                if chosen { palette.accent } else { palette.text },
-                footer.width() - 20.0,
-                1,
-            );
-            name.paint(
-                ui,
-                pos2(
-                    footer.center().x - name.size().x / 2.0,
-                    footer.center().y - name.size().y / 2.0,
-                ),
-                if chosen { palette.accent } else { palette.text },
-            );
-            let edge = if response.hovered() {
-                Stroke::new(1.0, palette.secondary)
-            } else {
-                Stroke::new(1.0, palette.outline)
-            };
-            painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Inside);
-            if t > 0.0 {
-                painter.rect_stroke(
-                    rect,
-                    radius,
-                    Stroke::new(2.0 + t, palette.accent.gamma_multiply(t)),
-                    egui::StrokeKind::Inside,
-                );
-            }
-        }
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(
-                egui::WidgetType::RadioButton,
-                ui.is_enabled(),
-                chosen,
-                &label,
-            )
-        });
-        if response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            match style {
-                None => app.actions.push(Action::SetWallpaperDoodles(false)),
-                Some(style) => app.actions.push(Action::SetDoodleStyle(style)),
-            }
-        }
-    }
-    ui.add_space(PAGE_ROW_GAP + 4.0);
-    doodle_ink_controls(ui, app);
-    ui.add_space(crate::theme::SPACE_XS);
-}
 
-/// The space a doodle control's row leaves under itself, beyond the ten
-/// points `setting_row` does: as far apart as the page's own rows.
-const DOODLE_ROW_GAP: f32 = PAGE_ROW_GAP - 10.0;
 
-/// The doodles' colour, grey or the accent, and how strongly they show.
-fn doodle_ink_controls(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let current = app.settings.doodle_color;
-    let locale = app.locale;
-    let options: Vec<_> = DoodleColor::ALL
-        .into_iter()
-        .map(|color| (color, crate::i18n::gettext(locale, color.label())))
-        .collect();
-    let actions = &mut app.actions;
-    widgets::setting_row(
-        ui,
-        &palette,
-        &crate::i18n::gettext(locale, "Doodle colour"),
-        "",
-        |ui| {
-            if let Some(color) =
-                segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0)
-            {
-                actions.push(Action::SetDoodleColor(color));
-            }
-        },
-    );
-    ui.add_space(DOODLE_ROW_GAP);
-    let range = DOODLE_INTENSITY;
-    let intensity = app
-        .settings
-        .doodle_intensity
-        .clamp(*range.start(), *range.end());
-    // The slider shows a share of the strongest doodles, not a multiple of
-    // the default, so it ends at 100%.
-    if let Some(percent) = doodle_slider(
-        ui,
-        app,
-        "Doodle intensity",
-        ("Subtle", "Strong"),
-        intensity / range.end(),
-        range.start() / range.end()..=1.0,
-    ) {
-        app.actions
-            .push(Action::SetDoodleIntensity(percent * range.end()));
-    }
-    ui.add_space(DOODLE_ROW_GAP);
-    let range = DOODLE_DENSITY;
-    let density = app
-        .settings
-        .doodle_density
-        .clamp(*range.start(), *range.end());
-    // How many doodles there are against the default tile, which is 100%.
-    if let Some(density) = doodle_slider(
-        ui,
-        app,
-        "Doodle density",
-        ("Sparse", "Dense"),
-        density,
-        range,
-    ) {
-        app.actions.push(Action::SetDoodleDensity(density));
-    }
-}
 
-/// One of the doodle sliders, laid out as Glass's is: a row with its
-/// name and, on the right, the slider between its two ends' names.
-/// `value` is a multiple of 1.0, and what the slider moves to is returned.
-fn doodle_slider(
-    ui: &mut egui::Ui,
-    app: &App,
-    label: &'static str,
-    (low, high): (&'static str, &'static str),
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-) -> Option<f32> {
-    let palette = app.palette;
-    let locale = app.locale;
-    let mut moved = None;
-    widgets::setting_row(
-        ui,
-        &palette,
-        &crate::i18n::gettext(locale, label),
-        "",
-        |ui| {
-            let mut value = value;
-            // As in `glass_slider`: the row lays its first item last.
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                theme::text(
-                    ui,
-                    crate::i18n::gettext(locale, high).into_owned(),
-                    theme::medium(theme::TEXT_CAPTION),
-                    palette.secondary,
-                );
-                let slider = widgets::glass_slider(ui, &palette, &mut value, range, 150.0);
-                slider.widget_info(|| {
-                    egui::WidgetInfo::slider(ui.is_enabled(), f64::from(value), label)
-                });
-                theme::text(
-                    ui,
-                    crate::i18n::gettext(locale, low).into_owned(),
-                    theme::medium(theme::TEXT_CAPTION),
-                    palette.secondary,
-                );
-                if slider.changed() {
-                    moved = Some(value);
-                }
-            });
-        },
-    );
-    moved
-}
 
-/// Least width of a doodle tile before the grid drops a column.
-const DOODLE_TILE: f32 = 128.0;
-/// How tall the doodled part of a tile is.
-const DOODLE_PREVIEW: f32 = 84.0;
 
 /// The space this account's media cache takes, split by kind, with the
 /// button that empties it.
@@ -3423,42 +2789,6 @@ fn toggle(
     }
 }
 
-/// Settings' Glass, from Clear to Solid. While the system reduces
-/// transparency it shows Solid and cannot be moved.
-fn glass_slider(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let reduced = crate::backdrop::system_reduces_transparency();
-    let mut tint = if reduced { 1.0 } else { app.settings.glass };
-    let clear = crate::i18n::gettext(app.locale, "Clear");
-    let solid = crate::i18n::gettext(app.locale, "Solid");
-    ui.add_enabled_ui(!reduced, |ui| {
-        // A setting's control sits in a right-to-left row, which lays its
-        // first item last: Solid goes first, so Clear ends up on the left,
-        // where the slider's low end is.
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            theme::text(
-                ui,
-                solid.into_owned(),
-                theme::medium(theme::TEXT_CAPTION),
-                palette.secondary,
-            );
-            let slider = widgets::glass_slider(ui, &palette, &mut tint, 0.0..=1.0, 150.0);
-            slider.widget_info(|| {
-                egui::WidgetInfo::slider(ui.is_enabled(), f64::from(tint), "Glass")
-            });
-            theme::text(
-                ui,
-                clear.into_owned(),
-                theme::medium(theme::TEXT_CAPTION),
-                palette.secondary,
-            );
-            if slider.changed() {
-                app.settings.set_glass(tint);
-                app.actions.push(Action::SettingsChanged);
-            }
-        });
-    });
-}
 
 fn account_toggle(
     ui: &mut egui::Ui,

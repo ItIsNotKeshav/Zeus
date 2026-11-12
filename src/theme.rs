@@ -791,8 +791,9 @@ pub fn ease_in(t: f32) -> f32 {
 /// A toggle's progress, 0 to 1, on a critically damped spring that rests
 /// after about `seconds` (see [`crate::motion::Spring::settling_in`]). A
 /// change of `on` mid-move turns it round with the speed it has, so hovers
-/// and presses let go of halfway never jump. At once while a screen reader
-/// is attached.
+/// and presses let go of halfway never jump. At once while motion is
+/// reduced ([`crate::motion::reduced`]: Settings' Motion, the system's
+/// setting, or a screen reader attached).
 pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32 {
     if seconds <= 0.0 {
         return if on { 1.0 } else { 0.0 };
@@ -807,7 +808,8 @@ pub fn animate(ctx: &egui::Context, id: egui::Id, on: bool, seconds: f32) -> f32
 
 /// Progress of something appearing, 0 to 1, from the first frame it is seen:
 /// [`animate`] toward `true` that starts at 0. Call [`forget_motion`] once it
-/// has gone, so its next appearance starts anew.
+/// has gone, so its next appearance starts anew. Whole at once while motion
+/// is reduced.
 pub fn appear(ctx: &egui::Context, id: egui::Id, seconds: f32) -> f32 {
     if seconds <= 0.0 {
         return 1.0;
@@ -827,10 +829,10 @@ pub fn forget_motion(ctx: &egui::Context, id: egui::Id) {
 }
 
 /// `seconds`, scaled by Settings' Motion ([`crate::motion::speed`]), or
-/// none at all while a screen reader is attached (see [`crate::motion`]):
+/// none at all while motion is reduced (see [`crate::motion::reduced`]):
 /// every animation takes its time through here.
 pub fn motion_time(ctx: &egui::Context, seconds: f32) -> f32 {
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         0.0
     } else {
         seconds * crate::motion::speed() as f32
@@ -1214,6 +1216,67 @@ pub fn set_font(ctx: &egui::Context, font: crate::settings::FontChoice) {
     }
 }
 
+/// The font a Settings tile shows `font` in, at `size`: the family of that
+/// typeface at the regular weight. Each is registered with the others (see
+/// [`add_previews`]); epaint reads a family's fonts only once text asks for
+/// it, so the ones never drawn cost nothing.
+pub fn preview_font(font: crate::settings::FontChoice, size: f32) -> egui::FontId {
+    egui::FontId::new(
+        size,
+        egui::FontFamily::Name(format!("zapfast-preview-{}", choice_index(font)).into()),
+    )
+}
+
+/// Registers every typeface on offer at the regular weight, each behind
+/// what the interface draws with, for [`preview_font`]. Called before the
+/// chosen typeface goes in, so System's falls back to the platform's.
+fn add_previews(fonts: &mut egui::FontDefinitions) {
+    use crate::settings::FontChoice;
+    use fastframe_fonts::Weight;
+    let behind = fonts
+        .families
+        .get(&egui::FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
+    for choice in FontChoice::ALL {
+        let (bytes, axes): (&'static [u8], &[(&[u8; 4], f32)]) = match choice {
+            FontChoice::System => (&[], &[]),
+            FontChoice::Inter => (fastframe_fonts::INTER, &[]),
+            FontChoice::Geist => (include_bytes!("../assets/fonts/Geist.ttf"), &[]),
+            FontChoice::GoogleSansFlex => (
+                include_bytes!("../assets/fonts/GoogleSansFlex.ttf"),
+                &[(b"opsz", 14.0), (b"wdth", 100.0)],
+            ),
+            FontChoice::Figtree => (include_bytes!("../assets/fonts/Figtree.ttf"), &[]),
+            FontChoice::PlusJakartaSans => {
+                (include_bytes!("../assets/fonts/PlusJakartaSans.ttf"), &[])
+            }
+            FontChoice::Manrope => (include_bytes!("../assets/fonts/Manrope.ttf"), &[]),
+            FontChoice::DmSans => (
+                include_bytes!("../assets/fonts/DMSans.ttf"),
+                &[(b"opsz", 14.0)],
+            ),
+        };
+        let mut family = Vec::new();
+        if !bytes.is_empty() {
+            let name = format!("zapfast-preview-font-{}", choice_index(choice));
+            let mut data = egui::FontData::from_static(bytes);
+            let mut coords = vec![(b"wght", lighter_variable_weight(Weight::Regular))];
+            coords.extend(axes.iter().map(|&(tag, value)| (tag, value)));
+            data.tweak.coords = egui::epaint::text::VariationCoords::new(coords);
+            fonts
+                .font_data
+                .insert(name.clone(), std::sync::Arc::new(data));
+            family.push(name);
+        }
+        family.extend(behind.iter().cloned());
+        fonts.families.insert(
+            egui::FontFamily::Name(format!("zapfast-preview-{}", choice_index(choice)).into()),
+            family,
+        );
+    }
+}
+
 /// Whether Inter is the chosen typeface.
 #[cfg(test)]
 pub fn inter_chosen() -> bool {
@@ -1240,6 +1303,7 @@ fn install_fonts(ctx: &egui::Context) {
     let mut fonts = fastframe_fonts::FontSetup::default()
         .primary(primary)
         .definitions();
+    add_previews(&mut fonts);
     if !cfg!(test) {
         match chosen_font() {
             FontChoice::System | FontChoice::Inter => {}
@@ -1549,6 +1613,7 @@ fastframe_icons::icons! {
         ShieldCheck => "shield-check",
         Smartphone => lucide "smartphone",
         Smile => "smile",
+        Sparkles => "sparkles",
         SquarePen => lucide "square-pen",
         Star => "star",
         StarFill => "star-fill",
@@ -1715,7 +1780,7 @@ pub fn circle_button_morph(
         }
         morph.fill = fill;
         ctx.data_mut(|data| data.insert_temp(key, morph));
-        let seconds = if crate::motion::screen_reader_attached(&ctx) {
+        let seconds = if crate::motion::reduced(&ctx) {
             0.0
         } else {
             MOTION_QUICK

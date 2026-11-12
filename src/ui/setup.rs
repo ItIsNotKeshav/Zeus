@@ -193,7 +193,7 @@ fn paint_card(ui: &egui::Ui, palette: &Palette, card: Rect) {
 /// The window behind the card: its own colour, lit softly from above by the
 /// accent, and from the far corner by the link colour.
 pub(super) fn backdrop(ui: &egui::Ui, palette: &Palette, area: Rect, drift: bool) {
-    let still = !drift || crate::motion::screen_reader_attached(ui.ctx());
+    let still = !drift || crate::motion::reduced(ui.ctx());
     let time = if still {
         0.0
     } else {
@@ -319,7 +319,7 @@ fn transition(ctx: &egui::Context, step: Step) -> (f32, f32) {
         (now, -1.0)
     };
     ctx.data_mut(|data| data.insert_temp(id, (step, since, direction)));
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return (f32::INFINITY, direction);
     }
     ((now - since) as f32, direction)
@@ -1776,7 +1776,7 @@ fn qr_tile(ui: &egui::Ui, palette: &Palette, tile: Rect, code: &str) {
         None => theme::paint_icon(ui, Icon::CircleAlert, inner, 32.0, palette.danger),
     }
     // The viewfinder breathes, slowly, as if looking for the phone.
-    let breath = if crate::motion::screen_reader_attached(ui.ctx()) {
+    let breath = if crate::motion::reduced(ui.ctx()) {
         0.0
     } else {
         crate::motion::request_frame_after(ui.ctx(), std::time::Duration::from_millis(33));
@@ -1967,7 +1967,7 @@ fn changed_for(ctx: &egui::Context, app: &App) -> f32 {
         .unwrap_or((look, f64::NEG_INFINITY));
     let since = if was == look { since } else { now };
     ctx.data_mut(|data| data.insert_temp(id, (look, since)));
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return f32::INFINITY;
     }
     (now - since) as f32

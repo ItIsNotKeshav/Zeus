@@ -1201,7 +1201,7 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
     // springs back, as the chat's messages do (`overscroll`).
     let list_rect = ui.available_rect_before_wrap();
     let mut overscroll = super::overscroll::Overscroll::load(ui.ctx(), "chat-list");
-    if copy || !ui.is_enabled() || crate::motion::screen_reader_attached(ui.ctx()) {
+    if copy || !ui.is_enabled() || crate::motion::reduced(ui.ctx()) {
         overscroll.clear();
     } else {
         let wheel = ui.input(|input| super::overscroll::read_wheel(input, list_rect));
@@ -1232,7 +1232,7 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
                     range.start,
                 );
             }
-            let motion = !copy && !crate::motion::screen_reader_attached(ui.ctx());
+            let motion = !copy && !crate::motion::reduced(ui.ctx());
             let now = ui.input(|input| input.time);
             let origin = ui.max_rect().top() - inset - range.start as f32 * step;
             let before = if motion {
@@ -2203,10 +2203,11 @@ fn approach_hover(amount: f32, on: bool, dt: f32) -> (f32, bool) {
     }
 }
 
-/// The row's hover fill, eased. A screen reader gets it at once: the
-/// animation would otherwise ask for a frame every step of the way.
+/// The row's hover fill, eased. It lands at once while motion is reduced,
+/// as it is with a screen reader attached, where the animation would
+/// otherwise ask for a frame every step of the way.
 pub(crate) fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
-    if crate::motion::screen_reader_attached(ui.ctx()) {
+    if crate::motion::reduced(ui.ctx()) {
         return if on { 1.0 } else { 0.0 };
     }
     let id = id.with("hover-fill");

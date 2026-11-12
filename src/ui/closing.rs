@@ -85,7 +85,7 @@ fn fade(shape: &mut egui::Shape, opacity: f32) {
 /// `pivot`. `seconds` is how long it took to open. Call it after the
 /// surface has drawn, and after [`settle`].
 pub fn keep(ctx: &Context, layer: LayerId, pivot: Pos2, seconds: f32, opacity: f32) {
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return;
     }
     let window = ctx.content_rect();

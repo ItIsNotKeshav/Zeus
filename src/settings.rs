@@ -841,6 +841,13 @@ pub struct Settings {
     pub mode: Mode,
     /// An accent over the theme's own.
     pub accent: Accent,
+    /// A colour from the colour wheel over `accent`; `None` keeps `accent`.
+    /// A field of its own, so older releases still read the file.
+    pub custom_accent: Option<crate::chat_themes::CustomAccent>,
+    /// Washes the chat wallpaper with the accent.
+    pub tint_wallpaper: bool,
+    /// How much the interface moves.
+    pub motion_preference: crate::motion::MotionPreference,
     /// The look the Custom style last used, to return to from Themes.
     pub last_look: ChatTheme,
     /// The ready-made theme last used, to return to from Custom.
@@ -1059,6 +1066,9 @@ impl Default for Settings {
             chat_theme: ChatTheme::Zeus,
             mode: Mode::Dark,
             accent: Accent::Theme,
+            custom_accent: None,
+            tint_wallpaper: false,
+            motion_preference: crate::motion::MotionPreference::Auto,
             last_look: ChatTheme::WhatsApp,
             last_theme: ChatTheme::Catppuccin,
             blur: true,
@@ -1178,7 +1188,12 @@ impl Settings {
 
     /// The wallpaper colour for `palette`, with Theme resolved against it.
     pub fn wallpaper_background(&self, palette: &crate::theme::Palette) -> egui::Color32 {
-        self.wallpaper_color_for(palette.dark).color32(palette)
+        let base = self.wallpaper_color_for(palette.dark).color32(palette);
+        if self.tint_wallpaper {
+            crate::theme::blend(base, palette.accent, if palette.dark { 0.16 } else { 0.12 })
+        } else {
+            base
+        }
     }
 
     /// Picks a theme as releases before chat themes named them: WhatsApp's
@@ -1255,7 +1270,10 @@ impl Settings {
     /// The palette to draw with, given whether the window is dark.
     pub fn palette(&self, dark: bool) -> crate::theme::Palette {
         self.cached_palette()
-            .unwrap_or_else(|| self.chat_theme.palette(dark, self.accent))
+            .unwrap_or_else(|| {
+                self.chat_theme
+                    .palette_with(dark, self.accent, self.custom_accent)
+            })
     }
 
     /// Sets Glass, and Blur with it for older releases: on short of Solid.
@@ -1660,6 +1678,40 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tint_wallpaper_moves_toward_the_accent() {
+        let mut settings = Settings::default();
+        let palette = settings.palette(true);
+        let plain = settings.wallpaper_background(&palette);
+        settings.tint_wallpaper = true;
+        let tinted = settings.wallpaper_background(&palette);
+        let d = |a: egui::Color32, b: egui::Color32| {
+            (i32::from(a.r()) - i32::from(b.r())).abs()
+                + (i32::from(a.g()) - i32::from(b.g())).abs()
+                + (i32::from(a.b()) - i32::from(b.b())).abs()
+        };
+        assert!(d(tinted, palette.accent) < d(plain, palette.accent));
+        settings.tint_wallpaper = false;
+        assert_eq!(settings.wallpaper_background(&palette), plain);
+    }
+
+    #[test]
+    fn custom_accent_fields_default_and_round_trip() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.custom_accent, None);
+        assert!(!old.tint_wallpaper);
+        let mut settings = Settings::default();
+        settings.custom_accent = Some(crate::chat_themes::CustomAccent {
+            hue: 42.0,
+            strength: 0.5,
+        });
+        settings.tint_wallpaper = true;
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.custom_accent, settings.custom_accent);
+        assert!(back.tint_wallpaper);
+    }
 
     #[test]
     fn unhex_reads_pairs_and_refuses_anything_else() {

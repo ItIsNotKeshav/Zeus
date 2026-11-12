@@ -159,7 +159,7 @@ struct Glide {
 fn eased_density(ctx: &egui::Context, id: egui::Id, target: f32) -> f32 {
     let target = clamp_density(target);
     let now = ctx.input(|input| input.time);
-    let seconds = if crate::motion::screen_reader_attached(ctx) {
+    let seconds = if crate::motion::reduced(ctx) {
         0.0
     } else {
         f64::from(crate::theme::MOTION_PANEL)

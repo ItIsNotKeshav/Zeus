@@ -445,7 +445,7 @@ fn ease(ctx: &Context, id: Id, pull: Option<Pull>) -> (f32, bool) {
     let (target, right) = pull.map_or((0.0, right), |pull| (pull.progress, pull.right));
     let time = if target > shown { FOLLOW } else { SETTLE };
     let dt = ctx.input(|input| input.stable_dt).clamp(0.0, 0.05);
-    let shown = if crate::motion::screen_reader_attached(ctx) || (target - shown).abs() < 0.004 {
+    let shown = if crate::motion::reduced(ctx) || (target - shown).abs() < 0.004 {
         target
     } else {
         shown + (target - shown) * (1.0 - (-dt / time).exp())
@@ -561,12 +561,12 @@ fn arm(ctx: &Context, id: Id, pull: Option<Pull>) -> Option<f64> {
 }
 
 /// How much the badge grows `since` it reached the threshold: up and back
-/// down in [`POP_SECONDS`], none with a screen reader attached.
+/// down in [`POP_SECONDS`], none while motion is reduced.
 fn pop(ctx: &Context, since: Option<f64>) -> f32 {
     let Some(at) = since else {
         return 0.0;
     };
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return 0.0;
     }
     let t = ((ctx.input(|input| input.time) - at) / POP_SECONDS).clamp(0.0, 1.0) as f32;

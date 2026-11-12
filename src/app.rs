@@ -2475,6 +2475,7 @@ impl App {
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());
         crate::theme::set_font(ctx, self.settings.font);
+        crate::motion::set_preference(self.settings.motion_preference);
         crate::theme::install(ctx);
         // Zoom stays in the settings, so egui must not change it behind the
         // app's back: the shortcuts below go through `Action::ZoomBy`.
@@ -9337,8 +9338,30 @@ impl App {
             }
             Action::SetAccent(accent) => {
                 self.settings.accent = accent;
+                // A named accent replaces a colour from the wheel.
+                self.settings.custom_accent = None;
                 self.mark_settings_dirty();
                 self.apply_theme(ctx);
+            }
+            Action::SetCustomAccent(custom) => {
+                self.settings.custom_accent = custom;
+                self.mark_settings_dirty();
+                // The wheel is dragged: each step lands at once, since a
+                // crossfade per frame would only stutter behind the pointer.
+                let reveal = std::mem::replace(&mut self.reveal_theme_changes, false);
+                self.apply_theme(ctx);
+                self.reveal_theme_changes = reveal;
+            }
+            Action::SetTintWallpaper(on) => {
+                self.settings.tint_wallpaper = on;
+                self.mark_settings_dirty();
+                ctx.request_repaint();
+            }
+            Action::SetMotion(preference) => {
+                self.settings.motion_preference = preference;
+                crate::motion::set_preference(preference);
+                self.mark_settings_dirty();
+                ctx.request_repaint();
             }
             Action::SetFont(choice) => {
                 self.settings.font = choice;

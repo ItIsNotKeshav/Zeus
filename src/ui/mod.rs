@@ -829,7 +829,7 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
                     true,
                     theme::MOTION_PANEL,
                 );
-                let leaving = if error || crate::motion::screen_reader_attached(ctx) {
+                let leaving = if error || crate::motion::reduced(ctx) {
                     1.0
                 } else {
                     let left = toast_leaving(

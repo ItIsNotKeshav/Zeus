@@ -265,7 +265,7 @@ fn fly_back(ctx: &egui::Context, palette: &crate::theme::Palette) {
     let now = ctx.input(|input| input.time);
     let closed = *ghost.closed.get_or_insert(now);
     let seconds = FLIGHT_SECONDS * theme::CLOSE;
-    let linear = if crate::motion::screen_reader_attached(ctx) || seconds <= 0.0 {
+    let linear = if crate::motion::reduced(ctx) || seconds <= 0.0 {
         1.0
     } else {
         ((now - closed) as f32 / seconds).clamp(0.0, 1.0)
@@ -364,8 +364,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let screen = ctx.content_rect();
     // The picture flies out of its bubble: the field fades in over the panel
     // time, the picture follows the spring, and the controls arrive after
-    // 60% of the flight. A screen reader gets the viewer at once.
-    let elapsed = if crate::motion::screen_reader_attached(ctx) {
+    // 60% of the flight. Reduced motion, as with a screen reader attached,
+    // gets the viewer at once.
+    let elapsed = if crate::motion::reduced(ctx) {
         FLIGHT_SECONDS
     } else {
         open_elapsed(ctx)

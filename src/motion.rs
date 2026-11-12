@@ -17,8 +17,309 @@
 //!
 //! [`Spring`] is the shared spring for one-shot motion, parametrised as
 //! SwiftUI's `spring(duration:bounce:)`.
+//!
+//! Settings' Motion decides whether the interface moves at all
+//! ([`reduced`]): Full always moves, Reduced lands every change at once, and
+//! Auto reduces motion while the system asks for less (macOS's Reduce
+//! motion, Windows' Animation effects off, GNOME's Animations off or the
+//! desktop portal's `reduced-motion`) or a screen reader is attached. The
+//! pacing above follows the screen reader alone, whatever Motion says.
 
+#[cfg(test)]
+use std::cell::Cell;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
+
+/// How much the interface moves, from Settings > Appearance > Motion.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MotionPreference {
+    /// As the system asks: reduced while it asks for less motion or a screen
+    /// reader is attached.
+    #[default]
+    Auto,
+    /// Every animation, whatever the system asks.
+    Full,
+    /// As little movement as possible: changes land at once.
+    Reduced,
+}
+
+impl MotionPreference {
+    pub const ALL: [MotionPreference; 3] = [Self::Auto, Self::Full, Self::Reduced];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Full => "Full",
+            Self::Reduced => "Reduced",
+        }
+    }
+
+    /// The preference as [`PREFERENCE`] keeps it.
+    const fn bits(self) -> u8 {
+        match self {
+            Self::Auto => 0,
+            Self::Full => 1,
+            Self::Reduced => 2,
+        }
+    }
+
+    /// The preference [`bits`](Self::bits) stored, Auto for anything else.
+    const fn from_bits(bits: u8) -> Self {
+        match bits {
+            1 => Self::Full,
+            2 => Self::Reduced,
+            _ => Self::Auto,
+        }
+    }
+}
+
+/// Settings' Motion, for [`reduced`].
+#[cfg(not(test))]
+static PREFERENCE: AtomicU8 = AtomicU8::new(MotionPreference::Auto.bits());
+#[cfg(test)]
+thread_local! {
+    /// Each test runs on a thread of its own, so one test's Motion cannot
+    /// change what another one draws.
+    static PREFERENCE: AtomicU8 = const { AtomicU8::new(MotionPreference::Auto.bits()) };
+    /// What [`system_reduces_motion`] answers on this thread: never reduced
+    /// unless a test says so ([`override_system_motion`]), so no test depends
+    /// on the machine it runs on. `None` reads the system.
+    static SYSTEM_OVERRIDE: Cell<Option<bool>> = const { Cell::new(Some(false)) };
+}
+
+/// Records Settings' Motion for [`reduced`]: the app does so as a window
+/// attaches and whenever the setting changes.
+pub fn set_preference(preference: MotionPreference) {
+    let bits = preference.bits();
+    #[cfg(not(test))]
+    PREFERENCE.store(bits, Ordering::Relaxed);
+    #[cfg(test)]
+    PREFERENCE.with(|stored| stored.store(bits, Ordering::Relaxed));
+}
+
+/// Settings' Motion, as last recorded by [`set_preference`].
+pub fn preference() -> MotionPreference {
+    #[cfg(not(test))]
+    let bits = PREFERENCE.load(Ordering::Relaxed);
+    #[cfg(test)]
+    let bits = PREFERENCE.with(|stored| stored.load(Ordering::Relaxed));
+    MotionPreference::from_bits(bits)
+}
+
+/// Whether the interface should hold still: never at Full, always at
+/// Reduced, and at Auto while the system asks for less motion
+/// ([`system_reduces_motion`]) or a screen reader is attached. Every
+/// animation that moves something asks here, and lands at its end at once
+/// when it answers yes.
+pub fn reduced(ctx: &egui::Context) -> bool {
+    match preference() {
+        MotionPreference::Full => false,
+        MotionPreference::Reduced => true,
+        MotionPreference::Auto => system_reduces_motion() || screen_reader_attached(ctx),
+    }
+}
+
+/// Whether the system asks apps for less motion: macOS's Reduce motion,
+/// Windows' Animation effects turned off, or on Linux GNOME's Animations off
+/// or the desktop portal's `reduced-motion`. Read at most every two seconds,
+/// since animations ask many times a frame.
+pub fn system_reduces_motion() -> bool {
+    use std::sync::Mutex;
+    use std::time::Instant;
+    #[cfg(test)]
+    if let Some(reduced) = SYSTEM_OVERRIDE.with(Cell::get) {
+        return reduced;
+    }
+    static READ: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let mut read = READ.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match *read {
+        Some((at, reduced)) if at.elapsed() < Duration::from_secs(2) => reduced,
+        _ => {
+            let reduced = platform::reduces_motion();
+            *read = Some((Instant::now(), reduced));
+            reduced
+        }
+    }
+}
+
+/// Makes [`system_reduces_motion`] answer `reduced` on this thread until the
+/// guard it returns is dropped.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn override_system_motion(reduced: bool) -> SystemMotionOverride {
+    SystemMotionOverride(SYSTEM_OVERRIDE.with(|cell| cell.replace(Some(reduced))))
+}
+
+/// Puts back what [`override_system_motion`] replaced.
+#[cfg(test)]
+pub(crate) struct SystemMotionOverride(Option<bool>);
+
+#[cfg(test)]
+impl Drop for SystemMotionOverride {
+    fn drop(&mut self) {
+        SYSTEM_OVERRIDE.with(|cell| cell.set(self.0));
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod platform {
+    /// Accessibility's Reduce motion.
+    pub fn reduces_motion() -> bool {
+        use objc2::runtime::AnyObject;
+        use objc2::{class, msg_send};
+        // SAFETY: the shared workspace and this getter (macOS 10.12 and
+        // later) may be used from any thread; a missing workspace is null.
+        unsafe {
+            let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
+            match workspace.as_ref() {
+                Some(workspace) => msg_send![workspace, accessibilityDisplayShouldReduceMotion],
+                None => false,
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+mod platform {
+    /// Accessibility's Animation effects (Visual effects), off. Windows
+    /// answers through `SPI_GETCLIENTAREAANIMATION`; an unanswered question
+    /// counts as animations on, as Windows has them by default.
+    pub fn reduces_motion() -> bool {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        // A Win32 BOOL.
+        let mut animate: i32 = 1;
+        // SAFETY: this action writes one BOOL through the pointer, which
+        // outlives the call, and changes no setting.
+        let read = unsafe {
+            SystemParametersInfoW(
+                SPI_GETCLIENTAREAANIMATION,
+                0,
+                Some((&raw mut animate).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        };
+        read.is_ok() && animate == 0
+    }
+}
+
+/// The desktop's motion setting, from the desktop portal: its own
+/// `org.freedesktop.appearance reduced-motion` where the portal has it, and
+/// GNOME's `org.gnome.desktop.interface enable-animations`, which GNOME's
+/// and the GTK portal serve. A thread of its own reads both once and follows
+/// their change signal, so a slow or absent session bus never holds up the
+/// window and nothing polls. A change shows from the next frame drawn.
+#[cfg(target_os = "linux")]
+mod platform {
+    use std::sync::Once;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use zbus::zvariant::{OwnedValue, Value};
+
+    const APPEARANCE: &str = "org.freedesktop.appearance";
+    const REDUCED_MOTION: &str = "reduced-motion";
+    const GNOME: &str = "org.gnome.desktop.interface";
+    const ANIMATIONS: &str = "enable-animations";
+
+    /// The portal's own key asks for reduced motion.
+    static PORTAL_REDUCED: AtomicBool = AtomicBool::new(false);
+    /// GNOME's Animations switch is off.
+    static GNOME_STILL: AtomicBool = AtomicBool::new(false);
+    static WATCH: Once = Once::new();
+
+    pub fn reduces_motion() -> bool {
+        WATCH.call_once(spawn);
+        PORTAL_REDUCED.load(Ordering::Relaxed) || GNOME_STILL.load(Ordering::Relaxed)
+    }
+
+    fn spawn() {
+        let spawned = std::thread::Builder::new()
+            .name("zapfast-motion".to_owned())
+            .spawn(|| {
+                if let Err(error) = watch() {
+                    log::debug!("the desktop's motion setting is unavailable: {error}");
+                }
+            });
+        if let Err(error) = spawned {
+            log::warn!("unable to watch the desktop's motion setting: {error}");
+        }
+    }
+
+    fn watch() -> zbus::Result<()> {
+        let connection = zbus::blocking::Connection::session()?;
+        let proxy = zbus::blocking::Proxy::new(
+            &connection,
+            "org.freedesktop.portal.Desktop",
+            "/org/freedesktop/portal/desktop",
+            "org.freedesktop.portal.Settings",
+        )?;
+        // Subscribe before reading, so a change in between is not missed.
+        let changes = proxy.receive_signal("SettingChanged")?;
+        for (namespace, key) in [(APPEARANCE, REDUCED_MOTION), (GNOME, ANIMATIONS)] {
+            // `ReadOne` arrived in version 2 of the interface; `Read` wraps
+            // the same answer in one more variant.
+            let current: zbus::Result<OwnedValue> = proxy
+                .call("ReadOne", &(namespace, key))
+                .or_else(|_| proxy.call("Read", &(namespace, key)));
+            if let Ok(value) = current {
+                record(namespace, key, &value);
+            }
+        }
+        for message in changes {
+            let Ok((namespace, key, value)) =
+                message.body().deserialize::<(String, String, OwnedValue)>()
+            else {
+                continue;
+            };
+            record(&namespace, &key, &value);
+        }
+        Ok(())
+    }
+
+    fn record(namespace: &str, key: &str, value: &Value<'_>) {
+        match (namespace, key) {
+            (APPEARANCE, REDUCED_MOTION) => {
+                if let Some(reduced) = portal_reduced(value) {
+                    PORTAL_REDUCED.store(reduced, Ordering::Relaxed);
+                }
+            }
+            (GNOME, ANIMATIONS) => {
+                if let Some(on) = switch(value) {
+                    GNOME_STILL.store(!on, Ordering::Relaxed);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The portal's `reduced-motion`: 1 asks for reduced motion, 0 states no
+    /// preference.
+    pub(super) fn portal_reduced(value: &Value<'_>) -> Option<bool> {
+        match value {
+            Value::U32(value) => Some(*value == 1),
+            Value::Value(inner) => portal_reduced(inner),
+            _ => None,
+        }
+    }
+
+    /// A boolean setting, through the one or two variants it arrives in.
+    pub(super) fn switch(value: &Value<'_>) -> Option<bool> {
+        match value {
+            Value::Bool(on) => Some(*on),
+            Value::Value(inner) => switch(inner),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+mod platform {
+    pub fn reduces_motion() -> bool {
+        false
+    }
+}
 
 /// The wait between frames of a stepped animation: about ten frames a
 /// second, which leaves the window's thread about as free as when idle.
@@ -336,8 +637,9 @@ struct Follow {
 /// frame. `id` names the value between frames. A new `target` mid-move turns
 /// the value around with the velocity it has, so a hover let go of halfway
 /// reverses smoothly instead of restarting. The first frame an id is seen it
-/// is already at `target`. While a screen reader is attached it is always
-/// there. Asks for frames until it has settled.
+/// is already at `target`. While motion is [`reduced`] (a screen reader
+/// attached, at Auto) it is always there. Asks for frames until it has
+/// settled.
 pub fn spring_to(ctx: &egui::Context, id: egui::Id, target: f32, spring: Spring) -> f32 {
     spring_from(ctx, id, target, target, spring)
 }
@@ -352,7 +654,7 @@ pub fn spring_from(
     start: f32,
     spring: Spring,
 ) -> f32 {
-    if screen_reader_attached(ctx) {
+    if reduced(ctx) {
         ctx.data_mut(|data| data.remove::<Follow>(id));
         return target;
     }
@@ -869,5 +1171,99 @@ pub(crate) mod tests {
             output.viewport_output[&egui::ViewportId::ROOT].repaint_delay,
             Duration::MAX
         );
+    }
+
+    /// Whether motion is reduced, asked inside a pass as the views ask.
+    fn reduced_in_a_pass(ctx: &egui::Context) -> bool {
+        let mut answer = None;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            answer = Some(reduced(ui.ctx()));
+        });
+        output.textures_delta.clear();
+        answer.expect("the pass ran")
+    }
+
+    #[test]
+    fn the_motion_preference_round_trips() {
+        assert_eq!(preference(), MotionPreference::Auto);
+        for choice in MotionPreference::ALL {
+            set_preference(choice);
+            assert_eq!(preference(), choice);
+            assert_eq!(MotionPreference::from_bits(choice.bits()), choice);
+        }
+        assert_eq!(MotionPreference::from_bits(200), MotionPreference::Auto);
+        set_preference(MotionPreference::Auto);
+    }
+
+    #[test]
+    fn full_and_reduced_ignore_the_system_and_auto_follows_it() {
+        for (system, reader) in [(false, false), (true, false), (false, true), (true, true)] {
+            let _system = override_system_motion(system);
+            assert_eq!(system_reduces_motion(), system);
+            let ctx = reading(reader);
+            set_preference(MotionPreference::Full);
+            assert!(!reduced_in_a_pass(&ctx), "{system} {reader}");
+            set_preference(MotionPreference::Reduced);
+            assert!(reduced_in_a_pass(&ctx), "{system} {reader}");
+            set_preference(MotionPreference::Auto);
+            assert_eq!(
+                reduced_in_a_pass(&ctx),
+                system || reader,
+                "{system} {reader}"
+            );
+        }
+        // The guard puts the test default back: the system never reduces.
+        assert!(!system_reduces_motion());
+    }
+
+    #[test]
+    fn a_spring_lands_at_once_while_reduced_and_moves_at_full_with_a_reader() {
+        let first_frame = |choice: MotionPreference, reader: bool| {
+            set_preference(choice);
+            let ctx = reading(reader);
+            let id = egui::Id::new("motion");
+            let mut shown = f32::NAN;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(0.0),
+                    ..Default::default()
+                },
+                |ui| shown = spring_from(ui.ctx(), id, 1.0, 0.0, Spring::SNAPPY),
+            );
+            output.textures_delta.clear();
+            shown
+        };
+        assert_eq!(first_frame(MotionPreference::Reduced, false), 1.0);
+        assert_eq!(first_frame(MotionPreference::Auto, true), 1.0);
+        // It starts from where it appears, so it has somewhere to move to.
+        assert_eq!(first_frame(MotionPreference::Auto, false), 0.0);
+        assert_eq!(first_frame(MotionPreference::Full, true), 0.0);
+        set_preference(MotionPreference::Auto);
+    }
+
+    #[test]
+    fn a_reader_keeps_decoration_stepped_whatever_motion_says() {
+        set_preference(MotionPreference::Full);
+        let (stepped, _) = delay_after(&reading(true), 0.0, |ui| request_frame(ui.ctx()));
+        assert!(is_a_step(stepped), "{stepped:?}");
+        set_preference(MotionPreference::Auto);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_desktops_motion_settings_are_read_through_either_wrapping() {
+        use zbus::zvariant::Value;
+        assert_eq!(platform::portal_reduced(&Value::U32(1)), Some(true));
+        assert_eq!(
+            platform::portal_reduced(&Value::Value(Box::new(Value::U32(0)))),
+            Some(false)
+        );
+        assert_eq!(platform::portal_reduced(&Value::Bool(true)), None);
+        assert_eq!(platform::switch(&Value::Bool(false)), Some(false));
+        assert_eq!(
+            platform::switch(&Value::Value(Box::new(Value::Bool(true)))),
+            Some(true)
+        );
+        assert_eq!(platform::switch(&Value::U32(1)), None);
     }
 }

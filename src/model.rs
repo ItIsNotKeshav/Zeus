@@ -3402,6 +3402,10 @@ pub enum Action {
     SetMode(crate::chat_themes::Mode),
     /// An accent over the chat theme's own.
     SetAccent(crate::chat_themes::Accent),
+    /// A colour from the wheel, or `None` for the accent chosen before.
+    SetCustomAccent(Option<crate::chat_themes::CustomAccent>),
+    SetTintWallpaper(bool),
+    SetMotion(crate::motion::MotionPreference),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
     /// Shows an info toast whose Undo button applies `undo`.

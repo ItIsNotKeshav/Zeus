@@ -520,7 +520,7 @@ pub fn badge_animated(
     live: bool,
 ) -> f32 {
     let key = id.with("badge-motion");
-    if crate::motion::screen_reader_attached(ui.ctx()) {
+    if crate::motion::reduced(ui.ctx()) {
         ui.data_mut(|data| data.remove::<BadgeMotion>(key));
         return badge(ui, palette, at, count, muted);
     }
@@ -665,7 +665,7 @@ pub fn pop_mark(
     pivot: egui::Pos2,
     draw: impl FnOnce(&Ui) -> f32,
 ) -> f32 {
-    if crate::motion::screen_reader_attached(ui.ctx()) {
+    if crate::motion::reduced(ui.ctx()) {
         ui.data_mut(|data| data.remove::<MarkMotion>(id));
         return if present { draw(ui) } else { 0.0 };
     }
@@ -1443,7 +1443,7 @@ pub fn glass_slider(
     let height = 28.0;
     let (rect, mut response) =
         ui.allocate_exact_size(vec2(width.max(60.0), height), Sense::click_and_drag());
-    let thumb_rest = vec2(30.0, 20.0);
+    let thumb_rest = SLIDER_THUMB;
     let travel = rect.left() + thumb_rest.x / 2.0..=rect.right() - thumb_rest.x / 2.0;
     if let Some(pointer) = response.interact_pointer_pos()
         && (response.dragged() || response.is_pointer_button_down_on() || response.clicked())
@@ -1475,52 +1475,62 @@ pub fn glass_slider(
         );
         let filled = Rect::from_min_max(track.min, pos2(x, track.max.y));
         painter.rect_filled(filled, 3.0, palette.accent);
-        // The thumb: a soft shadow, a clear glass body, a bright rim on top.
-        let size = thumb_rest * egui::lerp(1.0..=1.12, active);
-        let thumb = Rect::from_center_size(pos2(x, rect.center().y), size);
-        let radius = size.y / 2.0;
-        for (grow, alpha) in [(5.0, 10u8), (3.0, 16), (1.5, 24)] {
-            painter.rect_filled(
-                thumb.expand(grow).translate(vec2(0.0, 2.0 + active)),
-                radius + grow,
-                Color32::from_black_alpha(alpha),
-            );
-        }
-        let glass = if palette.dark {
-            Color32::from_white_alpha(70)
-        } else {
-            Color32::from_white_alpha(225)
-        };
-        painter.rect_filled(thumb, radius, glass);
-        // The accent shows through the lower half like light through glass.
-        painter.rect_filled(
-            thumb.shrink2(vec2(2.0, 0.0)).with_min_y(thumb.center().y),
-            radius,
-            palette.accent.gamma_multiply(0.10 + 0.08 * active),
-        );
-        painter.rect_stroke(
-            thumb,
-            radius,
-            Stroke::new(
-                1.0,
-                if palette.dark {
-                    Color32::from_white_alpha(120)
-                } else {
-                    Color32::from_black_alpha(34)
-                },
-            ),
-            egui::StrokeKind::Inside,
-        );
-        painter.rect_filled(
-            Rect::from_center_size(
-                pos2(thumb.center().x, thumb.top() + 3.0),
-                vec2(thumb.width() - 2.0 * radius * 0.9, 1.5),
-            ),
-            0.75,
-            Color32::from_white_alpha(if palette.dark { 150 } else { 255 }),
-        );
+        slider_thumb(ui, palette, pos2(x, rect.center().y), active);
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The resting size of a slider's thumb.
+pub const SLIDER_THUMB: Vec2 = vec2(30.0, 20.0);
+
+/// A slider's thumb at `center`: a soft shadow, a clear glass body with the
+/// accent showing through its lower half, a bright rim on top. `active`, 0
+/// to 1, swells it while hovered or dragged.
+pub fn slider_thumb(ui: &Ui, palette: &Palette, center: egui::Pos2, active: f32) {
+    let painter = ui.painter();
+    let size = SLIDER_THUMB * egui::lerp(1.0..=1.12, active);
+    let thumb = Rect::from_center_size(center, size);
+    let radius = size.y / 2.0;
+    for (grow, alpha) in [(5.0, 10u8), (3.0, 16), (1.5, 24)] {
+        painter.rect_filled(
+            thumb.expand(grow).translate(vec2(0.0, 2.0 + active)),
+            radius + grow,
+            Color32::from_black_alpha(alpha),
+        );
+    }
+    let glass = if palette.dark {
+        Color32::from_white_alpha(70)
+    } else {
+        Color32::from_white_alpha(225)
+    };
+    painter.rect_filled(thumb, radius, glass);
+    // The accent shows through the lower half like light through glass.
+    painter.rect_filled(
+        thumb.shrink2(vec2(2.0, 0.0)).with_min_y(thumb.center().y),
+        radius,
+        palette.accent.gamma_multiply(0.10 + 0.08 * active),
+    );
+    painter.rect_stroke(
+        thumb,
+        radius,
+        Stroke::new(
+            1.0,
+            if palette.dark {
+                Color32::from_white_alpha(120)
+            } else {
+                Color32::from_black_alpha(34)
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_filled(
+        Rect::from_center_size(
+            pos2(thumb.center().x, thumb.top() + 3.0),
+            vec2(thumb.width() - 2.0 * radius * 0.9, 1.5),
+        ),
+        0.75,
+        Color32::from_white_alpha(if palette.dark { 150 } else { 255 }),
+    );
 }
 
 /// The knob of a switch that is on: white on the accent track, unless the

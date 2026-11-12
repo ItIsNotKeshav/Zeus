@@ -78,9 +78,9 @@ impl Look<'_> {
 }
 
 /// The shimmer's position now, and a frame asked for to move it; `None`
-/// with a screen reader attached, when it holds still.
+/// while motion is reduced, when it holds still.
 fn shimmer(ctx: &egui::Context) -> Option<f32> {
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return None;
     }
     crate::motion::request_frame_after(ctx, std::time::Duration::from_millis(33));

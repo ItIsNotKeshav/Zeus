@@ -4091,7 +4091,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         jump.since.is_none()
             && app.scroll_anchor.as_deref() == Some(jump.message.as_str())
             && view.animate
-            && !crate::motion::screen_reader_attached(ui.ctx())
+            && !crate::motion::reduced(ui.ctx())
     });
     let jump_moving = std::cell::Cell::new(false);
     let jump_scroll_id = ui
@@ -4181,7 +4181,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let key_start = time - f64::from(ui.input(|input| input.stable_dt.min(0.1)));
     let mut pinned = false;
     let mut visible_day = None;
-    let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
+    let reduce_motion = crate::motion::reduced(ui.ctx());
     // Deleted messages still leaving go at once without motion.
     let leaving_now = std::time::Instant::now();
     if reduce_motion || !view.animate {
@@ -4193,9 +4193,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         ui.ctx().request_repaint();
     }
     // The rows hang on springs while the reader scrolls, as in iOS
-    // Messages. They go to their places at once with a screen reader, in a
-    // resting window, for a jump, and while something is held or dragged in
-    // the list: a sweep, a text selection, a swipe or a carried message.
+    // Messages. They go to their places at once while motion is reduced (as
+    // with a screen reader), in a resting window, for a jump, and while
+    // something is held or dragged in the list: a sweep, a text selection, a
+    // swipe or a carried message.
     let springs_calm = super::scroll_springs::Calm {
         screen_reader: reduce_motion,
         resting: !view.animate || crate::motion::window_resting(ui.ctx()),
@@ -5620,7 +5621,7 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
         (seen, data.get_temp::<f64>(chat_shown_id(&view.chat.id)))
     });
     // Still while motion is reduced or the window rests.
-    if !view.animate || crate::motion::screen_reader_attached(ui.ctx()) {
+    if !view.animate || crate::motion::reduced(ui.ctx()) {
         return;
     }
     let elapsed = time - seen.since;
@@ -6984,7 +6985,7 @@ fn status_motion(
     let now = ui.input(|input| input.time);
     let status_id = egui::Id::new(("tick-status", &view.chat.id, &message.id));
     let motion_id = egui::Id::new(("tick-motion", &view.chat.id, &message.id));
-    let calm = crate::motion::screen_reader_attached(ui.ctx());
+    let calm = crate::motion::reduced(ui.ctx());
     // Only a status seen on the frame before counts as earlier: a bubble
     // scrolled back into view after a change shows its status as it is.
     let frame = ui.ctx().cumulative_frame_nr();
@@ -9192,7 +9193,7 @@ fn menu_shade(ctx: &egui::Context, palette: &Palette, bubble_id: egui::Id) -> f3
     {
         // Drawn again in the same pass: it has moved this frame already.
         progress
-    } else if !crate::motion::screen_reader_attached(ctx) {
+    } else if !crate::motion::reduced(ctx) {
         let step = ctx.input(|input| input.stable_dt).min(0.1) / theme::MOTION_QUICK;
         let towards = if open { step } else { -step };
         let from = previous.map_or(0.0, |(progress, _)| progress);
@@ -9782,7 +9783,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     // The pill pops in when a reaction arrives live and pops again when its
     // emoji or counts change. The first sight of a message only records.
     let now = ui.input(|input| input.time);
-    let calm = crate::motion::screen_reader_attached(ui.ctx());
+    let calm = crate::motion::reduced(ui.ctx());
     let tally_id = egui::Id::new(("reaction-tally", &view.chat.id, &message.id));
     let motion_id = egui::Id::new(("reaction-motion", &view.chat.id, &message.id));
     let frame = ui.ctx().cumulative_frame_nr();
@@ -10301,7 +10302,7 @@ fn context_menu(
         Layout::left_to_right(Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let calm = crate::motion::screen_reader_attached(ui.ctx());
+            let calm = crate::motion::reduced(ui.ctx());
             let opened = quick_reactions_opened(ui, calm);
             for (index, emoji) in quick_reactions(message, view.reaction_emoji)
                 .into_iter()
@@ -14616,7 +14617,7 @@ fn recording_motion(ctx: &egui::Context, levels: &[f32]) -> (f32, f32, f32) {
     }
     let id = egui::Id::new("recording-motion");
     let now = ctx.input(|input| input.time);
-    let still = crate::motion::screen_reader_attached(ctx);
+    let still = crate::motion::reduced(ctx);
     let previous: Option<State> = ctx.data(|data| data.get_temp(id));
     // A gap of more than half a second means a new recording began.
     let mut state = match previous {
@@ -14823,10 +14824,11 @@ impl SelectionMotion {
     }
 }
 
-/// Whether the selection's furniture goes to its place at once: with a
-/// screen reader attached, and while the window is in the background.
+/// Whether the selection's furniture goes to its place at once: while
+/// motion is reduced (as with a screen reader attached), and while the
+/// window is in the background.
 fn selection_calm(ctx: &egui::Context, focused: bool) -> bool {
-    !focused || crate::motion::screen_reader_attached(ctx) || crate::motion::window_resting(ctx)
+    !focused || crate::motion::reduced(ctx) || crate::motion::window_resting(ctx)
 }
 
 /// Brings `chat`'s selection motion up to `selected` (`None` when it is
@@ -15239,7 +15241,7 @@ fn flights_id() -> egui::Id {
 /// Sends the sticker of `upload` flying from `from`, its tile in the picker,
 /// to its place at the end of the chat. Without motion it is simply there.
 pub fn launch_sticker(ctx: &egui::Context, upload: crate::model::UploadId, from: Rect) {
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return;
     }
     let start = ctx.input(|input| input.time);
@@ -18375,7 +18377,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
     let palette = app.palette;
     let mut remove = None;
     let mut open = None;
-    let reduce_motion = crate::motion::screen_reader_attached(ui.ctx());
+    let reduce_motion = crate::motion::reduced(ui.ctx());
     let animation_time = if reduce_motion {
         0.0
     } else {

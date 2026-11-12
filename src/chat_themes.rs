@@ -108,6 +108,17 @@ impl ChatTheme {
     /// The theme's palette in the dark or light mode, with `accent` over its
     /// own: every theme takes one, drawn in the theme's own style.
     pub fn palette(self, dark: bool, accent: Accent) -> Palette {
+        self.palette_with(dark, accent, None)
+    }
+
+    /// Like [`ChatTheme::palette`], with the reader's own colour from the
+    /// wheel taking the place of `accent` unless it sits at the centre.
+    pub fn palette_with(
+        self,
+        dark: bool,
+        accent: Accent,
+        custom: Option<CustomAccent>,
+    ) -> Palette {
         let base = match self {
             Self::Zeus if dark => Palette::nothing_dark(),
             Self::Zeus => Palette::nothing_light(),
@@ -128,7 +139,10 @@ impl ChatTheme {
                 source.palette(dark)
             }
         };
-        let Some(rgb) = accent.rgb() else {
+        let own = custom
+            .filter(|custom| custom.strength > CustomAccent::CENTRE)
+            .map(|custom| custom.rgb(dark));
+        let Some(rgb) = own.or_else(|| accent.rgb()) else {
             return base;
         };
         let mut palette = base.with_accent(rgb);
@@ -227,6 +241,99 @@ impl Accent {
             Self::Pink => Some([0xff, 0x37, 0x8f]),
         }
     }
+}
+
+/// A colour of the reader's own, picked on Settings' colour wheel: a hue in
+/// degrees and how far from the centre, 0 being the theme's own accent and 1
+/// the wheel's edge. It is stored as a place on the wheel rather than as RGB,
+/// so the light and dark modes each draw it at a lightness that reads there.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CustomAccent {
+    pub hue: f32,
+    pub strength: f32,
+}
+
+impl CustomAccent {
+    /// Below this strength the knob counts as the wheel's centre.
+    pub const CENTRE: f32 = 0.02;
+    const MAX_CHROMA: f32 = 0.19;
+
+    fn lightness(dark: bool) -> f32 {
+        if dark { 0.74 } else { 0.62 }
+    }
+
+    /// The colour at this place on the wheel in a dark or light mode: OKLCH
+    /// at a fixed lightness, chroma growing with strength and pulled in
+    /// until it fits sRGB.
+    pub fn rgb(self, dark: bool) -> [u8; 3] {
+        let l = Self::lightness(dark);
+        let hue = self.hue.to_radians();
+        let mut chroma = self.strength.clamp(0.0, 1.0) * Self::MAX_CHROMA;
+        loop {
+            let lin = oklab_to_linear(l, chroma * hue.cos(), chroma * hue.sin());
+            if lin.iter().all(|c| (-1e-4..=1.0 + 1e-4).contains(c)) || chroma <= 0.0 {
+                return lin.map(|c| (encode(c.clamp(0.0, 1.0)) * 255.0).round() as u8);
+            }
+            chroma = (chroma - 0.002).max(0.0);
+        }
+    }
+
+    /// The same, as a function of its parts, for drawing each dot of the wheel.
+    pub fn wheel_rgb(hue: f32, strength: f32, dark: bool) -> [u8; 3] {
+        Self { hue, strength }.rgb(dark)
+    }
+
+    /// The place on the wheel nearest an sRGB colour: its OKLCH hue, and its
+    /// chroma against the wheel's. Lightness is ignored, since the wheel
+    /// draws every dot at one.
+    pub fn nearest(rgb: [u8; 3]) -> Self {
+        let lin = rgb.map(|c| decode(f32::from(c) / 255.0));
+        let [_, a, b] = linear_to_oklab(lin);
+        let hue = b.atan2(a).to_degrees().rem_euclid(360.0);
+        let strength = (a.hypot(b) / Self::MAX_CHROMA).clamp(0.0, 1.0);
+        Self { hue, strength }
+    }
+}
+
+fn decode(c: f32) -> f32 {
+    if c <= 0.04045 {
+        c / 12.92
+    } else {
+        ((c + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn encode(c: f32) -> f32 {
+    if c <= 0.003_130_8 {
+        c * 12.92
+    } else {
+        1.055 * c.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// Björn Ottosson's OKLab to linear sRGB.
+fn oklab_to_linear(l: f32, a: f32, b: f32) -> [f32; 3] {
+    let l_ = l + 0.396_337_78 * a + 0.215_803_76 * b;
+    let m_ = l - 0.105_561_346 * a - 0.063_854_17 * b;
+    let s_ = l - 0.089_484_18 * a - 1.291_485_5 * b;
+    let (l, m, s) = (l_ * l_ * l_, m_ * m_ * m_, s_ * s_ * s_);
+    [
+        4.076_741_7 * l - 3.307_711_6 * m + 0.230_969_94 * s,
+        -1.268_438 * l + 2.609_757_4 * m - 0.341_319_4 * s,
+        -0.004_196_086_3 * l - 0.703_418_6 * m + 1.707_614_7 * s,
+    ]
+}
+
+/// Linear sRGB to OKLab, as `[L, a, b]`.
+fn linear_to_oklab([r, g, b]: [f32; 3]) -> [f32; 3] {
+    let l = (0.412_221_46 * r + 0.536_332_55 * g + 0.051_445_995 * b).cbrt();
+    let m = (0.211_903_5 * r + 0.680_699_5 * g + 0.107_396_96 * b).cbrt();
+    let s = (0.088_302_46 * r + 0.281_718_85 * g + 0.629_978_7 * b).cbrt();
+    [
+        0.210_454_26 * l + 0.793_617_8 * m - 0.004_072_047 * s,
+        1.977_998_5 * l - 2.428_592_2 * m + 0.450_593_7 * s,
+        0.025_904_037 * l + 0.782_771_77 * m - 0.808_675_77 * s,
+    ]
 }
 
 /// One mode of a ported theme, in the roles Agent Orchestrator names.
@@ -417,6 +524,56 @@ const DEFINITIONS: [Definition; 20] = [
 mod tests {
     use super::*;
     use crate::theme::{BubbleStyle, contrast};
+
+    #[test]
+    fn custom_accent_stays_in_gamut_and_nearest_round_trips() {
+        for dark in [true, false] {
+            for h in (0..360).step_by(15) {
+                for k in 0..=10 {
+                    let strength = k as f32 / 10.0;
+                    let own = CustomAccent {
+                        hue: h as f32,
+                        strength,
+                    };
+                    let lin = own.rgb(dark).map(|c| decode(f32::from(c) / 255.0));
+                    assert!(lin.iter().all(|c| (-0.01..=1.01).contains(c)));
+                    if (0.3..=1.0).contains(&strength) {
+                        let back = CustomAccent::nearest(own.rgb(dark));
+                        let gap = (back.hue - own.hue).abs();
+                        let gap = gap.min(360.0 - gap);
+                        // Pulled in to the gamut, strength may read lower.
+                        assert!(gap < 6.0, "hue {h} {strength} {dark}: {back:?}");
+                        assert!(back.strength <= strength + 0.05);
+                    }
+                }
+            }
+        }
+        let own = CustomAccent {
+            hue: 200.0,
+            strength: 0.5,
+        };
+        let back = CustomAccent::nearest(own.rgb(true));
+        assert!((back.strength - 0.5).abs() < 0.05, "{back:?}");
+    }
+
+    #[test]
+    fn centre_of_the_wheel_keeps_the_themes_accent() {
+        let own = Some(CustomAccent {
+            hue: 120.0,
+            strength: 0.0,
+        });
+        for dark in [true, false] {
+            let plain = ChatTheme::Zeus.palette(dark, Accent::Theme);
+            let wheel = ChatTheme::Zeus.palette_with(dark, Accent::Theme, own);
+            assert_eq!(plain.accent, wheel.accent);
+            let far = Some(CustomAccent {
+                hue: 120.0,
+                strength: 0.8,
+            });
+            let moved = ChatTheme::Zeus.palette_with(dark, Accent::Theme, far);
+            assert_ne!(plain.accent, moved.accent);
+        }
+    }
 
     /// Every theme in both modes keeps text readable where it is drawn:
     /// body text on the conversation, the list and both kinds of bubble,

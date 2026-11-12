@@ -284,7 +284,7 @@ fn tab(
 /// when reactions come or go.
 fn list_height(ctx: &egui::Context, rows: usize) -> f32 {
     let target = rows.clamp(1, MAX_ROWS) as f32 * ROW;
-    let time = if crate::motion::screen_reader_attached(ctx) {
+    let time = if crate::motion::reduced(ctx) {
         0.0
     } else {
         theme::MOTION_QUICK

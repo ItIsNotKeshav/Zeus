@@ -449,7 +449,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     });
     #[cfg(any(test, feature = "demo"))]
     let down = down || app.demo_carry.is_some();
-    let reduce_motion = crate::motion::screen_reader_attached(ctx);
+    let reduce_motion = crate::motion::reduced(ctx);
     match carry.phase {
         Phase::Pressed => {
             let moved = pointer.is_some_and(|pointer| pointer.distance(carry.down) > STILL);

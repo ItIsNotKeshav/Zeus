@@ -112,7 +112,7 @@ fn open_id() -> egui::Id {
 /// Starts playing a pane that was closed out of the panel: it fades away
 /// where it was while the pane that stays grows over the room.
 pub(crate) fn leave(ctx: &egui::Context, chat: &str, title: String, side: Side, ratio: f32) {
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return;
     }
     // The animation starts from the panel as it was: whole.
@@ -650,7 +650,7 @@ pub fn drag(app: &mut App, ctx: &egui::Context) {
             input.pointer.primary_down(),
         )
     });
-    let reduce_motion = crate::motion::screen_reader_attached(ctx);
+    let reduce_motion = crate::motion::reduced(ctx);
     match lift.phase {
         Phase::Pressed => {
             let Some(pointer) = pointer.filter(|_| down) else {

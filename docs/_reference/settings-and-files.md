@@ -118,7 +118,10 @@ name or description, in the interface language or in English.
     look). **Accent** is the look's own, or red, orange, yellow, green, teal,
     blue, purple or pink, for buttons, switches, links, ticks and your own
     bubbles. In a light mode a bright accent is darkened until it reads on
-    white. Messages keeps the system blue.
+    white. Messages keeps the system blue. The colour wheel picks an accent
+    of your own: its centre is the theme's own accent, the angle is the hue
+    and the distance from the centre is the strength. **Tint the wallpaper**
+    washes the chat wallpaper with the accent.
   - **Themes** are the twenty ready-made themes of
     [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
     (Orchestrate, Vercel, GitHub, One, Catppuccin, Tokyo Night, Dracula, Nord,
@@ -141,6 +144,14 @@ name or description, in the interface language or in English.
   click, and below your last message.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
+- **Motion**: how much the interface moves. **Auto** (the default) follows
+  the system's reduce-motion setting (Reduce motion on macOS, Animation
+  effects on Windows, Animations on GNOME or the desktop portal's reduced
+  motion on Linux) and holds still while a screen reader is attached.
+  **Full** plays every animation whatever the system asks. **Reduced** lands
+  every change at once: panels, bubbles and lists appear in place without
+  sliding, growing or fading. Spinners and typing dots still move, since
+  they show that something is happening.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
 - **Language**: the interface language, or **Auto** to follow the system.
   Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified

@@ -28,7 +28,7 @@ pub fn shown_for(ctx: &egui::Context, id: Id) -> f32 {
         .unwrap_or((now, f64::NEG_INFINITY));
     let since = if now - last > GONE { now } else { since };
     ctx.data_mut(|data| data.insert_temp(id, (since, now)));
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return f32::INFINITY;
     }
     (now - since) as f32
@@ -180,7 +180,7 @@ pub fn pop(ctx: &egui::Context, id: Id, on: bool) -> f32 {
         .unwrap_or((on, f64::NEG_INFINITY));
     let since = if on && !was { now } else { since };
     ctx.data_mut(|data| data.insert_temp(id, (on, since)));
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         return 0.0;
     }
     let progress = ((now - since) / POP) as f32;

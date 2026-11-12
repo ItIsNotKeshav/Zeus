@@ -415,7 +415,7 @@ fn navigate(ctx: &egui::Context, chat: &str, view: InfoView) -> Option<(InfoView
             remaining: 0.0,
             velocity: 0.0,
         });
-    if crate::motion::screen_reader_attached(ctx) {
+    if crate::motion::reduced(ctx) {
         nav.from = None;
     } else if !same_page(nav.shown, view) {
         match nav.from {
@@ -1920,7 +1920,7 @@ fn media_view(
     let target = order.iter().position(|choice| *choice == tab).unwrap_or(0) as f32;
     let id = tab_slide_id();
     let mut slide = ctx.data(|data| data.get_temp::<f32>(id)).unwrap_or(target);
-    if crate::motion::screen_reader_attached(&ctx) {
+    if crate::motion::reduced(&ctx) {
         slide = target;
     } else if slide != target {
         let step = ctx.input(|input| input.stable_dt).min(0.05) / TAB_SLIDE_SECONDS;
