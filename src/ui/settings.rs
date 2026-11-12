@@ -317,7 +317,6 @@ fn category_icon(source: &str) -> Icon {
     match source {
         "Appearance" => Icon::Sun,
         "Chats" => Icon::MessageCircle,
-        "Touchpad swipes" => Icon::ArrowLeftRight,
         "Calls and voice" => Icon::Phone,
         "Notifications" => Icon::Bell,
         "Privacy" => Icon::Lock,
@@ -701,7 +700,7 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
-    let swipes = swipe_section(locale);
+    swipe_rows(locale, &mut chats);
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
     notifications.account_toggle(
@@ -1123,7 +1122,6 @@ fn sections(app: &App) -> Vec<Section> {
     vec![
         appearance,
         chats,
-        swipes,
         notifications,
         voice,
         privacy,
@@ -1135,18 +1133,32 @@ fn sections(app: &App) -> Vec<Section> {
     ]
 }
 
-/// What each two-finger touchpad swipe does, one drop-down per swipe.
-fn swipe_section(locale: Locale) -> Section {
+/// What each two-finger touchpad swipe does, one drop-down per swipe, under
+/// a heading of their own at the foot of Chats.
+fn swipe_rows(locale: Locale, chats: &mut Section) {
     use crate::settings::SwipeSlot;
-    let mut swipes = Section::new(translated(locale, "Touchpad swipes"));
+    let heading = translated(locale, "Touchpad swipes");
+    let shown = heading.shown.clone();
+    chats.block(
+        vec![heading, translated(locale, "Swipe")],
+        move |ui, app| {
+            ui.add_space(crate::theme::SPACE_M);
+            theme::text(
+                ui,
+                shown.as_ref(),
+                theme::semibold(theme::TEXT_SECTION),
+                app.palette.text,
+            );
+            ui.add_space(crate::theme::SPACE_XS);
+        },
+    );
     for slot in SwipeSlot::ALL {
-        swipes.row(
+        chats.row(
             translated(locale, slot.label()),
             "",
             move |ui, app| swipe_picker(ui, app, slot),
         );
     }
-    swipes
 }
 
 fn swipe_picker(ui: &mut egui::Ui, app: &mut App, slot: crate::settings::SwipeSlot) {
