@@ -1700,12 +1700,14 @@ mod tests {
         let old: Settings = serde_json::from_str("{}").unwrap();
         assert_eq!(old.custom_accent, None);
         assert!(!old.tint_wallpaper);
-        let mut settings = Settings::default();
-        settings.custom_accent = Some(crate::chat_themes::CustomAccent {
-            hue: 42.0,
-            strength: 0.5,
-        });
-        settings.tint_wallpaper = true;
+        let settings = Settings {
+            custom_accent: Some(crate::chat_themes::CustomAccent {
+                hue: 42.0,
+                strength: 0.5,
+            }),
+            tint_wallpaper: true,
+            ..Settings::default()
+        };
         let json = serde_json::to_string(&settings).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.custom_accent, settings.custom_accent);
