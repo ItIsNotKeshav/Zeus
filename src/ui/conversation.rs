@@ -2569,7 +2569,7 @@ pub(crate) fn composer_pill_id() -> egui::Id {
 /// `(offset.y, height)`, as of its last frame: for tests that need them
 /// precisely. `App::at_bottom` covers ordinary UI checks.
 pub(crate) fn scroll_metrics_id(chat: &ChatId) -> egui::Id {
-    egui::Id::new(("message-scroll-metrics", chat))
+    in_window(egui::Id::new(("message-scroll-metrics", chat)))
 }
 
 /// How far below the top of a composer text row the middle of its ink sits,
@@ -3899,12 +3899,27 @@ fn glide_new_message<R>(
 /// pop-out, keep their place away from the app's: it is swapped in around the
 /// drawing.
 fn messages_in(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32, pane: Pane) {
+    // A transcript takes messages carried from another pane, window or chat,
+    // and from its own Media, links and docs panel.
+    if super::carry::carrying(ui.ctx()) {
+        let title = app.chat_title(chat);
+        let area = ui.max_rect();
+        super::carry::target(ui, area, chat, &title, area.center());
+    }
     match pane {
         Pane::Passive => app.with_other_view(|app| messages(app, ui, chat, under, over, pane)),
-        Pane::PopOut => app.with_pop_out_view(|app| messages(app, ui, chat, under, over, pane)),
+        Pane::PopOut => {
+            let ctx = ui.ctx().clone();
+            app.with_pop_out_view(|app| {
+                drawn_in_window(&ctx, || messages(app, ui, chat, under, over, pane))
+            })
+        }
         Pane::Bubble => {
             let id = chat.id.clone();
-            app.with_bubble_view(&id, |app| messages(app, ui, chat, under, over, pane))
+            let ctx = ui.ctx().clone();
+            app.with_bubble_view(&id, |app| {
+                drawn_in_window(&ctx, || messages(app, ui, chat, under, over, pane))
+            })
         }
         Pane::Solo | Pane::Active => messages(app, ui, chat, under, over, pane),
     }
@@ -5665,7 +5680,7 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
 }
 
 fn typing_bubble_id(chat: &str) -> egui::Id {
-    egui::Id::new(("typing-bubble", chat))
+    in_window(egui::Id::new(("typing-bubble", chat)))
 }
 
 /// Where and when the typing bubble was last drawn, in which pass, and
@@ -6468,7 +6483,7 @@ fn bubble_arriving(
 /// When the open chat's transcript was first drawn: messages already there
 /// then appear in place.
 fn chat_shown_id(chat: &str) -> egui::Id {
-    egui::Id::new(("chat-shown", chat))
+    in_window(egui::Id::new(("chat-shown", chat)))
 }
 
 /// The composer field's version of a sent bubble, to lay over the bubble
@@ -7626,7 +7641,7 @@ fn edit_focus_layers(chat: &str) -> (egui::LayerId, egui::LayerId) {
 /// Where the open chat's transcript was laid out this frame, top to bottom.
 /// Own balloons shade down it, and a lifted one, clipped to less, still does.
 fn transcript_span_id(chat: &str) -> egui::Id {
-    egui::Id::new(("transcript-span", chat))
+    in_window(egui::Id::new(("transcript-span", chat)))
 }
 
 /// The message edited in its bubble, and how far the rest of the chat has
@@ -7828,7 +7843,38 @@ fn inline_editor(
 
 /// Stable message-bubble id used by interaction tests.
 pub fn bubble_id(chat: &str, message: &str) -> egui::Id {
-    egui::Id::new(("bubble", chat, message))
+    in_window(egui::Id::new(("bubble", chat, message)))
+}
+
+thread_local! {
+    /// While a transcript is drawn in a window of its own (a bubble, the
+    /// pop-out), that window's id, which [`in_window`] mixes into the ids its
+    /// rows keep their state under.
+    static WINDOW: std::cell::Cell<Option<egui::ViewportId>> = const { std::cell::Cell::new(None) };
+}
+
+/// `id`, made the drawing window's own while a transcript is drawn outside
+/// the main window: egui's memory is shared by every window, and a chat
+/// open in the main window and in a bubble at once would otherwise have each
+/// read where the other drew its rows, its scroll metrics and its arrivals.
+fn in_window(id: egui::Id) -> egui::Id {
+    match WINDOW.get() {
+        Some(window) => id.with(window),
+        None => id,
+    }
+}
+
+/// Runs `draw` with the ids of a transcript drawn in `ctx`'s window made its
+/// own, when that is not the main window.
+fn drawn_in_window<R>(ctx: &egui::Context, draw: impl FnOnce() -> R) -> R {
+    let window = ctx.viewport_id();
+    if window == egui::ViewportId::ROOT {
+        return draw();
+    }
+    let before = WINDOW.replace(Some(window));
+    let out = draw();
+    WINDOW.set(before);
+    out
 }
 
 /// Where a video was drawn in its bubble, the rect the viewer flies from and
@@ -15123,7 +15169,7 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
 /// The file name to suggest when saving an attachment: the sender's name for
 /// documents, the cached file's name otherwise. Path separators are dropped so
 /// a crafted name cannot point the dialog somewhere else.
-fn attachment_name(content: &Content, path: &Path) -> String {
+pub(crate) fn attachment_name(content: &Content, path: &Path) -> String {
     let name = match content {
         Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
         _ => path

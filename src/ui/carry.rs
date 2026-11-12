@@ -21,6 +21,15 @@
 //! Carried out of the window with downloaded files on Windows, the files go
 //! on to the system's own drag and drop ([`crate::drag_out`]), so they can be
 //! dropped in Explorer or another app.
+//!
+//! Besides the chat list, an open transcript takes what is dropped on it: the
+//! other pane of a split, the pop-out, and the chat bubbles and their card.
+//! The bubbles and the pop-out are windows of their own, so a carry belongs
+//! to the window it was picked up in, which moves it along; every window
+//! keeps the places it can be dropped on in screen coordinates as well, and
+//! the others draw the card where it is over them. Something picked up in
+//! the Media, links and docs panel may also be dropped on its own chat, which
+//! sends it there again.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -71,6 +80,31 @@ fn glow_id() -> egui::Id {
     egui::Id::new("carry-glow")
 }
 
+fn windows_id() -> egui::Id {
+    egui::Id::new("carry-window-targets")
+}
+
+fn over_id() -> egui::Id {
+    egui::Id::new("carry-over-chat")
+}
+
+fn painted_id() -> egui::Id {
+    egui::Id::new("carry-painted")
+}
+
+/// How long a window's drop targets count after it last drew them, in
+/// seconds: a window that stopped drawing (closed, hidden) offers nothing.
+const WINDOW_TARGETS_LAST: f64 = 0.5;
+
+/// The drop targets each window drew, in screen coordinates, and when.
+type WindowTargets = std::collections::HashMap<egui::ViewportId, (f64, Vec<Target>)>;
+
+/// Where the window of `ctx` is on the screen, in points, when the platform
+/// says.
+fn window_origin(ctx: &egui::Context) -> Option<Pos2> {
+    ctx.input(|input| input.viewport().inner_rect.map(|rect| rect.min))
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
     /// The button went down on the bubble; not yet a carry.
@@ -88,6 +122,12 @@ enum Phase {
 /// One pickup, from the press on a bubble to the end of its animation.
 #[derive(Clone)]
 struct Carry {
+    /// The window it was picked up in, whose input moves it.
+    window: egui::ViewportId,
+    /// That window's place on the screen, as it last moved the carry.
+    window_origin: Option<Pos2>,
+    /// Picked up in the Media, links and docs panel: its own chat takes it.
+    listed: bool,
     chat: ChatId,
     /// The ids carried, in the chat's order.
     messages: Vec<String>,
@@ -133,6 +173,7 @@ struct Painted {
 /// A chat that can be dropped on, as its row registered it this frame.
 #[derive(Clone)]
 struct Target {
+    /// In the coordinates of the window it is used in.
     rect: Rect,
     chat: ChatId,
     title: String,
@@ -161,9 +202,22 @@ fn store(ctx: &egui::Context, carry: Option<Carry>) {
     });
 }
 
-/// Whether drop targets should register this frame: a card is in the air.
+/// Whether drop targets should register this frame: a card is in the air,
+/// in this window or another.
 pub fn carrying(ctx: &egui::Context) -> bool {
     load(ctx).is_some_and(|carry| !matches!(carry.phase, Phase::Pressed | Phase::Gone))
+}
+
+/// The chat the carried card is over, from whichever window carries it, so
+/// a chat drawn in another window (a bubble) can light up under it.
+pub fn over_chat(ctx: &egui::Context) -> Option<ChatId> {
+    ctx.data(|data| data.get_temp::<ChatId>(over_id()))
+}
+
+/// Where this window drew the carried card this frame, if it did: a window
+/// cut to what it shows keeps the card's place in it.
+pub fn painted(ctx: &egui::Context) -> Option<Rect> {
+    ctx.data(|data| data.get_temp::<Rect>(painted_id().with(ctx.viewport_id())))
 }
 
 /// How opaque a message's bubble is drawn: faint while its card is away,
@@ -204,14 +258,120 @@ pub fn watch(
     bubble: Rect,
     fill: Color32,
 ) {
+    watch_with(ui, chat, members, selected, start, bubble, fill, false);
+}
+
+/// [`watch`] for a message listed in the Media, links and docs panel, which
+/// its own chat takes too: dropped on it, it is sent there again.
+/// `picked` are the panel's picked items: one of them carries them all.
+pub fn watch_listed(
+    ui: &egui::Ui,
+    message: &Message,
+    picked: &[String],
+    start: egui::layers::ShapeIdx,
+    rect: Rect,
+    fill: Color32,
+) {
+    watch_with(
+        ui,
+        &message.chat,
+        std::slice::from_ref(message),
+        picked,
+        start,
+        rect,
+        fill,
+        true,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn watch_with(
+    ui: &egui::Ui,
+    chat: &str,
+    members: &[Message],
+    selected: &[String],
+    start: egui::layers::ShapeIdx,
+    bubble: Rect,
+    fill: Color32,
+    listed: bool,
+) {
     let Some(first) = members.first() else {
         return;
     };
+    watch_ids(
+        ui,
+        chat,
+        &first.id,
+        members.iter().all(carriable),
+        || {
+            // A message in the selection carries the selection.
+            let messages = if members.iter().any(|member| selected.contains(&member.id)) {
+                selected.to_vec()
+            } else {
+                members.iter().map(|member| member.id.clone()).collect()
+            };
+            (messages, members.iter().filter_map(downloaded).collect())
+        },
+        start,
+        bubble,
+        fill,
+        listed,
+    );
+}
+
+/// [`watch_listed`] for a link listed in the panel: the message it was
+/// written in, by id.
+pub fn watch_listed_link(
+    ui: &egui::Ui,
+    chat: &str,
+    message: &str,
+    picked: &[String],
+    start: egui::layers::ShapeIdx,
+    rect: Rect,
+    fill: Color32,
+) {
+    watch_ids(
+        ui,
+        chat,
+        message,
+        true,
+        || {
+            if picked.iter().any(|id| id == message) {
+                (picked.to_vec(), Vec::new())
+            } else {
+                (vec![message.to_owned()], Vec::new())
+            }
+        },
+        start,
+        rect,
+        fill,
+        true,
+    );
+}
+
+/// The heart of [`watch`]: `anchor` is the grabbed message, `allowed`
+/// whether everything carried may be, and `pick` says, once pressed, which
+/// ids go and the downloaded files among them.
+#[allow(clippy::too_many_arguments)]
+fn watch_ids(
+    ui: &egui::Ui,
+    chat: &str,
+    anchor: &str,
+    allowed: bool,
+    pick: impl FnOnce() -> (Vec<String>, Vec<PathBuf>),
+    start: egui::layers::ShapeIdx,
+    bubble: Rect,
+    fill: Color32,
+    listed: bool,
+) {
     let ctx = ui.ctx();
     let current = load(ctx);
-    let ours = current
-        .as_ref()
-        .is_some_and(|carry| carry.chat == chat && carry.anchor == first.id);
+    let ours = current.as_ref().is_some_and(|carry| {
+        carry.window == ctx.viewport_id()
+            && carry.listed == listed
+            && carry.chat == chat
+            && carry.anchor == anchor
+    });
     let pressed = ui.input(|input| {
         input.pointer.press_origin().filter(|origin| {
             input.pointer.primary_pressed()
@@ -223,7 +383,7 @@ pub fn watch(
         // Not through a menu, a picker or a dialog above the chat.
         ctx.layer_id_at(*origin)
             .is_none_or(|layer| layer == ui.layer_id())
-            && members.iter().all(carriable)
+            && allowed
             && current
                 .as_ref()
                 .is_none_or(|carry| matches!(carry.phase, Phase::Pressed))
@@ -264,22 +424,20 @@ pub fn watch(
     let now = ui.input(|input| input.time);
     let carry = match (pressed, current) {
         (Some(origin), _) => {
-            // A message in the selection carries the selection.
-            let messages = if members.iter().any(|member| selected.contains(&member.id)) {
-                selected.to_vec()
-            } else {
-                members.iter().map(|member| member.id.clone()).collect()
-            };
+            let (messages, files) = pick();
             Carry {
+                window: ctx.viewport_id(),
+                window_origin: window_origin(ctx),
+                listed,
                 chat: chat.to_owned(),
                 messages,
-                anchor: first.id.clone(),
+                anchor: anchor.to_owned(),
                 origin: bubble,
                 laid,
                 shapes: Arc::default(),
                 painted,
                 fill,
-                files: members.iter().filter_map(downloaded).collect(),
+                files,
                 press: origin,
                 down: origin,
                 pressed_at: now,
@@ -301,7 +459,7 @@ pub fn watch(
 }
 
 /// The downloaded file of a message, if it has one.
-fn downloaded(message: &Message) -> Option<PathBuf> {
+pub(crate) fn downloaded(message: &Message) -> Option<PathBuf> {
     match &message.content {
         Content::Image { media, .. }
         | Content::Video { media, .. }
@@ -359,7 +517,8 @@ pub fn lift_on_drag(ctx: &egui::Context, chat: &str, message: &str) -> bool {
     let Some(mut carry) = load(ctx) else {
         return false;
     };
-    if carry.chat != chat
+    if carry.window != ctx.viewport_id()
+        || carry.chat != chat
         || carry.anchor != message
         || carry.phase != Phase::Pressed
         || !carry.laid.contains(carry.down)
@@ -416,7 +575,8 @@ pub fn begin(ctx: &egui::Context) {
     let Some(mut carry) = load(ctx) else {
         return;
     };
-    if matches!(carry.phase, Phase::Lifted { .. })
+    if carry.window == ctx.viewport_id()
+        && matches!(carry.phase, Phase::Lifted { .. })
         && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
     {
         let now = ctx.input(|input| input.time);
@@ -430,15 +590,64 @@ pub fn begin(ctx: &egui::Context) {
 /// press, follows the pointer, lights the chat under it, and forwards on a
 /// drop. Called last, once every row has registered.
 pub fn show(app: &mut App, ctx: &egui::Context) {
-    let targets = ctx
+    let window = ctx.viewport_id();
+    let here = ctx
         .data_mut(|data| data.remove_temp::<Vec<Target>>(targets_id()))
         .unwrap_or_default();
+    ctx.data_mut(|data| data.remove::<Rect>(painted_id().with(window)));
+    let origin = window_origin(ctx);
+    let time = ctx.input(|input| input.time);
+    // This window's targets, for the others, and theirs, for this one.
+    let others = ctx.data_mut(|data| {
+        let windows = data.get_temp_mut_or_default::<WindowTargets>(windows_id());
+        match origin {
+            Some(origin) => {
+                let on_screen = here
+                    .iter()
+                    .cloned()
+                    .map(|mut target| {
+                        target.rect = target.rect.translate(origin.to_vec2());
+                        target.avatar += origin.to_vec2();
+                        target
+                    })
+                    .collect();
+                windows.insert(window, (time, on_screen));
+            }
+            None => {
+                windows.remove(&window);
+            }
+        }
+        windows.retain(|_, (at, _)| (time - *at).abs() < WINDOW_TARGETS_LAST);
+        origin.map_or_else(Vec::new, |origin| {
+            windows
+                .iter()
+                .filter(|(other, _)| **other != window)
+                .flat_map(|(_, (_, targets))| targets.iter().cloned())
+                .map(|mut target| {
+                    target.rect = target.rect.translate(-origin.to_vec2());
+                    target.avatar -= origin.to_vec2();
+                    target
+                })
+                .collect::<Vec<_>>()
+        })
+    });
+    let mut targets = here;
+    targets.extend(others);
     #[cfg(any(test, feature = "demo"))]
-    demo(app, ctx);
+    if window == egui::ViewportId::ROOT {
+        demo(app, ctx);
+    }
     let Some(mut carry) = load(ctx) else {
         fade_glow(app, ctx, None);
+        ctx.data_mut(|data| data.remove::<ChatId>(over_id()));
         return;
     };
+    if carry.window != window {
+        // Carried in another window: shown here where it is over this one.
+        mirror(app, ctx, &carry, &targets, origin);
+        return;
+    }
+    carry.window_origin = origin;
     capture(ctx, &mut carry);
     let (now, pointer, down) = ctx.input(|input| {
         (
@@ -491,14 +700,33 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         Phase::Landing { .. } | Phase::Returning { .. } => {}
     }
     let pointer = pointer.unwrap_or(carry.at);
-    let over = targets
-        .iter()
-        .find(|target| target.rect.contains(pointer) && target.chat != carry.chat);
+    let over = targets.iter().find(|target| {
+        target.rect.contains(pointer) && (carry.listed || target.chat != carry.chat)
+    });
+    ctx.data_mut(
+        |data| match over.filter(|_| matches!(carry.phase, Phase::Lifted { .. })) {
+            Some(target) => {
+                data.insert_temp(over_id(), target.chat.clone());
+            }
+            None => data.remove::<ChatId>(over_id()),
+        },
+    );
     if let Phase::Lifted { .. } = carry.phase {
         let screen = ctx.content_rect();
         if !down {
             // Let go: on a chat that takes it, forward; anywhere else, back.
             match over.filter(|target| target.accepts) {
+                Some(target) if target.chat == carry.chat => {
+                    // Listed in the panel and dropped on its own chat.
+                    app.actions.push(Action::ForwardHere {
+                        chat: carry.chat.clone(),
+                        messages: carry.messages.clone(),
+                    });
+                    carry.phase = Phase::Landing {
+                        at: now,
+                        to: target.avatar,
+                    };
+                }
                 Some(target) => {
                     app.actions.push(Action::ForwardDropped {
                         from_chat: carry.chat.clone(),
@@ -512,9 +740,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 }
                 None => carry.phase = Phase::Returning { at: now },
             }
-        } else if !screen.contains(pointer)
+        } else if over.is_none()
+            && !screen.contains(pointer)
             && !carry.files.is_empty()
             && crate::drag_out::supported()
+            // The system's drag starts from the main window.
+            && window == egui::ViewportId::ROOT
         {
             // Out of the window with files: the system carries them on.
             crate::drag_out::request(carry.files.clone());
@@ -538,8 +769,51 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         _ => None,
     };
     fade_glow(app, ctx, lit);
-    paint(app, ctx, &mut carry, pointer, over, now, reduce_motion);
+    paint(
+        app,
+        ctx,
+        &mut carry,
+        pointer,
+        over,
+        now,
+        reduce_motion,
+        None,
+    );
     store(ctx, Some(carry));
+    ctx.request_repaint();
+}
+
+/// A card carried in another window, drawn in this one where it is over it,
+/// with the light on the chat under it here. Nothing moves it from here.
+fn mirror(app: &App, ctx: &egui::Context, carry: &Carry, targets: &[Target], origin: Option<Pos2>) {
+    let offset = match (carry.window_origin, origin) {
+        (Some(from), Some(here)) => from - here,
+        _ => {
+            fade_glow(app, ctx, None);
+            return;
+        }
+    };
+    let at = carry.at + offset;
+    let over = targets
+        .iter()
+        .find(|target| target.rect.contains(at) && (carry.listed || target.chat != carry.chat));
+    let lit = match carry.phase {
+        Phase::Lifted { .. } => over,
+        _ => None,
+    };
+    fade_glow(app, ctx, lit);
+    let now = ctx.input(|input| input.time);
+    let mut card = carry.clone();
+    paint(
+        app,
+        ctx,
+        &mut card,
+        at,
+        None,
+        now,
+        crate::motion::screen_reader_attached(ctx),
+        Some(offset),
+    );
     ctx.request_repaint();
 }
 
@@ -621,6 +895,9 @@ fn fade_glow(app: &App, ctx: &egui::Context, lit: Option<&Target>) {
 }
 
 /// Draws the card at the pointer, or on its way into a chat or back home.
+/// `mirror` is the carrying window's offset from this one when this window
+/// only shows the card: its place and size are then the carry's as they are.
+#[allow(clippy::too_many_arguments)]
 fn paint(
     app: &App,
     ctx: &egui::Context,
@@ -629,6 +906,7 @@ fn paint(
     over: Option<&Target>,
     now: f64,
     reduce_motion: bool,
+    mirror: Option<Vec2>,
 ) {
     let palette = app.palette;
     let size = carry.origin.size();
@@ -642,6 +920,7 @@ fn paint(
     );
     let mut opacity = 1.0;
     let (at, scale) = match carry.phase {
+        Phase::Lifted { .. } if mirror.is_some() => (carry.at, carry.scale),
         Phase::Lifted { at } => {
             let lift = if reduce_motion {
                 1.0
@@ -687,10 +966,15 @@ fn paint(
         }
         Phase::Pressed | Phase::Gone => return,
     };
-    let transform = egui::emath::TSTransform::from_translation(at.to_vec2())
+    let transform = egui::emath::TSTransform::from_translation(mirror.unwrap_or_default())
+        * egui::emath::TSTransform::from_translation(at.to_vec2())
         * egui::emath::TSTransform::from_scaling(scale)
         * egui::emath::TSTransform::from_translation(-carry.press.to_vec2());
     let card = transform.mul_rect(carry.origin);
+    if !card.intersects(ctx.content_rect()) {
+        return;
+    }
+    ctx.data_mut(|data| data.insert_temp(painted_id().with(ctx.viewport_id()), card));
     let layer = egui::LayerId::new(egui::Order::Tooltip, carry_id());
     let mut ui = egui::Ui::new(
         ctx.clone(),
@@ -858,6 +1142,9 @@ fn demo(app: &mut App, ctx: &egui::Context) {
             store(
                 ctx,
                 Some(Carry {
+                    window: ctx.viewport_id(),
+                    window_origin: window_origin(ctx),
+                    listed: false,
                     chat,
                     messages: vec![message.clone()],
                     anchor: message,
