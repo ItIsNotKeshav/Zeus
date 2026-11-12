@@ -358,10 +358,13 @@ fn current_place(app: &App) -> CustomAccent {
     if let Some(custom) = app.settings.custom_accent {
         return custom;
     }
-    app.settings
-        .accent
-        .rgb()
-        .map_or(CustomAccent { hue: 0.0, strength: 0.0 }, CustomAccent::nearest)
+    app.settings.accent.rgb().map_or(
+        CustomAccent {
+            hue: 0.0,
+            strength: 0.0,
+        },
+        CustomAccent::nearest,
+    )
 }
 
 /// What a pick at `place` becomes once let go: the theme's own in the
@@ -562,7 +565,8 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
         crate::i18n::gettext(app.locale, "Open themes folder").into_owned(),
     ));
 
-    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), SWATCH + 12.0), Sense::hover());
+    let (row, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), SWATCH + 12.0), Sense::hover());
     let middle = row.width() - 2.0 * (CHEVRON + SWATCH_GAP);
     let fit = (((middle + SWATCH_GAP) / (SWATCH + SWATCH_GAP)).floor() as usize).max(1);
     let pages = items.len().div_ceil(fit);
@@ -577,7 +581,12 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
         .min(pages.saturating_sub(1));
 
     let arrows = [
-        (Icon::ChevronLeft, row.left() + CHEVRON / 2.0, page > 0, -1isize),
+        (
+            Icon::ChevronLeft,
+            row.left() + CHEVRON / 2.0,
+            page > 0,
+            -1isize,
+        ),
         (
             Icon::ChevronRight,
             row.right() - CHEVRON / 2.0,
@@ -646,7 +655,11 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
                 painter.circle_stroke(center, SWATCH / 2.0, Stroke::new(1.0, palette.outline));
             }
             None => {
-                painter.circle_stroke(center, SWATCH / 2.0 - 0.5, Stroke::new(1.0, palette.secondary));
+                painter.circle_stroke(
+                    center,
+                    SWATCH / 2.0 - 0.5,
+                    Stroke::new(1.0, palette.secondary),
+                );
                 theme::paint_icon(
                     ui,
                     Icon::Plus,
@@ -792,12 +805,7 @@ enum Doodle {
 pub(super) fn doodles(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let locale = app.locale;
-    block_heading(
-        ui,
-        &palette,
-        &crate::i18n::gettext(locale, "Doodles"),
-        "",
-    );
+    block_heading(ui, &palette, &crate::i18n::gettext(locale, "Doodles"), "");
     let look = app.wallpaper();
     // Each tile shows its whole pattern, whatever the density.
     let tile_look = wallpaper::Look {
@@ -1198,7 +1206,11 @@ pub(super) fn zoom(ui: &mut egui::Ui, app: &mut App) {
         pos2(small.x + 20.0, pill.top()),
         pos2(large.x - 22.0, pill.bottom()),
     );
-    let response = ui.interact(track, ui.id().with("appearance-zoom"), Sense::click_and_drag());
+    let response = ui.interact(
+        track,
+        ui.id().with("appearance-zoom"),
+        Sense::click_and_drag(),
+    );
     theme::reveal_focus(&response);
     let thumb_radius = 11.0;
     let travel = track.left() + thumb_radius..=track.right() - thumb_radius;
@@ -1303,7 +1315,10 @@ pub(super) fn more(ui: &mut egui::Ui, app: &mut App) {
         theme::paint_icon(
             ui,
             chevron,
-            Rect::from_center_size(pos2(rect.right() - 10.0, rect.center().y), Vec2::splat(18.0)),
+            Rect::from_center_size(
+                pos2(rect.right() - 10.0, rect.center().y),
+                Vec2::splat(18.0),
+            ),
             18.0,
             if response.hovered() {
                 palette.text
@@ -1399,7 +1414,11 @@ mod tests {
                 let place = CustomAccent { hue, strength };
                 let back = wheel_at(rect, wheel_point(rect, place));
                 let turn = (back.hue - hue).rem_euclid(360.0);
-                assert!(turn.min(360.0 - turn) < 0.5, "{hue} came back as {}", back.hue);
+                assert!(
+                    turn.min(360.0 - turn) < 0.5,
+                    "{hue} came back as {}",
+                    back.hue
+                );
                 assert!((back.strength - strength).abs() < 0.01);
             }
         }

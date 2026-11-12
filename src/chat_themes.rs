@@ -113,12 +113,7 @@ impl ChatTheme {
 
     /// Like [`ChatTheme::palette`], with the reader's own colour from the
     /// wheel taking the place of `accent` unless it sits at the centre.
-    pub fn palette_with(
-        self,
-        dark: bool,
-        accent: Accent,
-        custom: Option<CustomAccent>,
-    ) -> Palette {
+    pub fn palette_with(self, dark: bool, accent: Accent, custom: Option<CustomAccent>) -> Palette {
         let base = match self {
             Self::Zeus if dark => Palette::nothing_dark(),
             Self::Zeus => Palette::nothing_light(),

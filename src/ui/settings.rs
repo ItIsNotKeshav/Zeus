@@ -8,13 +8,11 @@ use egui::{
 
 use super::controls;
 use crate::app::App;
-use crate::chat_themes::{Accent, ChatTheme, Mode};
+use crate::chat_themes::{Accent, ChatTheme};
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
-use crate::settings::{
-    Settings, WallpaperColor,
-};
+use crate::settings::{Settings, WallpaperColor};
 use crate::theme::{self, Icon, Palette};
 use crate::wallpaper;
 
@@ -270,7 +268,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let page = ui.available_rect_before_wrap();
     let split = beside
         && !searching
-        && all.get(section).is_some_and(|one| one.title.source == "Appearance")
+        && all
+            .get(section)
+            .is_some_and(|one| one.title.source == "Appearance")
         && page.width() >= SPLIT_WIDTH;
     let (controls, preview) = if split {
         let left = (page.width() * 0.55).clamp(SPLIT_CONTROLS.0, SPLIT_CONTROLS.1);
@@ -286,85 +286,85 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         (page, None)
     };
     ui.scope_builder(egui::UiBuilder::new().max_rect(controls), |ui| {
-    egui::ScrollArea::vertical()
-        .id_salt("settings")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            // The column keeps a readable width and sits in the middle of a
-            // wide window instead of leaving the space on its right empty.
-            let full = ui.available_width();
-            let width = (full - 2.0 * SIDE_MARGIN).clamp(0.0, COLUMN_WIDTH);
-            let column = Rect::from_min_size(
-                ui.cursor().min + vec2((full - width) / 2.0, TOP_MARGIN),
-                vec2(width, ui.available_height()),
-            );
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(column_id(), column.x_range()));
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(column)
-                    .layout(Layout::top_down(Align::Min)),
-                |ui| {
-                    ui.set_width(width);
-                    // Beside its categories the page shows the one picked,
-                    // under its own name, or what a search finds.
-                    let one = beside.then_some(section).filter(|_| !searching);
-                    let heading = match one {
-                        Some(index) => all[index].title.shown.clone(),
-                        None => crate::i18n::gettext(locale, "Settings"),
-                    };
-                    ui.horizontal(|ui| {
-                        if theme::icon_button(
-                            ui,
-                            Icon::ArrowLeft,
-                            20.0,
-                            palette.secondary,
-                            palette.text,
-                            "Back (Esc)",
-                        )
-                        .clicked()
-                        {
-                            app.actions.push(Action::Open(Page::Chats));
-                        }
-                        theme::text(
-                            ui,
-                            heading.as_ref(),
-                            theme::bold(theme::TEXT_DISPLAY),
-                            palette.text,
-                        );
-                    });
-                    ui.add_space(16.0);
-                    if !beside {
-                        search(app, ui);
-                        ui.add_space(8.0);
-                    }
-                    let filter = Filter::new(&app.settings_search);
-                    let mut found = false;
-                    for (index, section) in all.into_iter().enumerate() {
-                        if one.is_some_and(|one| one != index) {
-                            continue;
-                        }
-                        let section = if split {
-                            section.without("Preview")
-                        } else {
-                            section
+        egui::ScrollArea::vertical()
+            .id_salt("settings")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                // The column keeps a readable width and sits in the middle of a
+                // wide window instead of leaving the space on its right empty.
+                let full = ui.available_width();
+                let width = (full - 2.0 * SIDE_MARGIN).clamp(0.0, COLUMN_WIDTH);
+                let column = Rect::from_min_size(
+                    ui.cursor().min + vec2((full - width) / 2.0, TOP_MARGIN),
+                    vec2(width, ui.available_height()),
+                );
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(column_id(), column.x_range()));
+                ui.scope_builder(
+                    egui::UiBuilder::new()
+                        .max_rect(column)
+                        .layout(Layout::top_down(Align::Min)),
+                    |ui| {
+                        ui.set_width(width);
+                        // Beside its categories the page shows the one picked,
+                        // under its own name, or what a search finds.
+                        let one = beside.then_some(section).filter(|_| !searching);
+                        let heading = match one {
+                            Some(index) => all[index].title.shown.clone(),
+                            None => crate::i18n::gettext(locale, "Settings"),
                         };
-                        found |= section.show(ui, app, &filter, one.is_none());
-                    }
-                    if !found {
-                        ui.add_space(crate::theme::SPACE_XXL);
-                        theme::paragraph(
-                            ui,
-                            crate::i18n::gettext(locale, "No settings match “{query}”.")
-                                .replace("{query}", app.settings_search.trim()),
-                            theme::regular(theme::TEXT_BODY),
-                            palette.secondary,
-                        );
-                    }
-                },
-            );
-            ui.add_space(TOP_MARGIN);
-        });
+                        ui.horizontal(|ui| {
+                            if theme::icon_button(
+                                ui,
+                                Icon::ArrowLeft,
+                                20.0,
+                                palette.secondary,
+                                palette.text,
+                                "Back (Esc)",
+                            )
+                            .clicked()
+                            {
+                                app.actions.push(Action::Open(Page::Chats));
+                            }
+                            theme::text(
+                                ui,
+                                heading.as_ref(),
+                                theme::bold(theme::TEXT_DISPLAY),
+                                palette.text,
+                            );
+                        });
+                        ui.add_space(16.0);
+                        if !beside {
+                            search(app, ui);
+                            ui.add_space(8.0);
+                        }
+                        let filter = Filter::new(&app.settings_search);
+                        let mut found = false;
+                        for (index, section) in all.into_iter().enumerate() {
+                            if one.is_some_and(|one| one != index) {
+                                continue;
+                            }
+                            let section = if split {
+                                section.without("Preview")
+                            } else {
+                                section
+                            };
+                            found |= section.show(ui, app, &filter, one.is_none());
+                        }
+                        if !found {
+                            ui.add_space(crate::theme::SPACE_XXL);
+                            theme::paragraph(
+                                ui,
+                                crate::i18n::gettext(locale, "No settings match “{query}”.")
+                                    .replace("{query}", app.settings_search.trim()),
+                                theme::regular(theme::TEXT_BODY),
+                                palette.secondary,
+                            );
+                        }
+                    },
+                );
+                ui.add_space(TOP_MARGIN);
+            });
     });
     if let Some(rect) = preview {
         appearance::preview(ui, app, rect);
@@ -572,17 +572,14 @@ fn sections(app: &App) -> Vec<Section> {
     let mut appearance = Section::new(translated(locale, "Appearance"));
     // Beside the controls on a wide page, the preview leaves this list for a
     // column of its own (see `show`).
-    appearance.block(
-        vec![translated(locale, "Preview")],
-        |ui, app| {
-            let (rect, _) = ui.allocate_exact_size(
-                vec2(ui.available_width(), appearance::PREVIEW_HEIGHT),
-                Sense::hover(),
-            );
-            appearance::preview(ui, app, rect);
-            ui.add_space(crate::theme::SPACE_L);
-        },
-    );
+    appearance.block(vec![translated(locale, "Preview")], |ui, app| {
+        let (rect, _) = ui.allocate_exact_size(
+            vec2(ui.available_width(), appearance::PREVIEW_HEIGHT),
+            Sense::hover(),
+        );
+        appearance::preview(ui, app, rect);
+        ui.add_space(crate::theme::SPACE_L);
+    });
     appearance.block(
         vec![
             translated(locale, "Theme"),
@@ -622,11 +619,9 @@ fn sections(app: &App) -> Vec<Section> {
     );
 
     let mut chats = Section::new(translated(locale, "Chats"));
-    chats.toggle(
-        translated(locale, "Open the last chat"),
-        "",
-        |settings| &mut settings.restore_last_chat,
-    );
+    chats.toggle(translated(locale, "Open the last chat"), "", |settings| {
+        &mut settings.restore_last_chat
+    });
     chats.toggle(
         translated(locale, "Enter sends"),
         keyed(translated(locale, "When off, Ctrl+Enter sends.")),
@@ -642,10 +637,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     chats.account_toggle(
         translated(locale, "Download files automatically"),
-        translated(
-            locale,
-            "Files up to 64 MiB.",
-        ),
+        translated(locale, "Files up to 64 MiB."),
         |settings| &mut settings.auto_download,
     );
     chats.account_toggle(
@@ -666,10 +658,7 @@ fn sections(app: &App) -> Vec<Section> {
     }
     chats.row(
         translated(locale, "Keep chats archived"),
-        translated(
-            locale,
-            "When off, a new message unarchives the chat.",
-        ),
+        translated(locale, "When off, a new message unarchives the chat."),
         move |ui, app| {
             let mut keep = app.settings.keep_chats_archived;
             let response = widgets::switch(ui, &palette, &mut keep);
@@ -690,10 +679,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     chats.row(
         translated(locale, "Locked chats code"),
-        translated(
-            locale,
-            "Hides chats. It does not encrypt them.",
-        ),
+        translated(locale, "Hides chats. It does not encrypt them."),
         move |ui, app| {
             // The buffer lives in egui memory: the hash is the only
             // stored form, so there is nothing to read it back from.
@@ -738,10 +724,7 @@ fn sections(app: &App) -> Vec<Section> {
         notifications.row(title, description, |ui, app| sound_control(ui, app, false));
         notifications.toggle(
             translated(locale, "Notification cooldown"),
-            translated(
-                locale,
-                "Only one sound when many messages arrive at once.",
-            ),
+            translated(locale, "Only one sound when many messages arrive at once."),
             |settings| &mut settings.notification_cooldown,
         );
         notifications.row(
@@ -897,29 +880,25 @@ fn sections(app: &App) -> Vec<Section> {
         |settings| &mut settings.keep_running_in_background,
     );
     if app.start_with_system.is_some() {
-        system.row(
-            translated(locale, "Start at login"),
-            "",
-            move |ui, app| {
-                let Some(mut enabled) = app.start_with_system else {
-                    return;
-                };
-                let response = widgets::switch(ui, &palette, &mut enabled);
-                theme::reveal_focus(&response);
-                let label = crate::i18n::gettext(app.locale, "Start at login");
-                response.widget_info(|| {
-                    egui::WidgetInfo::selected(
-                        egui::WidgetType::Checkbox,
-                        ui.is_enabled(),
-                        enabled,
-                        label.as_ref(),
-                    )
-                });
-                if response.changed() {
-                    app.actions.push(Action::SetStartWithSystem(enabled));
-                }
-            },
-        );
+        system.row(translated(locale, "Start at login"), "", move |ui, app| {
+            let Some(mut enabled) = app.start_with_system else {
+                return;
+            };
+            let response = widgets::switch(ui, &palette, &mut enabled);
+            theme::reveal_focus(&response);
+            let label = crate::i18n::gettext(app.locale, "Start at login");
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    enabled,
+                    label.as_ref(),
+                )
+            });
+            if response.changed() {
+                app.actions.push(Action::SetStartWithSystem(enabled));
+            }
+        });
     }
     // Only a build with a release feed of its own has anything to fetch.
     // Checking itself is always on, with no switch.
@@ -945,10 +924,7 @@ fn sections(app: &App) -> Vec<Section> {
                 source: text.source.replace("{proxy}", &redacted).into(),
             }
         }
-        None => translated(
-            locale,
-            "Empty uses ALL_PROXY or HTTPS_PROXY.",
-        ),
+        None => translated(locale, "Empty uses ALL_PROXY or HTTPS_PROXY."),
     };
     system.row(translated(locale, "Proxy"), description, move |ui, app| {
         let id = egui::Id::new("settings-proxy-draft");
@@ -968,15 +944,9 @@ fn sections(app: &App) -> Vec<Section> {
     system.row(
         translated(locale, "GIPHY API key"),
         if crate::settings::BUILT_IN_GIPHY_KEY.is_some() {
-            translated(
-                locale,
-                "For GIF search. Replaces the built-in key.",
-            )
+            translated(locale, "For GIF search. Replaces the built-in key.")
         } else {
-            translated(
-                locale,
-                "For GIF search. Free at developers.giphy.com.",
-            )
+            translated(locale, "For GIF search. Free at developers.giphy.com.")
         },
         move |ui, app| {
             let response = controls::Field::new(&mut app.settings.giphy_key)
@@ -1008,20 +978,16 @@ fn sections(app: &App) -> Vec<Section> {
     // The account on screen: each number keeps its own archive and media.
     let state = app.account().dirs.state.clone();
     let open_folder = crate::i18n::gettext(locale, "Open folder");
-    files.row(
-        translated(locale, "Message archive"),
-        "",
-        {
-            let open_folder = open_folder.clone();
-            move |ui, app| {
-                if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), &open_folder, false)
-                    .clicked()
-                {
-                    app.actions.push(Action::OpenFolder(state));
-                }
+    files.row(translated(locale, "Message archive"), "", {
+        let open_folder = open_folder.clone();
+        move |ui, app| {
+            if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), &open_folder, false)
+                .clicked()
+            {
+                app.actions.push(Action::OpenFolder(state));
             }
-        },
-    );
+        }
+    });
     let custom = app.settings.download_folder.clone();
     let media = custom
         .clone()
@@ -1084,23 +1050,19 @@ fn sections(app: &App) -> Vec<Section> {
         cache_limit_picker,
     );
     let log = app.dirs.log_file();
-    system.row(
-        translated(locale, "Log"),
-        "",
-        move |ui, app| {
-            if theme::soft_button(
-                ui,
-                &palette,
-                Some(Icon::FileText),
-                &crate::i18n::gettext(app.locale, "Open"),
-                false,
-            )
-            .clicked()
-            {
-                app.actions.push(Action::OpenLog(log));
-            }
-        },
-    );
+    system.row(translated(locale, "Log"), "", move |ui, app| {
+        if theme::soft_button(
+            ui,
+            &palette,
+            Some(Icon::FileText),
+            &crate::i18n::gettext(app.locale, "Open"),
+            false,
+        )
+        .clicked()
+        {
+            app.actions.push(Action::OpenLog(log));
+        }
+    });
 
     let mut experimental = Section::new(translated(locale, "Experimental"));
     experimental.toggle(
@@ -1162,11 +1124,9 @@ fn swipe_section(locale: Locale) -> Section {
     use crate::settings::SwipeSlot;
     let mut swipes = Section::new(translated(locale, "Touchpad swipes"));
     for slot in SwipeSlot::ALL {
-        swipes.row(
-            translated(locale, slot.label()),
-            "",
-            move |ui, app| swipe_picker(ui, app, slot),
-        );
+        swipes.row(translated(locale, slot.label()), "", move |ui, app| {
+            swipe_picker(ui, app, slot)
+        });
     }
     swipes
 }
@@ -1480,10 +1440,7 @@ fn app_lock_rows(app: &App, privacy: &mut Section) {
     if enabled {
         privacy.row(
             translated(locale, "Lock after"),
-            keyed(translated(
-                locale,
-                "Ctrl+Shift+L locks now.",
-            )),
+            keyed(translated(locale, "Ctrl+Shift+L locks now.")),
             move |ui, app| {
                 let selected = app.settings.app_lock_after;
                 let locale = app.locale;
@@ -1645,8 +1602,6 @@ fn block_heading(ui: &mut egui::Ui, palette: &Palette, title: &str, description:
     ui.add_space(8.0);
 }
 
-
-
 /// Seconds the pill's fill takes to reach a new segment.
 const SLIDE_SECONDS: f64 = theme::MOTION_PANEL as f64;
 
@@ -1747,7 +1702,6 @@ fn segmented<T: Copy + PartialEq>(
     clicked
 }
 
-
 /// How wide an accent swatch is.
 const SWATCH: f32 = 26.0;
 
@@ -1842,10 +1796,8 @@ pub(super) fn accent_swatches(ui: &mut egui::Ui, app: &mut App, enabled: bool) {
     });
 }
 
-
-
-
-
+/// How tall the coloured part of a theme card is.
+const CARD_PREVIEW: f32 = 62.0;
 
 /// One theme card: its conversation with a bubble each way, over its name
 /// on its own list colour, with its accent beside the name.
@@ -1924,7 +1876,6 @@ pub(super) fn theme_card(
     };
     painter.rect_stroke(rect, radius, edge, egui::StrokeKind::Outside);
 }
-
 
 fn language_picker(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
@@ -2244,11 +2195,6 @@ fn wallpaper_color_button(
         .on_hover_text(label.as_str())
         .clicked()
 }
-
-
-
-
-
 
 /// The space this account's media cache takes, split by kind, with the
 /// button that empties it.
@@ -2788,7 +2734,6 @@ fn toggle(
         app.actions.push(Action::SettingsChanged);
     }
 }
-
 
 fn account_toggle(
     ui: &mut egui::Ui,

@@ -31,7 +31,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::Duration;
 
 /// How much the interface moves, from Settings > Appearance > Motion.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum MotionPreference {
     /// As the system asks: reduced while it asks for less motion or a screen

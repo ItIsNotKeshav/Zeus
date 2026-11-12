@@ -1269,11 +1269,10 @@ impl Settings {
 
     /// The palette to draw with, given whether the window is dark.
     pub fn palette(&self, dark: bool) -> crate::theme::Palette {
-        self.cached_palette()
-            .unwrap_or_else(|| {
-                self.chat_theme
-                    .palette_with(dark, self.accent, self.custom_accent)
-            })
+        self.cached_palette().unwrap_or_else(|| {
+            self.chat_theme
+                .palette_with(dark, self.accent, self.custom_accent)
+        })
     }
 
     /// Sets Glass, and Blur with it for older releases: on short of Solid.
