@@ -72,7 +72,7 @@ fn sample_map() -> Vec<u8> {
 const SAMPLES: &[Sample] = &[
     Sample {
         id: "393331234567@s.whatsapp.net",
-        name: "Ada Lovelace",
+        name: "Luna Starling",
         minutes_ago: 3,
         unread: 2,
         pinned: true,
@@ -80,21 +80,18 @@ const SAMPLES: &[Sample] = &[
         archived: false,
         locked: false,
         lines: &[
-            (false, "Did the analytical engine build finish?"),
-            (true, "Yes! It compiles on stable now, no nightly needed."),
+            (false, "Did the backyard rocket survive the test launch?"),
+            (true, "Yes! It reached the neighbour's roof. Twice."),
+            (false, "Legendary. Send me the video before he does."),
             (
                 false,
-                "That is wonderful news. Send me the branch when you can.",
-            ),
-            (
-                false,
-                "Also: https://en.wikipedia.org/wiki/Analytical_engine for the bedtime reading 😄",
+                "Also: https://en.wikipedia.org/wiki/Model_rocket for the bedtime reading 😄",
             ),
         ],
     },
     Sample {
         id: "120363012345678901@g.us",
-        name: "Rust Berlin",
+        name: "Launch Squad",
         minutes_ago: 25,
         unread: 14,
         pinned: false,
@@ -102,15 +99,15 @@ const SAMPLES: &[Sample] = &[
         archived: false,
         locked: false,
         lines: &[
-            (false, "Anyone at the meetup tonight?"),
+            (false, "Who's coming to the launch tonight?"),
             (true, "I'll be there around 19:00"),
-            (false, "Same. Bringing the egui demo"),
+            (false, "Same. Bringing snacks and a folding chair"),
             (false, "Save me a seat 🙏"),
         ],
     },
     Sample {
         id: "441632960123@s.whatsapp.net",
-        name: "Grace Hopper",
+        name: "Rafi Okafor",
         minutes_ago: 90,
         unread: 0,
         pinned: false,
@@ -118,14 +115,14 @@ const SAMPLES: &[Sample] = &[
         archived: false,
         locked: false,
         lines: &[
-            (true, "Found the bug. It was a moth."),
-            (false, "Literally?"),
-            (true, "Literally. Taped it into the logbook."),
+            (true, "Found out why the wifi was so slow."),
+            (false, "The router?"),
+            (true, "The cat. She sleeps on it because it's warm 🐈"),
         ],
     },
     Sample {
         id: "4915112345678@s.whatsapp.net",
-        name: "Katherine Johnson",
+        name: "Bianca Rossi",
         minutes_ago: 60 * 26,
         unread: 0,
         pinned: false,
@@ -133,8 +130,8 @@ const SAMPLES: &[Sample] = &[
         archived: false,
         locked: false,
         lines: &[
-            (false, "Talk is cheap. Show me the code."),
-            (true, "Pushed 😌"),
+            (false, "Leg day tomorrow, 6 am. No excuses 🏋️"),
+            (true, "Who hurt you 😌"),
         ],
     },
     Sample {
@@ -147,14 +144,14 @@ const SAMPLES: &[Sample] = &[
         archived: false,
         locked: false,
         lines: &[
-            (false, "Dinner on Sunday at 13:00?"),
+            (false, "Lasagna on Sunday at 13:00?"),
             (true, "We'll be there"),
             (false, "Bring the good bread 🥖"),
         ],
     },
     Sample {
         id: "14155550199@s.whatsapp.net",
-        name: "Margaret Hamilton",
+        name: "Kenji Watanabe",
         minutes_ago: 60 * 24 * 4,
         unread: 0,
         pinned: false,
@@ -162,13 +159,13 @@ const SAMPLES: &[Sample] = &[
         archived: false,
         locked: false,
         lines: &[
-            (false, "The landing software held up."),
+            (false, "The sourdough starter survived the weekend."),
             (true, "Never doubted it."),
         ],
     },
     Sample {
         id: "120363011122233344@g.us",
-        name: "Section 8 Berlin",
+        name: "Karaoke Night",
         minutes_ago: 60 * 5,
         unread: 0,
         pinned: false,
@@ -178,11 +175,11 @@ const SAMPLES: &[Sample] = &[
         lines: &[
             (
                 false,
-                "*ARTIST CARE Timetable*\n\n20:00 – 21:00 @491701111111 (no pronouns)\n21:00 – 23:00 Melissa (she/they)\n23:00 – 07:00 @491703333333 (she/her)",
+                "*KARAOKE Line-up*\n\n20:00 – 21:00 @491701111111 (power ballads only)\n21:00 – 23:00 DJ Waffles (80s hits)\n23:00 – 01:00 @491703333333 (ABBA, obviously)",
             ),
             (
                 false,
-                "We'd really appreciate if you could take 3 minutes to check out our *vision & values*. It helps set the tone for a smooth and healthy collaboration 💜\nsection8berlin.com\n\nIn the next days we will drop some more information🔥\n* Guestlist\n* Dresscode\n* Coatcheck",
+                "We'd really appreciate if you could take 3 minutes to check out our *house rules*. Mainly: no Wonderwall before midnight 🎤\nkaraokenight.fun\n\nIn the next days we will drop some more information🔥\n* Song list\n* Dresscode\n* Snacks",
             ),
         ],
     },
@@ -210,14 +207,17 @@ const SAMPLES: &[Sample] = &[
     },
     Sample {
         id: "120363055566677788@newsletter",
-        name: "Rust Weekly",
+        name: "Crab Facts Weekly",
         minutes_ago: 60 * 8,
         unread: 0,
         pinned: false,
         muted: false,
         archived: false,
         locked: false,
-        lines: &[(false, "A new client build is out.")],
+        lines: &[(
+            false,
+            "Crabs can walk forwards. They just prefer sideways 🦀",
+        )],
     },
 ];
 
@@ -433,14 +433,14 @@ pub fn populate(app: &mut App) {
     // The sample account was linked long ago: past the first-run setup.
     app.settings.setup_done = true;
     app.me = Some(ME.to_owned());
-    app.me_name = Some("Carmine".to_owned());
+    app.me_name = Some("Sam".to_owned());
     app.chats.clear();
     app.conversations.clear();
     let now = crate::util::now();
     let group_members = [
-        ("491701111111@s.whatsapp.net", "Jonas"),
-        ("491702222222@s.whatsapp.net", "Mira"),
-        ("491703333333@s.whatsapp.net", "Tom"),
+        ("491701111111@s.whatsapp.net", "Goran"),
+        ("491702222222@s.whatsapp.net", "Olive"),
+        ("491703333333@s.whatsapp.net", "Pablo"),
     ];
     for (id, name) in group_members {
         app.contacts.insert(Contact {
@@ -453,7 +453,7 @@ pub fn populate(app: &mut App) {
     // Include a contact without a chat for search results.
     app.contacts.insert(Contact {
         id: "12025550137@s.whatsapp.net".to_owned(),
-        full_name: Some("Dorothy Vaughan".to_owned()),
+        full_name: Some("Dot Matrix".to_owned()),
         first_name: None,
         push_name: None,
     });
@@ -462,10 +462,10 @@ pub fn populate(app: &mut App) {
         chat.last_activity = now - sample.minutes_ago * 60;
         chat.unread = sample.unread;
         // Two favorites, in the phone's order rather than by recency.
-        chat.favorite = matches!(sample.name, "Ada Lovelace" | "Margaret Hamilton");
-        chat.favorite_position = u32::from(sample.name == "Ada Lovelace");
+        chat.favorite = matches!(sample.name, "Luna Starling" | "Kenji Watanabe");
+        chat.favorite_position = u32::from(sample.name == "Luna Starling");
         // One chat carries the empty dot, so the sample shows both marks.
-        chat.marked_unread = sample.name == "Grace Hopper";
+        chat.marked_unread = sample.name == "Rafi Okafor";
         chat.pinned = sample.pinned;
         chat.pinned_at = if sample.pinned {
             (now - sample.minutes_ago * 60) * 1000
@@ -475,8 +475,8 @@ pub fn populate(app: &mut App) {
         chat.muted_until = sample.muted.then_some(0);
         chat.archived = sample.archived;
         chat.locked = sample.locked;
-        // Someone in Rust Berlin mentioned us among its unread messages.
-        if sample.name == "Rust Berlin" {
+        // Someone in Launch Squad mentioned us among its unread messages.
+        if sample.name == "Launch Squad" {
             chat.unread_mention = Some(format!("{}-2", sample.id));
         }
         let mut conversation = Conversation {
@@ -516,14 +516,14 @@ pub fn populate(app: &mut App) {
                 .map(|(id, _)| (*id).to_owned())
                 .chain(std::iter::once(ME.to_owned()))
                 .collect();
-            chat.read_only = sample.name == "Section 8 Berlin";
-            // Rust Berlin lets every member edit its info, Family is locked
-            // but we are an admin, and Section 8 Berlin is locked for us.
-            chat.info_locked = Some(sample.name != "Rust Berlin");
+            chat.read_only = sample.name == "Karaoke Night";
+            // Launch Squad lets every member edit its info, Family is locked
+            // but we are an admin, and Karaoke Night is locked for us.
+            chat.info_locked = Some(sample.name != "Launch Squad");
             chat.admin = sample.name == "Family";
-            // Family is ours to run, with Mira as a second admin; Rust Berlin
-            // lets its members add people and share its link; Section 8
-            // Berlin is Tom's announcement group.
+            // Family is ours to run, with Olive as a second admin; Launch Squad
+            // lets its members add people and share its link; Karaoke
+            // Night is Pablo's announcement group.
             chat.group_settings = Some(match sample.name {
                 "Family" => crate::model::GroupSettings {
                     approval: true,
@@ -531,7 +531,7 @@ pub fn populate(app: &mut App) {
                     super_admins: vec![ME.to_owned()],
                     ..Default::default()
                 },
-                "Rust Berlin" => crate::model::GroupSettings {
+                "Launch Squad" => crate::model::GroupSettings {
                     members_add: true,
                     members_share_link: true,
                     admins: vec![group_members[0].0.to_owned()],
@@ -545,8 +545,8 @@ pub fn populate(app: &mut App) {
                     ..Default::default()
                 },
             });
-            chat.group_description = Some(if sample.name == "Rust Berlin" {
-                "Rust meetups in Berlin 🦀\nShare projects, ask questions, and help each other learn.\nNext meetup: Thursday at 19:00.".to_owned()
+            chat.group_description = Some(if sample.name == "Launch Squad" {
+                "Watching rockets go up since 2024 🚀\nShare launch times, photos and snack plans.\nNext launch: Thursday at 19:00.".to_owned()
             } else {
                 String::new()
             });
@@ -583,7 +583,7 @@ pub fn populate(app: &mut App) {
                 base + 30,
                 Content::Image {
                     motion: None,
-                    caption: Some("The difference engine, finally assembled".into()),
+                    caption: Some("Built a rocket guidance computer. Out of brass ⚙️".into()),
                     media: media(
                         "image/jpeg",
                         1_843_201,
@@ -612,7 +612,7 @@ pub fn populate(app: &mut App) {
             base + 60,
             Content::Document {
                 media: media("application/pdf", 482_113, None, None),
-                file_name: "Notes on the Engine.pdf".into(),
+                file_name: "Rocket Snack Plan.pdf".into(),
                 caption: None,
                 pages: Some(12),
             },
@@ -647,14 +647,14 @@ pub fn populate(app: &mut App) {
                 "ada-reply",
                 true,
                 base + 120,
-                Content::text("Listened, agreed on *all three* points."),
+                Content::text("Listened twice. Agreed on *all three* snacks."),
             );
             row.quoted = Some(Quoted {
                 labelled: None,
                 chat: None,
                 id: "ada-voice".into(),
                 sender: ada.into(),
-                sender_name: Some("Ada Lovelace".into()),
+                sender_name: Some("Luna Starling".into()),
                 summary: "Voice message (0:42)".into(),
                 mentions: Vec::new(),
             });
@@ -669,15 +669,15 @@ pub fn populate(app: &mut App) {
                 true,
                 base + 150,
                 Content::Text {
-                    text: "btw I made my own Spotify app from scratch! https://spotifast.rocks/".into(),
+                    text: "btw I chat on Zeus now, it's so fast ⚡ https://zeus-app-landing-page.vercel.app/".into(),
                     preview: Some(LinkPreview {
-                        url: "https://spotifast.rocks/".into(),
-                        title: Some("spotifast.rocks".into()),
-                        description: Some("Spotify, native and fast. A lightweight Spotify client written in Rust with egui.".into()),
+                        url: "https://zeus-app-landing-page.vercel.app/".into(),
+                        title: Some("Zeus".into()),
+                        description: Some("Your WhatsApp chats in a fast, native desktop app. No browser tab.".into()),
                     }),
                 },
             );
-            row.thumbnail = Some(stock::thumbnail(stock::SPOTIFAST));
+            row.thumbnail = Some(stock::thumbnail(stock::ZEUS));
             row
         },
     ];
@@ -705,7 +705,7 @@ pub fn populate(app: &mut App) {
             false,
             older + 60 * 16,
             Content::text(
-                "_Reading list_ for the weekend:\n* ~Babbage's memoirs~ done\n* `sketch.rs` from the repo\n> and the essay you sent 🙏\nMail me at ada@analytical.engine or see engine.rocks",
+                "_Packing list_ for the launch:\n* ~sunscreen~ done\n* `snacks.txt` from the group\n> and the blanket you promised 🙏\nMail me at luna@rocket.club or see rocketsnacks.fun",
             ),
         ),
         message(
@@ -767,7 +767,7 @@ pub fn populate(app: &mut App) {
             Content::Location {
                 latitude: 51.5237,
                 longitude: -0.1585,
-                name: Some("Ada's place".into()),
+                name: Some("Luna's place".into()),
                 address: Some("12 St James's Square, London".into()),
             },
         ),
@@ -823,7 +823,7 @@ pub fn populate(app: &mut App) {
                 group_base + 60,
                 Content::Image {
                     motion: None,
-                    caption: Some("Tonight's venue, doors at 18:30".into()),
+                    caption: Some("Pre-launch hangout, doors at 18:30".into()),
                     media: media(
                         "image/jpeg",
                         1_204_551,
@@ -897,7 +897,7 @@ pub fn populate(app: &mut App) {
             true,
             group_base + 180,
             Content::Poll {
-                question: "Pizza after the talks?".into(),
+                question: "Pizza after the launch?".into(),
                 state: crate::model::PollState {
                     selectable: 1,
                     counts: vec![3, 2, 0],
@@ -984,7 +984,26 @@ pub fn populate(app: &mut App) {
     app.focus_composer = false;
 }
 
-/// A WhatsApp sticker pack shared by Ada, and with `open`, its stickers in
+/// Downloads the open chat's and the group's sample photos, so screenshots
+/// show the pictures instead of their blurred previews.
+fn loaded_photos(app: &mut App) {
+    let dir = app.dirs.media_cache_dir();
+    for (chat, id, photo) in [
+        (SAMPLES[0].id, "ada-photo", stock::ENGINE),
+        (SAMPLES[1].id, "group-photo", stock::VENUE),
+    ] {
+        if let Some(row) = app
+            .conversations
+            .get_mut(chat)
+            .and_then(|chat| chat.message_mut(id))
+            && let Content::Image { media, .. } = &mut row.content
+        {
+            media.path = Some(stock::save_photo(&dir, photo));
+        }
+    }
+}
+
+/// A WhatsApp sticker pack shared by Luna, and with `open`, its stickers in
 /// the dialog that adds it.
 fn shared_pack_sample(app: &mut App, open: bool) {
     let id = SAMPLES[0].id;
@@ -1001,7 +1020,7 @@ fn shared_pack_sample(app: &mut App, open: bool) {
     row.reactions.clear();
     row.content = crate::model::Content::StickerPack {
         name: "Ducks".into(),
-        publisher: "Ada Lovelace".into(),
+        publisher: "Luna Starling".into(),
         count: 6,
         caption: None,
     };
@@ -1011,7 +1030,7 @@ fn shared_pack_sample(app: &mut App, open: bool) {
         sticker_sample(app, crate::model::StickerShelf::Recent, "");
         app.picker = None;
         let ducks = app.sticker_packs.first().cloned();
-        app.sticker_preview = ducks.map(|pack| (pack, "Ada Lovelace".to_owned()));
+        app.sticker_preview = ducks.map(|pack| (pack, "Luna Starling".to_owned()));
         app.dialog = Some(Dialog::StickerPack);
     }
 }
@@ -1106,7 +1125,7 @@ fn quote_sample(app: &mut App) {
     if let Some(index) = quoted {
         let original = &conversation.messages[index];
         let (sender, sender_name) = (original.sender.clone(), original.sender_name.clone());
-        // The quoted reply mentions Jonas, so the quote names him too.
+        // The quoted reply mentions Goran, so the quote names him too.
         let (summary, mentions) = (original.summary(), original.mentions.clone());
         let mut reply = message(
             group,
@@ -1520,14 +1539,14 @@ fn poll_sample(app: &mut App, voted: bool, results: bool) {
                     },
                     crate::model::PollVoter {
                         id: SAMPLES[2].id.into(),
-                        name: "Grace Hopper".into(),
+                        name: "Rafi Okafor".into(),
                         from_me: false,
                         timestamp: now - 90,
                         choices: vec![0],
                     },
                     crate::model::PollVoter {
                         id: SAMPLES[4].id.into(),
-                        name: "Katherine Johnson".into(),
+                        name: "Bianca Rossi".into(),
                         from_me: false,
                         timestamp: now - 120,
                         choices: vec![1],
@@ -1819,7 +1838,7 @@ fn media_replies_sample(app: &mut App) {
         id: "ada-photo".into(),
         sender: id.into(),
         sender_name: None,
-        summary: "The difference engine, finally assembled".into(),
+        summary: "Built a rocket guidance computer. Out of brass ⚙️".into(),
         mentions: Vec::new(),
     });
     for row in [&mut alone, &mut reply] {
@@ -2137,6 +2156,8 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "poll-voted" => poll_sample(app, true, false),
             "poll-results" => poll_sample(app, true, true),
             "photos" => photos_sample(app),
+            // The sample photos downloaded, for the README and website shots.
+            "loaded" => loaded_photos(app),
             "bubbles" => bubbles_sample(app),
             "drafts" => {
                 // Unsent text in two chats besides the open one, whose
@@ -2333,7 +2354,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     ..Default::default()
                 };
                 if part == "new-group" {
-                    app.new_chat_search = "gr".into();
+                    app.new_chat_search = "ra".into();
                 } else {
                     draft.stage = crate::new_group::Stage::Naming;
                     draft.name = "Weekend in Lisbon".into();
@@ -2689,7 +2710,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // up with a tile for each member, one of them only asked to it.
             "call-group" => group_call_sample(app, true, false),
             "call-group-active" => group_call_sample(app, false, false),
-            // A group's video call: three members' cameras on, Tom's off, and
+            // A group's video call: three members' cameras on, Pablo's off, and
             // ours in the corner.
             "call-group-video" => group_call_sample(app, false, true),
             // A call we started in the group: nobody has joined yet, so
@@ -2798,7 +2819,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
                 log.sort_by_key(|message| std::cmp::Reverse(message.timestamp));
                 if part == "calls-info" {
-                    // The newest row, Ada's two missed calls, picked: her
+                    // The newest row, Luna's two missed calls, picked: her
                     // chat opens at the call, filed among its messages.
                     let (chat, id) = (log[0].chat.clone(), log[0].id.clone());
                     if let Some(conversation) = app.conversations.get_mut(&chat) {
@@ -2915,7 +2936,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "poll-create" => {
                 app.dialog = app.open_chat.clone().map(Dialog::CreatePoll);
                 app.poll_draft = crate::model::PollDraft {
-                    question: "Pizza after the talks? 🍕".into(),
+                    question: "Pizza after the launch? 🍕".into(),
                     options: vec!["Yes".into(), "Only if it’s Neapolitan".into(), "No".into()],
                     multiple: false,
                 };
@@ -3013,7 +3034,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.open_chat = Some(group.to_owned());
                 info_sample(app, group, InfoView::Overview);
                 if part == "group-info-rename" {
-                    app.group_name_edit = Some("Rust Berlin 🦀".to_owned());
+                    app.group_name_edit = Some("Launch Squad 🚀".to_owned());
                 }
                 if part == "group-info-saving" {
                     app.group_saving.insert(group.to_owned());
@@ -3087,7 +3108,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.toast("Contact saved");
                 app.toast("History loaded");
                 app.toast_error_offering(
-                    crate::util::no_app_opens(std::path::Path::new("Notes on the Engine.pdf")),
+                    crate::util::no_app_opens(std::path::Path::new("Rocket Snack Plan.pdf")),
                     Some((
                         crate::util::REVEAL,
                         crate::model::Action::OpenFolder(std::env::temp_dir()),
@@ -3153,9 +3174,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     code: "DemoInviteCode123".into(),
                     state: crate::model::InviteState::Ready(crate::model::InviteInfo {
                         id: "120363000000000000@g.us".into(),
-                        subject: "Analytical Engine Club 🛠️".into(),
+                        subject: "Backyard Rocketry Club 🚀".into(),
                         description: Some(
-                            "Notes, diagrams and bad puns about difference engines.".into(),
+                            "Launch logs, near misses and bad puns about rockets.".into(),
                         ),
                         members: 42,
                         approval: true,
@@ -3227,10 +3248,10 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                         crate::settings::AccountSettings::default(),
                     ) {
                         work.me = Some("15550002222@s.whatsapp.net".into());
-                        work.me_name = Some("Carmine (Studio)".into());
+                        work.me_name = Some("Sam (Studio)".into());
                         work.link = crate::backend::LinkStatus::Connected;
                         for (id, name, unread) in [
-                            ("15550003333@s.whatsapp.net", "Grace", 2),
+                            ("15550003333@s.whatsapp.net", "Rafi", 2),
                             ("120363000000000099@g.us", "Studio team", 5),
                         ] {
                             let mut chat = Chat::new(id.into(), name.into());
@@ -3388,7 +3409,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 };
             }
             "syncing" => app.syncing = true,
-            // Ada shares where she is now.
+            // Luna shares where she is now.
             "live" => {
                 let ada = SAMPLES[0].id;
                 let now = crate::util::now();
@@ -3497,7 +3518,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "mention" => {
                 let group = SAMPLES[1].id;
                 app.open_chat = Some(group.to_owned());
-                app.composer = "@mi".to_owned();
+                app.composer = "@ol".to_owned();
                 app.mention_start = Some(0);
                 app.mention_selected = 0;
                 app.focus_composer = true;
@@ -3852,12 +3873,12 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 labels_sample(app);
                 app.dialog = Some(Dialog::Labels);
             }
-            "chat-search" => chat_search_sample(app, "engine"),
+            "chat-search" => chat_search_sample(app, "rocket"),
             // Right-to-left previews with emoji.
             "chat-search-rtl" => chat_search_sample(app, "שלום"),
             // The same pane with the day filter open.
             "chat-search-day" => {
-                chat_search_sample(app, "engine");
+                chat_search_sample(app, "rocket");
                 app.chat_search_day = app
                     .chat_search_hits
                     .first()
@@ -4054,10 +4075,14 @@ fn pin_sample(app: &mut App) {
     let sample = [
         (
             "ada-link",
-            "btw I made my own Spotify app from scratch! https://spotifast.rocks/",
+            "btw I chat on Zeus now, it's so fast ⚡ https://zeus-app-landing-page.vercel.app/",
             2,
         ),
-        ("ada-reply", "Listened, agreed on all three points.", 2),
+        (
+            "ada-reply",
+            "Listened twice. Agreed on all three snacks.",
+            2,
+        ),
         ("ada-emoji", "😂🎉", 2),
     ];
     let mut rows = Vec::new();
@@ -4239,7 +4264,7 @@ fn call_entries(now: i64) -> Vec<Message> {
     entries
 }
 
-/// Opens Rust Berlin with a run of call entries at its end, one of each
+/// Opens Launch Squad with a run of call entries at its end, one of each
 /// kind a group's transcript files, for the `call-bubbles` page. They are
 /// the newest messages, so they share one screen.
 fn call_bubbles_sample(app: &mut App) {
@@ -4249,7 +4274,7 @@ fn call_bubbles_sample(app: &mut App) {
     let entries = [
         // (sender, minutes ago, video, status, seconds)
         (
-            Some(("491701111111@s.whatsapp.net", "Jonas")),
+            Some(("491701111111@s.whatsapp.net", "Goran")),
             12,
             true,
             CallStatus::Answered,
@@ -4257,7 +4282,7 @@ fn call_bubbles_sample(app: &mut App) {
         ),
         (None, 10, true, CallStatus::NoAnswer, 0),
         (
-            Some(("491702222222@s.whatsapp.net", "Mira")),
+            Some(("491702222222@s.whatsapp.net", "Olive")),
             8,
             false,
             CallStatus::Answered,
@@ -4265,14 +4290,14 @@ fn call_bubbles_sample(app: &mut App) {
         ),
         (None, 6, false, CallStatus::Answered, 754),
         (
-            Some(("491703333333@s.whatsapp.net", "Tom")),
+            Some(("491703333333@s.whatsapp.net", "Pablo")),
             4,
             false,
             CallStatus::Missed,
             0,
         ),
         (
-            Some(("491701111111@s.whatsapp.net", "Jonas")),
+            Some(("491701111111@s.whatsapp.net", "Goran")),
             2,
             true,
             CallStatus::Declined,
@@ -4348,8 +4373,8 @@ pub fn call_sample(app: &mut App, incoming: bool, video: bool) {
     }
 }
 
-/// A call in the Rust Berlin group, started by Jonas: Mira, Tom and Ada are
-/// on it, and Grace was asked and has not joined.
+/// A call in the Launch Squad group, started by Goran: Olive, Pablo and Luna are
+/// on it, and Rafi was asked and has not joined.
 pub fn group_call_sample(app: &mut App, incoming: bool, video: bool) {
     call_sample(app, incoming, video);
     let roster = [
@@ -6817,7 +6842,7 @@ mod tests {
         let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
         assert_eq!(copied.len(), 1);
         assert!(
-            copied[0].contains("[document: Notes on the Engine.pdf] Notes for @Ada Lovelace 🎉"),
+            copied[0].contains("[document: Rocket Snack Plan.pdf] Notes for @Luna Starling 🎉"),
             "{}",
             copied[0]
         );
@@ -6833,7 +6858,7 @@ mod tests {
     fn selected_messages_leave_copy_available_to_focused_search_text() {
         let (mut app, ctx, chat) = sweep_chat(2);
         app.selection = Some((chat, vec!["m001".into()]));
-        app.search = "Ada".into();
+        app.search = "Luna".into();
         app.actions.push(crate::model::Action::FocusSearch);
         render(&mut app, &ctx);
         assert!(ctx.text_edit_focused());
@@ -6843,7 +6868,7 @@ mod tests {
             vec![key(egui::Key::A, egui::Modifiers::COMMAND)],
         );
         let copied = copied_text(&mut app, &ctx, egui::Event::Copy);
-        assert_eq!(copied, ["Ada"], "copy belongs to the focused text field");
+        assert_eq!(copied, ["Luna"], "copy belongs to the focused text field");
     }
 
     /// Dialogs and another chat must not export selected messages.
@@ -7036,7 +7061,7 @@ mod tests {
                 "forward-full",
                 "forward-review",
             ] {
-                for search in ["", "Ada", "no-fixture-matches"] {
+                for search in ["", "Luna", "no-fixture-matches"] {
                     let mut app = app();
                     app.backend.record_demo_commands();
                     let ctx = egui::Context::default();
@@ -7336,9 +7361,9 @@ mod tests {
     fn checking_someone_clears_the_search_for_the_next_name() {
         let (mut app, ctx) = new_group_dialog();
         press_labelled(&mut app, &ctx, "New group", egui::accesskit::Role::Button);
-        frame_with(&mut app, &ctx, vec![egui::Event::Text("katherine".into())]);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("bianca".into())]);
         render(&mut app, &ctx);
-        assert_eq!(app.new_chat_search, "katherine");
+        assert_eq!(app.new_chat_search, "bianca");
         let listed = |ctx: &egui::Context, id: &str| {
             ctx.data(|data| data.get_temp::<egui::Rect>(crate::ui::new_group::member_row_id(id)))
         };
@@ -7346,7 +7371,7 @@ mod tests {
             data.remove::<egui::Rect>(crate::ui::new_group::member_row_id(SAMPLES[0].id))
         });
         render(&mut app, &ctx);
-        assert!(listed(&ctx, SAMPLES[0].id).is_none(), "Ada is not a match");
+        assert!(listed(&ctx, SAMPLES[0].id).is_none(), "Luna is not a match");
         press_member(&mut app, &ctx, SAMPLES[3].id);
         assert!(app.new_chat_search.is_empty());
         assert_eq!(app.new_group.as_ref().unwrap().members, [SAMPLES[3].id]);
@@ -7874,8 +7899,8 @@ mod tests {
         assert!(app.new_group.as_ref().is_some_and(|draft| draft.creating));
     }
 
-    /// The member menu offers what the member may be made: Mira is an admin,
-    /// Jonas is not. Remove asks first.
+    /// The member menu offers what the member may be made: Olive is an admin,
+    /// Goran is not. Remove asks first.
     #[test]
     fn the_member_menu_follows_each_members_role() {
         use crate::group_admin::{MemberChange, member_changes};
@@ -8269,7 +8294,7 @@ mod tests {
         };
 
         click(&mut app, group_name_button_id());
-        assert_eq!(app.group_name_edit.as_deref(), Some("Rust Berlin"));
+        assert_eq!(app.group_name_edit.as_deref(), Some("Launch Squad"));
         // Unchanged: the editor closes and nothing is sent.
         let sent = enter(&mut app);
         assert!(app.group_name_edit.is_none());
@@ -8281,19 +8306,19 @@ mod tests {
         );
 
         click(&mut app, group_name_button_id());
-        app.group_name_edit = Some("  Rust Berlin meetups ".into());
+        app.group_name_edit = Some("  Launch Squad crew ".into());
         render(&mut app, &ctx);
         let sent = enter(&mut app);
         assert!(
             sent.iter().any(|command| matches!(command,
                 Command::SetGroupName { chat, name }
-                    if chat == group && name == "Rust Berlin meetups")),
+                    if chat == group && name == "Launch Squad crew")),
             "Enter renames the group, trimmed"
         );
         assert!(app.group_name_edit.is_none());
         assert_eq!(
             app.chat(group).map(|chat| chat.name.as_str()),
-            Some("Rust Berlin"),
+            Some("Launch Squad"),
             "the name waits for WhatsApp to accept it"
         );
 
@@ -10745,8 +10770,8 @@ mod tests {
         render(&mut app, &ctx);
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search"))));
 
-        frame_with(&mut app, &ctx, vec![egui::Event::Text("ada".into())]);
-        assert_eq!(app.search, "ada");
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("luna".into())]);
+        assert_eq!(app.search, "luna");
         frame_with(
             &mut app,
             &ctx,
@@ -10830,14 +10855,14 @@ mod tests {
         render(&mut app, &ctx);
 
         frame_with(&mut app, &ctx, vec![egui::Event::Text("@".into())]);
-        frame_with(&mut app, &ctx, vec![egui::Event::Text("mi".into())]);
+        frame_with(&mut app, &ctx, vec![egui::Event::Text("ol".into())]);
         frame_with(
             &mut app,
             &ctx,
             vec![key(egui::Key::Enter, egui::Modifiers::NONE)],
         );
 
-        assert_eq!(app.composer, "@Mira ");
+        assert_eq!(app.composer, "@Olive ");
         assert!(app.mention_start.is_none());
         assert!(ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text"))));
     }
@@ -13009,7 +13034,7 @@ mod tests {
                 .reactions
                 .iter()
                 .any(|reaction| !reaction.from_me && reaction.emoji == "🏆"),
-            "Mira's trophy should sit on the group photo"
+            "Olive's trophy should sit on the group photo"
         );
     }
 
@@ -13103,7 +13128,7 @@ mod tests {
         let mut app = app();
         app.chats
             .iter_mut()
-            .find(|chat| chat.name == "Grace Hopper")
+            .find(|chat| chat.name == "Rafi Okafor")
             .expect("sample chat")
             .unread = 1;
         app.chat_filter = ChatFilter::Unread;
@@ -15928,7 +15953,7 @@ mod tests {
                 summary: original.content.summary(),
                 mentions: original.mentions,
             });
-            app.chats.push(Chat::new(chat.clone(), "Tom".into()));
+            app.chats.push(Chat::new(chat.clone(), "Pablo".into()));
             app.conversations.insert(
                 chat.clone(),
                 crate::app::Conversation {
@@ -16151,7 +16176,7 @@ mod tests {
             .find(|row| row.id == "quote-own")
             .and_then(|row| row.quoted.clone())
             .expect("a quote");
-        let mention = quote.mentions.first().expect("the quote mentions Jonas");
+        let mention = quote.mentions.first().expect("the quote mentions Goran");
         assert!(quote.summary.contains(&format!("@{}", mention.user)));
         let named = format!("@{} will do", app.mention_name(&mention.id));
         fn texts(shape: &egui::Shape, out: &mut Vec<String>) {
@@ -19957,7 +19982,7 @@ mod call_surface_tests {
     fn a_group_call_we_started_rings_its_members() {
         let mut app = app();
         apply_flags(&mut app, Some("call-group-calling"));
-        assert_eq!(app.call_name(), "Rust Berlin");
+        assert_eq!(app.call_name(), "Launch Squad");
         assert_eq!(app.call_caller_name(), None);
         assert!(app.call_people().iter().all(|person| !person.joined));
         let ctx = egui::Context::default();
@@ -19974,13 +19999,13 @@ mod call_surface_tests {
     fn a_group_call_names_its_group_who_rang_and_who_is_on_it() {
         let mut ringing = app();
         apply_flags(&mut ringing, Some("call-group"));
-        assert_eq!(ringing.call_name(), "Rust Berlin", "named by its group");
+        assert_eq!(ringing.call_name(), "Launch Squad", "named by its group");
         let caller = ringing.call_caller_name();
-        assert_eq!(caller.as_deref(), Some("Jonas"));
+        assert_eq!(caller.as_deref(), Some("Goran"));
         let call = ringing.call.clone().unwrap();
         assert_eq!(
             crate::ui::call::incoming_text(ringing.locale, &call, caller.as_deref()),
-            "Group voice call from Jonas"
+            "Group voice call from Goran"
         );
 
         let mut running = app();
@@ -19993,11 +20018,11 @@ mod call_surface_tests {
         assert_eq!(
             people,
             [
-                ("Jonas".to_owned(), true),
-                ("Mira".to_owned(), true),
-                ("Tom".to_owned(), true),
-                ("Ada Lovelace".to_owned(), true),
-                ("Grace Hopper".to_owned(), false),
+                ("Goran".to_owned(), true),
+                ("Olive".to_owned(), true),
+                ("Pablo".to_owned(), true),
+                ("Luna Starling".to_owned(), true),
+                ("Rafi Okafor".to_owned(), false),
             ]
         );
         let ctx = egui::Context::default();
@@ -20656,16 +20681,16 @@ mod rail_tests {
         assert_eq!(
             drawn(&ctx),
             ids(&|call, missed| missed && call.chat == ada),
-            "Ada's missed calls"
+            "Luna's missed calls"
         );
         let grace = SAMPLES[2].id;
         app.calls_search = app.display_name(grace);
         frame(&mut app, &ctx, 1180.0, Vec::new());
         frame(&mut app, &ctx, 1180.0, Vec::new());
         let texts = frame_at(&mut app, &ctx, egui::vec2(1180.0, 780.0), Vec::new());
-        assert!(drawn(&ctx).is_empty(), "Grace has no missed call");
+        assert!(drawn(&ctx).is_empty(), "Rafi has no missed call");
         assert!(texts.iter().any(|text| text == "No matching calls"));
-        // The chips stay while searching: All brings Grace's call back.
+        // The chips stay while searching: All brings Rafi's call back.
         let missed = chip(&ctx, CallFilter::Missed);
         click(&mut app, &ctx, 1180.0, missed.center());
         assert_eq!(app.call_filter, CallFilter::All, "a second click is All");

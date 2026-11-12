@@ -125,7 +125,8 @@ pub fn prepare(app: &mut App) {
         .get_mut(super::SAMPLES[0].id)
         .and_then(|chat| chat.message_mut("ada-link"))
     {
-        row.content = Content::text("The desktop app is ready! https://zapfast.rocks");
+        row.content =
+            Content::text("The desktop app is ready! https://zeus-app-landing-page.vercel.app");
         row.thumbnail = None;
         let summary = row.summary();
         if let Some(last) = app.chats.first_mut().and_then(|chat| chat.last.as_mut()) {
@@ -170,7 +171,7 @@ fn common_setup(app: &mut App) {
     }
 }
 
-/// Shows fully loaded photos, `photo` with `caption` as Ada's, instead of
+/// Shows fully loaded photos, `photo` with `caption` as Luna's, instead of
 /// the deliberately blurry download previews used by the screenshot fixtures.
 fn show_photos(app: &mut App, photo: super::stock::Photo, caption: &str) {
     let dir = app.dirs.media_cache_dir();
@@ -180,7 +181,7 @@ fn show_photos(app: &mut App, photo: super::stock::Photo, caption: &str) {
             super::SAMPLES[1].id,
             "group-photo",
             super::stock::VENUE,
-            "Tonight's meetup, doors at 18:30",
+            "Pre-launch hangout, doors at 18:30",
         ),
     ] {
         if let Some(row) = app
@@ -288,7 +289,7 @@ fn script() -> Vec<Cue> {
     let mut add = |at, gesture| cues.push(Cue { at, gesture });
     let left = PointerButton::Primary;
     add(0.0, Key(egui::Key::K, command(), "Ctrl + K · Search chats"));
-    add(0.8, Move(Label("Rust Berlin")));
+    add(0.8, Move(Label("Launch Squad")));
     add(1.15, Click(left));
     add(
         1.7,
@@ -392,7 +393,7 @@ fn script() -> Vec<Cue> {
         25.0,
         Key(egui::Key::B, command(), "Ctrl + B · Show chat list"),
     );
-    add(26.0, Move(Label("Rust Berlin")));
+    add(26.0, Move(Label("Launch Squad")));
     add(26.5, Click(left));
     add(
         28.0,
@@ -439,10 +440,10 @@ fn script() -> Vec<Cue> {
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
     );
     for (start, text) in [
-        (0.2, "Rust"),
+        (0.2, "Laun"),
         (7.1, "See you tonight! :smile"),
         (12.1, "party"),
-        (20.8, "@mi"),
+        (20.8, "@ol"),
         (21.9, " see you in the front row!"),
     ] {
         for (index, character) in text.chars().enumerate() {
@@ -1125,7 +1126,7 @@ mod tests {
         frame(&mut app, &mut tour, &ctx, Vec::new());
         app.actions.push(crate::model::Action::OpenChatSearch);
         frame(&mut app, &mut tour, &ctx, Vec::new());
-        app.chat_search = "engine".into();
+        app.chat_search = "rocket".into();
         // Hits from another chat, so their text is painted only in the pane
         // and the click lands on the row rather than on a bubble.
         app.chat_search_hits = app
@@ -1143,7 +1144,7 @@ mod tests {
         let hit = app.chat_search_hits.first().cloned().expect("a hit");
         // The row previews the line the query matched, not the message's first
         // line, so that is the text the click lands on.
-        let preview = hit.text_matching("engine").unwrap_or_else(|| hit.summary());
+        let preview = hit.text_matching("rocket").unwrap_or_else(|| hit.summary());
         click(&mut app, &mut tour, &ctx, &preview);
         assert_eq!(
             app.open_chat.as_deref(),
@@ -1377,7 +1378,7 @@ mod tests {
         }
         // The header's name is painted after the chat list's, so the click
         // lands on the header.
-        click(&mut app, &mut tour, &ctx, "Ada Lovelace");
+        click(&mut app, &mut tour, &ctx, "Luna Starling");
         assert_eq!(shown(&app), Some(ada.clone()), "the header opens it");
         assert!(app.dialog.is_none(), "as a panel, not a modal");
         app.actions.push(crate::model::Action::CloseInfo);
@@ -1395,10 +1396,10 @@ mod tests {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
         assert_eq!(shown(&app), None, "another chat closes it");
-        // Mira's name over her message in the group opens her own panel,
+        // Olive's name over her message in the group opens her own panel,
         // over the group that stays open.
         let mira = "491702222222@s.whatsapp.net";
-        click(&mut app, &mut tour, &ctx, "Mira");
+        click(&mut app, &mut tour, &ctx, "Olive");
         assert_eq!(shown(&app), Some(mira.to_owned()), "a sender opens theirs");
         assert_eq!(app.open_chat.as_deref(), Some(group.as_str()));
         // The chat list's Info opens that chat and its panel together.
@@ -1574,7 +1575,7 @@ mod tests {
         super::super::apply_flags(&mut app, Some("info"));
         app.actions.push(crate::model::Action::EditContact {
             id: ada,
-            name: "Ada Lovelace".into(),
+            name: "Luna Starling".into(),
         });
         for _ in 0..3 {
             frame_sized(&mut app, &mut tour, &ctx, size, Vec::new());
@@ -1722,7 +1723,7 @@ mod tests {
         let mut tour = Tour::new(None, None);
         let group = super::super::sample_ids()[1].to_owned();
         let mira = "491702222222@s.whatsapp.net";
-        let mut private = crate::model::Chat::new(mira.into(), "Mira".into());
+        let mut private = crate::model::Chat::new(mira.into(), "Olive".into());
         private.locked = true;
         app.chats.push(private);
         app.actions.push(crate::model::Action::OpenChat(group));
@@ -1730,7 +1731,7 @@ mod tests {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
         app.backend.take_demo_commands();
-        click(&mut app, &mut tour, &ctx, "Mira");
+        click(&mut app, &mut tour, &ctx, "Olive");
         for _ in 0..2 {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
