@@ -7,10 +7,9 @@ feature; release builds do not carry them.
 Everything here is CC0 or in the public domain, so it needs no attribution;
 the sources are listed anyway. Works of US federal agencies (NASA, the Fish
 and Wildlife Service, the National Park Service, the Geological Survey) are
-in the public domain. The contacts named after Ada Lovelace, Grace Hopper,
-Katherine Johnson and Dorothy Vaughan carry their public-domain portraits;
-Margaret Hamilton's carries Earthrise instead of a picture of her, as she is
-living. The captions on the stickers are ours. NASA's insignia
+in the public domain. The sample people are made up, so their profile
+pictures are pets, places and launches rather than portraits. The captions on
+the stickers are ours. NASA's insignia
 is cropped out of the launch clips.
 
 | Files | Source | Author | Licence | Changes |
@@ -28,13 +27,8 @@ is cropped out of the launch clips.
 | `stickers/raccoon.webp`, `gifs/raccoon.jpg` | [Raccoon](https://www.flickr.com/photos/13631562@N00/4301171521) | Photo Cindy | CC0 1.0 | Cut out and captioned; cropped for the GIF tile |
 | `gifs/fireworks.jpg` | [st cyprien pre bastille day fireworks at garrit-france-em10-](https://www.flickr.com/photos/35034347371@N01/19703835476) | roland | CC0 1.0 | Cropped and resized |
 | `videos/launch.mp4`, `videos/note.mp4` | [Launch Replays of Antares Rocket with Cygnus OA-8 from Wallops](https://commons.wikimedia.org/wiki/File:Launch_Replays_of_Antares_Rocket_with_Cygnus_OA-8_from_Wallops.webm) | NASA | Public domain | Two four-second cuts, cropped, scaled and re-encoded |
-| `photos/spotifast.png` | [Spotifast](https://github.com/crmne/spotifast)'s logo | Carmine Paolino | MIT | Rasterized |
-| `avatars/ada.jpg` | [Ada Lovelace Chalon portrait](https://commons.wikimedia.org/wiki/File:Ada_Lovelace_Chalon_portrait.jpg) | Alfred Edward Chalon, about 1840 | Public domain | Cropped square and resized |
-| `avatars/grace.jpg` | [Commodore Grace M. Hopper, USN (covered)](https://commons.wikimedia.org/wiki/File:Commodore_Grace_M._Hopper,_USN_(covered)_head_and_shoulders_crop.jpg) | James S. Davis, US Navy | Public domain | Cropped square and resized |
-| `avatars/katherine.jpg` | [Katherine Johnson at NASA, in 1966](https://commons.wikimedia.org/wiki/File:Katherine_Johnson_at_NASA,_in_1966_(cropped).png) | NASA, restored by Adam Cuerden | Public domain | Cropped square and resized |
-| `avatars/dorothy.jpg` | [Dorothy Vaughan](https://commons.wikimedia.org/wiki/File:Dorothy_Vaughan_2.jpg) | NASA | Public domain | Cropped square and resized |
+| `photos/zeus.png` | Zeus's app icon (`packaging/icons/zeus-1024.png`) | Zeus contributors | MIT | Resized |
 | `avatars/earthrise.jpg` | [Earthrise, Apollo 8](https://commons.wikimedia.org/wiki/File:NASA-Apollo8-Dec24-Earthrise.jpg) | NASA, Bill Anders | Public domain | Cropped square and resized |
-| `avatars/berlin.jpg` | [Berliner Fernsehturm TV Tower February 2026](https://commons.wikimedia.org/wiki/File:Berliner_Fernsehturm_TV_Tower_February_2026.jpg) | Rebeccananonof | CC0 1.0 | Cropped square and resized |
 | `avatars/crab.jpg` | [Fiddler Crab](https://www.flickr.com/photos/38451115@N04/8278458818) | pasukaru76 | CC0 1.0 | Cropped square and resized |
 | `avatars/bread.jpg` | [Sourdough bread fresh from the oven](https://www.flickr.com/photos/93936679@N05/51327616477) | Nutrition, Food Safety & Health | CC0 1.0 | Cropped square and resized |
-| `avatars/goat.jpg`, `avatars/owl.jpg`, `avatars/pug.jpg`, `avatars/cat.jpg`, `avatars/astronaut.jpg`, `avatars/bar.jpg` | The goat, owl, pug, cat, spacewalk and bar pictures above | As above | As above | Cropped square and resized |
+| `avatars/goat.jpg`, `avatars/owl.jpg`, `avatars/pug.jpg`, `avatars/cat.jpg`, `avatars/astronaut.jpg`, `avatars/bar.jpg`, `avatars/frog.jpg`, `avatars/raccoon.jpg`, `avatars/fireworks.jpg`, `avatars/rocket.jpg` | The goat, owl, pug, cat, spacewalk, bar, frog, raccoon, fireworks and launch pictures above | As above | As above | Cropped square and resized |

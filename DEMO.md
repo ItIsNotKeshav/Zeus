@@ -80,6 +80,8 @@ choosing a playback speed, the chat list folded to avatars, hover controls,
 Ctrl-click and Shift-click selection with Forward, and Settings (languages,
 search, and the light theme). `--demo-tour-script launch` is the default.
 Demo runs never open the microphone: recording plays back a synthetic tone.
+Add `loaded` to a chat page (`--demo-page chat,loaded`) to show the sample
+photos downloaded instead of their blurred previews, as the README shots do.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill

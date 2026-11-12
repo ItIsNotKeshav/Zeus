@@ -35,8 +35,8 @@ pub const VENUE: Photo = photo!("venue.jpg", 1024, 683);
 pub const DUSK: Photo = photo!("dusk.jpg", 1200, 800);
 /// An astronaut on a spacewalk, a portrait.
 pub const SPACEWALK: Photo = photo!("spacewalk.jpg", 900, 1200);
-/// Spotifast's logo, for its link preview.
-pub const SPOTIFAST: Photo = photo!("spotifast.png", 256, 256);
+/// Zeus's icon, for its link preview.
+pub const ZEUS: Photo = photo!("zeus.png", 256, 256);
 
 /// The pictures `thumbnail_for` cycles through.
 pub(crate) const PHOTOS: [Photo; 5] = [LAUNCH, ENGINE, VENUE, DUSK, SPACEWALK];
@@ -105,23 +105,22 @@ macro_rules! avatar {
     };
 }
 
-/// Profile pictures by chat or contact id: the portraits of the people the
-/// sample contacts are named after, and the pets and places others would use.
-const AVATARS: [(&str, &[u8]); 14] = [
+/// Profile pictures by chat or contact id: the pets, places and launches the
+/// made-up sample contacts would pick.
+const AVATARS: [(&str, &[u8]); 13] = [
     avatar!("15550001111@s.whatsapp.net", "astronaut.jpg"), // ourselves
-    avatar!("393331234567@s.whatsapp.net", "ada.jpg"),
-    avatar!("441632960123@s.whatsapp.net", "grace.jpg"),
-    avatar!("4915112345678@s.whatsapp.net", "katherine.jpg"),
-    avatar!("14155550199@s.whatsapp.net", "earthrise.jpg"), // Margaret Hamilton
-    avatar!("12025550137@s.whatsapp.net", "dorothy.jpg"),
-    avatar!("491701111111@s.whatsapp.net", "goat.jpg"), // Jonas
-    avatar!("491702222222@s.whatsapp.net", "owl.jpg"),  // Mira
-    avatar!("491703333333@s.whatsapp.net", "pug.jpg"),  // Tom
-    avatar!("972501234567@s.whatsapp.net", "cat.jpg"),  // Yael
-    avatar!("120363012345678901@g.us", "berlin.jpg"),   // Rust Berlin
-    avatar!("120363098765432109@g.us", "bread.jpg"),    // Family
-    avatar!("120363011122233344@g.us", "bar.jpg"),      // Section 8 Berlin
-    avatar!("120363055566677788@newsletter", "crab.jpg"), // Rust Weekly
+    avatar!("393331234567@s.whatsapp.net", "owl.jpg"),
+    avatar!("441632960123@s.whatsapp.net", "cat.jpg"),
+    avatar!("4915112345678@s.whatsapp.net", "goat.jpg"),
+    avatar!("14155550199@s.whatsapp.net", "fireworks.jpg"), // Kenji Watanabe
+    avatar!("491701111111@s.whatsapp.net", "frog.jpg"),     // Goran
+    avatar!("491702222222@s.whatsapp.net", "earthrise.jpg"), // Olive
+    avatar!("491703333333@s.whatsapp.net", "pug.jpg"),      // Pablo
+    avatar!("972501234567@s.whatsapp.net", "raccoon.jpg"),  // Yael
+    avatar!("120363012345678901@g.us", "rocket.jpg"),       // Launch Squad
+    avatar!("120363098765432109@g.us", "bread.jpg"),        // Family
+    avatar!("120363011122233344@g.us", "bar.jpg"),          // Karaoke Night
+    avatar!("120363055566677788@newsletter", "crab.jpg"),   // Crab Facts Weekly
 ];
 
 /// The profile picture for `id`, if it has one.
@@ -175,7 +174,7 @@ mod tests {
 
     #[test]
     fn the_pictures_are_the_sizes_they_say() {
-        for photo in PHOTOS.into_iter().chain([SPOTIFAST]) {
+        for photo in PHOTOS.into_iter().chain([ZEUS]) {
             let image = image::load_from_memory(photo.bytes).expect(photo.name);
             assert_eq!(
                 (image.width(), image.height()),

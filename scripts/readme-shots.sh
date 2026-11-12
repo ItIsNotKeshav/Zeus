@@ -5,31 +5,32 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 out="${1:-docs/readme}"
+bin="${ZEUS_BIN:-./target/release/zeus}"
 raw="$(mktemp -d)"
 mkdir -p "$out"
 
 # name | --demo-page flags
 shots=(
-  "chat-dark|chat,nothing"
-  "chat-light|chat,nothing-light"
-  "chat-dracula|chat,dracula"
-  "chat-catppuccin|chat,catppuccin"
-  "chat-tokyo-night|chat,tokyo-night"
-  "chat-messages|chat,messages"
+  "chat-dark|chat,nothing,loaded"
+  "chat-light|chat,nothing-light,loaded"
+  "chat-dracula|chat,dracula,loaded"
+  "chat-catppuccin|chat,catppuccin,loaded"
+  "chat-tokyo-night|chat,tokyo-night,loaded"
+  "chat-messages|chat,messages,loaded"
   "settings-appearance|settings,nothing,section-0"
   "settings-chats|settings,nothing-light,section-1"
   "settings-notifications|settings,dracula,section-2"
   "settings-calls|voice-settings,nothing"
   "settings-privacy|settings,nord,section-4"
-  "doodles|chat,nothing-light,doodles-accent,doodle-style-travel,doodle-intensity-200"
-  "composer|chat,nothing,composer-tools"
-  "reactions|chat,nothing,reactions"
+  "doodles|chat,nothing-light,loaded,doodles-accent,doodle-style-travel,doodle-intensity-200"
+  "composer|chat,nothing,loaded,composer-tools"
+  "reactions|chat,nothing,loaded,reactions"
 )
 
 for entry in "${shots[@]}"; do
   name="${entry%%|*}"; page="${entry#*|}"
   xvfb-run -a -s "-screen 0 1600x1000x24" \
-    ./target/release/zeus --demo-size 1600x1000 --demo-shot "$raw/$name.png" --demo-page "$page"
+    "$bin" --demo-size 1600x1000 --demo-shot "$raw/$name.png" --demo-page "$page"
   bg=light; [[ "$name" == *light* ]] || bg=dark
   python3 -I scripts/macbook-mockup.py "$raw/$name.png" "$out/$name.png" --bg "$bg"
 done
