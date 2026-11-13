@@ -97,12 +97,12 @@ struct State {
 
 /// The tool a demo page opens the editor on, since a screenshot cannot
 /// click one: 0 crop, 1 pen, 2 highlighter.
-#[cfg(feature = "demo")]
+#[cfg(any(test, feature = "demo"))]
 pub(crate) static DEMO_TOOL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// The tool the editor opens on.
 fn first_tool() -> Tool {
-    #[cfg(feature = "demo")]
+    #[cfg(any(test, feature = "demo"))]
     {
         match DEMO_TOOL.load(std::sync::atomic::Ordering::Relaxed) {
             1 => return Tool::Pen,
@@ -475,7 +475,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             state.drawing = None;
         }
         Some(Change::Undo) => {
-            if edit.marks.pop().is_some() && state.selected == Some(edit.marks.len()) {
+            // The mark undone may be the sticker that was picked up.
+            edit.marks.pop();
+            if state.selected == Some(edit.marks.len()) {
                 state.selected = None;
             }
         }

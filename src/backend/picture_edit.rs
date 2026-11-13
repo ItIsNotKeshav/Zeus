@@ -237,7 +237,7 @@ fn emoji_picture(cluster: &str, side: u32) -> Option<image::RgbaImage> {
     let [width, height] = drawn.size;
     // The font's pixels are premultiplied; the picture's are not.
     let mut rgba = drawn.rgba;
-    for pixel in rgba.chunks_exact_mut(4) {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
         let alpha = u32::from(pixel[3]);
         if alpha > 0 && alpha < 255 {
             for channel in &mut pixel[..3] {
