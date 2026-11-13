@@ -634,6 +634,17 @@ pub(super) fn pending_media_size(native: Vec2, bounds: Vec2) -> Vec2 {
     }
 }
 
+/// Where a staged picture of `native` pixels is drawn inside its tile's
+/// `media` area: as large as fits, centred, in its own aspect ratio. A tile
+/// is held at [`PENDING_TILE`] at its least, so a panorama or a wide
+/// screenshot in a narrow window is shown whole, on the tile, rather than
+/// stretched to the tile's shape.
+pub(super) fn contained(native: Vec2, media: Rect) -> Rect {
+    let native = vec2(native.x.max(1.0), native.y.max(1.0));
+    let scale = (media.width() / native.x).min(media.height() / native.y);
+    Rect::from_center_size(media.center(), native * scale.max(0.0))
+}
+
 /// Side of the square a document or an undecoded attachment shows as.
 pub(super) const PENDING_TILE: f32 = 72.0;
 

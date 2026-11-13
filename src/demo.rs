@@ -3805,6 +3805,31 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 app.pending_view_once = part == "view-once";
                 app.composer = "One moment, just for you.".into();
             }
+            // A wide screenshot staged in a narrow window: it keeps its shape
+            // rather than being squeezed into a short strip.
+            "staged-wide" => {
+                let (width, height) = (1200usize, 180usize);
+                let rgba: Vec<u8> = (0..width * height)
+                    .flat_map(|index| {
+                        let (x, y) = ((index % width) as f32, (index / width) as f32);
+                        // Round dots on a gradient, so any stretching shows.
+                        let cell = 90.0;
+                        let (cx, cy) = (x % cell - cell / 2.0, y % cell - cell / 2.0);
+                        if cx * cx + cy * cy < 30.0 * 30.0 {
+                            [250, 250, 250, 255]
+                        } else {
+                            [(x / 6.0) as u8, 90, 200 - (y / 2.0) as u8, 255]
+                        }
+                    })
+                    .collect();
+                app.stage(crate::app::Pending::Picture {
+                    width,
+                    height,
+                    rgba: std::sync::Arc::new(rgba),
+                    texture: None,
+                });
+                app.composer = "Look at this".into();
+            }
             "staged" => {
                 let (photo, _) = sample_files(app);
                 let side = 48usize;

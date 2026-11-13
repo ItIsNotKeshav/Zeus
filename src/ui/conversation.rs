@@ -13864,6 +13864,20 @@ mod reaction_tests {
     }
 
     #[test]
+    fn a_wide_staged_picture_is_shown_whole_not_squeezed() {
+        // A wide screenshot in a narrow window: the tile is held at its
+        // least height, and the picture inside keeps its own ratio.
+        let native = vec2(1200.0, 180.0);
+        let tile = pending_media_size(native, vec2(300.0, 160.0));
+        assert!(tile.y >= PENDING_TILE && tile.x <= 300.0);
+        let media = Rect::from_min_size(egui::pos2(10.0, 10.0), tile);
+        let shown = contained(native, media);
+        assert!((shown.width() / shown.height() - native.x / native.y).abs() < 0.01);
+        assert!(media.contains_rect(shown));
+        assert!((shown.center() - media.center()).length() < 0.01);
+    }
+
+    #[test]
     fn the_message_menu_measures_star_and_unstar() {
         let labels = message_menu_labels(crate::i18n::Locale::German);
         assert!(labels.iter().any(|label| label == "Markierung entfernen"));
@@ -13909,13 +13923,17 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
     let available = ui.available_width();
     let count = app.pending.len();
     let screen_height = ui.ctx().content_rect().height();
+    // Each tile adds a 4 pt frame round its picture, so the bounds leave room
+    // for it: a picture as wide as the panel would otherwise push the strip
+    // past the composer's edge in a narrow window.
+    let frame = 8.0;
     let bounds = if count == 1 {
         vec2(
-            available.min(440.0),
+            (available - frame).clamp(PENDING_TILE, 440.0),
             (screen_height * 0.38).clamp(160.0, 320.0),
         )
     } else {
-        let side = ((available - spacing) / 2.0).clamp(120.0, 220.0);
+        let side = ((available - spacing) / 2.0 - frame).clamp(120.0, 220.0);
         vec2(side, side)
     };
     ui.horizontal_wrapped(|ui| {
@@ -13956,7 +13974,9 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                 _ => (None, None),
             };
             let target = match native {
-                Some(native) if !document => pending_media_size(native, bounds) + Vec2::splat(8.0),
+                Some(native) if !document => {
+                    pending_media_size(native, bounds) + Vec2::splat(frame)
+                }
                 _ => Vec2::splat(PENDING_TILE),
             };
             let size = vec2(
@@ -14038,17 +14058,22 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                                 egui::TextureOptions::LINEAR,
                             )
                         });
-                        egui::Image::from_texture((handle.id(), media.size()))
+                        // Whole and in its own shape: a tile held at its
+                        // least height for a wide screenshot shows it
+                        // smaller, not squeezed.
+                        let shown = native.map_or(media, |native| contained(native, media));
+                        egui::Image::from_texture((handle.id(), shown.size()))
                             .corner_radius(inner_radius)
-                            .paint_at(ui, media);
+                            .paint_at(ui, shown);
                         textures.push(handle.clone());
                     }
                     crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
                         if !document && crate::app::Pending::is_picture_file(path) {
-                            widgets::fitted_image(ui, path, media.size())
-                                .fit_to_exact_size(media.size())
+                            let shown = native.map_or(media, |native| contained(native, media));
+                            widgets::fitted_image(ui, path, shown.size())
+                                .fit_to_exact_size(shown.size())
                                 .corner_radius(inner_radius)
-                                .paint_at(ui, media);
+                                .paint_at(ui, shown);
                         } else if !document && crate::image_preview::is_video(path) {
                             ui.painter().rect_filled(
                                 media,
@@ -14056,9 +14081,10 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                                 palette.shadow.gamma_multiply(1.4),
                             );
                             if let Some(handle) = &poster {
-                                egui::Image::from_texture((handle.id(), media.size()))
+                                let shown = contained(handle.size_vec2(), media);
+                                egui::Image::from_texture((handle.id(), shown.size()))
                                     .corner_radius(inner_radius)
-                                    .paint_at(ui, media);
+                                    .paint_at(ui, shown);
                             }
                             // A clip says it is one, as it does in the chat.
                             let disc = Rect::from_center_size(media.center(), Vec2::splat(42.0));
