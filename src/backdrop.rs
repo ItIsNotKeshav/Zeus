@@ -145,6 +145,21 @@ pub fn strip_window_frame(title: &str) {
     let _ = title;
 }
 
+/// Keeps this app's window titled `title` on the desktop it is on (macOS).
+///
+/// A window above the normal level, as an always-on-top one is, is
+/// "transient" to macOS unless it says otherwise: it follows the reader to
+/// whichever Space they switch to, and so sits over an app in full screen
+/// too. The chat bubbles belong on the desktop they were put on. Does
+/// nothing on other systems, and nothing until the window exists, so call
+/// it on each frame the window is shown.
+pub fn keep_on_its_desktop(title: &str) {
+    #[cfg(target_os = "macos")]
+    crate::macos::keep_on_its_desktop(title);
+    #[cfg(not(target_os = "macos"))]
+    let _ = title;
+}
+
 /// The colour a frame clears to: `window`, made opaque on an opaque window,
 /// where alpha would leave the last frame's pixels behind (a theme with
 /// alpha chosen while the window is open, until the next one is made).
