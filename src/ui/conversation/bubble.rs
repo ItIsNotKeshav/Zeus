@@ -265,7 +265,7 @@ pub(super) fn bubble_arriving(
 /// When the open chat's transcript was first drawn: messages already there
 /// then appear in place.
 pub(super) fn chat_shown_id(chat: &str) -> egui::Id {
-    egui::Id::new(("chat-shown", chat))
+    in_window(egui::Id::new(("chat-shown", chat)))
 }
 
 /// The composer field's version of a sent bubble, to lay over the bubble
@@ -1107,7 +1107,7 @@ pub(super) fn edit_focus_layers(chat: &str) -> (egui::LayerId, egui::LayerId) {
 /// Where the open chat's transcript was laid out this frame, top to bottom.
 /// Own balloons shade down it, and a lifted one, clipped to less, still does.
 pub(super) fn transcript_span_id(chat: &str) -> egui::Id {
-    egui::Id::new(("transcript-span", chat))
+    in_window(egui::Id::new(("transcript-span", chat)))
 }
 
 /// The message edited in its bubble, and how far the rest of the chat has

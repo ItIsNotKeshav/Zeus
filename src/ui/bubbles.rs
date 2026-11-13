@@ -32,6 +32,8 @@ const CARD_GAP: f32 = 10.0;
 /// The card's corners, as the chat panel's.
 const CARD_RADIUS: f32 = 24.0;
 const HEADER: f32 = 56.0;
+/// Between the reply field's rounded ends and its text.
+const FIELD_PADDING: f32 = 16.0;
 /// An attachment's thumbnail above the reply field.
 const THUMB: f32 = 48.0;
 /// How long after the window was moved or resized its position is read back
@@ -149,14 +151,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             }
             return;
         }
-        contents(app, ui);
+        let region = contents(app, ui);
+        if see_through {
+            // Windows 11 frames even a borderless window with a hairline and
+            // rounds its corners, and composes the parts it paints nothing
+            // on as a faint sheet: the window is cut down to what it shows.
+            crate::backdrop::strip_window_frame(title.as_ref());
+            crate::backdrop::shape_window(title.as_ref(), &region, ui.ctx().pixels_per_point());
+        }
     });
-    if see_through {
-        // Windows 11 frames even a borderless window with a hairline and
-        // rounds its corners, which a see-through one shows as a thin
-        // rectangle hanging round the bubbles.
-        crate::backdrop::strip_window_frame(title.as_ref());
-    }
     // Only what names its own chat or message leaves the window.
     let mut index = 0;
     app.actions.retain(|action| {
@@ -166,8 +169,11 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     });
 }
 
-fn contents(app: &mut App, ui: &mut egui::Ui) {
+/// Draws the window's bubbles and card, and returns what it painted: the
+/// shapes (rects and their corner radius) the window is cut down to.
+fn contents(app: &mut App, ui: &mut egui::Ui) -> Vec<(Rect, f32)> {
     let ctx = ui.ctx().clone();
+    let mut region = Vec::new();
     if !crate::backdrop::window_is_transparent() {
         let palette = app.palette;
         ui.painter()
@@ -235,6 +241,7 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
             chat,
             centre,
             expanded.as_deref() == Some(chat.as_str()),
+            &mut region,
         );
     }
     if let (Some(chat), Some(pivot)) = (shown, pivot)
@@ -246,12 +253,33 @@ fn contents(app: &mut App, ui: &mut egui::Ui) {
             column_x + BUBBLE + CARD_GAP
         };
         let card = Rect::from_min_size(pos2(left, area.top() + PAD), CARD);
-        card_view(app, ui, &known, card, pivot, reveal);
+        region.push(card_view(app, ui, &known, card, pivot, reveal));
         // Read while it is open in front of the reader.
         if reveal >= 1.0 && known.unread > 0 && ctx.input(|input| input.focused) {
             app.actions.push(Action::MarkRead(chat));
         }
     }
+    // Messages carried out of the card, and the card carrying them.
+    super::carry::begin(&ctx);
+    super::carry::show(app, &ctx);
+    region.extend(super::carry::painted(&ctx).map(|rect| (rect.expand(16.0), 18.0)));
+    // Tooltips, menus and anything else floating over the window.
+    let floating: Vec<Rect> = ctx.memory(|memory| {
+        memory
+            .areas()
+            .visible_layer_ids()
+            .into_iter()
+            .filter(|layer| {
+                matches!(
+                    layer.order,
+                    egui::Order::Middle | egui::Order::Foreground | egui::Order::Tooltip
+                )
+            })
+            .filter_map(|layer| memory.area_rect(layer.id))
+            .collect()
+    });
+    region.extend(floating.into_iter().map(|rect| (rect.expand(2.0), 12.0)));
+    region
 }
 
 /// Resizes and moves the window when the card opens or closes, or bubbles
@@ -294,7 +322,14 @@ fn lay_out_window(
 /// One bubble: the chat's picture on a shadow, growing a little under the
 /// pointer, ringed in the accent while its card is open, with the unread
 /// count on it and a close button that shows on hover.
-fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool) {
+fn bubble(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &str,
+    centre: Pos2,
+    open: bool,
+    region: &mut Vec<(Rect, f32)>,
+) {
     let ctx = ui.ctx().clone();
     let palette = app.palette;
     let id = egui::Id::new(("bubble", chat));
@@ -313,10 +348,15 @@ fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool
         response.hovered(),
         theme::MOTION_QUICK,
     );
-    let ring = theme::animate(&ctx, id.with("ring"), open, theme::MOTION_QUICK);
+    // Messages carried over it from another window light it up too.
+    let landing = super::carry::over_chat(&ctx).as_deref() == Some(chat);
+    let ring = theme::animate(&ctx, id.with("ring"), open || landing, theme::MOTION_QUICK);
     let Some(known) = app.chat(chat).cloned() else {
         return;
     };
+    if super::carry::carrying(&ctx) {
+        super::carry::target(ui, rect, &known, &app.chat_title(&known), centre);
+    }
     let title = app.chat_title(&known);
     if response.drag_started() {
         // The platform moves the window with the pointer from here.
@@ -331,6 +371,8 @@ fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool
         .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, open, &title));
     let scale = egui::lerp(0.6..=1.0, theme::ease_out(arrive)) * (1.0 + 0.06 * hover);
     let shown = Rect::from_center_size(centre, Vec2::splat(BUBBLE * scale));
+    // The picture, its ring and its shadow's edge.
+    region.push((shown.expand(6.0), shown.width() / 2.0 + 6.0));
     let mut layer = ui.new_child(egui::UiBuilder::new().max_rect(shown));
     layer.set_opacity(arrive);
     let painter = layer.painter().clone();
@@ -353,6 +395,7 @@ fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool
         let galley = painter.layout_no_wrap(label, theme::bold(11.0), palette.on_accent);
         let size = vec2((galley.size().x + 10.0).max(20.0), 20.0);
         let badge = Rect::from_center_size(pos2(shown.right() - 6.0, shown.top() + 6.0), size);
+        region.push((badge.expand(3.0), 13.0));
         painter.rect(
             badge,
             10.0,
@@ -379,6 +422,7 @@ fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool
         theme::MOTION_QUICK,
     );
     if near > 0.0 {
+        region.push((close.expand(2.0), 12.0));
         painter.circle(
             close.center(),
             10.0,
@@ -402,7 +446,14 @@ fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool
 /// The open bubble's chat: a rounded card with the chat's name and buttons,
 /// its transcript, and a reply field with what is attached. It grows out of
 /// its bubble at `pivot` as `reveal` goes from 0 to 1 and folds back into it.
-fn card_view(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, pivot: Pos2, reveal: f32) {
+fn card_view(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    card: Rect,
+    pivot: Pos2,
+    reveal: f32,
+) -> (Rect, f32) {
     let palette = app.palette;
     let eased = theme::ease_out(reveal);
     let scale = egui::lerp(0.88..=1.0, eased);
@@ -465,7 +516,16 @@ fn card_view(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, pivot: P
             Stroke::new(1.25, palette.outline),
             egui::StrokeKind::Inside,
         );
+        // Messages carried here from the main window or another bubble.
+        if super::carry::carrying(ui.ctx()) {
+            super::carry::target(ui, card, chat, &app.chat_title(chat), pivot);
+        }
     });
+    // Where the card shows this frame, grown a point for its soft edge.
+    (
+        transform.mul_rect(card).expand(1.0),
+        CARD_RADIUS * scale + 1.0,
+    )
 }
 
 fn card_header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect) {
@@ -606,21 +666,26 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect, settled: 
     let mut enter = false;
     let mut ready = staged_count > 0;
     if let Some(bubble) = app.bubbles.get_mut(&chat.id) {
-        let mut child =
-            ui.new_child(egui::UiBuilder::new().max_rect(field.shrink2(vec2(14.0, 0.0))));
+        // One line of text, centred on the field with room either side, as
+        // the main composer's field has it.
+        let font = theme::regular(14.5);
+        let line = ui.ctx().fonts_mut(|fonts| fonts.row_height(&font));
+        let text = Rect::from_min_max(
+            pos2(field.left() + FIELD_PADDING, field.center().y - line / 2.0),
+            pos2(field.right() - FIELD_PADDING, field.center().y + line / 2.0),
+        );
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text));
         child.set_clip_rect(field.intersect(child.clip_rect()));
-        let response = child
-            .centered_and_justified(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut bubble.text)
-                        .id(egui::Id::new(("bubble-text", chat.id.as_str())))
-                        .hint_text(hint)
-                        .frame(egui::Frame::NONE)
-                        .font(theme::regular(14.5))
-                        .desired_width(f32::INFINITY),
-                )
-            })
-            .inner;
+        let response = child.add(
+            egui::TextEdit::singleline(&mut bubble.text)
+                .id(egui::Id::new(("bubble-text", chat.id.as_str())))
+                .hint_text(hint)
+                .frame(egui::Frame::NONE)
+                .margin(egui::Margin::ZERO)
+                .font(font)
+                .vertical_align(egui::Align::Center)
+                .desired_width(text.width()),
+        );
         // Once the card has settled: a field on its way in takes nothing.
         if settled && std::mem::take(&mut bubble.focus) {
             response.request_focus();

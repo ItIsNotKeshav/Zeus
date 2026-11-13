@@ -145,6 +145,38 @@ pub fn strip_window_frame(title: &str) {
     let _ = title;
 }
 
+/// Cuts the see-through window titled `title` down to `shapes` (rects in
+/// points, with their corner radius), so the rest of it is not part of the
+/// window at all: nothing of it shows, however the system composes a
+/// see-through window (Windows has left a faint sheet and a hairline over
+/// the desktop where the bubbles' window paints nothing), and clicks there
+/// reach the windows beneath. `pixels_per_point` is the window's. Does
+/// nothing on other systems; call it on each frame the window is shown, as
+/// it does nothing until the window exists and nothing while the shape holds.
+pub fn shape_window(title: &str, shapes: &[(egui::Rect, f32)], pixels_per_point: f32) {
+    #[cfg(windows)]
+    {
+        let shapes: Vec<[i32; 5]> = shapes
+            .iter()
+            .filter(|(rect, _)| rect.is_positive())
+            .map(|(rect, radius)| {
+                let px = |value: f32| (value * pixels_per_point).round() as i32;
+                // GDI leaves out a region's right and bottom edges.
+                [
+                    px(rect.left()),
+                    px(rect.top()),
+                    px(rect.right()) + 1,
+                    px(rect.bottom()) + 1,
+                    px(2.0 * radius),
+                ]
+            })
+            .collect();
+        platform::shape_window(title, &shapes);
+    }
+    #[cfg(not(windows))]
+    let _ = (title, shapes, pixels_per_point);
+}
+
 /// The colour a frame clears to: `window`, made opaque on an opaque window,
 /// where alpha would leave the last frame's pixels behind (a theme with
 /// alpha chosen while the window is open, until the next one is made).
@@ -218,28 +250,14 @@ mod platform {
         use windows::Win32::Graphics::Dwm::{
             DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
         };
-        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
-        use windows::core::PCWSTR;
-
         /// `DWMWA_COLOR_NONE`: no border at all, rather than one in a colour.
         const NO_BORDER: u32 = 0xFFFF_FFFE;
         /// The window last stripped, so the attributes are set once for it.
         static STRIPPED: Mutex<Option<isize>> = Mutex::new(None);
 
-        let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
-        // SAFETY: `wide` ends in NUL and outlives the call.
-        let Ok(hwnd) = (unsafe { FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr())) }) else {
+        let Some(hwnd) = own_window(title) else {
             return;
         };
-        if hwnd.is_invalid() {
-            return;
-        }
-        let mut process = 0_u32;
-        // SAFETY: `hwnd` was just found, and `process` holds the id asked for.
-        unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut process)) };
-        if process != std::process::id() {
-            return;
-        }
         let key = hwnd.0 as isize;
         let mut stripped = STRIPPED.lock().unwrap_or_else(|p| p.into_inner());
         if *stripped == Some(key) {
@@ -265,6 +283,69 @@ mod platform {
             );
         }
         *stripped = Some(key);
+    }
+
+    /// This process's window titled `title`, once it exists.
+    fn own_window(title: &str) -> Option<HWND> {
+        use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetWindowThreadProcessId};
+        use windows::core::PCWSTR;
+
+        let wide: Vec<u16> = title.encode_utf16().chain(std::iter::once(0)).collect();
+        // SAFETY: `wide` ends in NUL and outlives the call.
+        let hwnd = unsafe { FindWindowW(PCWSTR::null(), PCWSTR(wide.as_ptr())) }.ok()?;
+        if hwnd.is_invalid() {
+            return None;
+        }
+        let mut process = 0_u32;
+        // SAFETY: `hwnd` was just found, and `process` holds the id asked for.
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut process)) };
+        (process == std::process::id()).then_some(hwnd)
+    }
+
+    /// See [`super::shape_window`]. Each shape is a rounded rectangle in
+    /// physical pixels from the window's top left corner: its rect and its
+    /// corners' diameter.
+    pub fn shape_window(title: &str, shapes: &[[i32; 5]]) {
+        use windows_sys::Win32::Graphics::Gdi::{
+            CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, RGN_OR, SetWindowRgn,
+        };
+
+        /// The window last shaped and what it was given, so Windows is asked
+        /// only when the shape changes.
+        static SHAPED: Mutex<Option<(isize, Vec<[i32; 5]>)>> = Mutex::new(None);
+
+        let Some(hwnd) = own_window(title) else {
+            return;
+        };
+        let key = hwnd.0 as isize;
+        let mut shaped = SHAPED.lock().unwrap_or_else(|p| p.into_inner());
+        if shaped
+            .as_ref()
+            .is_some_and(|(window, was)| *window == key && was.as_slice() == shapes)
+        {
+            return;
+        }
+        // SAFETY: plain GDI regions, each combined into the first and then
+        // deleted; the first goes to the window, which owns it from then on
+        // (and frees it), so it is deleted here only when it was refused.
+        unsafe {
+            let region = CreateRectRgn(0, 0, 0, 0);
+            if region.is_null() {
+                return;
+            }
+            for [left, top, right, bottom, round] in shapes {
+                let part = CreateRoundRectRgn(*left, *top, *right, *bottom, *round, *round);
+                if !part.is_null() {
+                    CombineRgn(region, region, part, RGN_OR);
+                    DeleteObject(part);
+                }
+            }
+            if SetWindowRgn(hwnd.0, region, 1) == 0 {
+                DeleteObject(region);
+                return;
+            }
+        }
+        *shaped = Some((key, shapes.to_vec()));
     }
 
     /// Personalisation's Transparency effects, off. A missing value is on,

@@ -1037,12 +1037,15 @@ fn pop_out_contents(app: &mut App, ui: &mut egui::Ui, chat: &Chat, title: &str) 
                 });
             });
         });
+    super::carry::begin(ui.ctx());
     conversation::pop_out_composer(app, ui, chat);
     egui::CentralPanel::default()
         .frame(egui::Frame::new().fill(ground))
         .show(ui, |ui| {
             conversation::pop_out_transcript(app, ui, chat);
         });
+    // Messages carried out of it, and those carried over it from elsewhere.
+    super::carry::show(app, ui.ctx());
     // Only what names its own message or chat leaves the window; the rest
     // belongs to a composer, a menu or a selection the pop-out does not have.
     let mut index = 0;

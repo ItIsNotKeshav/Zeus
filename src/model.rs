@@ -2337,6 +2337,72 @@ pub enum PictureSource {
     Pasted(Arc<Vec<u8>>),
 }
 
+/// What a pen or a sticker leaves on a picture being edited.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PictureMark {
+    /// A line drawn by hand.
+    Stroke(PictureStroke),
+    /// An emoji or a sticker laid on the picture.
+    Sticker(PictureSticker),
+}
+
+/// A line drawn on a picture. Its points are in the picture's pixels as it is
+/// shown (after its turns, before its crop), like the crop's.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureStroke {
+    pub points: Vec<[f32; 2]>,
+    /// Straight sRGB.
+    pub colour: [u8; 3],
+    /// Across the line, in the picture's pixels.
+    pub width: f32,
+    /// A see-through marker rather than a pen: the picture shows through it,
+    /// and where it crosses itself it does not darken.
+    pub highlighter: bool,
+}
+
+/// What a sticker on a picture shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum StickerArt {
+    /// One emoji cluster.
+    Emoji(String),
+    /// A sticker's picture file (its first frame, when it moves).
+    File(PathBuf),
+}
+
+/// An emoji or sticker laid on a picture, upright, in the picture's pixels
+/// as it is shown.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PictureSticker {
+    pub art: StickerArt,
+    pub centre: [f32; 2],
+    /// The side of the square it fits in.
+    pub size: f32,
+}
+
+impl PictureMark {
+    /// The same mark after the picture is turned a quarter, measured in the
+    /// shown picture's `width` and `height` before the turn.
+    fn turned(self, clockwise: bool, width: u32, height: u32) -> Self {
+        let turn = |[x, y]: [f32; 2]| {
+            if clockwise {
+                [height as f32 - y, x]
+            } else {
+                [y, width as f32 - x]
+            }
+        };
+        match self {
+            Self::Stroke(stroke) => Self::Stroke(PictureStroke {
+                points: stroke.points.into_iter().map(turn).collect(),
+                ..stroke
+            }),
+            Self::Sticker(sticker) => Self::Sticker(PictureSticker {
+                centre: turn(sticker.centre),
+                ..sticker
+            }),
+        }
+    }
+}
+
 /// A staged picture on its way to being cropped and sent.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PictureEdit {
@@ -2350,6 +2416,8 @@ pub struct PictureEdit {
     pub crop: PictureCrop,
     /// Quarter turns clockwise already applied to the source.
     pub turns: u8,
+    /// What was drawn and laid on it, oldest first.
+    pub marks: Vec<PictureMark>,
 }
 
 impl PictureEdit {
@@ -2367,6 +2435,7 @@ impl PictureEdit {
             height: height.max(1),
             crop: PictureCrop::full(width, height),
             turns: 0,
+            marks: Vec::new(),
         }
     }
 
@@ -2387,6 +2456,11 @@ impl PictureEdit {
         } else {
             self.crop.turned_counter_clockwise(width)
         };
+        let marks = self
+            .marks
+            .into_iter()
+            .map(|mark| mark.turned(clockwise, width, height))
+            .collect();
         Self {
             turns: if clockwise {
                 (self.turns + 1) % 4
@@ -2394,17 +2468,33 @@ impl PictureEdit {
                 (self.turns + 3) % 4
             },
             crop,
+            marks,
             ..self
         }
     }
 
-    /// The whole picture again, the way it started: no turn and nothing
-    /// cropped away. This is what the editor's Reset does, so it has to undo
-    /// the turn as well as the region.
+    /// Lays `art` upright in the middle of the crop, a little over a quarter
+    /// of its shorter side, as the newest mark.
+    pub fn lay_sticker(&mut self, art: StickerArt) {
+        let crop = self.crop;
+        self.marks.push(PictureMark::Sticker(PictureSticker {
+            art,
+            centre: [
+                crop.x as f32 + crop.width as f32 / 2.0,
+                crop.y as f32 + crop.height as f32 / 2.0,
+            ],
+            size: crop.width.min(crop.height).max(1) as f32 * 0.28,
+        }));
+    }
+
+    /// The whole picture again, the way it started: no turn, nothing
+    /// cropped away and nothing drawn. This is what the editor's Reset does,
+    /// so it has to undo the turn and the drawing as well as the region.
     pub fn reset(self) -> Self {
         Self {
             crop: PictureCrop::full(self.width, self.height),
             turns: 0,
+            marks: Vec::new(),
             ..self
         }
     }
@@ -2420,6 +2510,7 @@ pub struct PictureOrigin {
     pub height: u32,
     pub crop: PictureCrop,
     pub turns: u8,
+    pub marks: Vec<PictureMark>,
 }
 
 /// A picture on its way to becoming a sticker.
@@ -3071,6 +3162,12 @@ pub enum Action {
         from_chat: ChatId,
         messages: Vec<String>,
         to_chat: ChatId,
+    },
+    /// Sends messages again in their own chat: carried out of its Media,
+    /// links and docs panel and dropped on it.
+    ForwardHere {
+        chat: ChatId,
+        messages: Vec<String>,
     },
     /// Opens a chat in a pane on one side of the chat panel, beside the open
     /// chat, and makes it the open chat: a chat dragged out of the list and
@@ -4067,10 +4164,68 @@ mod tests {
     }
 
     #[test]
+    fn a_picked_sticker_lands_in_the_middle_of_the_crop() {
+        use super::{PictureMark, StickerArt};
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        edit.crop = PictureCrop {
+            x: 100,
+            y: 100,
+            width: 400,
+            height: 200,
+        };
+        edit.lay_sticker(StickerArt::Emoji("🔥".to_owned()));
+        let Some(PictureMark::Sticker(sticker)) = edit.marks.last() else {
+            panic!("a sticker");
+        };
+        assert_eq!(sticker.centre, [300.0, 200.0]);
+        assert!((sticker.size - 56.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn drawing_turns_with_the_picture() {
+        use super::{PictureMark, PictureSticker, PictureStroke, StickerArt};
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        edit.marks.push(PictureMark::Stroke(PictureStroke {
+            points: vec![[10.0, 20.0]],
+            colour: [255, 0, 0],
+            width: 8.0,
+            highlighter: false,
+        }));
+        edit.marks.push(PictureMark::Sticker(PictureSticker {
+            art: StickerArt::Emoji("😀".to_owned()),
+            centre: [700.0, 100.0],
+            size: 120.0,
+        }));
+        let turned = edit.clone().turned(true);
+        // Clockwise, the top-left corner goes to the top right of a picture
+        // 600 across.
+        let PictureMark::Stroke(stroke) = &turned.marks[0] else {
+            panic!("a stroke");
+        };
+        assert_eq!(stroke.points, vec![[580.0, 10.0]]);
+        let PictureMark::Sticker(sticker) = &turned.marks[1] else {
+            panic!("a sticker");
+        };
+        assert_eq!(sticker.centre, [500.0, 700.0]);
+        // And back again.
+        assert_eq!(turned.turned(false).marks, edit.marks);
+    }
+
+    #[test]
     fn resetting_puts_the_picture_back_the_way_it_started() {
-        let edit = PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600)
-            .turned(true)
-            .reset();
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        edit.marks
+            .push(super::PictureMark::Stroke(super::PictureStroke {
+                points: vec![[1.0, 1.0]],
+                colour: [0, 0, 0],
+                width: 4.0,
+                highlighter: true,
+            }));
+        let edit = edit.turned(true).reset();
+        assert!(edit.marks.is_empty(), "the drawing goes too");
         assert_eq!(edit.turns, 0, "the turn goes back too");
         assert_eq!(edit.displayed_size(), (800, 600));
         assert_eq!(edit.crop, PictureCrop::full(800, 600));
