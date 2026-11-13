@@ -58,9 +58,33 @@ pub struct PaneView {
     pub scroll_anchor: Option<String>,
     pub jump_highlight: Option<JumpHighlight>,
     pub unread_divider: Option<UnreadDivider>,
+    /// The transcript's own layout, for a view that always shows one chat
+    /// (a bubble, the pop-out), which [`PaneView::swap_with`] leaves alone:
+    /// [`PaneView::draw`] swaps it in for that chat.
+    pub(crate) layout: crate::app::TranscriptLayout,
 }
 
 impl PaneView {
+    /// Runs `draw` with this view, and its layout of `chat`'s transcript,
+    /// in place of the app's, and puts both back after.
+    pub(crate) fn draw<R>(
+        &mut self,
+        app: &mut App,
+        chat: &str,
+        draw: impl FnOnce(&mut App) -> R,
+    ) -> R {
+        self.swap_with(app);
+        if let Some(conversation) = app.conversations.get_mut(chat) {
+            conversation.swap_layout(&mut self.layout);
+        }
+        let out = draw(app);
+        if let Some(conversation) = app.conversations.get_mut(chat) {
+            conversation.swap_layout(&mut self.layout);
+        }
+        self.swap_with(app);
+        out
+    }
+
     /// Exchanges this view with the app's own.
     pub fn swap_with(&mut self, app: &mut App) {
         std::mem::swap(&mut self.scroll_to_bottom, &mut app.scroll_to_bottom);
@@ -284,6 +308,9 @@ impl App {
         else {
             return draw(self);
         };
+        // The other pane's chat is shown nowhere else in this window, and
+        // its view changes hands with the open chat's as focus moves, so its
+        // layout stays with the chat rather than with the view.
         view.swap_with(self);
         let out = draw(self);
         view.swap_with(self);
@@ -295,16 +322,14 @@ impl App {
 
     /// The same for the pop-out's transcript.
     pub(crate) fn with_pop_out_view<R>(&mut self, draw: impl FnOnce(&mut App) -> R) -> R {
-        let Some(mut view) = self
+        let Some((mut view, chat)) = self
             .pop_out
             .as_mut()
-            .map(|pop| std::mem::take(&mut pop.view))
+            .map(|pop| (std::mem::take(&mut pop.view), pop.chat.clone()))
         else {
             return draw(self);
         };
-        view.swap_with(self);
-        let out = draw(self);
-        view.swap_with(self);
+        let out = view.draw(self, &chat, draw);
         if let Some(pop) = self.pop_out.as_mut() {
             pop.view = view;
         }
@@ -381,6 +406,9 @@ impl App {
                 | Action::CopyText(_)
                 | Action::OpenFile(_)
                 | Action::OpenFolder(_)
+                // Messages carried out of it, or into it from another window.
+                | Action::ForwardDropped { .. }
+                | Action::ForwardHere { .. }
         )
     }
 }

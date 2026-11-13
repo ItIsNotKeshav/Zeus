@@ -242,6 +242,31 @@ pub struct Conversation {
     pub(crate) leaving: Vec<crate::ui::leaving::Leaving>,
 }
 
+/// What a transcript remembers of its own layout: the rows' heights at its
+/// width, the first row in view, the keyboard scroll under way and the rows
+/// holding a selection's ends. A chat shown in two places at once (the main
+/// window and a bubble or the pop-out) keeps one of these for each, swapped
+/// into the [`Conversation`] around the drawing: shared, each place measured
+/// the rows at its own width and held the other's first row in view, so both
+/// jumped and laid out afresh every frame.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct TranscriptLayout {
+    rows: HashMap<String, RowHeight>,
+    text_ends: HashSet<String>,
+    key_scroll: Option<KeyScroll>,
+    top_row: Option<(String, f32)>,
+}
+
+impl Conversation {
+    /// Exchanges the transcript's layout with `layout`.
+    pub(crate) fn swap_layout(&mut self, layout: &mut TranscriptLayout) {
+        std::mem::swap(&mut self.rows, &mut layout.rows);
+        std::mem::swap(&mut self.text_ends, &mut layout.text_ends);
+        std::mem::swap(&mut self.key_scroll, &mut layout.key_scroll);
+        std::mem::swap(&mut self.top_row, &mut layout.top_row);
+    }
+}
+
 /// A keyboard scroll the message list eases through, one instant step per
 /// frame.
 #[derive(Clone, Copy, Debug)]
@@ -8051,6 +8076,18 @@ impl App {
                 });
                 self.follow_sent_chat();
                 self.toast(format!("Forwarded to {title}"));
+            }
+            Action::ForwardHere { chat, messages } => {
+                if messages.is_empty() || !self.chat(&chat).is_some_and(|known| known.can_send()) {
+                    return;
+                }
+                self.backend.send(Command::Forward {
+                    from_chat: chat.clone(),
+                    messages,
+                    to_chats: vec![chat],
+                });
+                self.follow_sent_chat();
+                self.toast(crate::i18n::gettext(self.locale, "Sent again").into_owned());
             }
             Action::StartSelection => {
                 // Choosing it again keeps what is already ticked.

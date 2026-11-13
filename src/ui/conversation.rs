@@ -2450,7 +2450,7 @@ pub(crate) fn composer_pill_id() -> egui::Id {
 /// `(offset.y, height)`, as of its last frame: for tests that need them
 /// precisely. `App::at_bottom` covers ordinary UI checks.
 pub(crate) fn scroll_metrics_id(chat: &ChatId) -> egui::Id {
-    egui::Id::new(("message-scroll-metrics", chat))
+    in_window(egui::Id::new(("message-scroll-metrics", chat)))
 }
 
 /// How far below the top of a composer text row the middle of its ink sits,
@@ -5315,7 +5315,38 @@ fn reply_on_double_click(
 
 /// Stable message-bubble id used by interaction tests.
 pub fn bubble_id(chat: &str, message: &str) -> egui::Id {
-    egui::Id::new(("bubble", chat, message))
+    in_window(egui::Id::new(("bubble", chat, message)))
+}
+
+thread_local! {
+    /// While a transcript is drawn in a window of its own (a bubble, the
+    /// pop-out), that window's id, which [`in_window`] mixes into the ids its
+    /// rows keep their state under.
+    static WINDOW: std::cell::Cell<Option<egui::ViewportId>> = const { std::cell::Cell::new(None) };
+}
+
+/// `id`, made the drawing window's own while a transcript is drawn outside
+/// the main window: egui's memory is shared by every window, and a chat
+/// open in the main window and in a bubble at once would otherwise have each
+/// read where the other drew its rows, its scroll metrics and its arrivals.
+fn in_window(id: egui::Id) -> egui::Id {
+    match WINDOW.get() {
+        Some(window) => id.with(window),
+        None => id,
+    }
+}
+
+/// Runs `draw` with the ids of a transcript drawn in `ctx`'s window made its
+/// own, when that is not the main window.
+fn drawn_in_window<R>(ctx: &egui::Context, draw: impl FnOnce() -> R) -> R {
+    let window = ctx.viewport_id();
+    if window == egui::ViewportId::ROOT {
+        return draw();
+    }
+    let before = WINDOW.replace(Some(window));
+    let out = draw();
+    WINDOW.set(before);
+    out
 }
 
 /// Where a voice message's speed chip was drawn, for interaction tests.
@@ -11396,7 +11427,7 @@ fn selection_bar(app: &mut App, ui: &mut egui::Ui, chat: &str, selected: &[Strin
 /// The file name to suggest when saving an attachment: the sender's name for
 /// documents, the cached file's name otherwise. Path separators are dropped so
 /// a crafted name cannot point the dialog somewhere else.
-fn attachment_name(content: &Content, path: &Path) -> String {
+pub(crate) fn attachment_name(content: &Content, path: &Path) -> String {
     let name = match content {
         Content::Document { file_name, .. } if !file_name.trim().is_empty() => file_name.clone(),
         _ => path
