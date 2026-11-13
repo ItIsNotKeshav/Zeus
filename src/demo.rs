@@ -3847,13 +3847,18 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             // hand and its colours out, `draw-stickers` with the tray open.
             "draw" | "draw-pen" | "draw-stickers" => {
                 crate::ui::image_editor::DEMO_TOOL.store(
-                    match part {
-                        "draw-pen" => 1,
-                        "draw-stickers" => 3,
-                        _ => 0,
-                    },
+                    u8::from(part == "draw-pen"),
                     std::sync::atomic::Ordering::Relaxed,
                 );
+                if part == "draw-stickers" {
+                    // The app's picker, open over the editor from its
+                    // Stickers button at the bottom of the window.
+                    app.picker = Some(crate::model::PickerTab::Emoji);
+                    app.picker_anchor = Some(egui::Rect::from_center_size(
+                        egui::pos2(657.0, 730.0),
+                        egui::vec2(34.0, 34.0),
+                    ));
+                }
                 use crate::model::{PictureMark, PictureSticker, PictureStroke, StickerArt};
                 let (photo, _) = sample_files(app);
                 let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));

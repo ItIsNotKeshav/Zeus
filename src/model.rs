@@ -2473,6 +2473,20 @@ impl PictureEdit {
         }
     }
 
+    /// Lays `art` upright in the middle of the crop, a little over a quarter
+    /// of its shorter side, as the newest mark.
+    pub fn lay_sticker(&mut self, art: StickerArt) {
+        let crop = self.crop;
+        self.marks.push(PictureMark::Sticker(PictureSticker {
+            art,
+            centre: [
+                crop.x as f32 + crop.width as f32 / 2.0,
+                crop.y as f32 + crop.height as f32 / 2.0,
+            ],
+            size: crop.width.min(crop.height).max(1) as f32 * 0.28,
+        }));
+    }
+
     /// The whole picture again, the way it started: no turn, nothing
     /// cropped away and nothing drawn. This is what the editor's Reset does,
     /// so it has to undo the turn and the drawing as well as the region.
@@ -4141,6 +4155,25 @@ mod tests {
         let left = edit.clone().turned(false);
         assert_eq!(left.turns, 3);
         assert_eq!(left.displayed_size(), (600, 800));
+    }
+
+    #[test]
+    fn a_picked_sticker_lands_in_the_middle_of_the_crop() {
+        use super::{PictureMark, StickerArt};
+        let mut edit =
+            PictureEdit::new(0, PictureSource::File(PathBuf::from("photo.jpg")), 800, 600);
+        edit.crop = PictureCrop {
+            x: 100,
+            y: 100,
+            width: 400,
+            height: 200,
+        };
+        edit.lay_sticker(StickerArt::Emoji("🔥".to_owned()));
+        let Some(PictureMark::Sticker(sticker)) = edit.marks.last() else {
+            panic!("a sticker");
+        };
+        assert_eq!(sticker.centre, [300.0, 200.0]);
+        assert!((sticker.size - 56.0).abs() < 0.01);
     }
 
     #[test]

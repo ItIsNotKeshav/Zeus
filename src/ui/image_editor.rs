@@ -1,14 +1,14 @@
 //! Crops, turns and draws on a staged picture over the whole window, before
 //! it is sent: a pen and a highlighter in a few colours, emoji and stickers
-//! laid on top, and the one-time view switch of a single photo.
+//! from the app's picker laid on top, and the one-time view switch of a
+//! single photo.
 
 use egui::{Align, Color32, Layout, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use super::widgets;
 use crate::app::{App, Pending};
 use crate::model::{
-    Action, CropEdge, PictureCrop, PictureMark, PictureSource, PictureSticker, PictureStroke,
-    StickerArt,
+    Action, CropEdge, PickerTab, PictureCrop, PictureMark, PictureSource, PictureStroke, StickerArt,
 };
 use crate::theme::{self, Icon};
 
@@ -33,18 +33,8 @@ const SWATCH: f32 = 22.0;
 const PEN_WIDTH: f32 = 5.0;
 /// How wide the highlighter draws on screen, in points.
 const HIGHLIGHTER_WIDTH: f32 = 20.0;
-/// A new sticker's side, as a share of the crop's shorter side.
-const STICKER_SHARE: f32 = 0.28;
 /// The smallest a sticker can be made, in points on screen.
 const STICKER_LEAST: f32 = 24.0;
-/// The most rows of the sticker tray shown at once; more scroll.
-const TRAY_ROWS: usize = 3;
-/// Room inside the tray around its cells.
-const TRAY_PAD: f32 = 10.0;
-/// Between the tray's cells.
-const TRAY_GAP: f32 = 4.0;
-/// The widest the sticker tray grows.
-const TRAY_WIDTH: f32 = 560.0;
 /// Room inside the glass bars around their buttons.
 const BAR_PAD: f32 = 4.0;
 /// Between the buttons of a glass bar.
@@ -53,13 +43,10 @@ const BAR_GAP: f32 = 4.0;
 const BAR_DIVIDE: f32 = 13.0;
 /// Between the colours in their bar.
 const SWATCH_GAP: f32 = 10.0;
-/// Between the toolbar and what floats over it.
+/// Between the toolbar and the colours over it.
 const SHELF_GAP: f32 = 10.0;
 /// Between the round buttons at the top, as the chat header spaces them.
 const TOP_GAP: f32 = 10.0;
-/// A cell of the sticker tray.
-const TRAY_CELL: f32 = 40.0;
-
 /// The colours the pen and highlighter offer, straight sRGB.
 const COLOURS: [[u8; 3]; 8] = [
     [255, 255, 255],
@@ -76,12 +63,6 @@ const COLOUR_NAMES: [&str; 8] = [
     "White", "Black", "Red", "Orange", "Yellow", "Green", "Blue", "Purple",
 ];
 
-/// The emoji the sticker tray offers before the user's own stickers.
-const EMOJI: [&str; 24] = [
-    "😀", "😂", "😍", "🥰", "😎", "🤩", "🥳", "😮", "🤔", "😭", "😡", "😴", "👍", "👏", "🙏", "💪",
-    "👀", "❤️", "🔥", "✨", "🎉", "💯", "⭐", "💀",
-];
-
 /// What a drag on the picture does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 enum Tool {
@@ -90,8 +71,6 @@ enum Tool {
     Crop,
     Pen,
     Highlighter,
-    /// The tray of emoji and stickers is open.
-    Sticker,
 }
 
 impl Tool {
@@ -111,10 +90,13 @@ struct State {
     drawing: Option<PictureStroke>,
     /// The sticker that shows its handles, an index into the edit's marks.
     selected: Option<usize>,
+    /// How many marks the edit had when last drawn: one more, and a sticker,
+    /// was picked in the picker, and is picked up here.
+    marks: usize,
 }
 
 /// The tool a demo page opens the editor on, since a screenshot cannot
-/// click one: 0 crop, 1 pen, 2 highlighter, 3 stickers.
+/// click one: 0 crop, 1 pen, 2 highlighter.
 #[cfg(feature = "demo")]
 pub(crate) static DEMO_TOOL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
@@ -125,7 +107,6 @@ fn first_tool() -> Tool {
         match DEMO_TOOL.load(std::sync::atomic::Ordering::Relaxed) {
             1 => return Tool::Pen,
             2 => return Tool::Highlighter,
-            3 => return Tool::Sticker,
             _ => {}
         }
     }
@@ -173,8 +154,18 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         .unwrap_or_else(|| State {
             tool: first_tool(),
             colour: 2,
+            marks: edit.marks.len(),
             ..State::default()
         });
+    // A sticker the picker just laid lands, picked up.
+    if edit.marks.len() == state.marks + 1
+        && matches!(edit.marks.last(), Some(PictureMark::Sticker(_)))
+    {
+        let at = edit.marks.len() - 1;
+        theme::forget_motion(ctx, sticker_motion_id(at));
+        state.selected = Some(at);
+        state.tool = Tool::Crop;
+    }
     if state
         .selected
         .is_some_and(|at| !matches!(edit.marks.get(at), Some(PictureMark::Sticker(_))))
@@ -183,12 +174,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     }
     let view_once_offered = app.pending_supports_view_once();
     let view_once = app.pending_view_once;
-    let own_stickers: Vec<std::path::PathBuf> = app
-        .sticker_packs
-        .iter()
-        .flat_map(|pack| pack.stickers.iter().cloned())
-        .take(48)
-        .collect();
+    let picker_open = app.picker.is_some();
+    let mut open_picker = None;
     // Captured before the edit is borrowed mutably, so the closure does not
     // need the whole app.
     let source = edit.source.clone();
@@ -219,16 +206,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             let top = Rect::from_min_size(room.min, vec2(room.width(), BAR));
             let bottom =
                 Rect::from_min_size(pos2(room.min.x, room.max.y - BAR), vec2(room.width(), BAR));
-            // The colours (while a pen is in hand) and the tray of stickers
-            // float over the toolbar, pushing the picture up as they come.
+            // The colours float over the toolbar while a pen is in hand,
+            // pushing the picture up as they come.
             let swatches_open = state.tool.draws();
             let swatches_shown = shown(ui.ctx(), ui.id().with("swatches"), swatches_open);
-            let tray_open = state.tool == Tool::Sticker;
-            let tray_shown = shown(ui.ctx(), ui.id().with("tray"), tray_open);
-            let tray_size = tray_size(EMOJI.len() + own_stickers.len(), room.width());
-            let shelf = ((SWATCH + 2.0 * BAR_PAD + 6.0 + SHELF_GAP)
-                * theme::ease_out(swatches_shown))
-            .max((tray_size.y + SHELF_GAP) * theme::ease_out(tray_shown));
+            let shelf =
+                (SWATCH + 2.0 * BAR_PAD + 6.0 + SHELF_GAP) * theme::ease_out(swatches_shown);
             let (wide, tall) = edit.displayed_size();
             let inner = Rect::from_min_max(
                 pos2(room.min.x, top.max.y),
@@ -437,20 +420,21 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         (Tool::Crop, Icon::Crop, "Crop"),
                         (Tool::Pen, Icon::Pencil, "Pen"),
                         (Tool::Highlighter, Icon::Highlighter, "Highlighter"),
-                        (Tool::Sticker, Icon::Sticker, "Stickers and emoji"),
                     ] {
                         let label = gettext(label);
-                        if tool_button(ui, palette, icon, state.tool == tool, false, &label)
-                            .clicked()
-                        {
-                            // A second press on the open tray closes it.
-                            state.tool = if tool == state.tool && tool == Tool::Sticker {
-                                Tool::Crop
-                            } else {
-                                tool
-                            };
+                        let on = state.tool == tool && !picker_open;
+                        if tool_button(ui, palette, icon, on, false, &label).clicked() {
+                            state.tool = tool;
                             state.selected = None;
                         }
+                    }
+                    // The app's own picker, over the editor: its emoji and
+                    // stickers are laid on the picture instead of sent.
+                    let label = gettext("Stickers and emoji");
+                    let stickers =
+                        tool_button(ui, palette, Icon::Sticker, picker_open, false, &label);
+                    if stickers.clicked() {
+                        open_picker = Some(stickers.rect);
                     }
                     divider(ui, palette);
                     let undo = gettext("Undo");
@@ -479,36 +463,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             if swatches_shown > 0.0 {
                 swatches(ui, palette, &mut state, &gettext, bar, swatches_shown);
             }
-            // And the tray of emoji and stickers.
-            if tray_shown > 0.0 {
-                let width = tray_size.x;
-                let tray = Rect::from_min_size(
-                    pos2(
-                        (bar.center().x - width / 2.0)
-                            .clamp(room.min.x, (room.max.x - width).max(room.min.x)),
-                        bar.min.y - SHELF_GAP - tray_size.y,
-                    ),
-                    tray_size,
-                );
-                if let Some(art) = sticker_tray(ui, palette, tray, tray_shown, &own_stickers) {
-                    // Laid in the middle of the crop, a little over a
-                    // quarter of its shorter side, and picked up.
-                    let side = (edit.crop.width.min(edit.crop.height) as f32 * STICKER_SHARE)
-                        .max(STICKER_LEAST / scale);
-                    edit.marks.push(PictureMark::Sticker(PictureSticker {
-                        art,
-                        centre: [
-                            edit.crop.x as f32 + edit.crop.width as f32 / 2.0,
-                            edit.crop.y as f32 + edit.crop.height as f32 / 2.0,
-                        ],
-                        size: side,
-                    }));
-                    let at = edit.marks.len() - 1;
-                    theme::forget_motion(ui.ctx(), sticker_motion_id(at));
-                    state.selected = Some(at);
-                    state.tool = Tool::Crop;
-                }
-            }
         });
     match change {
         Some(Change::Reset) => {
@@ -527,6 +481,17 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         }
         None => {}
     }
+    if let Some(anchor) = open_picker {
+        // A press while it is open closes it, as the composer's button does.
+        let tab = match app.settings.picker_mode {
+            PickerTab::Gifs => PickerTab::Stickers,
+            tab => tab,
+        };
+        app.picker_anchor = Some(anchor);
+        actions.push(Action::TogglePicker(app.picker.unwrap_or(tab)));
+        state.tool = Tool::Crop;
+    }
+    state.marks = edit.marks.len();
     ctx.data_mut(|data| data.insert_temp(state_id(), state));
     app.picture_edit = Some(edit);
     app.actions.extend(actions);
@@ -876,100 +841,6 @@ fn swatches(
     }
 }
 
-/// The tray of emoji and the user's stickers, a glass panel rising over the
-/// toolbar. Returns what was picked to lay on the picture.
-fn sticker_tray(
-    ui: &mut egui::Ui,
-    palette: theme::Palette,
-    tray: Rect,
-    shown: f32,
-    stickers: &[std::path::PathBuf],
-) -> Option<StickerArt> {
-    let eased = theme::ease_out(shown);
-    let place = tray.translate(vec2(0.0, 12.0 * (1.0 - eased)));
-    let mut picked = None;
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(place)
-            .layout(Layout::top_down(Align::Min)),
-    );
-    child.multiply_opacity(shown);
-    if shown < 1.0 {
-        child.disable();
-    }
-    child
-        .painter()
-        .add(super::conversation::glass(&palette, place, 22.0));
-    let inside = place.shrink(TRAY_PAD);
-    child.scope_builder(egui::UiBuilder::new().max_rect(inside), |ui| {
-        egui::ScrollArea::vertical()
-            .id_salt("picture-editor-tray")
-            .max_height(inside.height())
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::splat(TRAY_GAP);
-                    for cluster in EMOJI {
-                        let (rect, response) =
-                            ui.allocate_exact_size(Vec2::splat(TRAY_CELL), Sense::click());
-                        tray_hover(ui, palette, &response, rect);
-                        crate::emoji::paint_cluster(ui, cluster, rect.shrink(7.0));
-                        if response
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            picked = Some(StickerArt::Emoji(cluster.to_owned()));
-                        }
-                    }
-                    for path in stickers {
-                        let (rect, response) =
-                            ui.allocate_exact_size(Vec2::splat(TRAY_CELL), Sense::click());
-                        tray_hover(ui, palette, &response, rect);
-                        if ui.is_rect_visible(rect) {
-                            widgets::file_image(ui, path)
-                                .fit_to_exact_size(Vec2::splat(TRAY_CELL - 8.0))
-                                .paint_at(ui, rect.shrink(4.0));
-                        }
-                        if response
-                            .on_hover_cursor(egui::CursorIcon::PointingHand)
-                            .clicked()
-                        {
-                            picked = Some(StickerArt::File(path.clone()));
-                        }
-                    }
-                });
-            });
-    });
-    picked
-}
-
-/// The tray's size for `cells` emoji and stickers in `room` across: whole
-/// columns up to [`TRAY_WIDTH`], and as many rows as they fill, up to
-/// [`TRAY_ROWS`].
-fn tray_size(cells: usize, room: f32) -> Vec2 {
-    let step = TRAY_CELL + TRAY_GAP;
-    let fits = ((TRAY_WIDTH.min(room) - 2.0 * TRAY_PAD + TRAY_GAP) / step).floor() as usize;
-    let columns = fits.clamp(1, cells.max(1));
-    let rows = cells.div_ceil(columns).clamp(1, TRAY_ROWS);
-    vec2(
-        columns as f32 * step - TRAY_GAP + 2.0 * TRAY_PAD,
-        rows as f32 * step - TRAY_GAP + 2.0 * TRAY_PAD,
-    )
-}
-
-/// The tint under a tray cell the pointer is over.
-fn tray_hover(ui: &egui::Ui, palette: theme::Palette, response: &egui::Response, rect: Rect) {
-    let hover = theme::animate(
-        ui.ctx(),
-        response.id.with("hover"),
-        response.hovered(),
-        theme::MOTION_QUICK,
-    );
-    if hover > 0.0 {
-        ui.painter()
-            .rect_filled(rect, 10.0, palette.surface_hover.gamma_multiply(hover));
-    }
-}
 /// The largest rectangle of `shape`'s proportions centred in `room`.
 fn fitted(shape: Vec2, room: Rect) -> Rect {
     let scale = (room.width() / shape.x.max(1.0)).min(room.height() / shape.y.max(1.0));
@@ -1179,20 +1050,6 @@ fn shade_outside(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_tray_fits_its_cells_and_scrolls_past_three_rows() {
-        let step = TRAY_CELL + TRAY_GAP;
-        // Twenty-four emoji in a wide window: twelve across, two rows.
-        let tray = tray_size(24, 2000.0);
-        assert!(tray.x <= TRAY_WIDTH);
-        assert!((tray.y - (2.0 * step - TRAY_GAP + 2.0 * TRAY_PAD)).abs() < 0.01);
-        // Many stickers stop at three rows and scroll.
-        let full = tray_size(200, 2000.0);
-        assert!((full.y - (3.0 * step - TRAY_GAP + 2.0 * TRAY_PAD)).abs() < 0.01);
-        // A narrow window takes fewer columns, never none.
-        assert!(tray_size(24, 50.0).x > 0.0);
-    }
 
     #[test]
     fn the_picture_fills_the_room_in_one_direction() {

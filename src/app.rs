@@ -7119,6 +7119,12 @@ impl App {
         let Some(action) = self.apply_call_action(action, ctx) else {
             return;
         };
+        // The picker opened over the picture editor lays what is picked on
+        // the picture; nothing is inserted or sent.
+        let action = match self.pick_for_picture(action) {
+            Some(action) => action,
+            None => return,
+        };
         let reply_send = match &action {
             Action::SendText { chat, quoting, .. } | Action::SendLocation { chat, quoting, .. } => {
                 Some((chat.as_str(), quoting.as_ref()))
@@ -8334,8 +8340,9 @@ impl App {
                 }
             }
             Action::ApplyPictureEdit => {
-                // The editor is closing, and its picture goes with it.
+                // The editor is closing, and its picture and picker go with it.
                 self.picture_texture = None;
+                self.picker = None;
                 if let Some(edit) = self.picture_edit.take() {
                     // Held against the attachment until the file lands, so a
                     // second edit started meanwhile cannot take its origin.
@@ -8362,6 +8369,7 @@ impl App {
                 }
             }
             Action::CancelPictureEdit => {
+                self.picker = None;
                 self.picture_edit = None;
                 self.picture_texture = None;
                 self.picture_inspecting = None;
@@ -8453,7 +8461,9 @@ impl App {
                 self.reaction_anchor = None;
                 if self.picker == Some(tab) {
                     self.picker = None;
-                    self.refocus_composer(ctx);
+                    if self.picture_edit.is_none() {
+                        self.refocus_composer(ctx);
+                    }
                 } else {
                     self.picker = Some(tab);
                     if self.settings.picker_mode != tab {
@@ -8493,7 +8503,7 @@ impl App {
                 self.reaction_target = None;
                 self.reaction_anchor = None;
                 self.emoji_jump = None;
-                if !was_reaction {
+                if !was_reaction && self.picture_edit.is_none() {
                     self.refocus_composer(ctx);
                 }
             }
@@ -11260,6 +11270,30 @@ impl App {
                 egui::text::CCursor::new(at),
             )));
         egui::TextEdit::store_state(ctx, id, state);
+    }
+
+    /// While the picture editor is open, an emoji or sticker picked in the
+    /// picker is laid on the picture and the picker closes; a GIF cannot be,
+    /// and is dropped. Anything else is handed back to be applied.
+    fn pick_for_picture(&mut self, action: Action) -> Option<Action> {
+        let Some(edit) = self.picture_edit.as_mut() else {
+            return Some(action);
+        };
+        match action {
+            Action::InsertEmoji(emoji) => {
+                edit.lay_sticker(crate::model::StickerArt::Emoji(emoji.clone()));
+                self.remember_emoji(&emoji);
+                self.picker = None;
+                None
+            }
+            Action::SendSticker(path) => {
+                edit.lay_sticker(crate::model::StickerArt::File(path));
+                self.picker = None;
+                None
+            }
+            Action::SendGif(_) => None,
+            other => Some(other),
+        }
     }
 
     fn remember_emoji(&mut self, emoji: &str) {
