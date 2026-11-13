@@ -7119,6 +7119,12 @@ impl App {
         let Some(action) = self.apply_call_action(action, ctx) else {
             return;
         };
+        // The picker opened over the picture editor lays what is picked on
+        // the picture; nothing is inserted or sent.
+        let action = match self.pick_for_picture(action) {
+            Some(action) => action,
+            None => return,
+        };
         let reply_send = match &action {
             Action::SendText { chat, quoting, .. } | Action::SendLocation { chat, quoting, .. } => {
                 Some((chat.as_str(), quoting.as_ref()))
@@ -8323,6 +8329,7 @@ impl App {
                             height: origin.height,
                             crop: origin.crop,
                             turns: origin.turns,
+                            marks: origin.marks,
                         });
                     } else if Pending::is_picture_file(&path) {
                         // Its size has to be read before the cropper can open
@@ -8333,8 +8340,9 @@ impl App {
                 }
             }
             Action::ApplyPictureEdit => {
-                // The editor is closing, and its picture goes with it.
+                // The editor is closing, and its picture and picker go with it.
                 self.picture_texture = None;
+                self.picker = None;
                 if let Some(edit) = self.picture_edit.take() {
                     // Held against the attachment until the file lands, so a
                     // second edit started meanwhile cannot take its origin.
@@ -8346,6 +8354,7 @@ impl App {
                             height: edit.height,
                             crop: edit.crop,
                             turns: edit.turns,
+                            marks: edit.marks.clone(),
                         },
                     );
                     self.backend.send(Command::ApplyPictureEdit {
@@ -8355,10 +8364,12 @@ impl App {
                         height: edit.height,
                         crop: edit.crop,
                         turns: edit.turns,
+                        marks: edit.marks,
                     });
                 }
             }
             Action::CancelPictureEdit => {
+                self.picker = None;
                 self.picture_edit = None;
                 self.picture_texture = None;
                 self.picture_inspecting = None;
@@ -8450,7 +8461,9 @@ impl App {
                 self.reaction_anchor = None;
                 if self.picker == Some(tab) {
                     self.picker = None;
-                    self.refocus_composer(ctx);
+                    if self.picture_edit.is_none() {
+                        self.refocus_composer(ctx);
+                    }
                 } else {
                     self.picker = Some(tab);
                     if self.settings.picker_mode != tab {
@@ -8490,7 +8503,7 @@ impl App {
                 self.reaction_target = None;
                 self.reaction_anchor = None;
                 self.emoji_jump = None;
-                if !was_reaction {
+                if !was_reaction && self.picture_edit.is_none() {
                     self.refocus_composer(ctx);
                 }
             }
@@ -11259,6 +11272,30 @@ impl App {
         egui::TextEdit::store_state(ctx, id, state);
     }
 
+    /// While the picture editor is open, an emoji or sticker picked in the
+    /// picker is laid on the picture and the picker closes; a GIF cannot be,
+    /// and is dropped. Anything else is handed back to be applied.
+    fn pick_for_picture(&mut self, action: Action) -> Option<Action> {
+        let Some(edit) = self.picture_edit.as_mut() else {
+            return Some(action);
+        };
+        match action {
+            Action::InsertEmoji(emoji) => {
+                edit.lay_sticker(crate::model::StickerArt::Emoji(emoji.clone()));
+                self.remember_emoji(&emoji);
+                self.picker = None;
+                None
+            }
+            Action::SendSticker(path) => {
+                edit.lay_sticker(crate::model::StickerArt::File(path));
+                self.picker = None;
+                None
+            }
+            Action::SendGif(_) => None,
+            other => Some(other),
+        }
+    }
+
     fn remember_emoji(&mut self, emoji: &str) {
         self.settings.recent_emoji.retain(|known| known != emoji);
         self.settings.recent_emoji.insert(0, emoji.to_owned());
@@ -12897,6 +12934,7 @@ mod tests {
                 height: 6,
                 crop: crate::model::PictureCrop::full(8, 6),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         let first_id = app.account().id.clone();
@@ -20661,6 +20699,7 @@ mod tests {
                 height: 4,
                 crop: crate::model::PictureCrop::full(4, 4),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         // Unstaged while its crop is still being written.
