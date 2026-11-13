@@ -6205,6 +6205,43 @@ mod tests {
         assert!(!leaks(&labels).is_empty());
     }
 
+    /// A message picked up and held over the chat is drawn as a card, and the
+    /// window notes where. Noting it once asked egui for the window's id from
+    /// inside the closure that had its memory locked for writing, which waits
+    /// on itself: the app stopped answering the moment a card was drawn.
+    #[test]
+    fn a_carried_message_is_drawn_without_locking_up() {
+        let mut app = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        apply_flags(&mut app, Some("chat,carry=ada-photo"));
+        // The pointer rests over the chat list, as `--demo-hover` holds it.
+        // One pass lays the bubble out, the next presses it, then it lifts.
+        for _ in 0..6 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    events: vec![egui::Event::PointerMoved(egui::pos2(160.0, 300.0))],
+                    ..Default::default()
+                },
+                |ui| {
+                    let ctx = ui.ctx().clone();
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                },
+            );
+            output.textures_delta.clear();
+        }
+        assert!(crate::ui::carry::carrying(&ctx), "the message is picked up");
+        assert!(
+            crate::ui::carry::painted(&ctx).is_some(),
+            "the card is drawn, and the window knows where"
+        );
+    }
+
     /// Lays out each synthetic demo screen and checks that its controls fit the visible surface.
     #[test]
     fn keeping_a_crop_stages_the_cropped_picture_and_remembers_its_original() {

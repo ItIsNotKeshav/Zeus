@@ -217,7 +217,8 @@ pub fn over_chat(ctx: &egui::Context) -> Option<ChatId> {
 /// Where this window drew the carried card this frame, if it did: a window
 /// cut to what it shows keeps the card's place in it.
 pub fn painted(ctx: &egui::Context) -> Option<Rect> {
-    ctx.data(|data| data.get_temp::<Rect>(painted_id().with(ctx.viewport_id())))
+    let painted = painted_id().with(ctx.viewport_id());
+    ctx.data(|data| data.get_temp::<Rect>(painted))
 }
 
 /// How opaque a message's bubble is drawn: faint while its card is away,
@@ -974,7 +975,10 @@ fn paint(
     if !card.intersects(ctx.content_rect()) {
         return;
     }
-    ctx.data_mut(|data| data.insert_temp(painted_id().with(ctx.viewport_id()), card));
+    // The window's id is read before the memory is locked for writing:
+    // asking for it inside the closure waits on that same lock for ever.
+    let painted = painted_id().with(ctx.viewport_id());
+    ctx.data_mut(|data| data.insert_temp(painted, card));
     let layer = egui::LayerId::new(egui::Order::Tooltip, carry_id());
     let mut ui = egui::Ui::new(
         ctx.clone(),
