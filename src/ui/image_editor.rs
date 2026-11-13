@@ -37,8 +37,26 @@ const HIGHLIGHTER_WIDTH: f32 = 20.0;
 const STICKER_SHARE: f32 = 0.28;
 /// The smallest a sticker can be made, in points on screen.
 const STICKER_LEAST: f32 = 24.0;
-/// The sticker tray's height when open.
-const TRAY: f32 = 132.0;
+/// The most rows of the sticker tray shown at once; more scroll.
+const TRAY_ROWS: usize = 3;
+/// Room inside the tray around its cells.
+const TRAY_PAD: f32 = 10.0;
+/// Between the tray's cells.
+const TRAY_GAP: f32 = 4.0;
+/// The widest the sticker tray grows.
+const TRAY_WIDTH: f32 = 560.0;
+/// Room inside the glass bars around their buttons.
+const BAR_PAD: f32 = 4.0;
+/// Between the buttons of a glass bar.
+const BAR_GAP: f32 = 4.0;
+/// Between the groups of a glass bar, a hairline in the middle.
+const BAR_DIVIDE: f32 = 13.0;
+/// Between the colours in their bar.
+const SWATCH_GAP: f32 = 10.0;
+/// Between the toolbar and what floats over it.
+const SHELF_GAP: f32 = 10.0;
+/// Between the round buttons at the top, as the chat header spaces them.
+const TOP_GAP: f32 = 10.0;
 /// A cell of the sticker tray.
 const TRAY_CELL: f32 = 40.0;
 
@@ -95,6 +113,25 @@ struct State {
     selected: Option<usize>,
 }
 
+/// The tool a demo page opens the editor on, since a screenshot cannot
+/// click one: 0 crop, 1 pen, 2 highlighter, 3 stickers.
+#[cfg(feature = "demo")]
+pub(crate) static DEMO_TOOL: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// The tool the editor opens on.
+fn first_tool() -> Tool {
+    #[cfg(feature = "demo")]
+    {
+        match DEMO_TOOL.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => return Tool::Pen,
+            2 => return Tool::Highlighter,
+            3 => return Tool::Sticker,
+            _ => {}
+        }
+    }
+    Tool::Crop
+}
+
 fn state_id() -> egui::Id {
     egui::Id::new("picture-editor-state")
 }
@@ -134,6 +171,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let mut state = ctx
         .data(|data| data.get_temp::<State>(state_id()))
         .unwrap_or_else(|| State {
+            tool: first_tool(),
             colour: 2,
             ..State::default()
         });
@@ -181,24 +219,20 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             let top = Rect::from_min_size(room.min, vec2(room.width(), BAR));
             let bottom =
                 Rect::from_min_size(pos2(room.min.x, room.max.y - BAR), vec2(room.width(), BAR));
-            // The tray of stickers opens above the tools, pushing the picture
-            // up as it comes.
+            // The colours (while a pen is in hand) and the tray of stickers
+            // float over the toolbar, pushing the picture up as they come.
+            let swatches_open = state.tool.draws();
+            let swatches_shown = shown(ui.ctx(), ui.id().with("swatches"), swatches_open);
             let tray_open = state.tool == Tool::Sticker;
-            let tray_shown = theme::animate(
-                ui.ctx(),
-                ui.id().with("tray"),
-                tray_open,
-                if tray_open {
-                    theme::MOTION_PANEL
-                } else {
-                    theme::MOTION_PANEL * theme::CLOSE
-                },
-            );
-            let tray_room = (TRAY + 8.0) * theme::ease_out(tray_shown);
+            let tray_shown = shown(ui.ctx(), ui.id().with("tray"), tray_open);
+            let tray_size = tray_size(EMOJI.len() + own_stickers.len(), room.width());
+            let shelf = ((SWATCH + 2.0 * BAR_PAD + 6.0 + SHELF_GAP)
+                * theme::ease_out(swatches_shown))
+            .max((tray_size.y + SHELF_GAP) * theme::ease_out(tray_shown));
             let (wide, tall) = edit.displayed_size();
             let inner = Rect::from_min_max(
                 pos2(room.min.x, top.max.y),
-                pos2(room.max.x, bottom.min.y - tray_room),
+                pos2(room.max.x, bottom.min.y - SHELF_GAP - shelf),
             );
             let picture = fitted(vec2(wide as f32, tall as f32), inner);
             let scale = picture.width() / wide.max(1) as f32;
@@ -325,22 +359,16 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 // Stickers sit over the crop, so they take the pointer first.
                 move_stickers(ui, palette, &mut edit, &mut state, picture, scale);
             }
+            // The top right, as the chat header lays its buttons: round glass
+            // ones, with the accent circle for the action that finishes.
             ui.scope_builder(
                 egui::UiBuilder::new()
                     .max_rect(top)
                     .layout(Layout::right_to_left(Align::Center)),
                 |ui| {
+                    ui.spacing_mut().item_spacing.x = TOP_GAP;
                     let close = gettext("Cancel (Esc)");
-                    if theme::icon_button(
-                        ui,
-                        Icon::X,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        &close,
-                    )
-                    .clicked()
-                    {
+                    if tool_button(ui, palette, Icon::X, false, true, &close).clicked() {
                         actions.push(Action::CancelPictureEdit);
                     }
                     let keep = gettext("Done");
@@ -359,18 +387,108 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         actions.push(Action::ApplyPictureEdit);
                     }
                     if view_once_offered {
-                        ui.add_space(8.0);
                         let label = gettext("View once");
-                        if tool_button(ui, palette, Icon::ViewOnce, view_once, &label).clicked() {
+                        if tool_button(ui, palette, Icon::ViewOnce, view_once, true, &label)
+                            .clicked()
+                        {
                             actions.push(Action::SetPendingViewOnce(!view_once));
                         }
                     }
                 },
             );
+            // Reset sits alone at the bottom right, as an outlined pill.
+            let mut reset_left = bottom.max.x;
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(bottom)
+                    .layout(Layout::right_to_left(Align::Center)),
+                |ui| {
+                    let reset = gettext("Reset");
+                    let response = theme::pill_button(ui, &palette, &reset, false);
+                    reset_left = response.rect.min.x;
+                    if response.clicked() {
+                        change = Some(Change::Reset);
+                    }
+                },
+            );
+            // The tools, one glass bar in the middle of the bottom: what a drag
+            // does, then Undo, then the turns.
+            // Seven buttons and two dividers, each divider holding its own
+            // gaps either side.
+            let bar_width = 2.0 * BAR_PAD + 7.0 * TOOL + 4.0 * BAR_GAP + 2.0 * BAR_DIVIDE;
+            let bar_height = TOOL + 2.0 * BAR_PAD;
+            // Centred, unless that would run under Reset in a narrow window.
+            let bar_left = (bottom.center().x - bar_width / 2.0)
+                .min(reset_left - 12.0 - bar_width)
+                .max(bottom.min.x);
+            let bar = Rect::from_min_size(
+                pos2(bar_left, bottom.center().y - bar_height / 2.0),
+                vec2(bar_width, bar_height),
+            );
+            ui.painter()
+                .add(super::conversation::glass(&palette, bar, bar_height / 2.0));
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(bar.shrink(BAR_PAD))
+                    .layout(Layout::left_to_right(Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = BAR_GAP;
+                    for (tool, icon, label) in [
+                        (Tool::Crop, Icon::Crop, "Crop"),
+                        (Tool::Pen, Icon::Pencil, "Pen"),
+                        (Tool::Highlighter, Icon::Highlighter, "Highlighter"),
+                        (Tool::Sticker, Icon::Sticker, "Stickers and emoji"),
+                    ] {
+                        let label = gettext(label);
+                        if tool_button(ui, palette, icon, state.tool == tool, false, &label)
+                            .clicked()
+                        {
+                            // A second press on the open tray closes it.
+                            state.tool = if tool == state.tool && tool == Tool::Sticker {
+                                Tool::Crop
+                            } else {
+                                tool
+                            };
+                            state.selected = None;
+                        }
+                    }
+                    divider(ui, palette);
+                    let undo = gettext("Undo");
+                    let can_undo = !edit.marks.is_empty();
+                    if ui
+                        .add_enabled_ui(can_undo, |ui| {
+                            tool_button(ui, palette, Icon::Undo, false, false, &undo)
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        change = Some(Change::Undo);
+                    }
+                    divider(ui, palette);
+                    let left = gettext("Turn left");
+                    if tool_button(ui, palette, Icon::RotateLeft, false, false, &left).clicked() {
+                        change = Some(Change::Turn { clockwise: false });
+                    }
+                    let right = gettext("Turn right");
+                    if tool_button(ui, palette, Icon::RotateRight, false, false, &right).clicked() {
+                        change = Some(Change::Turn { clockwise: true });
+                    }
+                },
+            );
+            // Over the toolbar: the colours while drawing.
+            if swatches_shown > 0.0 {
+                swatches(ui, palette, &mut state, &gettext, bar, swatches_shown);
+            }
+            // And the tray of emoji and stickers.
             if tray_shown > 0.0 {
+                let width = tray_size.x;
                 let tray = Rect::from_min_size(
-                    pos2(room.min.x, bottom.min.y - tray_room),
-                    vec2(room.width(), TRAY),
+                    pos2(
+                        (bar.center().x - width / 2.0)
+                            .clamp(room.min.x, (room.max.x - width).max(room.min.x)),
+                        bar.min.y - SHELF_GAP - tray_size.y,
+                    ),
+                    tray_size,
                 );
                 if let Some(art) = sticker_tray(ui, palette, tray, tray_shown, &own_stickers) {
                     // Laid in the middle of the crop, a little over a
@@ -391,91 +509,6 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     state.tool = Tool::Crop;
                 }
             }
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(bottom)
-                    .layout(Layout::left_to_right(Align::Center)),
-                |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    for (tool, icon, label) in [
-                        (Tool::Crop, Icon::Crop, "Crop"),
-                        (Tool::Pen, Icon::Pencil, "Pen"),
-                        (Tool::Highlighter, Icon::Highlighter, "Highlighter"),
-                        (Tool::Sticker, Icon::Sticker, "Stickers and emoji"),
-                    ] {
-                        let label = gettext(label);
-                        if tool_button(ui, palette, icon, state.tool == tool, &label).clicked() {
-                            // A second press on the open tray closes it.
-                            state.tool = if tool == state.tool && tool == Tool::Sticker {
-                                Tool::Crop
-                            } else {
-                                tool
-                            };
-                            state.selected = None;
-                        }
-                    }
-                    let undo = gettext("Undo");
-                    let can_undo = !edit.marks.is_empty();
-                    if ui
-                        .add_enabled_ui(can_undo, |ui| {
-                            theme::icon_button(
-                                ui,
-                                Icon::Undo,
-                                18.0,
-                                if can_undo {
-                                    palette.secondary
-                                } else {
-                                    palette.dim
-                                },
-                                palette.text,
-                                &undo,
-                            )
-                        })
-                        .inner
-                        .clicked()
-                    {
-                        change = Some(Change::Undo);
-                    }
-                    swatches(ui, palette, &mut state, &gettext);
-                },
-            );
-            ui.scope_builder(
-                egui::UiBuilder::new()
-                    .max_rect(bottom)
-                    .layout(Layout::right_to_left(Align::Center)),
-                |ui| {
-                    let reset = gettext("Reset");
-                    if theme::pill_button(ui, &palette, &reset, false).clicked() {
-                        change = Some(Change::Reset);
-                    }
-                    let right = gettext("Turn right");
-                    if theme::icon_button(
-                        ui,
-                        Icon::RotateRight,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        &right,
-                    )
-                    .clicked()
-                    {
-                        change = Some(Change::Turn { clockwise: true });
-                    }
-                    let left = gettext("Turn left");
-                    if theme::icon_button(
-                        ui,
-                        Icon::RotateLeft,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        &left,
-                    )
-                    .clicked()
-                    {
-                        change = Some(Change::Turn { clockwise: false });
-                    }
-                },
-            );
         });
     match change {
         Some(Change::Reset) => {
@@ -670,13 +703,43 @@ fn move_stickers(
     }
 }
 
-/// A round tool button: lit in the accent while its tool is on, easing
-/// between the two.
+/// How far open a floating part of the editor is, easing in on the panel's
+/// time and out in [`theme::CLOSE`] of it, as surfaces close.
+fn shown(ctx: &egui::Context, id: egui::Id, open: bool) -> f32 {
+    theme::animate(
+        ctx,
+        id,
+        open,
+        if open {
+            theme::MOTION_PANEL
+        } else {
+            theme::MOTION_PANEL * theme::CLOSE
+        },
+    )
+}
+
+/// The hairline between a glass bar's groups of buttons.
+fn divider(ui: &mut egui::Ui, palette: theme::Palette) {
+    let (rect, _) = ui.allocate_exact_size(vec2(BAR_DIVIDE - 2.0 * BAR_GAP, TOOL), Sense::hover());
+    let x = rect.center().x;
+    ui.painter().line_segment(
+        [
+            pos2(x, rect.center().y - TOOL * 0.3),
+            pos2(x, rect.center().y + TOOL * 0.3),
+        ],
+        Stroke::new(1.0, palette.text.gamma_multiply(0.12)),
+    );
+}
+
+/// A round button: lit in the accent while `on`, easing between the two.
+/// Off, it is clear inside a glass bar, or a glass circle of its own at the
+/// top, as the chat header's buttons are.
 fn tool_button(
     ui: &mut egui::Ui,
     palette: theme::Palette,
     icon: Icon,
     on: bool,
+    glass: bool,
     label: &str,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(TOOL), Sense::click());
@@ -690,88 +753,131 @@ fn tool_button(
         let hover = theme::animate(
             ui.ctx(),
             response.id.with("hover"),
-            response.hovered() || response.has_focus(),
+            ui.is_enabled() && (response.hovered() || response.has_focus()),
             theme::MOTION_QUICK,
         );
+        let press = theme::animate(
+            ui.ctx(),
+            response.id.with("press"),
+            response.is_pointer_button_down_on(),
+            theme::MOTION_QUICK,
+        );
+        if glass && lit < 1.0 {
+            ui.painter()
+                .add(super::conversation::glass(&palette, rect, TOOL / 2.0));
+        }
         let idle = Color32::TRANSPARENT.lerp_to_gamma(palette.surface_hover, hover);
         let fill = idle.lerp_to_gamma(palette.accent, lit);
-        ui.painter().circle_filled(rect.center(), TOOL / 2.0, fill);
-        let tint = palette.secondary.lerp_to_gamma(palette.on_accent, lit);
-        theme::paint_icon(ui, icon, rect, 18.0, tint);
+        let scale = 1.0 - 0.06 * press;
+        ui.painter()
+            .circle_filled(rect.center(), TOOL / 2.0 * scale, fill);
+        let rest = if ui.is_enabled() {
+            palette.secondary.lerp_to_gamma(palette.text, hover)
+        } else {
+            palette.dim
+        };
+        let tint = rest.lerp_to_gamma(palette.on_accent, lit);
+        theme::paint_icon(ui, icon, rect, 18.0 * scale, tint);
     }
     response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(label)
 }
 
-/// The colours, shown beside the tools while the pen or highlighter is in
-/// hand, growing in as it is picked up.
+/// The colours, in a glass bar that rises over the toolbar while the pen or
+/// highlighter is in hand.
 fn swatches(
     ui: &mut egui::Ui,
     palette: theme::Palette,
     state: &mut State,
     gettext: &impl Fn(&'static str) -> String,
+    toolbar: Rect,
+    shown: f32,
 ) {
     let drawing = state.tool.draws();
-    let shown = theme::animate(
-        ui.ctx(),
-        egui::Id::new("picture-editor-swatches"),
-        drawing,
-        if drawing {
-            theme::MOTION_PANEL
-        } else {
-            theme::MOTION_PANEL * theme::CLOSE
-        },
-    );
-    if shown <= 0.0 {
-        return;
-    }
-    ui.add_space(10.0 * shown);
     let eased = theme::ease_out(shown);
+    let count = COLOURS.len() as f32;
+    let size = vec2(
+        count * SWATCH + (count - 1.0) * SWATCH_GAP + 2.0 * (BAR_PAD + 6.0),
+        SWATCH + 2.0 * (BAR_PAD + 3.0),
+    );
+    // Rises from just over the toolbar, and sinks back as it closes.
+    let rise = 10.0 * (1.0 - eased);
+    let bar = Rect::from_center_size(
+        pos2(
+            toolbar.center().x,
+            toolbar.min.y - SHELF_GAP - size.y / 2.0 + rise,
+        ),
+        size,
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(bar.shrink2(vec2(BAR_PAD + 6.0, 0.0)))
+            .layout(Layout::left_to_right(Align::Center)),
+    );
+    child.multiply_opacity(shown);
+    if !drawing {
+        child.disable();
+    }
+    child
+        .painter()
+        .add(super::conversation::glass(&palette, bar, size.y / 2.0));
+    child.spacing_mut().item_spacing.x = SWATCH_GAP;
     for (at, [r, g, b]) in COLOURS.into_iter().enumerate() {
-        let side = SWATCH * eased;
-        let (rect, response) = ui.allocate_exact_size(vec2(side, SWATCH), Sense::click());
+        let (rect, response) = child.allocate_exact_size(Vec2::splat(SWATCH), Sense::click());
         let name = gettext(COLOUR_NAMES[at]);
         response.widget_info(|| {
             egui::WidgetInfo::selected(
                 egui::WidgetType::RadioButton,
-                ui.is_enabled(),
+                drawing,
                 state.colour == at,
                 &name,
             )
         });
         let picked = theme::animate(
-            ui.ctx(),
+            child.ctx(),
             response.id.with("picked"),
             state.colour == at,
             theme::MOTION_QUICK,
         );
+        let hover = theme::animate(
+            child.ctx(),
+            response.id.with("hover"),
+            response.hovered(),
+            theme::MOTION_QUICK,
+        );
         let centre = rect.center();
-        let radius = side / 2.0 * (0.8 + 0.2 * picked);
-        let colour = Color32::from_rgb(r, g, b).gamma_multiply(shown);
-        ui.painter().circle_filled(centre, radius, colour);
-        // A thin ring keeps white and black visible on either theme, and a
-        // wider one marks the colour in hand.
-        ui.painter().circle_stroke(
+        // The colour in hand shrinks inside a ring of the accent; another
+        // grows a touch under the pointer.
+        let radius = SWATCH / 2.0 * (1.0 - 0.22 * picked + 0.08 * hover * (1.0 - picked));
+        child
+            .painter()
+            .circle_filled(centre, radius, Color32::from_rgb(r, g, b));
+        // A hairline keeps white and black visible on either theme.
+        child.painter().circle_stroke(
             centre,
             radius,
-            Stroke::new(1.0, palette.secondary.gamma_multiply(0.5 * shown)),
+            Stroke::new(1.0, palette.text.gamma_multiply(0.18)),
         );
         if picked > 0.0 {
-            ui.painter().circle_stroke(
+            child.painter().circle_stroke(
                 centre,
-                radius + 3.0,
-                Stroke::new(2.0, palette.accent.gamma_multiply(picked * shown)),
+                SWATCH / 2.0 + 1.0,
+                Stroke::new(2.0, palette.accent.gamma_multiply(picked)),
             );
         }
-        if drawing && response.on_hover_text(&name).clicked() {
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(&name)
+            .clicked()
+        {
             state.colour = at;
         }
     }
 }
 
-/// The tray of emoji and the user's stickers, sliding up from the tools.
-/// Returns what was picked to lay on the picture.
+/// The tray of emoji and the user's stickers, a glass panel rising over the
+/// toolbar. Returns what was picked to lay on the picture.
 fn sticker_tray(
     ui: &mut egui::Ui,
     palette: theme::Palette,
@@ -791,8 +897,10 @@ fn sticker_tray(
     if shown < 1.0 {
         child.disable();
     }
-    child.painter().rect_filled(place, 16.0, palette.surface);
-    let inside = place.shrink(8.0);
+    child
+        .painter()
+        .add(super::conversation::glass(&palette, place, 22.0));
+    let inside = place.shrink(TRAY_PAD);
     child.scope_builder(egui::UiBuilder::new().max_rect(inside), |ui| {
         egui::ScrollArea::vertical()
             .id_salt("picture-editor-tray")
@@ -800,12 +908,12 @@ fn sticker_tray(
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                    ui.spacing_mut().item_spacing = Vec2::splat(TRAY_GAP);
                     for cluster in EMOJI {
                         let (rect, response) =
                             ui.allocate_exact_size(Vec2::splat(TRAY_CELL), Sense::click());
                         tray_hover(ui, palette, &response, rect);
-                        crate::emoji::paint_cluster(ui, cluster, rect.shrink(6.0));
+                        crate::emoji::paint_cluster(ui, cluster, rect.shrink(7.0));
                         if response
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
@@ -833,6 +941,20 @@ fn sticker_tray(
             });
     });
     picked
+}
+
+/// The tray's size for `cells` emoji and stickers in `room` across: whole
+/// columns up to [`TRAY_WIDTH`], and as many rows as they fill, up to
+/// [`TRAY_ROWS`].
+fn tray_size(cells: usize, room: f32) -> Vec2 {
+    let step = TRAY_CELL + TRAY_GAP;
+    let fits = ((TRAY_WIDTH.min(room) - 2.0 * TRAY_PAD + TRAY_GAP) / step).floor() as usize;
+    let columns = fits.clamp(1, cells.max(1));
+    let rows = cells.div_ceil(columns).clamp(1, TRAY_ROWS);
+    vec2(
+        columns as f32 * step - TRAY_GAP + 2.0 * TRAY_PAD,
+        rows as f32 * step - TRAY_GAP + 2.0 * TRAY_PAD,
+    )
 }
 
 /// The tint under a tray cell the pointer is over.
@@ -1048,20 +1170,29 @@ fn shade_outside(
         return;
     }
     for (_, at) in handles(crop) {
-        let handle = Rect::from_center_size(at, Vec2::splat(HANDLE));
-        ui.painter().rect_filled(handle, 2.0, palette.accent);
-        ui.painter().rect_stroke(
-            handle,
-            2.0,
-            Stroke::new(1.0, palette.on_accent),
-            StrokeKind::Inside,
-        );
+        ui.painter().circle_filled(at, HANDLE / 2.0, palette.accent);
+        ui.painter()
+            .circle_stroke(at, HANDLE / 2.0, Stroke::new(1.5, palette.on_accent));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_tray_fits_its_cells_and_scrolls_past_three_rows() {
+        let step = TRAY_CELL + TRAY_GAP;
+        // Twenty-four emoji in a wide window: twelve across, two rows.
+        let tray = tray_size(24, 2000.0);
+        assert!(tray.x <= TRAY_WIDTH);
+        assert!((tray.y - (2.0 * step - TRAY_GAP + 2.0 * TRAY_PAD)).abs() < 0.01);
+        // Many stickers stop at three rows and scroll.
+        let full = tray_size(200, 2000.0);
+        assert!((full.y - (3.0 * step - TRAY_GAP + 2.0 * TRAY_PAD)).abs() < 0.01);
+        // A narrow window takes fewer columns, never none.
+        assert!(tray_size(24, 50.0).x > 0.0);
+    }
 
     #[test]
     fn the_picture_fills_the_room_in_one_direction() {

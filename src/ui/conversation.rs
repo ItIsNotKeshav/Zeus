@@ -537,7 +537,7 @@ pub(super) fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
 
 /// Glass under a vibrant header's name or one of its buttons: the veil
 /// thickened where they sit, with a faint edge, as Messages floats them.
-fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
+pub(crate) fn glass(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
     let radius = CornerRadius::from(radius);
     egui::Shape::Vec(vec![
         egui::Shape::rect_filled(rect, radius, palette.vibrant_pill(palette.chat)),

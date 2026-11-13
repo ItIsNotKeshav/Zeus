@@ -3843,8 +3843,17 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 ));
             }
             // The same editor with a pen line, a highlighter stroke and an
-            // emoji laid on the picture.
-            "draw" => {
+            // emoji laid on the picture; `draw-pen` opens it with the pen in
+            // hand and its colours out, `draw-stickers` with the tray open.
+            "draw" | "draw-pen" | "draw-stickers" => {
+                crate::ui::image_editor::DEMO_TOOL.store(
+                    match part {
+                        "draw-pen" => 1,
+                        "draw-stickers" => 3,
+                        _ => 0,
+                    },
+                    std::sync::atomic::Ordering::Relaxed,
+                );
                 use crate::model::{PictureMark, PictureSticker, PictureStroke, StickerArt};
                 let (photo, _) = sample_files(app);
                 let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
@@ -6561,6 +6570,8 @@ mod tests {
             "attachment-draft-return",
             "crop",
             "draw",
+            "draw-pen",
+            "draw-stickers",
             "compose-emoji",
             "voice",
             "voice,voice-menu",
