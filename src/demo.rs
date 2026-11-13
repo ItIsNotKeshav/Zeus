@@ -3842,6 +3842,45 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     height,
                 ));
             }
+            // The same editor with a pen line, a highlighter stroke and an
+            // emoji laid on the picture.
+            "draw" => {
+                use crate::model::{PictureMark, PictureSticker, PictureStroke, StickerArt};
+                let (photo, _) = sample_files(app);
+                let (width, height) = image::image_dimensions(&photo).unwrap_or((4, 3));
+                let target = app.stage(crate::app::Pending::File(photo.clone()));
+                let mut edit = crate::model::PictureEdit::new(
+                    target,
+                    crate::model::PictureSource::File(photo),
+                    width,
+                    height,
+                );
+                let (w, h) = (width as f32, height as f32);
+                let wave = (0..=24)
+                    .map(|step| {
+                        let t = step as f32 / 24.0;
+                        [w * (0.15 + 0.5 * t), h * (0.7 + 0.08 * (t * 12.0).sin())]
+                    })
+                    .collect();
+                edit.marks.push(PictureMark::Stroke(PictureStroke {
+                    points: wave,
+                    colour: [239, 68, 68],
+                    width: w / 120.0,
+                    highlighter: false,
+                }));
+                edit.marks.push(PictureMark::Stroke(PictureStroke {
+                    points: vec![[w * 0.1, h * 0.2], [w * 0.55, h * 0.2]],
+                    colour: [250, 204, 21],
+                    width: w / 30.0,
+                    highlighter: true,
+                }));
+                edit.marks.push(PictureMark::Sticker(PictureSticker {
+                    art: StickerArt::Emoji("😎".to_owned()),
+                    centre: [w * 0.75, h * 0.4],
+                    size: h * 0.25,
+                }));
+                app.picture_edit = Some(edit);
+            }
             "archived" => app.show_archived = true,
             "labels" | "label-chips" => labels_sample(app),
             "label-filter" => {
@@ -6220,6 +6259,7 @@ mod tests {
                 height,
                 crop: crate::model::PictureCrop::full(width, height),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         app.actions.push(crate::model::Action::EditPicture(target));
@@ -6520,6 +6560,7 @@ mod tests {
             "attachment-draft-away",
             "attachment-draft-return",
             "crop",
+            "draw",
             "compose-emoji",
             "voice",
             "voice,voice-menu",

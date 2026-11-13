@@ -8323,6 +8323,7 @@ impl App {
                             height: origin.height,
                             crop: origin.crop,
                             turns: origin.turns,
+                            marks: origin.marks,
                         });
                     } else if Pending::is_picture_file(&path) {
                         // Its size has to be read before the cropper can open
@@ -8346,6 +8347,7 @@ impl App {
                             height: edit.height,
                             crop: edit.crop,
                             turns: edit.turns,
+                            marks: edit.marks.clone(),
                         },
                     );
                     self.backend.send(Command::ApplyPictureEdit {
@@ -8355,6 +8357,7 @@ impl App {
                         height: edit.height,
                         crop: edit.crop,
                         turns: edit.turns,
+                        marks: edit.marks,
                     });
                 }
             }
@@ -12897,6 +12900,7 @@ mod tests {
                 height: 6,
                 crop: crate::model::PictureCrop::full(8, 6),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         let first_id = app.account().id.clone();
@@ -20661,6 +20665,7 @@ mod tests {
                 height: 4,
                 crop: crate::model::PictureCrop::full(4, 4),
                 turns: 0,
+                marks: Vec::new(),
             },
         );
         // Unstaged while its crop is still being written.

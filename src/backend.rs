@@ -811,6 +811,8 @@ pub enum Command {
         height: u32,
         crop: crate::model::PictureCrop,
         turns: u8,
+        /// Drawn on the turned picture before it is cropped.
+        marks: Vec<crate::model::PictureMark>,
     },
     /// Internal: the edited picture, ready to replace the staged attachment.
     PictureEdited {
