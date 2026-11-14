@@ -125,11 +125,7 @@ pub struct Player {
 
 struct Loaded {
     message: String,
-    /// The decoded clip; empty once playback is done (see `len`).
     samples: Arc<Vec<f32>>,
-    /// Length of the decoded clip in samples, kept after `samples` is freed
-    /// so the finished clip still reports its duration.
-    len: usize,
     /// Samples queued in the sink: the clip itself or its compression.
     buffer: Arc<Vec<f32>>,
     /// Speed the queued buffer represents; 1 plays the clip as recorded.
@@ -229,11 +225,19 @@ impl Player {
         let Some(loaded) = self.loaded.as_ref() else {
             return;
         };
-        let (wanted, _) = Self::buffer_for(loaded, &self.stretches, self.speed);
-        if self.output.is_none() || Arc::ptr_eq(&wanted, &loaded.buffer) {
+        let (wanted, factor) = Self::buffer_for(loaded, &self.stretches, self.speed);
+        if self.output.is_none() {
+            // A paused clip can change speed without reopening the device.
+            if let Some(loaded) = self.loaded.as_mut() {
+                loaded.buffer = wanted;
+                loaded.factor = factor;
+            }
             return;
         }
-        let total = clip_length(loaded.len);
+        if Arc::ptr_eq(&wanted, &loaded.buffer) {
+            return;
+        }
+        let total = clip_length(loaded.samples.len());
         let fraction = if total > Duration::ZERO {
             (self.status(&loaded.message).position.as_secs_f64() / total.as_secs_f64()) as f32
         } else {
@@ -271,10 +275,6 @@ impl Player {
         let Some(loaded) = &self.loaded else {
             return;
         };
-        if loaded.done {
-            // The decoded clip was freed when it ended; a replay decodes anew.
-            return;
-        }
         let samples = Arc::clone(&loaded.samples);
         let waker = self.waker.clone();
         let slot: StretchedSlot = Default::default();
@@ -306,22 +306,23 @@ impl Player {
         match self.loaded.as_mut() {
             Some(loaded) if loaded.message == message => {
                 if loaded.done {
-                    // Its samples were freed at the end: decode again.
-                    return self.load(message, path, 0.0);
+                    return self.restart(0.0);
                 }
                 if self.output.is_none() {
-                    // Paused when its output failed: open the device again.
-                    let fraction = fraction_of(loaded.base, loaded.len);
+                    // Paused clips release their player so the shared device
+                    // can sleep. Reopen it at the remembered position.
+                    let fraction = fraction_of(loaded.base, loaded.samples.len());
                     return self.restart(fraction);
                 }
                 if let Some((_, sink)) = &self.output {
-                    if loaded.paused {
-                        sink.play();
-                    } else {
-                        sink.pause();
-                    }
-                    loaded.paused = !loaded.paused;
+                    sink.pause();
+                    loaded.base = (loaded.base + sink.get_pos().mul_f32(loaded.factor))
+                        .min(clip_length(loaded.samples.len()));
+                    loaded.paused = true;
                 }
+                // A paused rodio player still produces silence forever and
+                // keeps the mixer busy, preventing the device from idling.
+                self.output = None;
                 Ok(())
             }
             _ => self.load(message, path, 0.0),
@@ -331,7 +332,7 @@ impl Player {
     /// Seeks to a fraction from 0 to 1 and starts playback.
     pub fn seek(&mut self, message: &str, path: &Path, fraction: f32) -> Result<(), String> {
         match &self.loaded {
-            Some(loaded) if loaded.message == message && !loaded.done => self.restart(fraction),
+            Some(loaded) if loaded.message == message => self.restart(fraction),
             _ => self.load(message, path, fraction),
         }
     }
@@ -345,6 +346,38 @@ impl Player {
         self.stretching = None;
         // A clip the reader stopped is not one that played to its end.
         self.finished = None;
+    }
+
+    /// The message of the clip in the player, until it ends.
+    pub fn current(&self) -> Option<&str> {
+        self.loaded
+            .as_ref()
+            .filter(|loaded| !loaded.done)
+            .map(|loaded| loaded.message.as_str())
+    }
+
+    /// Plays or pauses the clip in the player, whichever chat is on screen.
+    pub fn toggle_current(&mut self) -> Result<(), String> {
+        match self.current().map(str::to_owned) {
+            // Holding the clip, `toggle` never reads the path.
+            Some(message) => self.toggle(&message, Path::new("")),
+            None => Ok(()),
+        }
+    }
+
+    /// Holds a paused clip of `message`, without a sound device.
+    #[cfg(any(test, feature = "demo"))]
+    pub fn hold_paused(&mut self, message: &str) {
+        let samples = Arc::new(vec![0.0; 48_000 * 4]);
+        self.loaded = Some(Loaded {
+            message: message.to_owned(),
+            buffer: samples.clone(),
+            samples,
+            factor: 1.0,
+            base: Duration::from_secs(1),
+            paused: true,
+            done: false,
+        });
     }
 
     /// Takes the message whose clip just played to its end, once. The app uses
@@ -373,7 +406,7 @@ impl Player {
         }
         match &self.loaded {
             Some(loaded) if loaded.message == message => {
-                let total = clip_length(loaded.len);
+                let total = clip_length(loaded.samples.len());
                 if loaded.done {
                     return Status {
                         state: State::Idle,
@@ -429,7 +462,6 @@ impl Player {
                 message,
                 buffer: Arc::clone(&samples),
                 factor: 1.0,
-                len: samples.len(),
                 samples,
                 base: Duration::ZERO,
                 paused: false,
@@ -461,16 +493,6 @@ impl Player {
             // Release the device after playback ends.
             self.output = None;
             self.finished = self.loaded.as_ref().map(|loaded| loaded.message.clone());
-            // Free the decoded clip and its compressions; a replay decodes
-            // again instead of holding minutes of samples while idle.
-            if let Some(loaded) = self.loaded.as_mut() {
-                let empty = Arc::new(Vec::new());
-                loaded.samples = Arc::clone(&empty);
-                loaded.buffer = empty;
-                loaded.factor = 1.0;
-            }
-            self.stretches = Vec::new();
-            self.stretching = None;
         }
         Ok(())
     }
@@ -497,7 +519,7 @@ impl Player {
         };
         loaded.base = position;
         let paused = loaded.paused || loaded.done;
-        let fraction = fraction_of(position, loaded.len);
+        let fraction = fraction_of(position, loaded.samples.len());
         let recent = self
             .output_failed
             .is_some_and(|at| at.elapsed() < OUTPUT_RETRY);
@@ -544,7 +566,7 @@ impl Player {
         // The sink always plays at 1x: running it faster sharpens the voice,
         // so speeds above 1x queue a time-compressed copy of the clip.
         let (buffer, factor) = Self::buffer_for(loaded, &self.stretches, self.speed);
-        let total = clip_length(loaded.len);
+        let total = clip_length(loaded.samples.len());
         let offset = ((fraction.clamp(0.0, 1.0) * buffer.len() as f32) as usize).min(buffer.len());
         if self.output.is_none() {
             let waker = self.waker.clone();
@@ -611,7 +633,7 @@ type Outcome = Arc<Mutex<Option<Result<Vec<f32>, String>>>>;
 
 /// Records until told to stop, pushing a level per 50 ms and calling the
 /// wake function after each, and returns the mono 48 kHz samples.
-type Take = Box<dyn FnOnce(&AtomicBool, &Live, &dyn Fn()) -> Result<Vec<f32>, String> + Send>;
+type Take = fn(&AtomicBool, &Live, &dyn Fn()) -> Result<Vec<f32>, String>;
 
 /// What a take shows while it records: a loudness per 50 ms, and when the
 /// microphone first delivered sound.
@@ -638,7 +660,7 @@ impl Live {
     }
 }
 
-/// Records from a microphone until told to stop.
+/// Records from the default microphone until told to stop.
 pub struct Recorder {
     stop: Arc<AtomicBool>,
     /// Loudness for each recorded 50 ms segment, and when sound first came.
@@ -651,13 +673,8 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// Records from `device`, the system's id for a microphone, or from the
-    /// system default when it is `None` or cannot be opened.
-    pub fn start(waker: Waker, device: Option<String>) -> Self {
-        Self::spawn(
-            waker,
-            Box::new(move |stop, live, wake| record(device, stop, live, wake)),
-        )
+    pub fn start(waker: Waker) -> Self {
+        Self::spawn(waker, record)
     }
 
     /// Records a synthetic voice instead of the microphone, at the pace a
@@ -665,7 +682,7 @@ impl Recorder {
     /// and sending it yields that many seconds of a speech-like tone.
     #[cfg(any(test, feature = "demo"))]
     pub fn simulated(waker: Waker) -> Self {
-        Self::spawn(waker, Box::new(rehearse))
+        Self::spawn(waker, rehearse)
     }
 
     fn spawn(waker: Waker, body: Take) -> Self {
@@ -827,43 +844,13 @@ fn rehearse(stop: &AtomicBool, live: &Live, wake: &dyn Fn()) -> Result<Vec<f32>,
     Ok(samples)
 }
 
-fn record(
-    device: Option<String>,
-    stop: &AtomicBool,
-    live: &Live,
-    wake: &dyn Fn(),
-) -> Result<Vec<f32>, String> {
-    record_from(
-        move || open_microphone(device),
-        STALLED_MICROPHONE,
-        stop,
-        live,
-        wake,
-    )
+fn record(stop: &AtomicBool, live: &Live, wake: &dyn Fn()) -> Result<Vec<f32>, String> {
+    record_from(open_microphone, STALLED_MICROPHONE, stop, live, wake)
 }
 
-/// Opens `device`, or the default microphone, with its channel count and
-/// sample rate. A picked device that will not open (unplugged since it was
-/// picked) gives way to the default, as a call's does, rather than leaving
-/// nothing to record from.
-fn open_microphone(device: Option<String>) -> Result<(Microphone, u16, u32), String> {
-    let picked = device.map(|id| {
-        Microphone::open(
-            fastframe_audio::Device::Id(fastframe_audio::DeviceId::new(id)),
-            "voice recording",
-            false,
-        )
-    });
-    let microphone = match picked {
-        Some(Ok(microphone)) => microphone,
-        Some(Err(error)) => {
-            log::warn!(
-                "recording: the picked microphone could not be opened ({error}); using the default"
-            );
-            Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?
-        }
-        None => Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?,
-    };
+/// Opens the default microphone, with its channel count and sample rate.
+fn open_microphone() -> Result<(Microphone, u16, u32), String> {
+    let microphone = Microphone::open(fastframe_audio::Device::Default, "voice recording", false)?;
     let channels = microphone.channels();
     let rate = microphone.rate();
     Ok((microphone, channels, rate))
@@ -1370,35 +1357,6 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_clip_frees_its_samples_but_keeps_its_length() {
-        let samples = Arc::new(vec![0.0; 4_800]);
-        let mut player = Player::new(Waker::default());
-        player.stretches.push((2.0, Arc::new(vec![0.0; 2_400])));
-        player.loaded = Some(Loaded {
-            message: "clip".to_owned(),
-            len: samples.len(),
-            buffer: Arc::clone(&samples),
-            samples,
-            factor: 1.0,
-            base: Duration::ZERO,
-            paused: false,
-            done: false,
-        });
-        // No output is open, so poll cannot see the end; mark it as poll does.
-        player.speed = 2.0;
-        if let Some(loaded) = player.loaded.as_mut() {
-            loaded.done = true;
-            loaded.samples = Arc::new(Vec::new());
-            loaded.buffer = Arc::clone(&loaded.samples);
-        }
-        player.ensure_stretch();
-        assert!(player.stretching.is_none(), "nothing to compress once done");
-        let status = player.status("clip");
-        assert_eq!(status.state, State::Idle);
-        assert_eq!(status.total, clip_length(4_800));
-    }
-
-    #[test]
     fn speed_labels_match_the_button() {
         assert_eq!(speed_label(SPEEDS[0]), "1x");
         assert_eq!(speed_label(SPEEDS[1]), "1.25x");
@@ -1455,7 +1413,6 @@ mod tests {
         let loaded = Loaded {
             message: "clip".to_owned(),
             samples: Arc::clone(&samples),
-            len: samples.len(),
             buffer: Arc::clone(&one_and_a_half),
             factor: 1.5,
             base: Duration::ZERO,
@@ -1487,7 +1444,6 @@ mod tests {
         player.loaded = Some(Loaded {
             message: "clip".to_owned(),
             buffer: Arc::clone(&samples),
-            len: samples.len(),
             samples,
             factor: 1.0,
             base: Duration::ZERO,
@@ -1613,7 +1569,7 @@ mod tests {
     #[test]
     #[ignore = "needs a microphone"]
     fn records_a_second_on_this_machine() {
-        let recorder = Recorder::start(Waker::default(), None);
+        let recorder = Recorder::start(Waker::default());
         // A suspended USB microphone takes a few hundred milliseconds to wake.
         let asked = Instant::now();
         while !recorder.listening() && asked.elapsed() < Duration::from_secs(3) {

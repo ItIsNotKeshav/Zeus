@@ -10,7 +10,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use crate::model::{
-    Chat, ChatId, Contact, Gif, GifError, Message, PollDraft, StickerPack, StorageStats,
+    Chat, ChatActivity, ChatId, Contact, Gif, GifError, GifPage, Message, PollDraft, StickerPack,
+    StorageStats,
 };
 use crate::paths::AccountDirs;
 
@@ -126,43 +127,21 @@ pub struct CreatedPoll {
     pub recipients: Vec<String>,
 }
 
+/// An attachment's place in its chat's line of sends.
+#[derive(Debug)]
+pub struct SendTurn {
+    /// Resolved once the attachment has gone out or failed, so the next one
+    /// may follow it.
+    pub done: tokio::sync::oneshot::Sender<()>,
+    /// The linked session it was staged in: after a sign-out it is dropped,
+    /// never archived or sent from the account linked next.
+    pub generation: u64,
+    /// Settles this attachment's send against the reader's cancel.
+    pub gate: crate::model::UploadGate,
+}
+
 #[derive(Debug)]
 pub enum Command {
-    SetChatExportAllowed(bool),
-    ExportChat {
-        request: u64,
-        chat: ChatId,
-        include_media: bool,
-    },
-    CancelChatExport,
-    ChatExportTarget {
-        request: u64,
-        include_media: bool,
-        target: Option<PathBuf>,
-    },
-    ChatExportProgress {
-        request: u64,
-        counts: crate::archive::chat_export::Counts,
-    },
-    ChatExportFinished {
-        request: u64,
-        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
-    },
-    /// Changes a chat's disappearing-message timer; `0` turns it off.
-    SetDisappearingTimer {
-        chat: ChatId,
-        seconds: u32,
-    },
-    /// Internal: a disappearing-timer change went out. `Ok` carries the sent
-    /// message's id and setting time, whose server ack decides whether the
-    /// timer is written. `session` identifies the account this completion
-    /// belongs to.
-    TimerSet {
-        chat: ChatId,
-        session: u64,
-        seconds: u32,
-        result: Result<(String, i64), String>,
-    },
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,
@@ -256,6 +235,26 @@ pub enum Command {
     Composing {
         chat: ChatId,
         composing: bool,
+    },
+    SetChatExportAllowed(bool),
+    ExportChat {
+        request: u64,
+        chat: ChatId,
+        include_media: bool,
+    },
+    CancelChatExport,
+    ChatExportTarget {
+        request: u64,
+        include_media: bool,
+        target: Option<PathBuf>,
+    },
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
     },
     /// Stores the open chat's unsent text, so it survives a restart.
     SaveDraft {
@@ -460,9 +459,6 @@ pub enum Command {
         mentions: Vec<String>,
         /// The message the first file replies to.
         quoting: Option<crate::model::ReplyTarget>,
-        /// The interface's name for each file's upload, in order; files past
-        /// its end are not followed.
-        uploads: Vec<crate::model::UploadId>,
     },
     /// Sends a clipboard image as straight-alpha RGBA.
     SendImage {
@@ -475,7 +471,6 @@ pub enum Command {
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
-        upload: Option<crate::model::UploadId>,
     },
     /// Syncs chat mute state. `Some(0)` is indefinite and `None` unmutes.
     SetMuted(ChatId, Option<i64>),
@@ -542,15 +537,6 @@ pub enum Command {
     SetCallCameraDevice(Option<String>),
     /// Lists the microphones, speakers and cameras the call screen offers.
     RefreshCallDevices,
-    /// The microphone Settings picked for calls (`None` is the system
-    /// default) and whether push to talk keeps it silent between presses.
-    /// Process-wide, so every account's backend gets it.
-    SetCallInput {
-        microphone: Option<crate::settings::SavedDevice>,
-        push_to_talk: bool,
-    },
-    /// Whether the push to talk key is held, for the current call.
-    SetCallTalking(bool),
     /// Reads the account's call entries for the Calls page.
     LoadCallLog,
     /// Sends a played receipt for a voice message.
@@ -565,8 +551,6 @@ pub enum Command {
         chat: ChatId,
         path: PathBuf,
         quoting: Option<crate::model::ReplyTarget>,
-        /// The interface's name for the sticker while it goes.
-        upload: Option<crate::model::UploadId>,
     },
     /// Saves a sticker file.
     SaveSticker {
@@ -585,11 +569,12 @@ pub enum Command {
         complete: bool,
     },
     /// Internal: the one-time replay of the phone's contacts, for the first
-    /// names saved before ZapFast kept them, finished.
+    /// names saved before Zeus kept them, finished.
     FirstNamesRecovered {
         complete: bool,
     },
-    /// Internal: the one-time replay of the phone's stars finished.
+    /// Internal: the one-time replay of the phone's stars, for those made
+    /// before Zeus followed them, finished.
     StarsRecovered {
         complete: bool,
     },
@@ -628,6 +613,21 @@ pub enum Command {
         chat: ChatId,
         speed: Option<f32>,
     },
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
+    /// Internal: a disappearing-timer change went out. `Ok` carries the sent
+    /// message's id and setting time, whose server ack decides whether the
+    /// timer is written. `session` identifies the account this completion
+    /// belongs to.
+    TimerSet {
+        chat: ChatId,
+        session: u64,
+        seconds: u32,
+        result: Result<(String, i64), String>,
+    },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
     /// Asks for a wallpaper image and copies it into the state directory.
@@ -643,15 +643,15 @@ pub enum Command {
     PickProfilePicture,
     /// Internal: a picked picture, cropped and encoded as JPEG.
     SetProfilePicture(Vec<u8>),
-    /// Changes a group's description on WhatsApp; empty removes it.
-    SetGroupDescription {
-        chat: ChatId,
-        description: String,
-    },
     /// Renames a group on WhatsApp, for everyone in it.
     SetGroupName {
         chat: ChatId,
         name: String,
+    },
+    /// Changes a group's description on WhatsApp; empty removes it.
+    SetGroupDescription {
+        chat: ChatId,
+        description: String,
     },
     /// Asks for a picture and makes it the group's photo.
     PickGroupPicture(ChatId),
@@ -708,10 +708,13 @@ pub enum Command {
         chat: ChatId,
         answer: GroupAnswer,
     },
-    /// Internal: WhatsApp answered a change to a group's name or photo.
+    /// Internal: WhatsApp answered a change to a group's name, photo or
+    /// timer. `session` is the account session the change was sent under; a
+    /// completion from a departed session is discarded.
     GroupEdited {
         chat: ChatId,
         edit: GroupEdit,
+        session: u64,
         result: Result<(), String>,
     },
     /// Internal: the server accepted a profile change.
@@ -732,6 +735,14 @@ pub enum Command {
     SaveAttachmentAs {
         source: std::path::PathBuf,
         name: String,
+    },
+    /// The reader tried to open this message's attachment and its file is
+    /// gone: finds it again or lets it download again.
+    AttachmentMissing {
+        chat: ChatId,
+        message: String,
+        card: Option<usize>,
+        path: PathBuf,
     },
     /// Opens the log, or shows it in its folder, off the interface thread;
     /// only a failure reports back.
@@ -791,6 +802,18 @@ pub enum Command {
         result: Result<PathBuf, String>,
         chat: Option<ChatId>,
         quoting: Option<crate::model::ReplyTarget>,
+    },
+    /// Builds a bounded pasted-picture preview away from the UI thread.
+    PreparePicturePreview {
+        target: crate::app::AttachmentId,
+        width: usize,
+        height: usize,
+        rgba: Arc<Vec<u8>>,
+    },
+    /// Internal: the bounded preview produced by a blocking worker.
+    PicturePreviewReady {
+        target: crate::app::AttachmentId,
+        image: Option<egui::ColorImage>,
     },
     /// Reads a staged picture's size, so the cropper can open on it.
     InspectPicture {
@@ -872,6 +895,14 @@ pub enum Command {
     SearchGifs {
         query: String,
         key: String,
+        offset: usize,
+        request: u64,
+    },
+    /// Downloads one GIF result's animated preview when its tile shows.
+    FetchGifAnimation {
+        id: String,
+        url: String,
+        extension: String,
     },
     /// Loads recent and saved stickers for the picker.
     RecentStickers,
@@ -881,6 +912,13 @@ pub enum Command {
         emoji: String,
     },
     SetArchived(ChatId, bool),
+    Archived {
+        chat: ChatId,
+        archived: bool,
+        at: i64,
+        request: u64,
+        result: Result<(), ()>,
+    },
     /// Leaves a group or channel. `archive` also hides the chat in Archived.
     LeaveGroup {
         chat: ChatId,
@@ -940,12 +978,16 @@ pub enum Command {
     /// Unlinks this account and deletes its local folders.
     RemoveAccount,
     Reconnect,
+    /// Starts a fresh WhatsApp client over the same device store, for a link
+    /// the library ended for good (a spent QR-only pairing) and that a
+    /// reconnect therefore cannot revive.
+    Relink,
     /// Use this proxy setting and reconnect. Empty follows the environment.
     SetProxy(String),
     /// Sets aside an unreadable archive and the linked session, then starts
     /// over with a new archive and a new link.
     StartOverArchive,
-    /// Whether the person is looking at ZapFast. While they are not, the
+    /// Whether the person is looking at Zeus. While they are not, the
     /// linked phone keeps receiving push notifications.
     SetOnline(bool),
     Shutdown,
@@ -991,18 +1033,15 @@ pub enum Command {
     /// Internal GIPHY result.
     GifResults {
         query: String,
-        results: Result<Vec<Gif>, GifError>,
+        offset: usize,
+        request: u64,
+        results: Result<GifPage, GifError>,
     },
-    /// Deletes the attachments in this account's media cache not opened
-    /// within `max_age`, then the ones opened longest ago until the cache
-    /// holds no more than `max_bytes`. Answered by `Event::MediaPruned` when
-    /// anything went.
-    PruneMediaCache {
-        max_age: Option<std::time::Duration>,
-        max_bytes: Option<u64>,
+    /// Internal GIF animated-preview result.
+    GifAnimated {
+        id: String,
+        path: Option<PathBuf>,
     },
-    /// Internal: the files a prune made off the runtime deleted.
-    MediaPruned(Vec<PathBuf>),
     /// Measures this account's media cache for Settings, answered by
     /// `Event::StorageStats` with the same `token`.
     LoadStorageStats {
@@ -1032,21 +1071,12 @@ pub enum Command {
         chat: ChatId,
         row: Box<Message>,
         raw: Vec<u8>,
-        /// The upload the message ends, now it is in the archive.
-        upload: Option<crate::model::UploadId>,
+        /// Its place in the chat's line, for an attachment that waits for the
+        /// one staged before it.
+        turn: Option<SendTurn>,
     },
-    /// Internal: how far an upload has got.
-    UploadProgress {
-        chat: ChatId,
-        upload: crate::model::UploadId,
-        sent: u64,
-        total: u64,
-    },
-    /// Internal: an upload that failed, or was refused.
-    UploadEnded {
-        chat: ChatId,
-        upload: crate::model::UploadId,
-    },
+    /// Phone numbers a group's metadata named, as (privacy id, number).
+    LearnNumbers(Vec<(String, String)>),
     /// Internal send audience. The sender waits for it to be archived.
     GroupRecipients {
         chat: ChatId,
@@ -1148,13 +1178,16 @@ pub enum Command {
 
 #[derive(Debug)]
 pub enum Event {
-    ChatExportProgress {
-        request: u64,
-        counts: crate::archive::chat_export::Counts,
+    Blocklist {
+        state: crate::blocking::Blocklist,
+        error: Option<crate::blocking::Failure>,
     },
-    ChatExportFinished {
-        request: u64,
-        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    /// Apply a privacy-id mapping together with its chat locks and blocklist.
+    BlocklistMapped {
+        from: ChatId,
+        to: ChatId,
+        chats: Vec<Chat>,
+        state: crate::blocking::Blocklist,
     },
     /// The phone's "Disable link previews", sent at start and on every change.
     LinkPreviewsDisabled(bool),
@@ -1162,30 +1195,6 @@ pub enum Event {
     LinkPreview {
         url: String,
         preview: Option<crate::model::ComposedPreview>,
-    },
-    /// A disappearing-timer change went to WhatsApp (`saving`), or WhatsApp
-    /// answered it, for a direct chat or a group. The chat keeps its current
-    /// timer until the answer.
-    TimerSaving {
-        chat: ChatId,
-        saving: bool,
-    },
-    Blocklist {
-        state: crate::blocking::Blocklist,
-        error: Option<crate::blocking::Failure>,
-    },
-    /// How far an attachment on its way has got, in encrypted bytes.
-    UploadProgress {
-        chat: ChatId,
-        upload: crate::model::UploadId,
-        sent: u64,
-        total: u64,
-    },
-    /// An attachment that is no longer on its way: its message is in the
-    /// archive, or it failed.
-    UploadEnded {
-        chat: ChatId,
-        upload: crate::model::UploadId,
     },
     InteractiveReplyState {
         chat: ChatId,
@@ -1222,7 +1231,7 @@ pub enum Event {
     /// Every label in creation order. Chats carry the labels they wear.
     Labels(Vec<crate::model::Label>),
     /// Unsent text stored for each chat, sent once at startup.
-    Drafts(Vec<(ChatId, String, i64)>),
+    Drafts(Vec<(ChatId, String)>),
     /// The starred messages of one chat, for the mark in the conversation.
     Stars {
         chat: ChatId,
@@ -1287,7 +1296,23 @@ pub enum Event {
         older: bool,
         complete: bool,
     },
+    /// History toward a message (`Command::LoadUntil`) that could not be
+    /// read, and why. It ends the chat's wait for older history as an empty
+    /// older page does, and is one event so that the replied-message jump
+    /// waiting on it says this error alone, never "not found" before it.
+    HistoryUnavailable {
+        chat: ChatId,
+        error: String,
+    },
     MessageUpdated(Box<Message>),
+    ChatExportProgress {
+        request: u64,
+        counts: crate::archive::chat_export::Counts,
+    },
+    ChatExportFinished {
+        request: u64,
+        result: Result<Option<(PathBuf, crate::archive::chat_export::Counts)>, String>,
+    },
     /// The account's media cache as measured, `None` when it could not be
     /// read. `cleared` says the cache was just emptied, so files the
     /// interface still points into it are gone.
@@ -1296,9 +1321,6 @@ pub enum Event {
         token: u64,
         cleared: bool,
     },
-    /// Attachments the automatic cleanup deleted from the media cache, so
-    /// the interface stops pointing at them.
-    MediaPruned(Vec<PathBuf>),
     /// Files selected for the composer, to go as documents when `documents`.
     Picked {
         chat: ChatId,
@@ -1310,9 +1332,7 @@ pub enum Event {
         chat: ChatId,
         message: Box<Message>,
     },
-    /// Contacts loaded or changed, each the worker's own allocation rather
-    /// than a copy, which the window keeps as it is (`model::Contacts`).
-    Contacts(Vec<Arc<Contact>>),
+    Contacts(Vec<Contact>),
     /// Message search results with their query, newest first.
     SearchHits {
         query: String,
@@ -1321,7 +1341,7 @@ pub enum Event {
     Typing {
         chat: ChatId,
         sender: String,
-        composing: bool,
+        activity: Option<ChatActivity>,
     },
     Presence {
         id: String,
@@ -1349,7 +1369,14 @@ pub enum Event {
     /// GIF search results or failure.
     Gifs {
         query: String,
-        results: Result<Vec<Gif>, GifError>,
+        offset: usize,
+        request: u64,
+        results: Result<GifPage, GifError>,
+    },
+    /// A GIF result's animated preview finished downloading.
+    GifAnimated {
+        id: String,
+        path: Option<PathBuf>,
     },
     /// A picture chosen for the sticker maker: its file, size, and whether it
     /// has see-through pixels.
@@ -1358,6 +1385,11 @@ pub enum Event {
         width: u32,
         height: u32,
         transparent: bool,
+    },
+    /// Bounded preview pixels; only the UI uploads the texture.
+    PicturePreviewReady {
+        target: crate::app::AttachmentId,
+        image: Option<egui::ColorImage>,
     },
     /// A staged picture's size, so the cropper can open on it.
     PictureInspected {
@@ -1387,6 +1419,27 @@ pub enum Event {
         chat: ChatId,
         message: String,
         result: Result<PathBuf, String>,
+    },
+    /// How far an attachment download has got, for its ring.
+    DownloadProgress {
+        chat: ChatId,
+        message: String,
+        percent: u8,
+    },
+    /// How far a file being sent has gone out, for the strip above the
+    /// composer, and roughly how many seconds the rest takes. The first one,
+    /// at 0, comes before it is prepared.
+    UploadProgress {
+        id: u64,
+        gate: crate::model::UploadGate,
+        chat: ChatId,
+        name: String,
+        percent: u8,
+        seconds_left: Option<u32>,
+    },
+    /// The upload with this id is over, sent or not.
+    UploadEnded {
+        id: u64,
     },
     /// A motion photo's clip finished downloading, or failed.
     Motion {
@@ -1498,7 +1551,7 @@ pub enum Event {
     },
     /// The current call changed state. The UI renders this and nothing else.
     Call(Box<crate::calls::CallUpdate>),
-    /// A group call ZapFast cannot join while [`crate::calls::GROUP_CALLS_ENABLED`] is off:
+    /// A group call Zeus cannot join while [`crate::calls::GROUP_CALLS_ENABLED`] is off:
     /// ringing (`phase` is `Incoming`), so the window says who is calling and to answer on the
     /// phone, or over, so that word is taken back. It never takes the call screen.
     PhoneOnlyCall(Box<crate::calls::CallUpdate>),
@@ -1518,9 +1571,11 @@ pub enum Event {
     Info(String),
     /// A decoded image ready to be written to the clipboard on the interface thread.
     ClipboardImage(Result<crate::model::DecodedImage, String>),
-    /// What GitHub said about releases: a newer one, none, or why it could
-    /// not be asked.
-    UpdateChecked(Result<Option<crate::updates::Release>, String>),
+    /// A newer release than this build exists.
+    UpdateAvailable {
+        version: String,
+        url: String,
+    },
     UpdateSupport(Result<crate::updates::Installation, String>),
     UpdateProgress {
         received: u64,
@@ -1538,10 +1593,21 @@ pub enum Event {
     },
     /// The account folders were deleted after RemoveAccount.
     AccountRemoved,
+    ArchiveFailed {
+        archived: bool,
+        failure: ArchiveFailure,
+    },
     Error(String),
     /// A change to a group's name or photo went to WhatsApp (`saving`), or
     /// WhatsApp answered it.
     GroupSaving {
+        chat: ChatId,
+        saving: bool,
+    },
+    /// A disappearing-timer change went to WhatsApp (`saving`), or WhatsApp
+    /// answered it, for a direct chat or a group. The chat keeps its current
+    /// timer until the answer.
+    TimerSaving {
         chat: ChatId,
         saving: bool,
     },
@@ -1552,11 +1618,11 @@ pub enum Event {
 pub enum GroupEdit {
     /// The new subject.
     Name(String),
+    /// The new description, empty when removed.
+    Description(String),
     /// A new photo, or none.
     Picture { removed: bool },
-    /// A new description; empty removes it.
-    Description(String),
-    /// A new disappearing-message timer, in seconds; `0` turns it off.
+    /// The new disappearing-message duration in seconds; zero turns it off.
     Timer(u32),
 }
 
@@ -1623,19 +1689,27 @@ pub struct ChannelPicture {
     pub preview: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArchiveFailure {
+    Offline,
+    Read,
+    Sync,
+    Write,
+}
+
 /// Why the worker refused a send.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
+    Blocked,
     /// There is no WhatsApp connection.
     Offline,
     /// The message being replied to cannot be quoted, because its row or its
-    /// original protobuf is missing, unreadable, or deleted. Sending anyway
+    /// original protobuf is missing, unreadable, or deleted (a view-once
+    /// message is quoted from its row, without one). Sending anyway
     /// would deliver the reply without its quote.
     QuoteUnavailable,
     /// View-once sends must be one photo, not a document or batch.
     UnsupportedViewOnce,
-    /// The contact is blocked; unblock them to send.
-    Blocked,
 }
 
 /// The content of a refused send.
@@ -1678,6 +1752,10 @@ pub struct Backend {
     offline: bool,
     #[cfg(any(test, feature = "demo"))]
     demo_commands: Option<std::sync::Mutex<Vec<Command>>>,
+    #[cfg(any(test, feature = "demo"))]
+    demo_events: Option<std::sync::mpsc::Sender<Event>>,
+    #[cfg(any(test, feature = "demo"))]
+    demo_waker: Waker,
 }
 
 impl Backend {
@@ -1712,6 +1790,10 @@ impl Backend {
             offline: false,
             #[cfg(any(test, feature = "demo"))]
             demo_commands: None,
+            #[cfg(any(test, feature = "demo"))]
+            demo_events: None,
+            #[cfg(any(test, feature = "demo"))]
+            demo_waker: Waker::default(),
         }
     }
 
@@ -1728,6 +1810,10 @@ impl Backend {
                 offline: true,
                 #[cfg(any(test, feature = "demo"))]
                 demo_commands: None,
+                #[cfg(any(test, feature = "demo"))]
+                demo_events: Some(event_tx.clone()),
+                #[cfg(any(test, feature = "demo"))]
+                demo_waker: Waker::default(),
             },
             event_tx,
         )
@@ -1772,8 +1858,32 @@ impl Backend {
         self.offline
     }
 
+    /// Queue runtime work, or handle local preview work in an offline demo.
     pub fn send(&self, command: Command) {
         if self.offline && !matches!(command, Command::Shutdown) {
+            #[cfg(any(test, feature = "demo"))]
+            if let Command::PreparePicturePreview {
+                target,
+                width,
+                height,
+                rgba,
+            } = &command
+                && let Some(events) = &self.demo_events
+            {
+                let (target, width, height, rgba) = (*target, *width, *height, Arc::clone(rgba));
+                let events = events.clone();
+                let waker = self.demo_waker.clone();
+                // Offline demos use the same command/event boundary, without a WhatsApp runtime.
+                std::thread::Builder::new()
+                    .name("demo-picture-preview".into())
+                    .spawn(move || {
+                        let image = picture_edit::preview(width, height, &rgba);
+                        let _ = events.send(Event::PicturePreviewReady { target, image });
+                        waker.wake();
+                    })
+                    .ok();
+                return;
+            }
             #[cfg(any(test, feature = "demo"))]
             if let Some(commands) = &self.demo_commands {
                 commands
@@ -1784,6 +1894,12 @@ impl Backend {
             return;
         }
         let _ = self.commands.send(command);
+    }
+
+    /// Wake an offline demo when its local preview worker finishes.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn attach_demo_window(&self, ctx: &egui::Context) {
+        self.demo_waker.attach(ctx);
     }
 
     /// Captures real UI commands for an offline demo's local responder.
@@ -1800,6 +1916,16 @@ impl Backend {
             .map_or_else(Vec::new, |commands| {
                 std::mem::take(&mut *commands.lock().unwrap_or_else(|p| p.into_inner()))
             })
+    }
+
+    /// Delivers `event` to the window as the worker would, for an offline
+    /// demo playing the other side of a call.
+    #[cfg(any(test, feature = "demo"))]
+    pub(crate) fn deliver_demo_event(&self, event: Event) {
+        if let Some(events) = &self.demo_events {
+            let _ = events.send(event);
+            self.demo_waker.wake();
+        }
     }
 
     pub fn poll(&self) -> Vec<Event> {

@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-23 16:22+0200\n"
+"POT-Creation-Date: 2026-11-01 20:11+0100\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: Zeus contributors\n"
 "Language-Team: Russian\n"
@@ -1221,8 +1221,7 @@ msgid "Custom title bar"
 msgstr "Собственный заголовок окна"
 
 #: src/ui/settings.rs:424
-msgid ""
-"Draw Zeus's own title bar and window buttons instead of the desktop's."
+msgid "Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
 "Рисовать собственный заголовок и кнопки окна Zeus вместо стандартных "
 "элементов рабочего стола."
@@ -1352,8 +1351,7 @@ msgid "Show when you are typing"
 msgstr "Показывать, что вы печатаете"
 
 #: src/ui/settings.rs:600
-msgid ""
-"Could not load your account privacy. Trying again when Zeus reconnects."
+msgid "Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
 "Не удалось загрузить настройки конфиденциальности аккаунта. Повторим, когда "
 "Zeus переподключится."
@@ -1406,11 +1404,11 @@ msgstr "Загружать обновления автоматически"
 
 #: src/ui/settings.rs:696
 msgid ""
-"You still choose when to restart. Package managers and Flatpak update "
-"Zeus themselves."
+"You still choose when to restart. Package managers and Flatpak update Zeus "
+"themselves."
 msgstr ""
-"Когда перезапускать, решаете вы. Менеджеры пакетов и Flatpak обновляют "
-"Zeus сами."
+"Когда перезапускать, решаете вы. Менеджеры пакетов и Flatpak обновляют Zeus "
+"сами."
 
 #: src/ui/settings.rs:709
 #, rust-format
@@ -1573,8 +1571,8 @@ msgstr "Блокировать"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using Zeus, also counted while it is in the tray. "
-"Ctrl+Shift+L locks it at once."
+"Time without using Zeus, also counted while it is in the tray. Ctrl+Shift+L "
+"locks it at once."
 msgstr ""
 "Время без использования Zeus, в том числе пока он в трее. Ctrl+Shift+L "
 "блокирует сразу."
@@ -1987,8 +1985,8 @@ msgstr "Входящий звонок"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
-"your phone."
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on your "
+"phone."
 msgstr ""
 "{caller} звонит в {group}. Zeus пока не может присоединяться к групповым "
 "звонкам: ответьте на телефоне."
@@ -1996,11 +1994,11 @@ msgstr ""
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. Zeus can't join group calls yet: "
-"answer on your phone."
+"{caller} is calling you and others. Zeus can't join group calls yet: answer "
+"on your phone."
 msgstr ""
-"{caller} звонит вам и другим участникам. Zeus пока не может "
-"присоединяться к групповым звонкам: ответьте на телефоне."
+"{caller} звонит вам и другим участникам. Zeus пока не может присоединяться к "
+"групповым звонкам: ответьте на телефоне."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
 #: src/ui/widgets.rs:944
@@ -3101,3 +3099,94 @@ msgstr ""
 
 #~ msgid "Next pinned message"
 #~ msgstr "Следующее закреплённое сообщение"
+
+#, fuzzy, rust-format
+#~ msgid "{name} turned off disappearing messages"
+#~ msgstr "Исчезающие сообщения"
+
+#, fuzzy
+#~ msgid "Locked chats"
+#~ msgstr "Заблокированный чат"
+
+#, fuzzy
+#~ msgid "recording audio…"
+#~ msgstr "Отправка набора стикеров…"
+
+#, fuzzy
+#~ msgid "Delete chat"
+#~ msgstr "Удалить чат?"
+
+#, fuzzy
+#~ msgid "Unarchive"
+#~ msgstr "Архив"
+
+#, fuzzy
+#~ msgid "Archive"
+#~ msgstr "Архив"
+
+#, fuzzy
+#~ msgid "Unlock chat"
+#~ msgstr "Заблокированный чат"
+
+#, fuzzy
+#~ msgid "Lock chat"
+#~ msgstr "Заблокированный чат"
+
+#, fuzzy
+#~ msgid "Default"
+#~ msgstr "По умолчанию"
+
+#, fuzzy
+#~ msgid "System sound"
+#~ msgstr "Система"
+
+#, fuzzy
+#~ msgid "No sound"
+#~ msgstr "Звук упоминания"
+
+#, fuzzy
+#~ msgid "Notification sound"
+#~ msgstr "Уведомления"
+
+#, fuzzy
+#~ msgid "8 hours"
+#~ msgstr "24 часа"
+
+#, fuzzy
+#~ msgid "Close chat"
+#~ msgstr "Очистить чат"
+
+#, fuzzy
+#~ msgid "You blocked this contact"
+#~ msgstr "Вы покинули этот канал"
+
+#: src/ui/conversation.rs:1530
+msgid "Channels are read-only in ZapFast"
+msgstr "Каналы в ZapFast доступны только для чтения"
+
+#: src/ui/settings.rs:703
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr "Раз в день обращается к GitHub, передавая только версию ZapFast."
+
+#: src/app.rs:4907 src/app.rs:8029
+msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgstr ""
+"ZapFast пока не может присоединяться к групповым звонкам: откройте ссылку на "
+"телефоне."
+
+#: src/app.rs:5740
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "Не отправлено: ZapFast не подключён к WhatsApp."
+
+#: src/app.rs:9279 src/ui/labels.rs:257
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "У вас {limit} меток — больше ZapFast не хранит."
+
+#: src/ui/image_preview.rs:738
+msgid "This image could not be displayed in ZapFast."
+msgstr "ZapFast не смог показать это изображение."
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "ZapFast заблокирован"

@@ -50,86 +50,6 @@ const WAITING_LIMIT: usize = 32;
 /// are limited. Opening the chat ends the wait early.
 const THROTTLE_WINDOW: Duration = Duration::from_secs(10 * 60);
 
-/// This many notifications within `BURST_WINDOW` make a burst.
-const BURST_COUNT: usize = 4;
-const BURST_WINDOW: Duration = Duration::from_secs(5);
-/// A burst ends after this long without a new notification. Messages
-/// arriving while the app starts are treated as a burst too.
-const BURST_QUIET: Duration = Duration::from_secs(8);
-
-/// What the burst guard decides about one notification.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Burst {
-    /// Show it; `sound` is whether it may make its sound.
-    Show { sound: bool },
-    /// Drop it: its chat already has one for this burst.
-    Skip,
-}
-
-/// Android-style notification cooldown. Once notifications flood in, only the
-/// first one of the burst sounds, each chat shows at most one, and the guard
-/// resets after a quiet spell. The app starts inside a burst, so the backlog
-/// that syncs at startup stays quiet too.
-#[derive(Debug)]
-pub struct BurstGuard {
-    recent: std::collections::VecDeque<Instant>,
-    /// Until when the burst lasts, extended by every notification.
-    until: Option<Instant>,
-    chats: std::collections::HashSet<String>,
-    sounded: bool,
-}
-
-impl BurstGuard {
-    pub fn starting(now: Instant) -> Self {
-        Self {
-            recent: Default::default(),
-            until: Some(now + BURST_QUIET),
-            chats: Default::default(),
-            sounded: false,
-        }
-    }
-
-    /// Judges a notification for `chat` arriving at `now`.
-    pub fn judge(&mut self, chat: &str, now: Instant) -> Burst {
-        while self
-            .recent
-            .front()
-            .is_some_and(|at| now.saturating_duration_since(*at) > BURST_WINDOW)
-        {
-            self.recent.pop_front();
-        }
-        self.recent.push_back(now);
-        if self.until.is_some_and(|until| now >= until) {
-            self.until = None;
-            self.chats.clear();
-            self.sounded = false;
-        }
-        if self.until.is_none() {
-            if self.recent.len() < BURST_COUNT {
-                return Burst::Show { sound: true };
-            }
-            // The burst started with notifications that already sounded.
-            self.until = Some(now + BURST_QUIET);
-            self.chats.clear();
-            self.sounded = true;
-        } else {
-            self.until = Some(now + BURST_QUIET);
-        }
-        if !self.chats.insert(chat.to_owned()) {
-            return Burst::Skip;
-        }
-        let sound = !self.sounded;
-        self.sounded = true;
-        Burst::Show { sound }
-    }
-}
-
-impl Default for BurstGuard {
-    fn default() -> Self {
-        Self::starting(Instant::now())
-    }
-}
-
 type Throttle = Arc<Mutex<std::collections::HashMap<(String, String), Instant>>>;
 
 type PendingByAccountChat =
@@ -166,7 +86,6 @@ pub struct Notifications {
     /// When each limited chat last showed a notification. Shared so a failed
     /// delivery, which happens on the notification's own thread, can undo it.
     throttle: Throttle,
-    burst: BurstGuard,
     /// What unit tests would have shown, recorded instead of shown on the
     /// desktop. Always empty outside tests.
     pub shown: Vec<Shown>,
@@ -238,12 +157,6 @@ impl Notifications {
     /// Takes back a call's notification, and only that one.
     pub fn clear_call(&mut self, account: &crate::model::AccountId, chat: &str) {
         self.clear(account, &call_key(chat));
-    }
-
-    /// Burst cooldown verdict for a notification about `chat`.
-    pub fn burst(&mut self, account: &crate::model::AccountId, chat: &str, now: Instant) -> Burst {
-        self.burst
-            .judge(&format!("{}\0{chat}", account.as_str()), now)
     }
 
     /// Whether a notification for this chat may be shown at `now`. A chat
@@ -401,7 +314,7 @@ impl Notifications {
 const RECEIVE: &[u8] = include_bytes!("../assets/sounds/receive.wav");
 const ALERT: &[u8] = include_bytes!("../assets/sounds/alert.wav");
 
-/// Whether the notification itself plays the sound, instead of ZapFast. On
+/// Whether the notification itself plays the sound, instead of Zeus. On
 /// macOS a sound the notification plays is silenced along with the banner by
 /// Do Not Disturb, Focus, and the app's notification settings, so Pidgin's
 /// sounds go with it when the application bundle carries them.
@@ -443,10 +356,6 @@ pub fn play_sound(sound: NotificationSound) {
         }),
         NotificationSound::System | NotificationSound::None => return,
     };
-    play_source(source);
-}
-
-fn play_source(source: Box<dyn Fn() -> std::io::Result<Box<dyn ReadSeek>> + Send>) {
     let spawned = std::thread::Builder::new()
         .name("notification-sound".into())
         .spawn(move || {
@@ -493,17 +402,27 @@ pub fn locked_lines(locale: crate::i18n::Locale) -> (String, String) {
 }
 
 /// Builds the notification title and body, including the group sender.
-pub fn lines(chat_name: &str, is_group: bool, sender: &str, summary: &str) -> (String, String) {
+pub fn lines(
+    chat_name: &str,
+    is_group: bool,
+    sender: &str,
+    summary: &str,
+    account: Option<&str>,
+) -> (String, String) {
     let body = if is_group {
         format!("{sender}: {summary}")
     } else {
         summary.to_owned()
     };
-    (chat_name.to_owned(), body)
+    let title = match account {
+        Some(account) => format!("{chat_name} · {account}"),
+        None => chat_name.to_owned(),
+    };
+    (title, body)
 }
 
 /// The bundle identifier packaging/macos gives the app.
-const MACOS_BUNDLE_ID: &str = "app.zeus.Zeus";
+const MACOS_BUNDLE_ID: &str = "me.paolino.fastsapp";
 
 /// The identity notifications are sent under. macOS refuses a client whose
 /// identity is not the running bundle's before it asks for permission, so a
@@ -514,12 +433,12 @@ fn notification_app_id() -> &'static str {
     if cfg!(target_os = "macos") {
         MACOS_BUNDLE_ID
     } else {
-        crate::brand::APP_USER_MODEL_ID
+        "me.paolino.zapfast"
     }
 }
 
 /// Fastframe owns the platform adapters and one bounded native worker. This
-/// thread only keeps ZapFast's account-scoped cancellation and click routing.
+/// thread only keeps Zeus's account-scoped cancellation and click routing.
 #[expect(clippy::too_many_arguments)]
 fn deliver(
     title: &str,
@@ -541,13 +460,13 @@ fn deliver(
     let client = match CLIENT.get_or_init(|| {
         Client::new(
             App::new(notification_app_id(), crate::brand::NAME)
-                .desktop_entry(crate::brand::ID)
-                .icon(crate::brand::ID)
-                // The logo's violet behind it on Windows toasts, so Windows
-                // 11's dark theme leaves it as drawn.
+                .desktop_entry("zapfast")
+                .icon("zapfast")
+                // Zeus's green, the theme's accent, behind the logo on
+                // Windows toasts, so Windows 11's dark theme leaves it as drawn.
                 .logo(
-                    include_bytes!("../packaging/icons/zeus-1024.png"),
-                    [0x5b, 0x5c, 0xf0],
+                    include_bytes!("../packaging/macos/icon-1024.png"),
+                    [0x00, 0xa8, 0x84],
                 ),
         )
     }) {
@@ -612,53 +531,6 @@ fn deliver(
 
 #[cfg(test)]
 mod tests {
-    use super::{Burst, BurstGuard};
-    use std::time::{Duration, Instant};
-
-    fn quiet_guard(start: Instant) -> (BurstGuard, Instant) {
-        let mut guard = BurstGuard::default();
-        // Let the startup burst end.
-        let now = start + Duration::from_secs(60);
-        assert_eq!(guard.judge("warmup", now), Burst::Show { sound: true });
-        (guard, now + Duration::from_secs(60))
-    }
-
-    #[test]
-    fn startup_backlog_sounds_once_and_one_per_chat() {
-        let start = Instant::now();
-        let mut guard = BurstGuard::starting(start);
-        assert_eq!(guard.judge("a", start), Burst::Show { sound: true });
-        assert_eq!(guard.judge("b", start), Burst::Show { sound: false });
-        assert_eq!(guard.judge("a", start), Burst::Skip);
-    }
-
-    #[test]
-    fn a_burst_mutes_then_resets_after_quiet() {
-        let (mut guard, t) = quiet_guard(Instant::now());
-        let step = Duration::from_millis(500);
-        for i in 0..3u32 {
-            assert_eq!(guard.judge("a", t + step * i), Burst::Show { sound: true });
-        }
-        // The fourth within five seconds starts the cooldown: no sound, and
-        // its chat is now used up.
-        assert_eq!(guard.judge("a", t + step * 3), Burst::Show { sound: false });
-        assert_eq!(guard.judge("a", t + step * 4), Burst::Skip);
-        assert_eq!(guard.judge("b", t + step * 5), Burst::Show { sound: false });
-        assert_eq!(guard.judge("b", t + step * 6), Burst::Skip);
-        // After a quiet spell the next one sounds again.
-        let later = t + Duration::from_secs(60);
-        assert_eq!(guard.judge("a", later), Burst::Show { sound: true });
-    }
-
-    #[test]
-    fn slow_notifications_always_sound() {
-        let (mut guard, t) = quiet_guard(Instant::now());
-        for i in 0..10u64 {
-            let now = t + Duration::from_secs(10 * i);
-            assert_eq!(guard.judge("a", now), Burst::Show { sound: true });
-        }
-    }
-
     /// Notifications on macOS need the bundle's own identifier, or the
     /// system never asks for permission.
     #[test]
@@ -721,7 +593,7 @@ mod tests {
 
     #[test]
     fn the_windows_shortcut_uses_the_notification_identity() {
-        let installer = include_str!("../packaging/windows/zeus.iss");
+        let installer = include_str!("../packaging/windows/zapfast.iss");
         let shortcuts: Vec<_> = installer
             .lines()
             .filter(|line| {
@@ -731,10 +603,7 @@ mod tests {
             .collect();
         assert_eq!(shortcuts.len(), 2);
         for shortcut in shortcuts {
-            assert!(shortcut.contains(&format!(
-                "AppUserModelID: \"{}\"",
-                crate::brand::APP_USER_MODEL_ID
-            )));
+            assert!(shortcut.contains("AppUserModelID: \"me.paolino.zapfast\""));
         }
     }
 
@@ -985,11 +854,15 @@ mod tests {
     #[test]
     fn a_group_names_the_sender_and_a_chat_does_not() {
         assert_eq!(
-            lines("Rust Berlin", true, "Mira", "Save me a seat"),
+            lines("Rust Berlin", true, "Mira", "Save me a seat", None),
             ("Rust Berlin".to_owned(), "Mira: Save me a seat".to_owned())
         );
         assert_eq!(
-            lines("Ada Lovelace", false, "Ada Lovelace", "Photo"),
+            lines("Ada Lovelace", false, "Ada Lovelace", "Photo", Some("Work")).0,
+            "Ada Lovelace · Work"
+        );
+        assert_eq!(
+            lines("Ada Lovelace", false, "Ada Lovelace", "Photo", None),
             ("Ada Lovelace".to_owned(), "Photo".to_owned())
         );
     }

@@ -1,4 +1,4 @@
-# Indonesia translation of the Zeus navigation pilot.
+# Indonesian translation of the Zeus navigation pilot.
 # Distributed under the same MIT license as Zeus.
 #
 msgid ""
@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-23 16:22+0200\n"
+"POT-Creation-Date: 2026-11-01 20:11+0100\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: Zeus contributors\n"
 "Language-Team: Indonesian\n"
@@ -487,8 +487,8 @@ msgid ""
 "Enter sends · Shift+Enter for a new line · *bold* _italic_ ~strike~ · Ctrl+V "
 "pastes a picture"
 msgstr ""
-"Enter untuk kirim · Shift+Enter untuk baris baru · *tebal* _miring_ ~coret~ "
-"· Ctrl+V menempelkan gambar"
+"Enter untuk kirim · Shift+Enter untuk baris baru · *tebal* _miring_ "
+"~coret~ · Ctrl+V menempelkan gambar"
 
 #: src/ui/conversation.rs:1863
 msgid "Ctrl+Enter sends · *bold* _italic_ ~strike~ · Ctrl+V pastes a picture"
@@ -936,8 +936,8 @@ msgid ""
 "your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"Zeus menyimpan arsip Anda yang tidak terbaca sebagai file terpisah, "
-"membuat arsip baru, dan meminta Anda menautkan lagi. Menautkan lagi akan "
+"Zeus menyimpan arsip Anda yang tidak terbaca sebagai file terpisah, membuat "
+"arsip baru, dan meminta Anda menautkan lagi. Menautkan lagi akan "
 "mengembalikan riwayat terbaru dari telepon Anda. Setelah itu, hapus entri "
 "Zeus lama di Perangkat tertaut pada telepon Anda."
 
@@ -1207,8 +1207,7 @@ msgid "Custom title bar"
 msgstr "Bilah judul khusus"
 
 #: src/ui/settings.rs:424
-msgid ""
-"Draw Zeus's own title bar and window buttons instead of the desktop's."
+msgid "Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
 "Gambar bilah judul dan tombol jendela milik Zeus sendiri, bukan milik "
 "desktop."
@@ -1340,8 +1339,7 @@ msgid "Show when you are typing"
 msgstr "Tampilkan saat Anda sedang mengetik"
 
 #: src/ui/settings.rs:600
-msgid ""
-"Could not load your account privacy. Trying again when Zeus reconnects."
+msgid "Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
 "Tidak dapat memuat privasi akun Anda. Mencoba lagi saat Zeus terhubung "
 "kembali."
@@ -1392,8 +1390,8 @@ msgstr "Unduh pembaruan secara otomatis"
 
 #: src/ui/settings.rs:696
 msgid ""
-"You still choose when to restart. Package managers and Flatpak update "
-"Zeus themselves."
+"You still choose when to restart. Package managers and Flatpak update Zeus "
+"themselves."
 msgstr ""
 "Anda tetap memilih kapan harus memulai ulang. Manajer paket dan Flatpak "
 "memperbarui Zeus sendiri."
@@ -1559,8 +1557,8 @@ msgstr "Kunci setelah"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using Zeus, also counted while it is in the tray. "
-"Ctrl+Shift+L locks it at once."
+"Time without using Zeus, also counted while it is in the tray. Ctrl+Shift+L "
+"locks it at once."
 msgstr ""
 "Waktu tidak menggunakan Zeus, juga dihitung saat berada di baki sistem. "
 "Tekan Ctrl+Shift+L untuk mengunci seketika."
@@ -1975,8 +1973,8 @@ msgstr "Panggilan masuk"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
-"your phone."
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on your "
+"phone."
 msgstr ""
 "{caller} sedang memanggil {group}. Zeus belum bisa bergabung ke panggilan "
 "grup: jawab di ponselmu."
@@ -1984,8 +1982,8 @@ msgstr ""
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. Zeus can't join group calls yet: "
-"answer on your phone."
+"{caller} is calling you and others. Zeus can't join group calls yet: answer "
+"on your phone."
 msgstr ""
 "{caller} sedang memanggilmu dan orang lain. Zeus belum bisa bergabung ke "
 "panggilan grup: jawab di ponselmu."
@@ -3079,3 +3077,93 @@ msgstr ""
 #, fuzzy
 #~ msgid "Next pinned message"
 #~ msgstr "{} pesan belum dibaca"
+
+#, fuzzy, rust-format
+#~ msgid "{name} turned off disappearing messages"
+#~ msgstr "Pesan sementara"
+
+#, fuzzy
+#~ msgid "Locked chats"
+#~ msgstr "Obrolan terkunci"
+
+#, fuzzy
+#~ msgid "recording audio…"
+#~ msgstr "Mengirim paket stiker…"
+
+#, fuzzy
+#~ msgid "Delete chat"
+#~ msgstr "Hapus chat?"
+
+#, fuzzy
+#~ msgid "Unarchive"
+#~ msgstr "Arsip"
+
+#, fuzzy
+#~ msgid "Archive"
+#~ msgstr "Arsip"
+
+#, fuzzy
+#~ msgid "Unlock chat"
+#~ msgstr "Obrolan terkunci"
+
+#, fuzzy
+#~ msgid "Lock chat"
+#~ msgstr "Obrolan terkunci"
+
+#, fuzzy
+#~ msgid "Default"
+#~ msgstr "Gunakan default"
+
+#, fuzzy
+#~ msgid "System sound"
+#~ msgstr "System"
+
+#, fuzzy
+#~ msgid "No sound"
+#~ msgstr "Suara sebutan"
+
+#, fuzzy
+#~ msgid "Notification sound"
+#~ msgstr "Notifikasi"
+
+#, fuzzy
+#~ msgid "8 hours"
+#~ msgstr "24 jam"
+
+#, fuzzy
+#~ msgid "Close chat"
+#~ msgstr "Kosongkan chat"
+
+#, fuzzy
+#~ msgid "You blocked this contact"
+#~ msgstr "Kamu meninggalkan saluran ini"
+
+#: src/ui/conversation.rs:1530
+msgid "Channels are read-only in ZapFast"
+msgstr "Saluran bersifat read-only di ZapFast"
+
+#: src/ui/settings.rs:703
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr "Memeriksa GitHub sekali sehari, hanya mengirimkan versi ZapFast."
+
+#: src/app.rs:4907 src/app.rs:8029
+msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgstr ""
+"ZapFast belum bisa bergabung ke panggilan grup: buka tautannya di ponselmu."
+
+#: src/app.rs:5740
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "Tidak terkirim: ZapFast tidak terhubung ke WhatsApp."
+
+#: src/app.rs:9279 src/ui/labels.rs:257
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "Anda memiliki {limit} label, batas maksimal yang disimpan ZapFast."
+
+#: src/ui/image_preview.rs:738
+msgid "This image could not be displayed in ZapFast."
+msgstr "Gambar ini tidak dapat ditampilkan di ZapFast."
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "ZapFast terkunci"

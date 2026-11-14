@@ -32,3 +32,4 @@ src/ui/new_group.rs
 src/group_admin.rs
 src/ui/polls.rs
 src/ui/update.rs
+src/a11y.rs

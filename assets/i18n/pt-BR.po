@@ -1,4 +1,4 @@
-# Brazilian Portuguese translation of the Zeus navigation pilot.
+# Portuguese (Brazil) translation of the Zeus navigation pilot.
 # Distributed under the same MIT license as Zeus.
 #
 msgid ""
@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-23 16:22+0200\n"
+"POT-Creation-Date: 2026-11-01 20:11+0100\n"
 "PO-Revision-Date: 2026-09-22 00:00-0300\n"
 "Last-Translator: Zeus contributors\n"
 "Language-Team: Brazilian Portuguese\n"
@@ -938,8 +938,8 @@ msgid ""
 "your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"O Zeus guarda seu arquivo ilegível como um arquivo separado, cria um novo "
-"e pede que você conecte de novo. Ao conectar de novo, o histórico recente "
+"O Zeus guarda seu arquivo ilegível como um arquivo separado, cria um novo e "
+"pede que você conecte de novo. Ao conectar de novo, o histórico recente "
 "volta do seu celular. Depois, remova a entrada antiga do Zeus em "
 "Dispositivos conectados no seu celular."
 
@@ -1208,11 +1208,10 @@ msgid "Custom title bar"
 msgstr "Barra de título personalizada"
 
 #: src/ui/settings.rs:424
-msgid ""
-"Draw Zeus's own title bar and window buttons instead of the desktop's."
+msgid "Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
-"Desenha a barra de título e os botões de janela do próprio Zeus em vez "
-"dos da área de trabalho."
+"Desenha a barra de título e os botões de janela do próprio Zeus em vez dos "
+"da área de trabalho."
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:293
 msgid "Chats"
@@ -1343,8 +1342,7 @@ msgid "Show when you are typing"
 msgstr "Mostrar quando você está digitando"
 
 #: src/ui/settings.rs:600
-msgid ""
-"Could not load your account privacy. Trying again when Zeus reconnects."
+msgid "Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
 "Não foi possível carregar a privacidade da sua conta. Nova tentativa quando "
 "o Zeus reconectar."
@@ -1395,8 +1393,8 @@ msgstr "Baixar atualizações automaticamente"
 
 #: src/ui/settings.rs:696
 msgid ""
-"You still choose when to restart. Package managers and Flatpak update "
-"Zeus themselves."
+"You still choose when to restart. Package managers and Flatpak update Zeus "
+"themselves."
 msgstr ""
 "Você escolhe quando reiniciar. Gerenciadores de pacotes e o Flatpak "
 "atualizam o Zeus por conta própria."
@@ -1560,8 +1558,8 @@ msgstr "Bloquear após"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using Zeus, also counted while it is in the tray. "
-"Ctrl+Shift+L locks it at once."
+"Time without using Zeus, also counted while it is in the tray. Ctrl+Shift+L "
+"locks it at once."
 msgstr ""
 "Tempo sem usar o Zeus, contado também enquanto ele está na bandeja do "
 "sistema. Ctrl+Shift+L bloqueia na hora."
@@ -1975,8 +1973,8 @@ msgstr "Chamada recebida"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
-"your phone."
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on your "
+"phone."
 msgstr ""
 "{caller} está ligando para {group}. O Zeus ainda não consegue entrar em "
 "chamadas em grupo: atenda no seu celular."
@@ -1984,11 +1982,11 @@ msgstr ""
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. Zeus can't join group calls yet: "
-"answer on your phone."
+"{caller} is calling you and others. Zeus can't join group calls yet: answer "
+"on your phone."
 msgstr ""
-"{caller} está ligando para você e outras pessoas. O Zeus ainda não "
-"consegue entrar em chamadas em grupo: atenda no seu celular."
+"{caller} está ligando para você e outras pessoas. O Zeus ainda não consegue "
+"entrar em chamadas em grupo: atenda no seu celular."
 
 #. Translators: {name} is replaced by the author's name, shown as a link.
 #: src/ui/widgets.rs:944
@@ -2612,7 +2610,7 @@ msgstr "O Zeus não conseguiu mostrar esta imagem."
 
 #: src/ui/image_preview.rs:704
 msgid "Open externally"
-msgstr "Abrir fora do Zeus"
+msgstr "Abrir fora do ZapFast"
 
 #: src/ui/image_preview.rs:866
 msgid "Play or pause the video"
@@ -3084,3 +3082,94 @@ msgstr ""
 
 #~ msgid "Next pinned message"
 #~ msgstr "Próxima mensagem fixada"
+
+#, fuzzy, rust-format
+#~ msgid "{name} turned off disappearing messages"
+#~ msgstr "Mensagens temporárias"
+
+#, fuzzy
+#~ msgid "Locked chats"
+#~ msgstr "Conversa trancada"
+
+#, fuzzy
+#~ msgid "recording audio…"
+#~ msgstr "Enviando o pacote de figurinhas…"
+
+#, fuzzy
+#~ msgid "Delete chat"
+#~ msgstr "Apagar conversa?"
+
+#, fuzzy
+#~ msgid "Unarchive"
+#~ msgstr "Arquivadas"
+
+#, fuzzy
+#~ msgid "Archive"
+#~ msgstr "Arquivadas"
+
+#, fuzzy
+#~ msgid "Unlock chat"
+#~ msgstr "Conversa trancada"
+
+#, fuzzy
+#~ msgid "Lock chat"
+#~ msgstr "Conversa trancada"
+
+#, fuzzy
+#~ msgid "Default"
+#~ msgstr "Usar o padrão"
+
+#, fuzzy
+#~ msgid "System sound"
+#~ msgstr "Sistema"
+
+#, fuzzy
+#~ msgid "No sound"
+#~ msgstr "Som de menção"
+
+#, fuzzy
+#~ msgid "Notification sound"
+#~ msgstr "Notificações"
+
+#, fuzzy
+#~ msgid "8 hours"
+#~ msgstr "24 horas"
+
+#, fuzzy
+#~ msgid "Close chat"
+#~ msgstr "Limpar conversa"
+
+#, fuzzy
+#~ msgid "You blocked this contact"
+#~ msgstr "Você saiu deste canal"
+
+#: src/ui/conversation.rs:1530
+msgid "Channels are read-only in ZapFast"
+msgstr "Os canais são somente leitura no ZapFast"
+
+#: src/ui/settings.rs:703
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr "Consulta o GitHub uma vez por dia, enviando só a versão do ZapFast."
+
+#: src/app.rs:4907 src/app.rs:8029
+msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgstr ""
+"O ZapFast ainda não consegue entrar em chamadas em grupo: abra o link no seu "
+"celular."
+
+#: src/app.rs:5740
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "Não enviado: o ZapFast não está conectado ao WhatsApp."
+
+#: src/app.rs:9279 src/ui/labels.rs:257
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "Você tem {limit} etiquetas, o máximo que o ZapFast guarda."
+
+#: src/ui/image_preview.rs:738
+msgid "This image could not be displayed in ZapFast."
+msgstr "O ZapFast não conseguiu mostrar esta imagem."
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "O ZapFast está bloqueado"

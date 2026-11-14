@@ -30,6 +30,10 @@ does, and keeps your chats in an encrypted archive on your own computer.
   <img src="docs/readme/chat-dark.png" alt="Zeus in its Dark theme on a MacBook, showing a conversation with a photo, a file, voice messages, a quoted reply, and a link preview">
 </p>
 
+The interface is available in English, Chinese (Simplified and Traditional),
+Dutch, French, German, Indonesian, Italian, Portuguese (Brazil), Russian,
+Spanish, and Turkish.
+
 <p align="center"><em>The screenshots use made-up demo chats, never real conversations.</em></p>
 
 ## Your look
@@ -60,6 +64,16 @@ from the message, and a message menu with Reply, Edit, Forward, Pin and more.
   <img src="docs/readme/composer.png" alt="Zeus's composer with its attachment and poll menu open" width="49%">
   <img src="docs/readme/reactions.png" alt="Zeus's reaction picker and messages with reactions" width="49%">
 </p>
+
+| Feature | What you can do |
+|---|---|
+| **Messages** | Send formatted text, replies, edits, reactions, forwards, pictures, files, stickers, GIFs, polls, and voice messages. |
+| **Media in the chat** | Play voice messages, videos, round video messages, GIFs, and animated stickers in place. |
+| **Your history** | Keep your chats in an encrypted archive on this computer, fetch older messages from your phone as you scroll, and export locally saved chat history as text or a ZIP with downloaded attachments. |
+| **Several numbers** | Link more than one WhatsApp number and switch between them in one window. |
+| **Desktop controls** | Use keyboard shortcuts, select and copy text across messages, and stay linked in the tray with notifications. |
+| **Themes** | Choose light, dark, system appearance, or custom colours. On Omarchy, follow your desktop theme. |
+| **Privacy** | Hide locked chats behind a code, or the whole window behind an app lock. Nothing goes to a server of ours. |
 
 ## Settings
 

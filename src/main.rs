@@ -2,18 +2,13 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-// The system allocator keeps the high-water mark of transient peaks such as
-// history sync and image decode. mimalloc returns freed segments to the OS.
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 use zeus::{app, backend, paths, settings, single_instance};
 
 use clap::Parser;
 
 /// A fast, native WhatsApp client.
 #[derive(Debug, Parser)]
-#[command(name = "zeus", version, about)]
+#[command(name = "zapfast", version, about)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Control>,
@@ -21,14 +16,9 @@ struct Cli {
     #[arg(short, long)]
     verbose: bool,
     /// Start in the tray without opening a window, when the tray is available
-    /// and ZapFast keeps running in the background. For login autostart.
+    /// and Zeus keeps running in the background. For login autostart.
     #[arg(long)]
     start_hidden: bool,
-    /// Keep this copy's accounts, settings and caches in this folder rather
-    /// than the usual ones, so it runs beside the installed copy as a linked
-    /// device of its own: for trying a test build on a real account.
-    #[arg(long, value_name = "DIR")]
-    profile: Option<std::path::PathBuf>,
 
     /// Start with offline sample chats.
     #[cfg(feature = "demo")]
@@ -51,9 +41,10 @@ struct Cli {
     demo_tour_events: Option<std::path::PathBuf>,
 
     /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
-    /// added, 86 seconds), `bench` (the benchmark's timed phases, about 2
-    /// minutes, started at once; see scripts/bench), or `setup` (the
-    /// first-run setup, 24 seconds).
+    /// added, 86 seconds), `calls` (39 seconds; `ZAPFAST_DEMO_CALL_FEEDS`
+    /// puts video clips in its call tiles) or `whats-new-21` (what 0.21
+    /// added, 49 seconds). `ZAPFAST_DEMO_FONT=inter` draws any tour in the
+    /// bundled Inter.
     #[cfg(feature = "demo")]
     #[arg(
         long,
@@ -75,12 +66,6 @@ struct Cli {
     )]
     demo_tour_frames: Option<std::path::PathBuf>,
 
-    /// Write the tour's phase marks here, one JSON object a line, for the
-    /// benchmark's sampler (scripts/bench).
-    #[cfg(feature = "demo")]
-    #[arg(long, requires = "demo_tour", value_name = "PATH")]
-    demo_tour_marks: Option<std::path::PathBuf>,
-
     /// Frames per second for `--demo-tour-frames` (default 30).
     #[cfg(feature = "demo")]
     #[arg(long, requires = "demo_tour_frames", value_name = "FPS", value_parser = clap::value_parser!(u32).range(1..=120))]
@@ -91,8 +76,14 @@ struct Cli {
     #[arg(long, requires = "demo")]
     demo_macos: bool,
 
+    /// Draw Zeus's own title bar and window buttons, as Settings >
+    /// Appearance > Custom title bar does, on Windows and Linux (demo only).
+    #[cfg(feature = "demo")]
+    #[arg(long, conflicts_with = "demo_macos")]
+    demo_titlebar: bool,
+
     /// Demo view: `chat`, `phone-menu`, `empty`, `settings`, `login`,
-    /// `pair`, `shortcuts`, `about`, `info`, `mention`, `light`, or a comma-separated
+    /// `pair`, `shortcuts`, `about`, `info`, `mention`, `voice-presence`, `light`, or a comma-separated
     /// mix such as `chat,light`.
     #[cfg(feature = "demo")]
     #[arg(long)]
@@ -125,9 +116,9 @@ struct Cli {
 
 #[derive(Debug, clap::Subcommand)]
 enum Control {
-    /// Reload palettes in an already-running ZapFast without showing its window.
+    /// Reload palettes in an already-running Zeus without showing its window.
     ReloadThemes,
-    /// Quit an already-running ZapFast, which closing its window leaves in the tray.
+    /// Quit an already-running Zeus, which closing its window leaves in the tray.
     Quit,
 }
 
@@ -179,12 +170,12 @@ fn control(command: &Control, sent: single_instance::Sent) -> (i32, Option<Strin
 /// hiding real clipboard failures (`arboard=error`) or any other warning.
 fn default_log_filter(verbose: bool) -> &'static str {
     if verbose {
-        "info,zeus=debug,whatsapp_rust=debug,wacore=debug"
+        "info,zapfast=debug,whatsapp_rust=debug,wacore=debug"
     } else {
         // env_logger treats '/' as a message-regex separator, so it cannot
         // select the literal target Client/AppState here. Enable Client INFO;
         // the protocol redactor reduces every such line to a fixed category.
-        "warn,zeus=info,fastframe_fonts=info,Client=info,arboard=error"
+        "warn,zapfast=info,fastframe_fonts=info,Client=info,arboard=error"
     }
 }
 
@@ -215,18 +206,9 @@ fn run() -> eframe::Result<()> {
     // `--update-receipt` and `--update-error` off the command line.
     let launch = fastframe_update::intercept(&zeus::updates::CONFIG);
     let cli = Cli::parse_from(&launch.arguments);
-    let profile = cli
-        .profile
-        .as_deref()
-        .map(std::path::absolute)
-        .transpose()
-        .map_err(|error| eframe::Error::AppCreation(error.into()))?;
-    let discovered = match &profile {
-        Some(root) => paths::AppDirs::under(root),
-        None => paths::AppDirs::discover(),
-    };
+    let discovered = paths::AppDirs::discover();
     // A control command only talks to the running copy: whatever the answer,
-    // it never starts ZapFast and never stops a process itself.
+    // it never starts Zeus and never stops a process itself.
     if let Some(command) = &cli.command {
         let (code, message) = control(
             command,
@@ -260,12 +242,6 @@ fn run() -> eframe::Result<()> {
     let waker = backend::Waker::default();
     #[cfg(feature = "demo")]
     let demo = cli.demo || cli.demo_shot.is_some() || cli.demo_tour;
-    // A saved picture must show every emoji; the live app and the benchmark
-    // draw new ones off the interface thread.
-    #[cfg(feature = "demo")]
-    if cli.demo_shot.is_some() || cli.demo_tour_frames.is_some() {
-        zeus::emoji::draw_in_frame();
-    }
     #[cfg(not(feature = "demo"))]
     let demo = false;
     // Keep one linked instance. Demo runs do not participate.
@@ -314,7 +290,7 @@ fn run() -> eframe::Result<()> {
         }
     };
     let default_filter = default_log_filter(cli.verbose);
-    // A demo must not create empty ZapFast directories that would prevent a
+    // A demo must not create empty Zeus directories that would prevent a
     // later real launch from adopting the existing FastsApp session.
     let demo_root = demo.then(|| {
         std::env::temp_dir().join(format!(
@@ -329,8 +305,7 @@ fn run() -> eframe::Result<()> {
     };
     // A demo's folders are throwaway; remove them when the run returns.
     let _demo_root = demo_root.map(RemoveOnDrop);
-    // A profile starts on its own, without the previous app's settings.
-    if !demo && profile.is_none() {
+    if !demo {
         dirs.adopt_previous_names()
             .map_err(|error| eframe::Error::AppCreation(error.into()))?;
     }
@@ -338,7 +313,7 @@ fn run() -> eframe::Result<()> {
     // directories have been created and secured successfully.
     dirs.ensure()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
-    let logging = fastframe_log::Logging::new(zeus::brand::ID, env!("CARGO_PKG_VERSION"))
+    let logging = fastframe_log::Logging::new("zapfast", env!("CARGO_PKG_VERSION"))
         .filter(default_filter)
         .panic_log(dirs.panic_log())
         .redact(redact_protocol);
@@ -352,7 +327,6 @@ fn run() -> eframe::Result<()> {
     logging
         .init()
         .map_err(|error| eframe::Error::AppCreation(error.into()))?;
-    contain_panics();
     // Moving a single-account setup into its account folder needs the
     // keyring; when it cannot finish, the log says why.
     if !demo && let Err(error) = dirs.adopt_single_account() {
@@ -362,27 +336,25 @@ fn run() -> eframe::Result<()> {
     // The name and icon volume mixers show for every sound Zeus plays or records; set before
     // anything opens or lists a device.
     let _ = fastframe_audio::set_app_info(fastframe_audio::AppInfo {
-        name: zeus::brand::NAME.into(),
-        icon: Some(zeus::brand::ID.into()),
+        name: "Zeus".into(),
+        icon: Some("zapfast".into()),
     });
     let settings = settings::Settings::load(&dirs.settings_file());
+    // The drawn title bar (Windows and Linux): GNOME's button layout and
+    // icons, read once, and the choice every window is made with.
+    fastframe_titlebar::init();
+    #[cfg(feature = "demo")]
+    let custom_titlebar = settings.custom_titlebar || cli.demo_titlebar;
+    #[cfg(not(feature = "demo"))]
+    let custom_titlebar = settings.custom_titlebar;
+    fastframe_titlebar::set_enabled(custom_titlebar);
     // A Cargo build has no application bundle to supply its Dock icon.
     #[cfg(target_os = "macos")]
-    if let Err(error) = fastframe_dock::set_icon(DOCK_ICON) {
+    if let Err(error) = fastframe_dock::set_icon(include_bytes!("../packaging/macos/icon-1024.png"))
+    {
         log::warn!("could not set the Dock icon: {error}");
     }
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
-    // A copy on a profile of its own names it, apart from the installed one.
-    let title = match (&demo_persistence, &profile) {
-        (Some(_), _) => "Zeus Demo".to_owned(),
-        (None, Some(root)) => format!(
-            "Zeus ({})",
-            root.file_name()
-                .unwrap_or(root.as_os_str())
-                .to_string_lossy()
-        ),
-        (None, None) => "Zeus".to_owned(),
-    };
 
     #[allow(unused_mut)]
     let mut app = if demo {
@@ -422,11 +394,6 @@ fn run() -> eframe::Result<()> {
     }
     #[cfg(feature = "demo")]
     if demo {
-        // A screenshot shows the same times whenever it is taken, so two
-        // builds' pictures compare pixel for pixel (scripts/bench/shots.sh).
-        if cli.demo_shot.is_some() {
-            zeus::util::freeze_demo_clock();
-        }
         zeus::demo::populate(&mut app);
         zeus::demo::apply_flags(&mut app, cli.demo_page.as_deref());
         if cli.demo_tour {
@@ -474,7 +441,7 @@ fn run() -> eframe::Result<()> {
             // later.
             let transparent = lease.peek(|app: &app::App| {
                 zeus::backdrop::transparent_window(
-                    app.settings.vibrant_window(),
+                    app.palette.vibrant(),
                     app.palette.window.a() < 255,
                 )
             });
@@ -499,14 +466,19 @@ fn run() -> eframe::Result<()> {
                             fps: cli.demo_fps.unwrap_or(30),
                         }),
                 )
-                .with_marks(cli.demo_tour_marks.clone())
             });
             eframe::run_native(
                 "Zeus",
-                native_options(demo_persistence.clone(), &title, geometry, transparent),
+                native_options(demo_persistence.clone(), geometry, transparent),
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
+                    #[cfg(target_os = "linux")]
+                    app.attach_clipboard(
+                        raw_window_handle::HasDisplayHandle::display_handle(cc)
+                            .ok()
+                            .map(|display| display.as_raw()),
+                    );
                     // Registered here rather than in `attach`, which headless
                     // tests call too: they must never start a browser.
                     #[cfg(all(unix, not(target_os = "macos")))]
@@ -524,8 +496,6 @@ fn run() -> eframe::Result<()> {
                         update_receipt: receipt,
                         #[cfg(target_os = "windows")]
                         taskbar: Default::default(),
-                        #[cfg(target_os = "macos")]
-                        pacer: zeus::pacing::for_display(),
                         #[cfg(feature = "demo")]
                         shot,
                         #[cfg(feature = "demo")]
@@ -542,48 +512,6 @@ fn run() -> eframe::Result<()> {
     Ok(())
 }
 
-/// Threads that catch their own panics. Each wraps its work in
-/// `catch_unwind` and turns a panic into an "unsupported file" result, so a
-/// malformed image or video cannot close the app. `video-sound` reads a
-/// video's sound track header off the UI thread (the mp4 hang fix);
-/// `fit-pictures` decodes chat photos at their display size.
-const CONTAINED_THREADS: &[&str] = &[
-    "animation-decode",
-    "video-decode",
-    "video-sound",
-    "fit-pictures",
-];
-
-/// egui's own picture loader names its one-picture-per-thread decoders after
-/// the picture. It does not catch a panic, but a thread that ends alone only
-/// leaves that picture unloaded, which beats closing the app for a crafted
-/// avatar, sticker, thumbnail or link preview.
-const CONTAINED_THREAD_PREFIXES: &[&str] = &["egui_extras::ImageLoader::load("];
-
-/// Keeps release builds' old crash behavior for every thread but the
-/// decoders. The release profile unwinds so their guards work, but a panic
-/// anywhere else (the UI, the backend worker, a tokio task) must still end
-/// the process instead of quietly leaving a dead thread behind. Chains the
-/// panic log hook, so the panic is recorded first.
-fn contain_panics() {
-    let previous = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        previous(info);
-        if !is_contained(std::thread::current().name()) {
-            std::process::abort();
-        }
-    }));
-}
-
-fn is_contained(thread: Option<&str>) -> bool {
-    thread.is_some_and(|name| {
-        CONTAINED_THREADS.contains(&name)
-            || CONTAINED_THREAD_PREFIXES
-                .iter()
-                .any(|prefix| name.starts_with(prefix))
-    })
-}
-
 /// Whether eframe stopped because the graphics driver gave it no usable
 /// OpenGL: no pixel format, no context of any version it asks for, or a
 /// context the renderer cannot use.
@@ -595,7 +523,7 @@ fn is_graphics_failure(error: &eframe::Error) -> bool {
     )
 }
 
-/// The text of the dialog shown when ZapFast cannot start, kept apart from
+/// The text of the dialog shown when Zeus cannot start, kept apart from
 /// the dialog so it is tested on every platform.
 #[cfg(any(windows, test))]
 fn startup_failure_text(graphics: bool, details: &str, log: &std::path::Path) -> String {
@@ -680,18 +608,17 @@ fn tour_script(name: &str) -> zeus::demo::tour::Script {
 
 fn native_options(
     demo_persistence: Option<std::path::PathBuf>,
-    title: &str,
     geometry: fastframe_shell::window::Geometry,
     transparent: bool,
 ) -> eframe::NativeOptions {
     let default_size = demo_size_arg().unwrap_or([1180.0, 780.0]);
     let demo = demo_persistence.is_some();
     let viewport = egui::ViewportBuilder::default()
-        .with_title(title)
+        .with_title(if demo { "Zeus Demo" } else { "Zeus" })
         .with_app_id(if demo {
             "zapfast-demo".to_owned()
         } else {
-            fastframe_desktop::desktop_entry(zeus::brand::ID)
+            fastframe_desktop::desktop_entry("zapfast")
         });
     // The remembered size and position, from the settings, over the default
     // size. Demo runs keep their fixed screenshot size.
@@ -713,7 +640,10 @@ fn native_options(
         // its sidebar; every other theme paints the window opaque.
         .with_transparent(transparent)
         .with_titlebar_shown(false)
-        .with_title_shown(false);
+        .with_title_shown(false)
+        // Windows and Linux: no frame when Zeus draws its own title bar.
+        // Fixed for the window's life; a new choice replaces the window.
+        .with_decorations(!fastframe_titlebar::enabled());
     eframe::NativeOptions {
         viewport,
         persistence_path: demo_persistence,
@@ -722,29 +652,6 @@ fn native_options(
         // time, and opened smaller at every launch with the interface zoomed,
         // since its zoom comes back only once the window exists.
         persist_window: false,
-        #[cfg(target_os = "macos")]
-        renderer: eframe::Renderer::Wgpu,
-        #[cfg(target_os = "macos")]
-        wgpu_options: metal_options(),
-        ..Default::default()
-    }
-}
-
-/// How macOS draws: with Metal through wgpu, where AppKit keeps two fewer
-/// full-window buffers than for OpenGL (about 90 MB for a large window on a
-/// 2x display). It asks for the integrated GPU, so a Mac with two never wakes
-/// the discrete one to draw a chat, and keeps one frame in flight, so the
-/// window has two drawables rather than three. Frosted glass needs OpenGL and
-/// stays solid here (`backdrop::blur`).
-#[cfg(target_os = "macos")]
-fn metal_options() -> eframe::egui_wgpu::WgpuConfiguration {
-    use eframe::egui_wgpu::{SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
-    let mut setup = WgpuSetupCreateNew::without_display_handle();
-    setup.instance_descriptor.backends = eframe::wgpu::Backends::METAL;
-    setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
-    WgpuConfiguration {
-        surface: SurfaceConfig::LOW_LATENCY,
-        wgpu_setup: WgpuSetup::CreateNew(setup),
         ..Default::default()
     }
 }
@@ -760,13 +667,9 @@ struct Shell {
     transparent: bool,
     update_receipt: Option<fastframe_update::Receipt>,
     app: fastframe_shell::Held<app::App>,
-    /// This window's unread count, drawn on its taskbar button.
+    /// This window's unread overlay on its taskbar button.
     #[cfg(target_os = "windows")]
-    taskbar: TaskbarBadge,
-    /// Starts each frame in step with the display, where the swap does not
-    /// wait for it (macOS 13 and later).
-    #[cfg(target_os = "macos")]
-    pacer: Option<zeus::pacing::Pacer<zeus::pacing::DisplayLink>>,
+    taskbar: zeus::notify::Taskbar,
     #[cfg(feature = "demo")]
     shot: Option<Shot>,
     #[cfg(feature = "demo")]
@@ -835,35 +738,19 @@ impl eframe::App for Shell {
         }
     }
 
+    #[cfg(feature = "demo")]
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
-        #[cfg(target_os = "macos")]
-        if let Some(pacer) = &mut self.pacer {
-            pacer.hold();
+        if let Some(tour) = &mut self.tour {
+            tour.input(&mut self.app, ctx, input);
         }
-        // A maximized Windows window hides its sizing frame, which leaves the
-        // interface that much closer to a shorter title bar: start it lower.
-        let inset = zeus::window_inset::top(input);
-        if inset > 0.0
-            && let Some(screen) = &mut input.screen_rect
+        // Moves the pointer only while it is elsewhere: each move restarts
+        // egui's tooltip delay, so a fake pointer that kept moving in place
+        // would never show one.
+        if let Some(pos) = self.hover
+            && ctx.input(|input| input.pointer.latest_pos()) != Some(pos)
         {
-            screen.min.y = (screen.min.y + inset).min(screen.max.y);
+            input.events.push(egui::Event::PointerMoved(pos));
         }
-        #[cfg(feature = "demo")]
-        {
-            if let Some(tour) = &mut self.tour {
-                tour.input(&mut self.app, ctx, input);
-            }
-            // Moves the pointer only while it is elsewhere: each move restarts
-            // egui's tooltip delay, so a fake pointer that kept moving in place
-            // would never show one.
-            if let Some(pos) = self.hover
-                && ctx.input(|input| input.pointer.latest_pos()) != Some(pos)
-            {
-                input.events.push(egui::Event::PointerMoved(pos));
-            }
-        }
-        #[cfg(not(feature = "demo"))]
-        let _ = ctx;
     }
 
     /// Does not persist egui interaction state across windows. The zoom and
@@ -891,27 +778,6 @@ impl eframe::App for Shell {
     }
 }
 
-/// The taskbar button's icon: the logo, with the unread count drawn on it
-/// as a badge, redrawn only when the count changes. It replaces the
-/// pixel-font overlay, which Windows draws far smaller.
-#[cfg(target_os = "windows")]
-#[derive(Default)]
-struct TaskbarBadge(Option<u32>);
-
-#[cfg(target_os = "windows")]
-impl TaskbarBadge {
-    fn show(&mut self, window: &winit::window::Window, count: u32) {
-        use winit::platform::windows::WindowExtWindows;
-        if self.0 == Some(count) {
-            return;
-        }
-        self.0 = Some(count);
-        const SIZE: u32 = 64;
-        let rgba = zeus::util::badged_icon_rgba(SIZE as usize, count);
-        window.set_taskbar_icon(winit::window::Icon::from_rgba(rgba, SIZE, SIZE).ok());
-    }
-}
-
 impl Shell {
     fn window_logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         if !std::mem::replace(&mut self.window_recovery_checked, true) {
@@ -920,37 +786,32 @@ impl Shell {
         let app = &mut *self.app;
         #[cfg(feature = "demo")]
         if let Some(tour) = self.tour.as_mut() {
-            // The benchmark's results name the graphics chip it drew on.
-            if tour.wants_gpu()
-                && let Some(gl) = frame.gl()
-            {
-                use eframe::glow::HasContext as _;
-                // SAFETY: a plain string query on the window's own current
-                // context, from the thread that draws with it.
-                let name = unsafe { gl.get_parameter_string(eframe::glow::RENDERER) };
-                tour.note_gpu(name);
-            }
-            tour.note_frame_cost(frame.info().cpu_usage);
             tour.drive(app, ctx);
         }
         app.background_frame(ctx);
         app.window_logic(ctx);
         #[cfg(target_os = "windows")]
-        if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count()) {
-            self.taskbar.show(window, count);
+        if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count())
+            && let Some(at) = self.taskbar.show(
+                window,
+                count,
+                &zeus::notify::badge_description(count, app.locale),
+            )
+        {
+            ctx.request_repaint_after(at.saturating_duration_since(std::time::Instant::now()));
         }
         // The chat header is 60 points and zooms; the linking screen keeps
         // AppKit's own 28-point strip.
-        let title_bar = if app.is_linked() && !app.app_lock.is_locked() {
-            zeus::theme::TOP_BAR_HEIGHT
+        // Over the rail alone the lights have a 32-point strip of their own.
+        let title_bar = if zeus::ui::macos_title_strip(app, ctx) {
+            zeus::ui::title_strip_height(ctx)
+        } else if app.is_linked() && !app.app_lock.is_locked() {
+            zeus::ui::appkit_bar_height(zeus::theme::TOP_BAR_HEIGHT, ctx.zoom_factor())
         } else {
             28.0 / ctx.zoom_factor()
         };
         fastframe_titlebar::align_traffic_lights(frame, ctx, title_bar);
         zeus::backdrop::apply(frame, &app.palette, self.transparent);
-        // A message carried out of the window last frame: its files go on
-        // to the system's drag and drop.
-        zeus::drag_out::perform(frame);
         #[cfg(feature = "demo")]
         {
             // Keep requesting the configured screenshot size until it is applied.
@@ -973,6 +834,8 @@ impl Shell {
             egui::Popup::open_id(ui.ctx(), zeus::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
+        #[cfg(target_os = "macos")]
+        app.match_window_transparency(ui.ctx(), self.transparent);
         let startups: Vec<_> = app
             .accounts
             .iter_mut()
@@ -1132,12 +995,6 @@ mod target_cli_tests {
         let cli = Cli::try_parse_from(["zapfast", "--start-hidden"]).unwrap();
         assert!(cli.start_hidden);
         assert!(cli.target.is_none());
-        let cli = Cli::try_parse_from(["zapfast", "--profile", "ZeusTest", "quit"]).unwrap();
-        assert_eq!(
-            cli.profile.as_deref(),
-            Some(std::path::Path::new("ZeusTest"))
-        );
-        assert!(matches!(cli.command, Some(Control::Quit)));
     }
 
     /// A link asked to be seen: `--start-hidden` with a chat to open must not
@@ -1221,89 +1078,6 @@ mod tests {
             .is_err()
         );
     }
-
-    #[test]
-    fn tour_cli_runs_the_benchmark_with_its_marks() {
-        let cli = Cli::try_parse_from([
-            "zapfast",
-            "--demo-tour",
-            "--demo-tour-script",
-            "bench",
-            "--demo-tour-marks",
-            "marks.jsonl",
-        ])
-        .unwrap();
-        assert_eq!(
-            tour_script(&cli.demo_tour_script),
-            zeus::demo::tour::Script::Bench
-        );
-        assert_eq!(
-            cli.demo_tour_marks.as_deref(),
-            Some(std::path::Path::new("marks.jsonl"))
-        );
-        // Marks come only from a tour.
-        assert!(Cli::try_parse_from(["zapfast", "--demo-tour-marks", "marks.jsonl"]).is_err());
-    }
-}
-
-/// The unbundled Dock icon: 512 pixels at 144 dpi, so 256 points, which
-/// covers the Dock fully magnified on a Retina screen. AppKit keeps a
-/// snapshot of the icon at its size in points times the screen's scale, and
-/// the 1024-pixel PNG at 72 dpi held one of 32 MB for the whole session.
-#[cfg(any(target_os = "macos", test))]
-const DOCK_ICON: &[u8] = include_bytes!("../packaging/macos/icon-dock.png");
-
-#[cfg(test)]
-mod dock_icon_tests {
-    use super::DOCK_ICON;
-
-    /// The big-endian `u32` at `at`.
-    fn word(at: usize) -> u32 {
-        u32::from_be_bytes(DOCK_ICON[at..at + 4].try_into().unwrap())
-    }
-
-    /// The icon stays small in points: a larger image or a lower density
-    /// brings back a snapshot several times the size.
-    #[test]
-    fn dock_icon_is_256_points() {
-        assert_eq!(&DOCK_ICON[..8], b"\x89PNG\r\n\x1a\n");
-        assert_eq!(&DOCK_ICON[12..16], b"IHDR");
-        assert_eq!((word(16), word(20)), (512, 512));
-        let physical = DOCK_ICON
-            .windows(4)
-            .position(|chunk| chunk == b"pHYs")
-            .expect("the icon states its density");
-        // 144 dpi in pixels per metre, the unit PNG uses.
-        assert_eq!(word(physical + 4), 5669);
-        assert_eq!(word(physical + 8), 5669);
-        assert_eq!(DOCK_ICON[physical + 12], 1, "the unit is the metre");
-    }
-}
-
-#[cfg(test)]
-mod panic_tests {
-    use super::*;
-
-    #[test]
-    fn only_the_decoder_threads_survive_a_panic() {
-        assert!(is_contained(Some("animation-decode")));
-        assert!(is_contained(Some("video-decode")));
-        assert!(is_contained(Some("video-sound")));
-        assert!(is_contained(Some("fit-pictures")));
-        assert!(is_contained(Some(
-            "egui_extras::ImageLoader::load(\"file:///a.png\")"
-        )));
-        assert!(!is_contained(Some("main")));
-        assert!(!is_contained(Some("tokio-runtime-worker")));
-        assert!(!is_contained(None));
-    }
-
-    #[test]
-    fn the_contained_names_match_the_decoder_threads() {
-        // A renamed thread would silently lose its guard.
-        assert!(include_str!("animation.rs").contains(r#".name("animation-decode".into())"#));
-        assert!(include_str!("video.rs").contains(r#".name("video-decode".into())"#));
-    }
 }
 
 #[cfg(test)]
@@ -1368,7 +1142,11 @@ mod log_filter_tests {
             log::Level::Error,
             "arboard::platform::linux"
         ));
-        assert!(matches(filter, log::Level::Warn, "zeus::backend::worker"));
+        assert!(matches(
+            filter,
+            log::Level::Warn,
+            "zeus::backend::worker"
+        ));
     }
 
     /// Every log names the face chosen for each fallback script, without

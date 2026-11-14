@@ -1,9 +1,21 @@
 name: CI
 
+# Pull requests run Linux only: the account's 20 hosted runners are shared
+# by every repository, and a full matrix per push to a pull request kept
+# them all busy for hours (2026-10-26). macOS, Windows, Debian 12 and the
+# other Nix systems run on main, so a platform break shows there before a
+# release tag. Changes to documentation alone skip the build entirely; the
+# required `policy` check lives in policy.yml so it still reports on them.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - docs/**
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - docs/**
+      - '**.md'
   merge_group:
   workflow_dispatch:
 
@@ -18,25 +30,13 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Dependencies come only from the approved sources in CONTRIBUTING.md, and
-  # review evidence (captures, comparison pages, recordings) stays in the pull
-  # request instead of the tree. See CONTRIBUTING.md.
-  policy:
-    name: policy
+  memory-benchmark-scripts:
+    name: Memory benchmark scripts
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Dependency sources
-        run: python3 .github/scripts/check-dependency-sources.py
-      - name: No review evidence in the tree
-        if: ${{ !cancelled() }}
-        run: python3 .github/scripts/check-review-evidence.py
-      - name: Policy check regressions
-        if: ${{ !cancelled() }}
-        run: python3 .github/scripts/test-policy-checks.py
       - name: Memory benchmark scripts
-        if: ${{ !cancelled() }}
         run: |
           python3 -m unittest discover -s scripts/bench -p 'test_*.py'
           bash scripts/bench/test-lib.sh
@@ -92,7 +92,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-latest"]' || '["ubuntu-latest", "macos-latest", "windows-latest"]') }}
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -129,8 +129,30 @@ jobs:
           name: macos-preview
           path: ${{ runner.temp }}/zapfast-*.png
 
+  # Linux releases build in Debian 12 for its older glibc (release.yml).
+  # Building here too catches a dependency that needs newer system
+  # libraries before a release tag does.
+  debian-12:
+    name: compile (Debian 12)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    container: debian:12
+    timeout-minutes: 45
+    steps:
+      - name: GUI build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
+            libpipewire-0.3-dev clang libclang-dev cmake perl
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked
+
   windows-arm64:
     name: compile (Windows arm64)
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     timeout-minutes: 40
     steps:
@@ -152,13 +174,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            system: x86_64-linux
-          - os: ubuntu-24.04-arm
-            system: aarch64-linux
-          - os: macos-latest
-            system: aarch64-darwin
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"os":"ubuntu-latest","system":"x86_64-linux"}]' || '[{"os":"ubuntu-latest","system":"x86_64-linux"},{"os":"ubuntu-24.04-arm","system":"aarch64-linux"},{"os":"macos-latest","system":"aarch64-darwin"}]') }}
     steps:
       - uses: actions/checkout@v7
       # Frees disk space on Ubuntu runners; macOS runners have enough.

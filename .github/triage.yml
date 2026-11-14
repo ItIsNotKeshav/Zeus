@@ -1,6 +1,13 @@
 extends: crmne/github-automation:triage/account.yml
 followups: selective
 
+# Changes to these need screenshots in the pull request (CONTRIBUTING.md).
+pull_requests:
+  visual_paths:
+    - src/ui/**
+    - src/theme.rs
+    - assets/icons/**
+
 report_bots:
   - honeybadger[bot]
 

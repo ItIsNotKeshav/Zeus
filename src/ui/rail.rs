@@ -185,7 +185,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             ui.spacing_mut().item_spacing.y = 0.0;
             let width = ui.available_width();
             if theme::traffic_light_inset(ui.ctx()) > 0.0 {
-                // The traffic lights, or the caption buttons ZapFast draws where
+                // The traffic lights, or the caption buttons Zeus draws where
                 // the desktop puts them on the left (GNOME's round ones end 42
                 // points down), take the rail's top; it starts under them.
                 let (strip, _) =

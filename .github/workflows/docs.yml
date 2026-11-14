@@ -1,12 +1,19 @@
 name: Docs
 
+# The stable site at / is built from the newest release tag and /next/
+# from main (jekyll_vitepress.versions in docs/_config.yml), so a release
+# tag deploys too. Path filters do not apply to tag pushes.
 on:
   push:
-    branches:
-      - main
+    branches: [main]
+    tags: ['v*']
     paths:
       - docs/**
       - .github/workflows/docs.yml
+      - .github/scripts/indexnow.rb
+  release:
+    types: [published]
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -16,44 +23,11 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/configure-pages@v6
-
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: '4.0'
-
-      - name: Install site dependencies
-        working-directory: docs
-        run: |
-          bundle config set path vendor/bundle
-          bundle install
-
-      - name: Build site
-        working-directory: docs
-        env:
-          # Analytics is only included in production builds, so a local
-          # `jekyll serve` does not report visits.
-          JEKYLL_ENV: production
-        run: bundle exec jekyll build --destination ./_site
-
-      - uses: actions/upload-pages-artifact@v5
-        with:
-          path: ./docs/_site
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v5
+  # Builds with JEKYLL_ENV=production, which turns on analytics
+  # (docs/_includes/jekyll_vitepress/head_end.html), so a local
+  # `jekyll serve` does not report visits.
+  docs:
+    uses: crmne/jekyll-vitepress-theme/.github/workflows/publish-docs.yml@v1

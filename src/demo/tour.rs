@@ -2,11 +2,14 @@
 
 mod bench;
 mod capture;
+mod calls;
+mod feeds;
 mod marks;
 pub(super) mod media;
 mod session;
 mod setup;
 mod whats_new;
+mod whats_new_21;
 
 pub use bench::{DURATION as BENCH_LENGTH, PHASES as BENCH_PHASES};
 pub use capture::Capture;
@@ -23,6 +26,7 @@ use serde::Serialize;
 use std::{
     collections::HashMap,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -38,6 +42,11 @@ pub enum Script {
     Launch,
     /// What ZapFast 0.16 added, about 90 seconds.
     WhatsNew,
+    /// A one-to-one video call, a voice call answered, and a group's video
+    /// call, about 40 seconds.
+    Calls,
+    /// What ZapFast 0.21 added, about 45 seconds.
+    WhatsNew21,
     /// The memory benchmark: timed phases over a photo-heavy chat, about 13
     /// minutes, that starts at once and closes the window when it ends.
     Bench,
@@ -47,12 +56,21 @@ pub enum Script {
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 4] = ["launch", "whats-new", "bench", "setup"];
+    pub const NAMES: [&str; 6] = [
+        "launch",
+        "whats-new",
+        "calls",
+        "whats-new-21",
+        "bench",
+        "setup",
+    ];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
             "launch" => Some(Self::Launch),
             "whats-new" => Some(Self::WhatsNew),
+            "calls" => Some(Self::Calls),
+            "whats-new-21" => Some(Self::WhatsNew21),
             "bench" => Some(Self::Bench),
             "setup" => Some(Self::Setup),
             _ => None,
@@ -64,6 +82,8 @@ impl Script {
         match self {
             Self::Launch => DURATION,
             Self::WhatsNew => whats_new::DURATION,
+            Self::Calls => calls::DURATION,
+            Self::WhatsNew21 => whats_new_21::DURATION,
             Self::Bench => bench::DURATION,
             Self::Setup => setup::DURATION,
         }
@@ -74,6 +94,8 @@ impl Script {
         match self {
             Self::Launch => prepare(app),
             Self::WhatsNew => whats_new::prepare(app),
+            Self::Calls => calls::prepare(app),
+            Self::WhatsNew21 => whats_new_21::prepare(app),
             Self::Bench => bench::prepare(app),
             Self::Setup => setup::prepare(app),
         }
@@ -83,6 +105,8 @@ impl Script {
         match self {
             Self::Launch => script(),
             Self::WhatsNew => whats_new::script(),
+            Self::Calls => calls::script(),
+            Self::WhatsNew21 => whats_new_21::script(),
             Self::Bench => bench::script(),
             Self::Setup => setup::script(),
         }
@@ -92,9 +116,8 @@ impl Script {
     fn scrolls(self) -> &'static [(f32, f32, f32)] {
         match self {
             Self::Launch => &[(3.6, 4.6, 340.0)],
-            Self::WhatsNew => &[],
+            Self::WhatsNew | Self::Calls | Self::WhatsNew21 | Self::Setup => &[],
             Self::Bench => &bench::SCROLLS,
-            Self::Setup => &[],
         }
     }
 
@@ -138,6 +161,11 @@ pub fn prepare(app: &mut App) {
 /// local stickers and GIFs in place of downloads.
 fn common_setup(app: &mut App) {
     assert!(app.backend.is_offline(), "a tour requires an offline app");
+    // `ZAPFAST_DEMO_FONT=inter` draws the tour in the bundled Inter, the same
+    // on every machine, instead of the platform's font.
+    if std::env::var("ZAPFAST_DEMO_FONT").is_ok_and(|font| font.eq_ignore_ascii_case("inter")) {
+        app.settings.font = crate::settings::FontChoice::Inter;
+    }
     app.settings.set_theme(ThemeChoice::Dark);
     app.settings.keep_running_in_background = false;
     app.page = Page::Chats;
@@ -489,8 +517,6 @@ pub struct Tour {
     pointer: Pos2,
     motion: Option<(f32, Pos2, Pos2)>,
     labels: HashMap<String, Pos2>,
-    /// Every painted text and where, including repeats that `labels` folds.
-    spots: Vec<(String, Pos2)>,
     trace: Vec<Trace>,
     trace_path: Option<PathBuf>,
     saved: bool,
@@ -554,7 +580,6 @@ impl Tour {
             pointer: pos2(680.0, 440.0),
             motion: None,
             labels: HashMap::new(),
-            spots: Vec::new(),
             trace: Vec::new(),
             trace_path,
             saved: false,
@@ -674,19 +699,12 @@ impl Tour {
                 let id = egui::Id::new(("chat-search-day", day.year(), day.month(), day.day()));
                 ctx.read_response(id).map(|r| r.rect.center())
             }
+            // The pane's row for the oldest result, by where it was drawn
+            // rather than by its text, which another font may lay out apart.
             Target::OldestHit => {
-                // The hit's line is painted in the pane, and may be in its
-                // bubble too; the pane is the one outside the transcript.
-                let query = app.chat_search.trim().to_lowercase();
-                let view = (*app.selection_view.lock().unwrap_or_else(|p| p.into_inner()))?;
-                self.spots
-                    .iter()
-                    .filter(|(text, pos)| {
-                        let text = text.to_lowercase();
-                        text != query && text.contains(&query) && !view.contains(*pos)
-                    })
-                    .map(|(_, pos)| *pos)
-                    .max_by(|a, b| a.y.total_cmp(&b.y))
+                let key = crate::ui::pane::hit_row_id(&app.chat_search_hits.last()?.id);
+                let row = ctx.data(|data| data.get_temp::<egui::Id>(key))?;
+                ctx.read_response(row).map(|r| r.rect.center())
             }
             Target::Point(x, y) => Some(pos2(x, y)),
             Target::Hits => (!app.search_hits.is_empty()).then_some(Pos2::ZERO),
@@ -698,6 +716,14 @@ impl Tour {
                 };
                 ctx.data(|d| d.get_temp::<Rect>(crate::ui::picker::shelf_tab_id(&shelf)))
                     .map(|rect| rect.center())
+            }
+            Target::Button(tooltip) => ctx
+                .read_response(crate::ui::focus::named_button(ctx, tooltip)?)
+                .map(|r| r.rect.center()),
+            Target::Reactions(message) => {
+                let id = crate::ui::conversation::bubble_id(app.open_chat.as_deref()?, message)
+                    .with("reactions");
+                ctx.read_response(id).map(|r| r.rect.center())
             }
         }
     }
@@ -712,7 +738,13 @@ impl Tour {
         rect.is_positive().then_some(rect)
     }
 
-    fn input_at(&mut self, app: &App, ctx: &egui::Context, input: &mut egui::RawInput, at: f32) {
+    fn input_at(
+        &mut self,
+        app: &mut App,
+        ctx: &egui::Context,
+        input: &mut egui::RawInput,
+        at: f32,
+    ) {
         if self.failed {
             return;
         }
@@ -802,6 +834,7 @@ impl Tour {
             }
             self.next += 1;
         }
+        self.feeds.show(app, at);
         if let Some((began, from, to)) = self.motion {
             let t = ((at - began) / 0.28).clamp(0.0, 1.0);
             self.pointer = from.lerp(to, t * t * (3.0 - 2.0 * t));
@@ -991,7 +1024,6 @@ impl Tour {
             }
         }
         self.labels.clear();
-        self.spots.clear();
         let layers: Vec<_> = ctx.memory(|memory| memory.layer_ids().collect());
         for layer in layers {
             let transform = ctx.layer_transform_to_global(layer).unwrap_or_default();
@@ -1003,13 +1035,26 @@ impl Tour {
                             if rect.intersects(clipped.clip_rect) {
                                 let spot = transform * rect.center();
                                 self.labels.insert(text.galley.text().to_owned(), spot);
-                                self.spots.push((text.galley.text().to_owned(), spot));
                             }
                         }
                     }
                 }
             });
         }
+    }
+}
+
+/// A file the tour drops on the window, from its own media folder.
+#[derive(Debug)]
+struct Dropped(PathBuf);
+
+impl egui::DroppedFile for Dropped {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|error| error.to_string())
     }
 }
 
@@ -1827,6 +1872,28 @@ mod tests {
             for _ in 0..3 {
                 frame(&mut app, &mut tour, &ctx, Vec::new());
             }
+            // Leave closes the panel's list: scroll to its end, past a
+            // group's members, link and Add members, as a reader would.
+            let over_panel = Pos2::new(1100.0, 400.0);
+            for _ in 0..4 {
+                frame(
+                    &mut app,
+                    &mut tour,
+                    &ctx,
+                    vec![
+                        Event::PointerMoved(over_panel),
+                        Event::MouseWheel {
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: vec2(0.0, -2000.0),
+                            modifiers: Modifiers::NONE,
+                            phase: egui::TouchPhase::Move,
+                        },
+                    ],
+                );
+            }
+            for _ in 0..3 {
+                frame(&mut app, &mut tour, &ctx, Vec::new());
+            }
             // The controls are announced in the interface language, which
             // follows the system when Settings carries no choice of its own.
             let locale = app.locale;
@@ -2021,6 +2088,8 @@ mod tests {
     fn one_picker_chooses_a_theme_and_an_accent_for_any_theme() {
         use crate::chat_themes::{Accent, ChatTheme};
         let mut app = super::super::tests::app();
+        // Keep Follow system unique to the open menu while scrolling its choices.
+        app.settings.theme = ThemeChoice::Dark;
         app.page = Page::Settings;
         let ctx = egui::Context::default();
         app.attach(&ctx);
@@ -2101,7 +2170,7 @@ mod tests {
                 ..Default::default()
             };
             if frame > 0 {
-                tour.input_at(&app, &ctx, &mut input, at);
+                tour.input_at(&mut app, &ctx, &mut input, at);
             }
             let mut output = ctx.run_ui(input, |ui| {
                 app.background_frame(&ctx);
@@ -2179,6 +2248,266 @@ mod tests {
         assert!(app.selection.is_none());
         assert!(app.recording.is_none());
         assert!(app.image_preview.is_none());
+        assert!(app.backend.is_offline());
+    }
+
+    /// A click on the info panel's timer row opens its choices, and one
+    /// picked asks for that timer.
+    #[test]
+    fn a_click_opens_the_disappearing_timer_menu() {
+        let mut app = super::super::tests::app();
+        prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        app.backend.record_demo_commands();
+        let mut tour = Tour::new(None, None);
+        let ada = super::super::sample_ids()[0].to_owned();
+        app.actions
+            .push(crate::model::Action::OpenChat(ada.clone()));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
+        app.actions
+            .push(crate::model::Action::OpenInfo(ada.clone()));
+        for _ in 0..3 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
+        let row = crate::i18n::gettext(app.locale, "Disappearing messages").to_string();
+        click(&mut app, &mut tour, &ctx, &row);
+        let week = crate::i18n::gettext(app.locale, "7 days").to_string();
+        assert!(tour.labels.contains_key(&week), "the choices show");
+        click(&mut app, &mut tour, &ctx, &week);
+        assert_eq!(
+            app.chat(&ada).and_then(|chat| chat.ephemeral_expiration),
+            Some(604_800),
+            "the pick goes out and the reply sets it"
+        );
+    }
+
+    /// Plays `script` at 60 frames a second at the capture's size, calling
+    /// `each` after every frame, and fails at the first missing target.
+    fn play(script: Script, mut each: impl FnMut(&mut App, &Tour, &egui::Context)) -> App {
+        let mut app = super::super::tests::app();
+        script.prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::scripted(script, None, None, None);
+        let duration = script.duration().as_secs_f32();
+        for frame in 0..=((duration + 1.0) * 60.0) as usize {
+            let at = frame as f32 / 60.0;
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1180.0, 780.0))),
+                time: Some(at as f64),
+                ..Default::default()
+            };
+            if frame > 0 {
+                tour.input_at(&mut app, &ctx, &mut input, at);
+            }
+            let mut output = ctx.run_ui(input, |ui| {
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+                tour.observe(&mut app, &ctx);
+            });
+            output.textures_delta.clear();
+            each(&mut app, &tour, &ctx);
+            assert!(
+                !tour.failed,
+                "missing target at {at:.2}s, cue {}",
+                tour.next
+            );
+        }
+        app
+    }
+
+    /// Reports which of `features` `checks` never saw.
+    fn never_shown(features: &[&str], seen: &[bool]) {
+        let missing: Vec<_> = features
+            .iter()
+            .zip(seen)
+            .filter(|(_, seen)| !**seen)
+            .map(|(feature, _)| *feature)
+            .collect();
+        assert!(missing.is_empty(), "never shown: {missing:?}");
+    }
+
+    #[test]
+    fn the_calls_tour_places_answers_and_hangs_up_through_real_input() {
+        use crate::calls::CallPhase;
+        let features = [
+            "placing",
+            "calling",
+            "ringing",
+            "video call with both pictures",
+            "muted",
+            "device pickers",
+            "entry in the chat",
+            "incoming voice call",
+            "voice call answered",
+            "everyone invited",
+            "group video call, three cameras and Tom without",
+            "call history",
+        ];
+        let mut seen = [false; 12];
+        let ada = super::super::SAMPLES[0].id;
+        let grace = super::super::SAMPLES[2].id;
+        let group = super::super::SAMPLES[1].id;
+        let filed = |app: &App, chat: &str| {
+            app.conversations[chat]
+                .messages
+                .iter()
+                .any(|row| row.id.starts_with(calls::ENTRY))
+        };
+        let app = play(Script::Calls, |app, _, _| {
+            let call = app.call.as_ref();
+            let phase = call.map(|call| call.phase);
+            let group_call = call.and_then(|call| call.group.as_ref());
+            let checks = [
+                phase == Some(CallPhase::Placing),
+                phase == Some(CallPhase::Dialing) && app.call_local_frame.is_some(),
+                phase == Some(CallPhase::Ringing),
+                phase == Some(CallPhase::Active)
+                    && group_call.is_none()
+                    && app.call_remote_frame.is_some()
+                    && app.call_local_frame.is_some(),
+                call.is_some_and(|call| call.muted),
+                app.call_devices_open,
+                app.call.is_none() && filed(app, ada),
+                phase == Some(CallPhase::Incoming) && call.is_some_and(|call| call.chat == grace),
+                phase == Some(CallPhase::Active)
+                    && call.is_some_and(|call| !call.video && call.chat == grace),
+                group_call.is_some_and(|group| {
+                    !group.participants.is_empty()
+                        && group.participants.iter().all(|person| !person.joined)
+                }),
+                group_call.is_some_and(|group| {
+                    group.participants.iter().all(|person| person.joined)
+                        && group
+                            .participants
+                            .iter()
+                            .filter(|person| person.video)
+                            .count()
+                            == 3
+                }) && app.call_member_frames.len() == 3
+                    && app.call_local_frame.is_some(),
+                app.page == Page::Calls
+                    && app
+                        .call_log
+                        .iter()
+                        .filter(|row| row.id.starts_with(calls::ENTRY))
+                        .count()
+                        == 3,
+            ];
+            for (seen, check) in seen.iter_mut().zip(checks) {
+                *seen |= check;
+            }
+        });
+        never_shown(&features, &seen);
+        assert!(app.call.is_none(), "every call hung up");
+        assert!(filed(&app, grace) && filed(&app, group));
+        assert!(!app.call_devices_open);
+        assert!(app.backend.is_offline());
+    }
+
+    #[test]
+    fn the_whats_new_21_tour_reaches_every_feature_through_real_input() {
+        use crate::model::Content;
+        let features = [
+            "link card above the field",
+            "link card on the sent bubble",
+            "two photos under review",
+            "caption typed",
+            "two upload strips",
+            "one upload cancelled",
+            "photo sent",
+            "who reacted",
+            "format menu",
+            "bold word sent",
+            "GIF results",
+            "more GIFs loaded",
+            "disappearing messages on",
+            "contact blocked",
+            "export dialog",
+            "attachments ticked and unticked",
+            "account muted",
+        ];
+        let mut seen = [false; 17];
+        let ada = super::super::SAMPLES[0].id;
+        let group = super::super::SAMPLES[1].id;
+        let katherine = super::super::SAMPLES[3].id;
+        let mut first_gifs = None;
+        let mut exports = [false; 2];
+        let app = play(Script::WhatsNew21, |app, tour, ctx| {
+            let last_text = |chat: &str| {
+                app.conversations[chat]
+                    .messages
+                    .last()
+                    .map(|row| row.content.full_summary())
+                    .unwrap_or_default()
+            };
+            let gifs = app.gif_results.len();
+            if app.picker == Some(PickerTab::Gifs) {
+                first_gifs.get_or_insert(gifs);
+            }
+            if let Some(Dialog::ExportChat { include_media, .. }) = &app.dialog {
+                exports[usize::from(*include_media)] = true;
+            }
+            let reactions =
+                crate::ui::conversation::bubble_id(group, "group-photo").with("reaction-list");
+            let checks = [
+                matches!(
+                    app.composer_preview.as_ref().map(|preview| &preview.state),
+                    Some(crate::app::LinkPreviewState::Ready(_))
+                ),
+                app.conversations[ada].messages.iter().any(|row| {
+                    row.id.starts_with("tour-")
+                        && matches!(
+                            &row.content,
+                            Content::Text {
+                                preview: Some(_),
+                                ..
+                            }
+                        )
+                }),
+                // Files on disk, so the review shows the pictures.
+                app.pending.len() == 2
+                    && app.pending.iter().all(|staged| {
+                        matches!(&staged.item, crate::app::Pending::File(path) if path.is_file())
+                    }),
+                app.pending.len() == 2 && app.composer == whats_new_21::CAPTION,
+                app.uploads.len() == 2,
+                app.uploads.len() == 1 && app.uploads[0].percent >= 71,
+                app.conversations[ada].message("tour-photo").is_some(),
+                egui::Popup::is_id_open(ctx, reactions),
+                tour.labels.contains_key("Bold")
+                    && tour.labels.contains_key("Monospace")
+                    && egui::Popup::is_any_open(ctx),
+                last_text(group).contains("*tonight*"),
+                app.picker == Some(PickerTab::Gifs) && gifs > 0,
+                first_gifs.is_some_and(|first| gifs > first)
+                    && app.gif_results.iter().all(|gif| {
+                        gif.animated.as_ref().is_some_and(|path| path.is_file())
+                    })
+                    && app.gif_results[..6]
+                        .iter()
+                        .map(|gif| gif.animated.clone())
+                        .collect::<std::collections::HashSet<_>>()
+                        .len()
+                        == 6,
+                app.chat(katherine)
+                    .and_then(|chat| chat.ephemeral_expiration)
+                    == Some(604_800),
+                app.blocklist.contains(katherine),
+                exports.iter().any(|seen| *seen),
+                exports == [true; 2],
+                app.accounts.len() > 1 && !app.accounts[1].settings.notifications,
+            ];
+            for (seen, check) in seen.iter_mut().zip(checks) {
+                *seen |= check;
+            }
+        });
+        never_shown(&features, &seen);
+        assert_eq!(app.page, Page::Chats);
+        assert_eq!(app.open_chat.as_deref(), Some(katherine));
+        assert!(app.dialog.is_none());
+        assert!(app.uploads.is_empty());
         assert!(app.backend.is_offline());
     }
 
@@ -2300,7 +2629,7 @@ mod tests {
             };
             // Give the first screen a frame to establish its hit targets.
             if frame > 0 {
-                tour.input_at(&app, &ctx, &mut input, at);
+                tour.input_at(&mut app, &ctx, &mut input, at);
             }
             let mut output = ctx.run_ui(input, |ui| {
                 app.background_frame(&ctx);

@@ -4,6 +4,7 @@
 //! active account through `App`'s `Deref`. Each account has its own backend
 //! thread, archive, and folders.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -11,7 +12,8 @@ use std::time::Instant;
 use crate::app::{AttachmentDraft, ComposerMention, Conversation, PhoneHistory};
 use crate::backend::{Backend, LinkStatus, Waker};
 use crate::model::{
-    AccountId, Chat, ChatFilter, ChatId, Contacts, Label, Message, PollDraft, StickerPack,
+    AccountId, Chat, ChatActivity, ChatFilter, ChatId, Contacts, Label, Message, PollDraft,
+    StickerPack,
 };
 use crate::paths::{AccountDirs, AppDirs};
 use crate::settings::AccountSettings;
@@ -81,10 +83,15 @@ pub struct Account {
     pub search: String,
     pub search_selected: Option<ChatId>,
     pub search_hits: Vec<Message>,
-    pub typing: HashMap<ChatId, Vec<(String, Instant)>>,
-    /// Attachments on their way, oldest first.
-    pub uploads: Vec<crate::model::Upload>,
-    pub(crate) next_upload: crate::model::UploadId,
+    /// When the text last typed into the chat list's search is scanned for.
+    /// Waiting out the typing makes a word cost one scan, not one per letter.
+    pub search_due: Option<Instant>,
+    /// Normalized forms of the names and previews the chat list's search
+    /// compares, keyed by the text they came from. Normalizing ICU text costs
+    /// microseconds, and repeating it for every chat on every frame made the
+    /// whole window slow for as long as the search was open.
+    pub search_keys: RefCell<HashMap<String, String>>,
+    pub typing: HashMap<ChatId, Vec<(String, ChatActivity, Instant)>>,
     pub presence: HashMap<String, crate::app::Presence>,
     pub account_receipts_off: bool,
     pub(crate) avatars: HashMap<String, Option<PathBuf>>,
@@ -92,6 +99,12 @@ pub struct Account {
     pub(crate) avatars_full: HashMap<String, Option<PathBuf>>,
     pub(crate) avatar_full_requests: HashSet<String>,
     pub(crate) played_told: HashSet<String>,
+    /// How far each downloading attachment has got, by chat and message, as
+    /// the worker last said.
+    pub download_progress: HashMap<ChatId, HashMap<String, u8>>,
+    /// Files going out, oldest first, for the strip above the composer.
+    pub uploads: Vec<crate::model::Upload>,
+    pub(crate) next_upload: crate::model::UploadId,
     pub stickers: Vec<PathBuf>,
     pub stickers_received: Vec<PathBuf>,
     pub stickers_saved: Vec<PathBuf>,
@@ -142,7 +155,8 @@ pub struct Account {
     pub account_privacy: crate::privacy::Snapshot,
     pub interactive_sending: HashSet<(ChatId, String)>,
     pub group_saving: HashSet<ChatId>,
-    /// Chats whose disappearing-message timer change is in flight.
+    /// Chats whose disappearing-timer change is on its way to WhatsApp. The
+    /// control stays disabled and the old timer stays visible until it lands.
     pub timer_saving: HashSet<ChatId>,
     pub(crate) reported_online: Option<bool>,
     /// Chats this account may pin; WhatsApp Plus raises it once known.
@@ -199,6 +213,7 @@ impl Account {
             me_lid: None,
             me_name: None,
             me_about: None,
+            link_previews_disabled: false,
             chats: Vec::new(),
             contacts: Contacts::default(),
             conversations: HashMap::new(),
@@ -221,6 +236,8 @@ impl Account {
             search: String::new(),
             search_selected: None,
             search_hits: Vec::new(),
+            search_due: None,
+            search_keys: RefCell::new(HashMap::new()),
             typing: HashMap::new(),
             uploads: Vec::new(),
             next_upload: 0,
@@ -231,6 +248,8 @@ impl Account {
             avatars_full: HashMap::new(),
             avatar_full_requests: HashSet::new(),
             played_told: HashSet::new(),
+            download_progress: HashMap::new(),
+            uploads: Vec::new(),
             stickers: Vec::new(),
             stickers_received: Vec::new(),
             stickers_saved: Vec::new(),
@@ -265,6 +284,7 @@ impl Account {
             chat_pins: HashMap::new(),
             reply_when_loaded: None,
             account_privacy: crate::privacy::Snapshot::default(),
+            blocklist: Default::default(),
             interactive_sending: HashSet::new(),
             group_saving: HashSet::new(),
             timer_saving: HashSet::new(),

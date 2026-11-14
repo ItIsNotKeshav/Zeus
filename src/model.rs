@@ -15,79 +15,11 @@ pub type ChatId = String;
 /// Names one attachment on its way to WhatsApp, unique within an account.
 pub type UploadId = u64;
 
-/// An attachment on its way to WhatsApp, drawn at the end of its chat from
-/// the moment it is sent until its message arrives.
-#[derive(Clone)]
-pub struct Upload {
-    pub id: UploadId,
-    pub chat: ChatId,
-    pub kind: UploadKind,
-    /// The file's name, or nothing for a pasted picture.
-    pub name: String,
-    pub preview: Option<UploadPreview>,
-    /// Encrypted bytes on their way, of `total`; nothing is known before the
-    /// upload begins, while the file is read, converted and encrypted.
-    pub sent: u64,
-    pub total: u64,
-}
-
-impl Upload {
-    /// How much of it is uploaded, once the upload has begun.
-    pub fn fraction(&self) -> Option<f32> {
-        (self.total > 0).then(|| (self.sent as f64 / self.total as f64).clamp(0.0, 1.0) as f32)
-    }
-}
-
-/// What an upload is sent as.
+/// Live activity another participant is performing in a chat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum UploadKind {
-    Image,
-    Video,
-    Audio,
-    Document,
-    /// A sticker, which flies in from the picker and waits in place.
-    Sticker,
-}
-
-impl UploadKind {
-    /// What a file at `path` goes as: a document when asked, otherwise by
-    /// its type, as the backend decides.
-    pub fn of(path: &std::path::Path, document: bool) -> Self {
-        if document {
-            return Self::Document;
-        }
-        let mime = mime_guess2::from_path(path).first_or_octet_stream();
-        match mime.type_().as_str() {
-            // The pictures the backend converts to a photo; others go as
-            // documents.
-            "image"
-                if matches!(
-                    mime.subtype().as_str(),
-                    "jpeg" | "png" | "webp" | "bmp" | "tiff"
-                ) =>
-            {
-                Self::Image
-            }
-            "video" => Self::Video,
-            "audio" => Self::Audio,
-            _ => Self::Document,
-        }
-    }
-}
-
-/// The picture an upload shows while it goes.
-#[derive(Clone)]
-pub enum UploadPreview {
-    /// A picture file on disk.
-    File(PathBuf),
-    /// A pasted picture, as straight-alpha RGBA.
-    Pixels {
-        width: usize,
-        height: usize,
-        rgba: std::sync::Arc<Vec<u8>>,
-        /// The composer's thumbnail of it, when it made one.
-        texture: Option<egui::TextureHandle>,
-    },
+pub enum ChatActivity {
+    Typing,
+    RecordingAudio,
 }
 
 /// Stable folder name for a linked WhatsApp account on this computer.
@@ -187,7 +119,7 @@ impl ChatKind {
 }
 
 /// A local chat label: a name, a colour, and nothing that leaves this computer.
-/// Not a WhatsApp Business label; ZapFast neither reads nor syncs those.
+/// Not a WhatsApp Business label; Zeus neither reads nor syncs those.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Label {
     pub id: String,
@@ -489,7 +421,7 @@ impl Chat {
 
     /// Newsletter publishing permissions are not supported by this client.
     pub fn can_send(&self) -> bool {
-        !self.locked && !self.read_only && !self.left && self.kind != ChatKind::Broadcast
+        !self.read_only && !self.left && self.kind != ChatKind::Broadcast
     }
 
     /// A followed WhatsApp channel (newsletter).
@@ -703,6 +635,15 @@ pub struct ComposedPreview {
 }
 
 impl Message {
+    /// Whether WhatsApp also holds this row under an id it can be named by. A
+    /// send still pending or failed here may never have reached it, and a
+    /// disappearing-timer notice is filed under an id it never issued. Neither
+    /// may be named in a message range sent to the phone.
+    pub fn known_to_phone(&self) -> bool {
+        !timer_notice_id(&self.id)
+            && !(self.from_me && matches!(self.status, Delivery::Pending | Delivery::Failed))
+    }
+
     /// Returns a valid individual sender only for an incoming, non-revoked group message.
     pub fn private_reply_recipient(&self) -> Option<&str> {
         (!self.from_me
@@ -740,10 +681,6 @@ pub struct ChatLink {
     pub url: String,
     /// The preview's title, when WhatsApp attached one for this address.
     pub title: Option<String>,
-    /// The preview's description, when it has one.
-    pub description: Option<String>,
-    /// The preview's picture as WhatsApp sent it, when it sent one.
-    pub thumbnail: Option<Vec<u8>>,
 }
 
 /// How many pictures and videos, documents, and links the info panel lists
@@ -780,23 +717,12 @@ impl ChatMedia {
                 Content::Image { .. } | Content::Video { .. } => media.media.push(row),
                 Content::Document { .. } => media.docs.push(row),
                 Content::Text { .. } => {
-                    let preview = match &row.content {
-                        Content::Text { preview, .. } => preview.as_ref(),
-                        _ => None,
-                    };
-                    for (index, (url, title)) in row.content.web_links().into_iter().enumerate() {
-                        // The preview's address comes first.
-                        let own = index == 0 && preview.is_some();
+                    for (url, title) in row.content.web_links() {
                         media.links.push(ChatLink {
                             message: row.id.clone(),
                             timestamp: row.timestamp,
                             url,
                             title,
-                            description: preview
-                                .filter(|_| own)
-                                .and_then(|preview| preview.description.clone())
-                                .filter(|text| !text.trim().is_empty()),
-                            thumbnail: row.thumbnail.clone().filter(|_| own),
                         });
                     }
                 }
@@ -987,7 +913,7 @@ pub enum Content {
         once: Option<OnceMedia>,
     },
     /// A call in this chat, where it falls among the messages, as WhatsApp
-    /// shows it. `from_me` on the message says who placed it. Entries ZapFast
+    /// shows it. `from_me` on the message says who placed it. Entries Zeus
     /// writes itself carry an id that starts with [`CALL_ENTRY_PREFIX`] and are
     /// never sent anywhere.
     Call {
@@ -999,10 +925,17 @@ pub enum Content {
         /// A group call.
         #[serde(default)]
         group: bool,
+        /// How many people were on the call, this account counted once. `None`
+        /// for a one-to-one call, and for a group call whose record does not
+        /// name who took part (one filed before this was kept, or a missed-call
+        /// notice that carries no roster). Only the number is kept, never who:
+        /// no name, number, or id of anyone on the call is stored.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        participants: Option<u32>,
     },
 }
 
-/// The id prefix of the call entries ZapFast files from call records: the
+/// The id prefix of the call entries Zeus files from call records: the
 /// calls it handled and the phone's call log. They are local, so no receipt,
 /// reaction or deletion is ever sent for them.
 pub const CALL_ENTRY_PREFIX: &str = "zapfast-call-";
@@ -1017,7 +950,8 @@ pub const CALL_LINK_CHAT: &str = "zapfast-call-link";
 pub const TIMER_NOTICE_PREFIX: &str = "zapfast-timer-";
 
 /// Whether `id` is one Zeus made up for a row of its own, which no server
-/// ever issued: a call entry, or a disappearing-timer notice.
+/// ever issued: a call entry, or a disappearing-timer notice. Nothing sent to
+/// WhatsApp may name such an id.
 pub fn local_message_id(id: &str) -> bool {
     id.starts_with(CALL_ENTRY_PREFIX) || timer_notice_id(id)
 }
@@ -1438,10 +1372,10 @@ impl Content {
 
     /// [`Self::summary`] with its content label in `locale`.
     pub fn summary_in(&self, locale: crate::i18n::Locale) -> String {
+        // The duration after the label is a phrase of its own, so the whole
+        // line is built in the reader's language rather than only its label.
         if let Self::DisappearingTimer { seconds } = self {
-            return crate::util::disappearing_line(locale, Some(*seconds)).unwrap_or_else(|| {
-                crate::i18n::gettext(locale, "Disappearing messages").into_owned()
-            });
+            return disappearing_summary(locale, *seconds);
         }
         let summary = self.summary();
         if self.labelled() {
@@ -1583,6 +1517,25 @@ impl Content {
         }
     }
 
+    /// Where this message keeps `path`: `Some(None)` for its own attachment,
+    /// `Some(Some(index))` for a carousel card's picture.
+    pub fn place_of_file(&self, path: &std::path::Path) -> Option<Option<usize>> {
+        let holds = |media: &Media| media.path.as_deref() == Some(path);
+        if self.media().is_some_and(holds) {
+            return Some(None);
+        }
+        let Self::Interactive {
+            card: Some(card), ..
+        } = self
+        else {
+            return None;
+        };
+        card.carousel
+            .iter()
+            .position(|item| item.image.as_ref().is_some_and(holds))
+            .map(Some)
+    }
+
     /// Whether this message belongs in the viewer album, and as what.
     ///
     /// A GIF is not a video here: it plays inline as an animation, so it is
@@ -1627,18 +1580,53 @@ impl Content {
         }
     }
 
+    /// Takes the files that `other`, another copy of the same message,
+    /// downloaded where this copy has none: the attachment, a motion photo's
+    /// clip, and each carousel card's image. A file this copy has stays.
+    pub fn fill_local_paths(&mut self, other: &Content) {
+        if let (Some(new), Some(old)) = (self.media_mut(), other.media())
+            && new.path.is_none()
+        {
+            new.path = old.path.clone();
+        }
+        if let (
+            Self::Image { motion: new, .. },
+            Self::Image {
+                motion: Some(old), ..
+            },
+        ) = (&mut *self, other)
+            && new
+                .as_ref()
+                .is_none_or(|new| new.path.is_none() && old.path.is_some())
+        {
+            *new = Some(old.clone());
+        }
+        if let (
+            Self::Interactive {
+                card: Some(new), ..
+            },
+            Self::Interactive {
+                card: Some(old), ..
+            },
+        ) = (self, other)
+        {
+            for (new, old) in new.carousel.iter_mut().zip(&old.carousel) {
+                if let (Some(new), Some(old)) = (&mut new.image, &old.image)
+                    && new.path.is_none()
+                {
+                    new.path = old.path.clone();
+                }
+            }
+        }
+    }
+
     /// Forgets every downloaded file of this message kept under `dir`, so
     /// it downloads again: the attachment, a motion photo's clip, and each
     /// carousel card's picture. Files elsewhere, such as a chosen download
     /// folder, are kept.
     pub fn forget_files_in(&mut self, dir: &std::path::Path) {
-        self.forget_files(&|path| path.starts_with(dir));
-    }
-
-    /// Forgets the files `gone` picks, as [`Self::forget_files_in`] does.
-    pub fn forget_files(&mut self, gone: &dyn Fn(&std::path::Path) -> bool) {
         let forget = |path: &mut Option<PathBuf>, state: &mut MediaState| {
-            if path.as_deref().is_some_and(gone) {
+            if path.as_deref().is_some_and(|path| path.starts_with(dir)) {
                 *path = None;
                 *state = MediaState::Idle;
             }
@@ -1778,6 +1766,14 @@ fn summary_label(
         "Video call" => gettext(locale, "Video call"),
         _ => std::borrow::Cow::Borrowed(label),
     }
+}
+
+/// A timer change's line in `locale`, as the chat list and a notification
+/// show it: "Disappearing messages: 7 days", both parts translated.
+fn disappearing_summary(locale: crate::i18n::Locale, seconds: u32) -> String {
+    // A known duration always reads, so the label alone is only a fallback.
+    crate::util::disappearing_line(locale, Some(seconds))
+        .unwrap_or_else(|| crate::i18n::gettext(locale, "Disappearing messages").into_owned())
 }
 
 /// `summary` with the content label it starts with, such as "Photo" or
@@ -1928,6 +1924,57 @@ pub enum MediaState {
     Failed(String),
 }
 
+/// The one ordering point between the reader's cancel and the worker's send.
+///
+/// The window cancels here directly rather than through a command, which
+/// would wait in the same queue as the message it is meant to stop. Exactly
+/// one side wins: a cancel means the message is never sent, and a commitment
+/// means it is, so the strip never leaves ahead of a message that still goes.
+#[derive(Clone, Debug, Default)]
+pub struct UploadGate(std::sync::Arc<std::sync::atomic::AtomicU8>);
+
+impl UploadGate {
+    const OPEN: u8 = 0;
+    const CANCELLED: u8 = 1;
+    const COMMITTED: u8 = 2;
+
+    fn settle(&self, outcome: u8) -> bool {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire};
+        self.0
+            .compare_exchange(Self::OPEN, outcome, AcqRel, Acquire)
+            .is_ok()
+    }
+
+    /// Cancels the send, unless it was already committed. Returns whether it
+    /// is cancelled.
+    pub fn cancel(&self) -> bool {
+        self.settle(Self::CANCELLED) || self.is_cancelled()
+    }
+
+    /// Commits to the send, unless it was already cancelled. Returns whether
+    /// it may go out.
+    pub fn commit(&self) -> bool {
+        self.settle(Self::COMMITTED) || !self.is_cancelled()
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::Acquire) == Self::CANCELLED
+    }
+}
+
+/// A file going out, for the strip above its chat's composer. An empty name
+/// is a pasted picture.
+#[derive(Clone, Debug)]
+pub struct Upload {
+    pub id: u64,
+    pub gate: UploadGate,
+    pub chat: ChatId,
+    pub name: String,
+    pub percent: u8,
+    /// Roughly how long the rest takes, once the pace is known.
+    pub seconds_left: Option<u32>,
+}
+
 /// Decoded straight-alpha RGBA image bytes ready for the clipboard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodedImage {
@@ -1977,100 +2024,6 @@ impl Contact {
     }
 }
 
-/// One account's contacts by id. The worker's copy, the event that hands a
-/// contact over and the window's copy point at one allocation, so an
-/// address book is held once however many sides read it. A change copies
-/// only the contact it touches, and only while another side still holds it.
-#[derive(Clone, Debug, Default)]
-pub struct Contacts(std::collections::HashSet<SharedContact>);
-
-/// A contact filed by its id alone, which is all it hashes and compares, so
-/// the set finds it by `&str` without a second copy of the id as a key.
-#[derive(Clone, Debug)]
-struct SharedContact(Arc<Contact>);
-
-impl PartialEq for SharedContact {
-    fn eq(&self, other: &Self) -> bool {
-        self.0.id == other.0.id
-    }
-}
-
-impl Eq for SharedContact {}
-
-impl std::hash::Hash for SharedContact {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // As a `str`, which the `Borrow` below looks it up as.
-        std::hash::Hash::hash(self.0.id.as_str(), state);
-    }
-}
-
-impl std::borrow::Borrow<str> for SharedContact {
-    fn borrow(&self) -> &str {
-        &self.0.id
-    }
-}
-
-impl Contacts {
-    pub fn get(&self, id: &str) -> Option<&Contact> {
-        self.0.get(id).map(|shared| &*shared.0)
-    }
-
-    pub fn contains_key(&self, id: &str) -> bool {
-        self.0.contains(id)
-    }
-
-    /// Files `contact` under its id, in place of the one there.
-    pub fn insert(&mut self, contact: impl Into<Arc<Contact>>) {
-        // `HashSet::insert` would keep the old contact.
-        self.0.replace(SharedContact(contact.into()));
-    }
-
-    /// Hands `change` the contact filed under `id`, an empty one when there
-    /// is none, and keeps it filed as `change` leaves it, even unchanged, as
-    /// a map's entry would. `Arc::make_mut` copies it before a change only
-    /// while another side holds it. `change` must keep its id.
-    pub fn edit<R>(&mut self, id: &str, change: impl FnOnce(&mut Arc<Contact>) -> R) -> R {
-        let mut contact = match self.0.take(id) {
-            Some(SharedContact(contact)) => contact,
-            None => Arc::new(Contact {
-                id: id.to_owned(),
-                ..Contact::default()
-            }),
-        };
-        let edited = change(&mut contact);
-        debug_assert_eq!(contact.id, id, "an edit keeps the contact's id");
-        self.0.insert(SharedContact(contact));
-        edited
-    }
-
-    pub fn values(&self) -> impl Iterator<Item = &Contact> {
-        self.0.iter().map(|shared| &*shared.0)
-    }
-
-    /// Another handle on every contact, for the window's copy.
-    pub fn shared(&self) -> Vec<Arc<Contact>> {
-        self.0.iter().map(|shared| Arc::clone(&shared.0)).collect()
-    }
-
-    pub fn clear(&mut self) {
-        self.0.clear();
-    }
-}
-
-impl FromIterator<Contact> for Contacts {
-    fn from_iter<I: IntoIterator<Item = Contact>>(contacts: I) -> Self {
-        let contacts = contacts.into_iter();
-        let mut all = Self(std::collections::HashSet::with_capacity(
-            contacts.size_hint().0,
-        ));
-        // A later contact with the same id wins, as it does in a map.
-        for contact in contacts {
-            all.insert(contact);
-        }
-        all
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Page {
     Chats,
@@ -2088,10 +2041,8 @@ pub enum CallDirection {
 }
 
 /// The tabs of the picker above the composer.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PickerTab {
-    #[default]
     Emoji,
     Gifs,
     Stickers,
@@ -2443,7 +2394,7 @@ pub struct StickerPack {
     pub name: String,
     pub dir: PathBuf,
     pub stickers: Vec<PathBuf>,
-    /// Put together in ZapFast, so stickers can be filed into it.
+    /// Put together in Zeus, so stickers can be filed into it.
     pub local: bool,
 }
 
@@ -2475,12 +2426,24 @@ pub struct GifError {
     pub bad_key: bool,
 }
 
+/// One page from GIPHY, with an offset based on all returned API entries.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GifPage {
+    pub gifs: Vec<Gif>,
+    pub next_offset: Option<usize>,
+}
+
 /// A GIF found through GIPHY.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Gif {
     pub id: String,
     /// Downloaded still-frame path.
     pub still: Option<PathBuf>,
+    /// Downloaded animated thumbnail shown while the tile is visible.
+    pub animated: Option<PathBuf>,
+    /// URL and file extension of the animated thumbnail, downloaded when the
+    /// tile first shows.
+    pub animated_source: Option<(String, String)>,
     pub mp4: String,
     pub width: u32,
     pub height: u32,
@@ -2596,11 +2559,6 @@ pub enum Dialog {
         chat: ChatId,
         message: String,
     },
-    /// Who reacted to a message, and with what.
-    Reactions {
-        chat: ChatId,
-        message: String,
-    },
     /// Picks people to add to a group, with New group's check boxes.
     AddGroupMembers(ChatId),
     /// Confirms revoking a group's invite link for a new one.
@@ -2624,7 +2582,7 @@ pub struct Recipient {
 }
 
 /// Per-recipient receipts for one of our group messages, as far as they are
-/// known. Receipts are only kept from when ZapFast began recording them.
+/// known. Receipts are only kept from when Zeus began recording them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MessageReceipts {
     pub chat: ChatId,
@@ -2721,23 +2679,6 @@ pub struct Toast {
     pub message: String,
     pub kind: ToastKind,
     pub created: Instant,
-    /// What its Undo button does; empty when it has none.
-    pub undo: Vec<Action>,
-    /// A button that offers a way on, as an error's Show in Finder: its
-    /// label, to translate, and what it does.
-    pub offer: Option<(&'static str, Action)>,
-}
-
-impl Toast {
-    /// How long an info toast stays, including its fade: one with Undo
-    /// longer, to leave time to reach the button.
-    pub fn lifetime(&self) -> std::time::Duration {
-        if self.undo.is_empty() {
-            crate::app::INFO_TOAST_LIFETIME
-        } else {
-            crate::app::UNDO_TOAST_LIFETIME
-        }
-    }
 }
 
 /// A scroll request for the open chat's message list, from the keyboard.
@@ -2770,13 +2711,6 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
-    /// Sends the message being written without its link preview.
-    DismissLinkPreview,
-    /// Changes a chat's disappearing-message timer; `0` turns it off.
-    SetDisappearingTimer {
-        chat: ChatId,
-        seconds: u32,
-    },
     FetchBlocklist,
     SetBlocked {
         chat: ChatId,
@@ -2791,9 +2725,6 @@ pub enum Action {
     /// Steps forward again after a back step.
     NavigateForward,
     OpenChat(ChatId),
-    /// Loads a chat's newest messages ahead of opening it: a press on its row
-    /// in the list, so the click that follows opens it with them in place.
-    PreloadChat(ChatId),
     /// Starts a voice call with the chat: the person, or everyone in a group.
     StartCall(ChatId),
     /// Starts a video call with the chat: the person, or everyone in a group.
@@ -2930,6 +2861,14 @@ pub enum Action {
         chat: ChatId,
         message: String,
     },
+    /// A downloaded picture or sticker at `path` could not be drawn: its file
+    /// is gone, and it downloads again like any other attachment, or it does
+    /// not decode, and its bubble offers a retry.
+    UnreadableMedia {
+        chat: ChatId,
+        message: String,
+        path: PathBuf,
+    },
     /// Downloads a motion photo's clip.
     DownloadMotion {
         chat: ChatId,
@@ -2952,6 +2891,11 @@ pub enum Action {
         path: PathBuf,
         fraction: f32,
     },
+    /// Plays or pauses the clip in the player from the bar another chat
+    /// shows it in.
+    ToggleVoice,
+    /// Stops the clip in the player.
+    StopVoice,
     /// Sets the voice playback speed to one of the supported speeds.
     SetVoiceSpeed(f32),
     /// Plays or pauses a downloaded video inside its message.
@@ -2983,7 +2927,7 @@ pub enum Action {
     SendRecording,
     /// Drops a voice message the worker refused to send.
     DiscardUnsentVoice,
-    /// Opens a downloaded image in ZapFast's native preview. Only the file
+    /// Opens a downloaded image in Zeus's native preview. Only the file
     /// extension and existence are checked here, and anything else opens
     /// externally; an image that then fails to decode shows a message with an
     /// Open externally button inside the preview.
@@ -3017,16 +2961,16 @@ pub enum Action {
     PreviewSticker(PathBuf),
     CloseStickerPreview,
     OpenFile(PathBuf),
-    /// Opens ZapFast's log, or shows it in its folder when no application
+    /// Opens Zeus's log, or shows it in its folder when no application
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),
     OpenFolder(PathBuf),
+    /// Saves a copy of a downloaded attachment where the person chooses.
     ExportChat {
         chat: ChatId,
         include_media: bool,
     },
     CancelChatExport,
-    /// Saves a copy of a downloaded attachment where the person chooses.
     SaveAttachmentAs {
         path: PathBuf,
         name: String,
@@ -3042,18 +2986,17 @@ pub enum Action {
     DismissToast(usize),
     /// Starts a reply to a message in the open chat.
     Reply(String),
-    /// Saves a text message edited in its own bubble.
-    SaveEdit {
-        chat: ChatId,
-        id: String,
-        text: String,
-    },
     /// Opens the group sender's direct chat with this message quoted.
     ReplyPrivately {
         chat: ChatId,
         message: String,
     },
     CancelReply,
+    /// Stops sending the file with this upload id.
+    CancelUpload(u64),
+    /// Takes away the link preview above the composer, for its link only:
+    /// the message goes without one.
+    DismissLinkPreview,
     /// Starts selecting messages in the open chat with none picked yet.
     StartSelection,
     /// Adds a chat to the forwarding dialog's recipients or removes it,
@@ -3066,56 +3009,6 @@ pub enum Action {
     /// Forwards to the chosen recipients: one at once, several after
     /// their confirmation.
     ConfirmForward,
-    /// Forwards messages carried out of a chat and dropped on another one.
-    ForwardDropped {
-        from_chat: ChatId,
-        messages: Vec<String>,
-        to_chat: ChatId,
-    },
-    /// Opens a chat in a pane on one side of the chat panel, beside the open
-    /// chat, and makes it the open chat: a chat dragged out of the list and
-    /// dropped on a side, or picked from a menu.
-    OpenSplit {
-        chat: ChatId,
-        side: crate::app::Side,
-    },
-    /// Makes the chat in the other pane of the split the open chat.
-    FocusSplit(ChatId),
-    /// Closes the pane showing this chat; the chat in the other pane fills
-    /// the panel.
-    CloseSplit(ChatId),
-    /// Puts the open chat's pane on the other side of the panel.
-    SwapSplit,
-    /// Shows a chat in a window of its own, above the other windows.
-    PopOut(ChatId),
-    /// Closes the pop-out window.
-    ClosePopOut,
-    /// Closes the pop-out and opens its chat in the window.
-    DockPopOut,
-    /// Sends what the pop-out's reply field holds to its chat.
-    PopOutSend {
-        chat: ChatId,
-        text: String,
-    },
-    /// Keeps a chat as a bubble over other windows and opens it.
-    Bubble(ChatId),
-    /// Opens this chat's bubble, or closes it when it is the open one.
-    ToggleBubble(ChatId),
-    /// Closes the open bubble back into its picture.
-    CollapseBubbles,
-    /// Lets go of a chat's bubble.
-    DismissBubble(ChatId),
-    /// Lets go of a chat's bubble and opens the chat in the window.
-    DockBubble(ChatId),
-    /// Sends what a chat's bubble holds: its text, its attachments, or both.
-    BubbleSend(ChatId),
-    /// Picks files to attach in a chat's bubble.
-    BubbleAttach(ChatId),
-    /// Takes one attachment out of a chat's bubble.
-    BubbleUnstage {
-        chat: ChatId,
-        index: usize,
-    },
     /// Starts selecting messages in the open chat, beginning with this one.
     SelectMessage(String),
     /// Adds a message to the selection or removes it.
@@ -3172,10 +3065,13 @@ pub enum Action {
     /// Opens the full emoji picker to react to a message. `beside_menu` keeps
     /// the message's context menu open next to it, as when the picker comes
     /// from the menu's "+"; the hover button opens the picker alone.
+    /// `from_list`: opened by the message list's E, so closing the picker
+    /// returns focus to the list.
     OpenReactionPicker {
         chat: ChatId,
         message: String,
         beside_menu: bool,
+        from_list: bool,
     },
     /// Inserts an emoji at the composer cursor.
     InsertEmoji(String),
@@ -3254,11 +3150,18 @@ pub enum Action {
     },
     /// Searches GIFs or lists trending results for an empty query.
     SearchGifs(String),
+    MoreGifs,
     /// Wraps the selected character range in WhatsApp markup.
     FormatComposer {
         format: ComposerFormat,
         start: usize,
         end: usize,
+    },
+    /// Fetches one GIF result's animated preview when its tile shows.
+    FetchGifAnimation {
+        id: String,
+        url: String,
+        extension: String,
     },
     SendGif(Gif),
     React {
@@ -3374,55 +3277,37 @@ pub enum Action {
     ScrollToBottom,
     /// Scrolls the open chat by about a page, or to the top of its history.
     ScrollPage(Scroll),
+    /// Moves the open chat's current message, from its focused message list.
+    MessageCursor(crate::ui::list_nav::Step),
+    /// Gives the open chat's message list keyboard focus.
+    FocusMessages,
+    /// Opens a message's context menu in the open chat, from the keyboard.
+    OpenMessageMenu(String),
+    /// The menu asked for by `OpenMessageMenu` is open: stop asking, so it
+    /// opens once and closes as any menu does.
+    MessageMenuOpened,
     /// Scrolls the open chat to a message.
     ScrollTo(String),
+    /// Goes to a replied message from the keys: as `ScrollTo`, but the
+    /// message list moves only once the message is loaded.
+    GoToReplied(String),
     /// Updates chat-list search text.
     Search(String),
     ShowUpdate,
     CloseUpdate,
-    /// Asks GitHub for a newer release now, from Settings.
-    CheckForUpdates,
-    /// Runs the benchmark in a second window, from About.
-    StartBenchmark,
-    /// Closes the benchmark window before it ends.
-    StopBenchmark,
-    /// Asks where to save the finished benchmark's results.
-    SaveBenchmark,
     DownloadUpdate,
     InstallUpdate,
     SetTheme(crate::settings::ThemeChoice),
-    /// Draws the window in one of the chat themes, leaving any theme file.
-    SetChatTheme(crate::chat_themes::ChatTheme),
-    /// Opens the next change of colours from this point, where a theme
-    /// card was clicked.
-    RevealThemeFrom(egui::Pos2),
-    /// Shows one settings category beside the list of them.
-    OpenSettingsSection(usize),
-    /// Light, dark, or as the system is.
-    SetMode(crate::chat_themes::Mode),
-    /// An accent over the chat theme's own.
-    SetAccent(crate::chat_themes::Accent),
-    /// A colour from the wheel, or `None` for the accent chosen before.
-    SetCustomAccent(Option<crate::chat_themes::CustomAccent>),
-    SetTintWallpaper(bool),
-    SetMotion(crate::motion::MotionPreference),
     /// Draws the interface in the platform's font or in the bundled Inter.
     SetFont(crate::settings::FontChoice),
-    /// Shows an info toast whose Undo button applies `undo`.
-    ToastUndo {
-        message: String,
-        undo: Vec<Action>,
-    },
-    /// Sets what one of the four touchpad swipes does.
-    SetSwipe(crate::settings::SwipeSlot, crate::settings::SwipeAction),
+    /// Windows and Linux: draws Zeus's own title bar and window buttons
+    /// (`true`) or the desktop's. Decorations are fixed when a window is
+    /// made, so the window is replaced.
+    SetCustomTitlebar(bool),
     SetInterfaceLanguage(Option<crate::i18n::Locale>),
     SetCustomTheme(String),
     SetWallpaperColor(crate::settings::WallpaperColor),
     SetWallpaperDoodles(bool),
-    SetDoodleStyle(crate::settings::DoodleStyle),
-    SetDoodleColor(crate::settings::DoodleColor),
-    SetDoodleIntensity(f32),
-    SetDoodleDensity(f32),
     /// Asks for an image to use as the chat wallpaper.
     PickWallpaperImage,
     /// Goes back to the wallpaper colour and deletes the copied image.
@@ -3435,7 +3320,7 @@ pub enum Action {
         kind: crate::privacy::PrivacyKind,
         choice: crate::privacy::PrivacyChoice,
     },
-    /// Registers or removes the login entry that starts ZapFast in the tray.
+    /// Registers or removes the login entry that starts Zeus in the tray.
     SetStartWithSystem(bool),
     /// Sets the sound for mentions and replies to us (`true`) or for
     /// other new messages.
@@ -3459,6 +3344,11 @@ pub enum Action {
         chat: ChatId,
         speed: Option<f32>,
     },
+    /// Changes a chat's disappearing-message timer; `0` turns it off.
+    SetDisappearingTimer {
+        chat: ChatId,
+        seconds: u32,
+    },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
     /// Changes our display name and About text; `None` keeps the current one.
@@ -3473,6 +3363,11 @@ pub enum Action {
     EditGroupName(String),
     /// Closes the group name editor without renaming.
     CloseGroupName,
+    /// Renames a group on WhatsApp; the editor closes.
+    SetGroupName {
+        chat: ChatId,
+        name: String,
+    },
     /// Opens the group description editor, holding the current text.
     EditGroupDescription(String),
     /// Closes the group description editor without changing it.
@@ -3483,34 +3378,14 @@ pub enum Action {
         chat: ChatId,
         description: String,
     },
-    /// Renames a group on WhatsApp; the editor closes.
-    SetGroupName {
-        chat: ChatId,
-        name: String,
-    },
     /// Asks for a picture and makes it the group's photo.
     PickGroupPicture(ChatId),
     /// Removes the group's photo.
     RemoveGroupPicture(ChatId),
     /// Sets or resets (`None`) the folder for new downloads.
     SetDownloadFolder(Option<PathBuf>),
-    /// When unopened attachments leave the media cache.
-    SetCacheAge(crate::settings::CacheAge),
-    /// How big the media cache may grow.
-    SetCacheLimit(crate::settings::CacheLimit),
     /// Keeps archived chats archived when a new message comes, or not.
     SetKeepChatsArchived(bool),
-    /// Picks the microphone calls and voice messages use; `None` follows the
-    /// system default.
-    SetMicrophone(Option<crate::settings::SavedDevice>),
-    /// Lists the microphones again for Settings.
-    RefreshMicrophones,
-    /// Starts or stops listening to the microphone in Settings.
-    CheckMicrophone(bool),
-    /// Turns push to talk on or off.
-    SetPushToTalk(bool),
-    /// Binds push to talk to a key, by egui's name for it.
-    SetPushToTalkKey(String),
     /// Saves the proxy setting and reconnects. Empty follows the environment.
     SetProxy(String),
     /// Plays a notification sound once, as a preview.
@@ -3534,7 +3409,7 @@ pub enum Action {
     AppLockForm(Option<crate::app_lock::FormMode>),
     /// Submits the Settings password form.
     SubmitAppLockForm,
-    /// How long ZapFast may go unused before it locks.
+    /// How long Zeus may go unused before it locks.
     SetAutoLock(crate::settings::AutoLock),
     Reconnect,
     /// Sets aside an archive whose key is gone and links again.
@@ -3548,6 +3423,8 @@ pub enum Action {
     CloseWindow,
     /// Shows another linked account in the window.
     SwitchAccount(AccountId),
+    /// Moves to the next (`1`) or previous (`-1`) account, wrapping round.
+    CycleAccount(i8),
     /// Starts linking another number beside the ones already here.
     AddAccount,
     /// Leaves an account being added before it was linked.
@@ -3556,6 +3433,9 @@ pub enum Action {
     RemoveAccount(AccountId),
     /// Deletes one account's cached attachments, never its archive.
     ClearMediaCache(AccountId),
+    /// Turns one account's desktop notifications on or off, from the account
+    /// switcher, without showing that account. It stays linked either way.
+    SetAccountNotifications(AccountId, bool),
     /// Mutes until Unix time, indefinitely with `Some(0)`, or unmutes with `None`.
     SetMuted(ChatId, Option<i64>),
     /// Moves a chat into or out of the locked folder.
@@ -3641,81 +3521,6 @@ mod storage_tests {
         }
         assert_eq!(cached.media().unwrap().path, None);
         assert!(kept.media().unwrap().path.is_some());
-    }
-}
-
-#[cfg(test)]
-mod contact_tests {
-    use std::sync::Arc;
-
-    use super::{Contact, Contacts};
-
-    const ADA: &str = "15550000001@s.whatsapp.net";
-
-    fn ada(push_name: &str) -> Contact {
-        Contact {
-            id: ADA.into(),
-            push_name: Some(push_name.into()),
-            ..Contact::default()
-        }
-    }
-
-    /// The worker's copy and the window's hold one allocation, and a change
-    /// on one side copies only that contact, leaving the other's as it was.
-    #[test]
-    fn both_sides_hold_one_contact_until_it_changes() {
-        let mut worker: Contacts = [ada("Ada")].into_iter().collect();
-        let mut window = Contacts::default();
-        for contact in worker.shared() {
-            window.insert(contact);
-        }
-        assert!(std::ptr::eq(
-            worker.get(ADA).unwrap(),
-            window.get(ADA).unwrap()
-        ));
-
-        let changed = worker.edit(ADA, |contact| {
-            Arc::make_mut(contact).push_name = Some("Ada L.".into());
-            Arc::clone(contact)
-        });
-        assert_eq!(window.get(ADA).unwrap().push_name.as_deref(), Some("Ada"));
-        assert_eq!(
-            worker.get(ADA).unwrap().push_name.as_deref(),
-            Some("Ada L.")
-        );
-        window.insert(changed);
-        assert!(std::ptr::eq(
-            worker.get(ADA).unwrap(),
-            window.get(ADA).unwrap()
-        ));
-    }
-
-    /// Filing a contact again replaces it, as a map's insert does, and an
-    /// edit of someone unknown files them empty, as a map's entry does.
-    #[test]
-    fn contacts_are_filed_by_id_and_replaced() {
-        let mut contacts = Contacts::default();
-        contacts.insert(ada("Ada"));
-        contacts.insert(ada("Ada L."));
-        assert_eq!(contacts.values().count(), 1);
-        assert_eq!(
-            contacts.get(ADA).unwrap().push_name.as_deref(),
-            Some("Ada L.")
-        );
-        assert!(contacts.contains_key(ADA));
-        assert!(contacts.get("15550000002@s.whatsapp.net").is_none());
-
-        let unchanged = contacts.edit("15550000002@s.whatsapp.net", |contact| contact.label());
-        assert_eq!(unchanged, None);
-        assert_eq!(
-            contacts.get("15550000002@s.whatsapp.net"),
-            Some(&Contact {
-                id: "15550000002@s.whatsapp.net".into(),
-                ..Contact::default()
-            })
-        );
-        contacts.clear();
-        assert!(!contacts.contains_key(ADA));
     }
 }
 

@@ -87,15 +87,31 @@ pub fn respond_to(app: &mut App, search: bool) -> Vec<String> {
                 }
                 app.poll_voting.remove(&(chat, message));
             }
+            // No network offline: only the sample's own site has a card.
+            Command::FetchLinkPreview { url } => {
+                let preview = link_preview(&url);
+                app.link_preview_arrived(url, preview);
+            }
             Command::SendText {
                 chat,
                 text,
                 quoting,
                 mentions,
-                ..
+                preview,
             } => {
                 let quoted = quoting.and_then(|id| quote(app, &chat, id));
-                let mut row = outgoing(app, &chat, Content::text(text));
+                let (content, thumbnail) = match preview {
+                    Some(preview) => (
+                        Content::Text {
+                            text,
+                            preview: Some(preview.preview),
+                        },
+                        preview.thumbnail,
+                    ),
+                    None => (Content::text(text), None),
+                };
+                let mut row = outgoing(app, &chat, content);
+                row.thumbnail = thumbnail;
                 row.quoted = quoted;
                 row.mentions = mentions
                     .into_iter()
@@ -185,10 +201,49 @@ pub fn respond_to(app: &mut App, search: bool) -> Vec<String> {
                 row.quoted = quoting.and_then(|id| quote(app, &chat, id));
                 append(app, row);
             }
+            // A further page: the same pictures again, as new results.
+            Command::SearchGifs {
+                query,
+                offset,
+                request,
+                ..
+            } if offset > 0 => {
+                let gifs = app
+                    .gif_results
+                    .iter()
+                    .rev()
+                    .map(|gif| crate::model::Gif {
+                        id: format!("{}-{offset}", gif.id),
+                        ..gif.clone()
+                    })
+                    .collect();
+                app.backend.deliver_demo_event(crate::backend::Event::Gifs {
+                    query,
+                    offset,
+                    request,
+                    results: Ok(crate::model::GifPage {
+                        gifs,
+                        next_offset: None,
+                    }),
+                });
+            }
             Command::SearchGifs { .. } => {
                 // The offline results were rendered before the tour began.
                 app.gif_pending = false;
                 app.gif_error = None;
+            }
+            Command::SetBlocked { chat, blocked } => {
+                let ids = app.blocklist.ids.get_or_insert_with(Default::default);
+                if blocked {
+                    ids.insert(chat);
+                } else {
+                    ids.remove(&chat);
+                }
+            }
+            Command::SetDisappearingTimer { chat, seconds } => {
+                if let Some(known) = app.chat_mut(&chat) {
+                    known.ephemeral_expiration = Some(seconds);
+                }
             }
             Command::RecentStickers => app.stickers_pending = false,
             Command::SearchChatMessages {
@@ -279,10 +334,61 @@ pub fn respond_to(app: &mut App, search: bool) -> Vec<String> {
                     }
                 }
             }
+            // The engine's answers to the call screen's own controls: the
+            // call as it now is, as the worker reports it.
+            Command::SetCallMuted(muted) => update_call(app, |call| call.muted = muted),
+            Command::SetCallCamera(on) => update_call(app, |call| call.camera_on = on),
+            Command::AnswerCall => update_call(app, |call| {
+                call.phase = crate::calls::CallPhase::Active;
+                call.started = Some(std::time::Instant::now());
+                call.remote_video = call.video;
+                call.camera_on = call.video;
+            }),
+            Command::LoadCallLog => {
+                // The sample's history, with the calls made on this run.
+                let mut log = super::super::call_entries(crate::util::now());
+                log.extend(
+                    app.conversations
+                        .values()
+                        .flat_map(|conversation| &conversation.messages)
+                        .filter(|row| row.id.starts_with(super::calls::ENTRY))
+                        .cloned(),
+                );
+                log.sort_by_key(|row| std::cmp::Reverse(row.timestamp));
+                app.call_log = log;
+                app.call_log_loaded = true;
+            }
             _ => {}
         }
     }
     answered
+}
+
+/// The card for a link to the sample's own site, as the worker would make it.
+fn link_preview(url: &str) -> Option<crate::model::ComposedPreview> {
+    url.contains("spotifast.rocks")
+        .then(|| crate::model::ComposedPreview {
+            preview: crate::model::LinkPreview {
+                url: url.to_owned(),
+                title: Some("spotifast.rocks".into()),
+                description: Some(
+                    "Spotify, native and fast. A lightweight Spotify client written in Rust with egui."
+                        .into(),
+                ),
+            },
+            thumbnail: Some(super::super::stock::thumbnail(super::super::stock::SPOTIFAST)),
+        })
+}
+
+/// Delivers the call on screen, changed by `change`, as the worker's next
+/// word on it.
+pub(super) fn update_call(app: &mut App, change: impl FnOnce(&mut crate::calls::CallUpdate)) {
+    let Some(mut call) = app.call.clone().filter(|call| call.phase.is_live()) else {
+        return;
+    };
+    change(&mut call);
+    app.backend
+        .deliver_demo_event(crate::backend::Event::Call(Box::new(call)));
 }
 
 /// Resolves an explicit quote source rather than assuming it belongs to the destination chat.
@@ -316,7 +422,7 @@ fn outgoing(app: &App, chat: &str, content: Content) -> Message {
     )
 }
 
-fn append(app: &mut App, row: Message) {
+pub(super) fn append(app: &mut App, row: Message) {
     if let Some(chat) = app.chats.iter_mut().find(|chat| chat.id == row.chat) {
         chat.last_activity = row.timestamp;
         chat.last = Some(LastMessage {

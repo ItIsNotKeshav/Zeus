@@ -35,6 +35,37 @@ enum Row {
     },
 }
 
+/// The picker's `Area`, the layer it is drawn on.
+pub(crate) fn area_id() -> egui::Id {
+    egui::Id::new("picker")
+}
+
+/// The reaction picker's `Area`, the layer it is drawn on.
+pub(crate) fn reaction_area_id() -> egui::Id {
+    egui::Id::new("reaction-picker")
+}
+
+/// The animation cache of the GIF tab's playing tiles.
+pub(crate) fn gif_animations() -> egui::Id {
+    egui::Id::new("gif-picker")
+}
+
+/// Whether the GIF tab is what the picker draws this pass.
+fn gif_tab_shown(app: &App) -> bool {
+    app.picker == Some(PickerTab::Gifs)
+        && app.reaction_target.is_none()
+        && !app.app_lock.is_locked()
+}
+
+/// Frees the GIF tab's animations once it is not drawn. The tab is their only
+/// caller, so they would never reach another idle sweep. Called before the
+/// lock screen's early return, since a locked app draws no picker either.
+pub fn release_gif_animations(app: &App, ctx: &egui::Context) {
+    if !gif_tab_shown(app) {
+        crate::animation::release(ctx, gif_animations());
+    }
+}
+
 pub fn show(app: &mut App, ctx: &egui::Context) {
     if app.picker == Some(PickerTab::Emoji) && app.reaction_target.is_none() {
         if app.picker_recent.is_none() {
@@ -1046,8 +1077,12 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if query != app.picker_search {
         app.picker_search = query.clone();
     }
-    if submit && query.trim() != app.gif_query.trim() {
-        app.actions.push(Action::SearchGifs(query));
+    if submit && (query.trim() != app.gif_query.trim() || app.gif_error.is_some()) {
+        if query.trim() == app.gif_query.trim() && app.gif_next_offset.is_some() {
+            app.actions.push(Action::MoreGifs);
+        } else {
+            app.actions.push(Action::SearchGifs(query));
+        }
     }
     if app.gif_pending {
         ui.horizontal(|ui| {
@@ -1110,6 +1145,16 @@ fn gif_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
                         }
                     }
                 });
+            }
+            if !app.gif_pending && app.gif_next_offset.is_some() {
+                let label = if app.gif_error.is_some() {
+                    gettext(app.locale, "Retry")
+                } else {
+                    gettext(app.locale, "Load more")
+                };
+                if theme::soft_button(ui, palette, None, &label, false).clicked() {
+                    app.actions.push(Action::MoreGifs);
+                }
             }
             if results.is_empty() && !app.gif_pending && app.gif_error.is_none() {
                 ui.add_space(crate::theme::SPACE_XL);

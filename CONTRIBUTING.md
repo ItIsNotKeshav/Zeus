@@ -114,12 +114,14 @@ cargo test --locked --all-targets --all-features
 RUSTDOCFLAGS='-D warnings' cargo doc --locked --all-features --no-deps
 ```
 
-Translation changes also need `.github/scripts/update-translations.sh --check`,
-using GNU gettext tools with Rust support. Run the script without `--check` when
-translatable source strings change, and review any fuzzy or missing entries in
-the updated PO files. Keep each translatable literal inside its own `gettext`
-call so extraction can find it. Normal Cargo builds compile the catalogs without
-gettext tools.
+Leave the translation template and catalogs (`zapfast.pot` and the PO files)
+out of pull requests that add or change UI strings: the maintainer regenerates
+them on `main`, and regenerated catalogs bury the real change and conflict with
+every other pull request. Keep each translatable literal inside its own
+`gettext` call so extraction can find it. A pull request that is a translation
+itself edits its PO file and passes `.github/scripts/update-translations.sh
+--check`, using GNU gettext tools with Rust support. Normal Cargo builds compile
+the catalogs without gettext tools.
 
 Linux needs the development packages listed in
 [Getting started](https://zapfast.rocks/getting-started/); `nix develop`

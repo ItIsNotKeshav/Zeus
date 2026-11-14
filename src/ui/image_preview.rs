@@ -393,7 +393,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let area = egui::Area::new(egui::Id::new("image-preview"))
         .order(egui::Order::Foreground)
         .fixed_pos(screen.min);
-    let response = egui::Modal::new(egui::Id::new("image-preview"))
+    let response = egui::Modal::new(modal_id())
         .area(area)
         .frame(egui::Frame::new().fill(palette.overlay.gamma_multiply(fade)))
         .backdrop_color(palette.shadow.gamma_multiply(fade))
@@ -406,8 +406,9 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 .rect_filled(window, 0.0, palette.overlay.gamma_multiply(fade));
             // Claimed first, so every control drawn over it wins the click.
             // What reaches this is a click on the empty field, which closes the
-            // viewer, as it does on the phone.
-            let (_, backdrop) = ui.allocate_exact_size(window.size(), Sense::click());
+            // viewer, as it does on the phone. It only takes clicks: focusable,
+            // it would be a nameless first stop, before Close.
+            let (_, backdrop) = ui.allocate_exact_size(window.size(), Sense::CLICK);
             let (header_rect, stage, strip_rect) = panes(window, strip);
 
             // Inset from the window's edges, so the title does not touch the
@@ -465,16 +466,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                     &mut actions,
                 )
             };
+            // Zoomed, the stage's scrollbars sit in the field and take its clicks.
+            if let Some(drawn) = drawn.filter(|_| clip || preview.is_fit()) {
+                field_click(ui, stage, drawn, &mut actions);
+            }
             if strip {
-                navigation_overlay(
-                    ui,
-                    stage,
-                    drawn.unwrap_or(stage),
-                    &palette,
-                    app.locale,
-                    clip,
-                    &mut actions,
-                );
+                navigation_overlay(ui, stage, &palette, app.locale, clip, &mut actions);
                 let mut bar = ui.new_child(UiBuilder::new().max_rect(strip_rect));
                 bar.set_clip_rect(strip_rect);
                 bar.set_opacity(chrome);
@@ -512,6 +509,37 @@ fn panes(window: Rect, strip: bool) -> (Rect, Rect, Rect) {
         pos2(window.max.x, strip_rect.min.y),
     );
     (header, stage, strip_rect)
+}
+
+/// Closes the viewer on a click on the field the picture leaves uncovered:
+/// the pan area under it holds the whole stage, so the strip beside a picture
+/// would otherwise swallow the click. The controls laid over the picture are
+/// added after this, so they keep their own clicks.
+fn field_click(ui: &mut egui::Ui, stage: Rect, drawn: Rect, actions: &mut Vec<Action>) {
+    for (index, panel) in field_panels(stage, drawn).into_iter().enumerate() {
+        if ui
+            .interact(
+                panel,
+                egui::Id::new(("image-preview-field", index)),
+                // Not a stop in the modal's Tab order.
+                Sense::CLICK,
+            )
+            .clicked()
+        {
+            actions.push(Action::CloseImagePreview);
+        }
+    }
+}
+
+/// The four parts of the stage around the picture, empty where it covers them.
+fn field_panels(stage: Rect, drawn: Rect) -> [Rect; 4] {
+    let drawn = drawn.intersect(stage);
+    [
+        Rect::from_x_y_ranges(stage.x_range(), stage.min.y..=drawn.min.y),
+        Rect::from_x_y_ranges(stage.x_range(), drawn.max.y..=stage.max.y),
+        Rect::from_x_y_ranges(stage.min.x..=drawn.min.x, drawn.y_range()),
+        Rect::from_x_y_ranges(drawn.max.x..=stage.max.x, drawn.y_range()),
+    ]
 }
 
 /// Title, the actions that reach the message, and the zoom controls.
@@ -1486,15 +1514,17 @@ enum Tile {
     /// The thumbnail the archive stored with the message: already the 56 px the
     /// strip wants.
     Stored,
-    /// The message's kind icon. A tile is never drawn from the file itself: a
-    /// 56 px square is not worth decoding a whole photo on the interface
-    /// thread, nor holding its full-size texture for a strip that scrolls.
+    /// A small poster generated from the downloaded file off the UI thread.
+    Downloaded,
+    /// The message's kind icon while neither a stored preview nor a file is available.
     Icon,
 }
 
 fn tile_of(item: &MediaItem) -> Tile {
     if item.thumbnail.is_some() {
         Tile::Stored
+    } else if item.path.is_some() {
+        Tile::Downloaded
     } else {
         Tile::Icon
     }
@@ -1506,11 +1536,179 @@ mod tile_tests {
     use crate::model::MediaItem;
     use std::path::PathBuf;
 
-    /// The strip draws the thumbnail the archive stored, and the message's
-    /// kind icon when there is none: decoding the file for a 56 px tile
-    /// would run on the interface thread and hold its full-size texture.
     #[test]
-    fn a_tile_is_drawn_from_the_stored_thumbnail_or_not_at_all() {
+    fn strip_thumbnails_crop_the_longer_side_without_stretching() {
+        for (width, height, uv) in [
+            (
+                120,
+                40,
+                Rect::from_min_max(pos2(1.0 / 3.0, 0.0), pos2(2.0 / 3.0, 1.0)),
+            ),
+            (
+                40,
+                120,
+                Rect::from_min_max(pos2(0.0, 1.0 / 3.0), pos2(1.0, 2.0 / 3.0)),
+            ),
+            (
+                400,
+                40,
+                Rect::from_min_max(pos2(0.45, 0.0), pos2(0.55, 1.0)),
+            ),
+            (
+                40,
+                400,
+                Rect::from_min_max(pos2(0.0, 0.45), pos2(1.0, 0.55)),
+            ),
+            (40, 40, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0))),
+        ] {
+            for video in [false, true] {
+                let ctx = egui::Context::default();
+                egui_extras::install_image_loaders(&ctx);
+                let mut png = std::io::Cursor::new(Vec::new());
+                image::RgbImage::from_pixel(width, height, image::Rgb([60, 120, 180]))
+                    .write_to(&mut png, image::ImageFormat::Png)
+                    .unwrap();
+                let item = MediaItem {
+                    card: None,
+                    id: "crop-fixture".into(),
+                    timestamp: 0,
+                    video,
+                    path: None,
+                    thumbnail: Some(png.into_inner()),
+                };
+                let rect = Rect::from_min_size(pos2(16.0, 16.0), Vec2::splat(THUMB));
+                let uri =
+                    thumbnail_uri(&ctx, "fixture", &item.id, item.thumbnail.as_ref().unwrap());
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+                loop {
+                    match egui::Image::new(uri.clone())
+                        .load_for_size(&ctx, rect.size())
+                        .unwrap()
+                    {
+                        egui::load::TexturePoll::Ready { texture } => {
+                            assert_eq!(texture.size, vec2(width as f32, height as f32));
+                            break;
+                        }
+                        egui::load::TexturePoll::Pending { .. } => {
+                            assert!(
+                                std::time::Instant::now() < deadline,
+                                "thumbnail did not load"
+                            );
+                            std::thread::sleep(std::time::Duration::from_millis(1));
+                        }
+                    }
+                }
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            Vec2::splat(200.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        thumb(
+                            ui,
+                            &crate::theme::Palette::dark(),
+                            "fixture",
+                            &item,
+                            rect,
+                            false,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                let painted = output
+                    .shapes
+                    .iter()
+                    .find_map(|shape| match &shape.shape {
+                        egui::Shape::Rect(shape) if shape.brush.is_some() => Some(shape),
+                        _ => None,
+                    })
+                    .expect("the stored thumbnail is painted");
+                assert_eq!(painted.rect, rect);
+                assert_eq!(painted.corner_radius, CornerRadius::same(6));
+                let crop = painted.brush.as_ref().unwrap().uv;
+                assert!(
+                    (crop.min - uv.min).length() < 0.00001,
+                    "{width}x{height}: {crop:?}"
+                );
+                assert!(
+                    (crop.max - uv.max).length() < 0.00001,
+                    "{width}x{height}: {crop:?}"
+                );
+            }
+        }
+    }
+
+    /// Exercise the generated tile's actual painted mesh, for both source orientations.
+    #[test]
+    fn downloaded_thumbnail_paint_preserves_aspect_ratio() {
+        let dir = tempfile::tempdir().unwrap();
+        for (width, height, expected) in [(160, 80, vec2(56.0, 28.0)), (80, 160, vec2(28.0, 56.0))]
+        {
+            let path = dir.path().join(format!("{width}x{height}.png"));
+            image::RgbImage::from_pixel(width, height, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            let item = MediaItem {
+                id: "test".into(),
+                card: None,
+                timestamp: 0,
+                video: false,
+                path: Some(path.clone()),
+                thumbnail: None,
+            };
+            let ctx = egui::Context::default();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let mut texture = None;
+                let rect = Rect::from_min_size(pos2(20.0, 20.0), Vec2::splat(THUMB));
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    if let crate::animation::Frame::Ready(ready) =
+                        crate::animation::frame(ui, &path, rect, false)
+                    {
+                        texture = Some(ready.id());
+                    }
+                    thumb(
+                        ui,
+                        &crate::theme::Palette::dark(),
+                        "chat",
+                        &item,
+                        rect,
+                        false,
+                    );
+                });
+                if let Some(texture) = texture {
+                    let painted = output
+                        .shapes
+                        .iter()
+                        .find(|shape| shape.shape.texture_id() == texture)
+                        .expect("the generated thumbnail is painted")
+                        .shape
+                        .visual_bounding_rect();
+                    assert!(
+                        (painted.width() - expected.x).abs() < 0.1
+                            && (painted.height() - expected.y).abs() < 0.1,
+                        "{painted:?}"
+                    );
+                    assert_eq!(painted.center(), rect.center());
+                    output.textures_delta.clear();
+                    break;
+                }
+                output.textures_delta.clear();
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "poster did not arrive"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        }
+    }
+
+    /// Missing stored previews use downloaded photos and videos before falling back to icons.
+    #[test]
+    fn a_tile_prefers_the_stored_thumbnail_then_the_downloaded_file() {
         let stored = MediaItem {
             card: None,
             id: "m1".into(),
@@ -1524,12 +1722,14 @@ mod tile_tests {
             thumbnail: None,
             ..stored.clone()
         };
-        assert_eq!(tile_of(&file_only), Tile::Icon);
+        assert_eq!(tile_of(&file_only), Tile::Downloaded);
         let clip = MediaItem {
             video: true,
             ..file_only
         };
-        assert_eq!(tile_of(&clip), Tile::Icon);
+        assert_eq!(tile_of(&clip), Tile::Downloaded);
+        let missing = MediaItem { path: None, ..clip };
+        assert_eq!(tile_of(&missing), Tile::Icon);
     }
 }
 
@@ -1546,7 +1746,7 @@ fn thumb(
     match (tile_of(item), item.thumbnail.as_deref()) {
         // A message id is only unique inside its chat, and the image cache
         // keeps the first bytes for a URI, so the chat has to be part of it.
-        (Tile::Stored, Some(bytes)) => {
+        (Tile::Stored, Some(bytes), _) => {
             // A carousel's cards share their message's id, and each has its
             // own preview, so the card is part of the key too.
             let key = match item.card {
@@ -1585,15 +1785,11 @@ fn thumb(
     }
 }
 
-/// Previous and next buttons over the visible part of the picture or clip,
-/// shown while the pointer is over it. A picture too narrow for both gets a
-/// band just wide enough, centred on it, so the buttons sit at its edges
-/// instead of on top of each other. Over a clip the arrow keys jump through
-/// it, so the tooltips name no key there.
+/// Previous and next buttons stay at the viewer stage edges while the pointer
+/// is over the stage. Over a clip the arrow keys seek, so its tooltips name no key.
 fn navigation_overlay(
     ui: &mut egui::Ui,
     area: Rect,
-    image: Rect,
     palette: &theme::Palette,
     locale: crate::i18n::Locale,
     clip: bool,
@@ -1601,12 +1797,7 @@ fn navigation_overlay(
 ) {
     const DIAMETER: f32 = 40.0;
     const INSET: f32 = 12.0;
-    let min_width = 2.0 * (DIAMETER + INSET) + DIAMETER;
-    let mut band = image;
-    if band.width() < min_width {
-        band = Rect::from_center_size(band.center(), vec2(min_width, band.height()));
-    }
-    let band = band.intersect(area);
+    let band = area;
     if band.height() < DIAMETER || band.width() < 2.0 * DIAMETER {
         return;
     }
@@ -1674,14 +1865,17 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
         .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
         .inner_margin(Margin::same(20))
         .shadow(palette.modal_shadow());
-    let response = egui::Modal::new(egui::Id::new("sticker-preview"))
+    let response = egui::Modal::new(sticker_modal_id())
         .frame(card)
         .backdrop_color(palette.shadow)
         .show(ctx, |ui| {
             ui.set_width(side);
             ui.vertical_centered(|ui| {
+                // A click on the sticker closes the card, as Escape does. It
+                // only takes clicks: focusable, it would be a nameless first
+                // stop, before the favorite button.
                 let (rect, response) =
-                    ui.allocate_exact_size(Vec2::splat(side), egui::Sense::click());
+                    ui.allocate_exact_size(Vec2::splat(side), egui::Sense::CLICK);
                 paint_sticker(ui, &preview, rect, &palette);
                 if response
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1723,6 +1917,11 @@ pub fn show_sticker(app: &mut App, ctx: &egui::Context) {
     if response.should_close() {
         app.actions.push(Action::CloseStickerPreview);
     }
+}
+
+/// The sticker view's `Modal`, the layer it is drawn on.
+pub(crate) fn sticker_modal_id() -> egui::Id {
+    egui::Id::new("sticker-preview")
 }
 
 /// Where the sticker preview's favorite button was drawn, for tests.
@@ -1775,8 +1974,7 @@ fn paint_sticker(
     }
 }
 
-/// The largest rect of `size`'s shape centred in `rect`. Stickers are small,
-/// so unlike photos they are enlarged to fill it.
+/// Fit a poster or sticker into its available rectangle without changing its aspect ratio.
 fn fit_within(size: Vec2, rect: Rect) -> Rect {
     if size.x <= 0.0 || size.y <= 0.0 {
         return rect;
@@ -2046,5 +2244,31 @@ mod tests {
         // because the row is wider than the strip.
         assert_eq!(pad(40), 0.0);
         assert!(row(40) > inner.width());
+    }
+
+    /// The parts of the stage the picture leaves uncovered are the viewer's:
+    /// one click there closes it, and none of them covers the picture.
+    #[test]
+    fn the_field_beside_the_picture_takes_the_click_that_closes_it() {
+        let stage = Rect::from_min_size(pos2(0.0, 56.0), vec2(800.0, 400.0));
+        let picture = Rect::from_min_size(pos2(300.0, 156.0), vec2(200.0, 200.0));
+        let panels = field_panels(stage, picture);
+        for panel in panels {
+            assert_eq!(
+                panel.intersect(picture).area(),
+                0.0,
+                "{panel:?} covers the picture"
+            );
+            assert!(stage.contains_rect(panel), "{panel:?} leaves the stage");
+        }
+        let in_field = |pos: egui::Pos2| panels.iter().any(|panel| panel.contains(pos));
+        assert!(in_field(pos2(100.0, 200.0)), "the margin beside it");
+        assert!(!in_field(picture.center()), "the picture keeps its clicks");
+        // A picture as big as the stage leaves no field at all.
+        assert!(
+            field_panels(stage, stage)
+                .iter()
+                .all(|panel| panel.area() == 0.0)
+        );
     }
 }

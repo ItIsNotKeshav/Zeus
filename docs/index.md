@@ -1,10 +1,12 @@
 ---
 layout: home
-title: Zeus
-description: A fast, lightweight WhatsApp app for Linux, macOS, and Windows.
+title: ZapFast
+description: ZapFast is a lightweight WhatsApp client for Linux, macOS, and Windows, written in Rust with no browser engine. Opens in under a second, about 200 MB of RAM.
+seo:
+  title: Native WhatsApp Client for Linux, macOS and Windows
 permalink: /
 hero:
-  name: Zeus
+  name: ZapFast
   text: WhatsApp, native and fast
   tagline: A lightweight WhatsApp app for Linux, macOS, and Windows. Chat, send voice messages, and share files.
   actions:
@@ -12,7 +14,7 @@ hero:
       text: Download
       link: /download/
     - theme: alt
-      text: What is Zeus?
+      text: What is ZapFast?
       link: /what-is-zapfast/
     - theme: alt
       text: GitHub
@@ -20,7 +22,7 @@ hero:
   image:
     dark: /screenshot.png
     light: /screenshot-light.png
-    alt: "Zeus showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview"
+    alt: "ZapFast showing a conversation with an attachment, voice messages, reactions, a quoted reply, and a link preview"
     width: 1800
     height: 1360
 
@@ -39,13 +41,13 @@ features:
     details: Photos, GIFs, stickers, documents, polls, locations, and link previews appear in the chat. Add captions before sending files.
   - icon: 🔔
     title: Background mode
-    details: Closing the window keeps Zeus linked in the tray. Notifications show the chat picture, and muted chats stay quiet.
+    details: Closing the window keeps ZapFast linked in the tray. Notifications show the chat picture, and muted chats stay quiet.
   - icon: 👥
     title: Several numbers
     details: Link more than one WhatsApp number and switch between them from your picture at the foot of the rail beside the chat list.
   - icon: 🎨
     title: Themes
-    details: Light, dark, or automatic appearance, custom colour themes, and on Omarchy your desktop theme.
+    details: Light, dark, or the system's appearance, custom colour themes, and on Omarchy your desktop theme.
     link: /themes/
     link_text: Make a theme
   - icon: ⌨️
@@ -58,9 +60,13 @@ features:
     link_text: Read the source
 ---
 
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"ZapFast","url":"https://zapfast.rocks/","downloadUrl":"https://zapfast.rocks/download/","softwareVersion":"{{ site.zapfast_version }}","operatingSystem":"Linux, macOS, Windows","applicationCategory":"CommunicationApplication","license":"https://github.com/crmne/zapfast/blob/main/LICENSE","isAccessibleForFree":true,"offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"image":"https://zapfast.rocks/screenshot.png","author":{"@type":"Person","name":"Carmine Paolino","url":"https://paolino.me"}}
+</script>
+
 <p class="sibling"><strong>Want Spotify just as fast and native?</strong> <a href="https://spotifast.rocks">Spotifast</a> is ZapFast's sibling: the same native interface, for Spotify. Both are built on <a href="https://fastframe.dev">fastframe</a>, the shared foundation for native Rust apps built with <a href="https://www.egui.rs">egui</a>.</p>
 
-<video class="hero-film image-src" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="Zeus in under a minute: a film of the app, made with its built-in demo content" hidden>
+<video class="hero-film image-src" width="1280" height="720" controls muted loop playsinline preload="metadata" poster="{{ '/assets/images/launch-film-poster.jpg' | relative_url }}" aria-label="ZapFast in under a minute: a film of the app, made with its built-in demo content" hidden>
   <source src="{{ '/assets/videos/launch-film.mp4' | relative_url }}" type="video/mp4">
 </video>
 
@@ -82,6 +88,8 @@ features:
 <style>
   .hero-film {
     display: block;
+    /* The film's box before its metadata arrives, so nothing moves. */
+    aspect-ratio: 16 / 9;
     background: #0b141a;
   }
   .sibling {

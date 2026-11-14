@@ -681,6 +681,17 @@ fn overview(app: &mut App, ui: &mut egui::Ui, id: &str, overlay: bool, card: boo
         });
 }
 
+/// Opens a profile picture in the image viewer. It belongs to no message, so
+/// the viewer has no album of a chat to browse from it.
+fn view_photo(picture: &std::path::Path) -> Action {
+    Action::PreviewImage {
+        path: picture.to_path_buf(),
+        chat: String::new(),
+        message: String::new(),
+        card: None,
+    }
+}
+
 /// The picture, name, details, actions and members, top to bottom.
 fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     let palette = app.palette;
@@ -705,8 +716,18 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     ui.vertical_centered(|ui| {
         if group_editable {
             group_action = group_photo(app, ui, name, id, photo, picture.as_deref());
+        } else if let Some(picture) = picture.as_deref() {
+            let label = crate::i18n::gettext(app.locale, "View photo");
+            if widgets::clickable_avatar(ui, &palette, name, id, photo, Some(picture), &label)
+                .tab_stop(Stop::InfoControl(PHOTO_STOP))
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(label.as_ref())
+                .clicked()
+            {
+                app.actions.push(view_photo(picture));
+            }
         } else {
-            widgets::avatar(ui, &palette, name, id, photo, picture.as_deref());
+            widgets::avatar(ui, &palette, name, id, photo, None);
         }
         ui.add_space(8.0);
         if let Some(draft) = renaming.as_mut() {
@@ -1040,11 +1061,12 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     if let Some(action) = group_action {
         app.actions.push(action);
     }
-    ui.add_space(16.0);
-    actions(app, ui, shown);
+    ui.add_space(4.0);
+    actions(app, ui, shown, mine, editable);
+    ui.vertical_centered(|ui| super::blocking::button(app, ui, id, Stop::InfoControl(BLOCK_STOP)));
     let describing = app.group_description_edit.take().filter(|_| group_editable);
     if let Some(mut draft) = describing {
-        ui.add_space(SECTION_GAP);
+        ui.add_space(8.0);
         match group_description_field(app, ui, &mut draft) {
             Some(true) => app.actions.push(Action::SetGroupDescription {
                 chat: id.to_owned(),
@@ -3110,6 +3132,24 @@ pub fn group_name_field_id() -> egui::Id {
 
 #[cfg(test)]
 mod tests {
+    /// The picture opens the viewer on its own, not a chat's album (#640).
+    #[test]
+    fn a_profile_picture_opens_alone_in_the_viewer() {
+        let path = std::path::Path::new("/fixture/1_s_whatsapp_net-full.jpg");
+        assert!(crate::image_preview::can_view(path));
+        let crate::model::Action::PreviewImage {
+            path: shown,
+            chat,
+            message,
+            card,
+        } = super::view_photo(path)
+        else {
+            panic!("the viewer");
+        };
+        assert_eq!(shown, path);
+        assert!(chat.is_empty() && message.is_empty() && card.is_none());
+    }
+
     use super::domain;
 
     #[test]

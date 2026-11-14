@@ -3,7 +3,13 @@
 use egui::{Key, Modifiers};
 
 use crate::app::App;
-use crate::model::{Action, Chat, Dialog, InfoView, Page, Scroll};
+use crate::model::{Action, Chat, ChatId, Dialog, InfoView, Page, Scroll};
+
+/// Whether Home, End and Ctrl+End scroll the open chat rather than move the
+/// cursor of the focused text field (#456).
+fn jump_keys_reach_chat(editing_text: bool, composer_focused: bool, composer_empty: bool) -> bool {
+    !editing_text || (composer_focused && composer_empty)
+}
 
 /// Routes keyboard commands to actions, respecting overlays and text focus.
 pub fn handle(app: &mut App, ctx: &egui::Context) {
@@ -29,6 +35,12 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
     let find = find_action(app);
     let archive = archive_action(app);
     let next_account = next_account_action(app);
+    let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
+    // Home/End (and Ctrl+End) move the text cursor in a field with text in
+    // it, as in any editor; they scroll the chat only from an empty composer
+    // or with no field focused.
+    let jump_allowed =
+        jump_keys_reach_chat(editing_text, composer_focused, app.composer.is_empty());
     let mut actions = Vec::new();
     let menu_open = egui::Popup::is_any_open(ctx);
     let recent_chat = (app.page == Page::Chats
@@ -43,6 +55,20 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         .then(|| app.other_recent_chat())
         .flatten();
     ctx.input_mut(|input| {
+        // The message list's key counts only with its modifier alone:
+        // `consume_key` would also take Alt+Shift+2, and on macOS
+        // Command+Control+2, which is Command+2's chat.
+        let messages_key_free = input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key {
+                    key: Key::Num2,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if messages_modifier_alone(*modifiers)
+            )
+        });
         let mut key = |modifiers: Modifiers, key: Key, action: Action| {
             if input.consume_key(modifiers, key) {
                 actions.push(action);
@@ -110,7 +136,31 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         key(Modifiers::COMMAND, Key::Equals, Action::ZoomBy(0.1));
         key(Modifiers::COMMAND, Key::Minus, Action::ZoomBy(-0.1));
         key(Modifiers::COMMAND, Key::Num0, Action::ResetZoom);
-        key(Modifiers::COMMAND, Key::End, Action::ScrollToBottom);
+        if jump_allowed {
+            key(Modifiers::COMMAND, Key::End, Action::ScrollToBottom);
+        }
+        // Alt+2 goes to the message list. On macOS it is Control+2:
+        // Command+1 to 9 open chats there, and Option with a digit types
+        // characters some keyboard layouts need, such as # and €.
+        if app.dialog.is_none()
+            && !app.show_update
+            && app.picker.is_none()
+            && app.reaction_target.is_none()
+            && app.recording.is_none()
+            // The call screen covers the chats.
+            && (app.call.is_none() || app.call_surface_hidden)
+            && messages_key_free
+        {
+            key(
+                if cfg!(target_os = "macos") {
+                    Modifiers::CTRL
+                } else {
+                    Modifiers::ALT
+                },
+                Key::Num2,
+                Action::FocusMessages,
+            );
+        }
         // The rail's Chats and Calls, by the digit's place on the keyboard:
         // with Shift held, layouts report the digits as their symbols.
         // Ctrl+1..9 without Shift open chats by their place in the list.
@@ -122,9 +172,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             }
         }
     });
+    drop_shortcut_text(ctx);
     // Escape cancels the topmost state. Menus handle Escape themselves.
     let search_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("chat-search")));
-    let composer_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("composer-text")));
     if app.chat_view()
         && app.selection.as_ref().is_some_and(|(chat, selected)| {
             app.open_chat.as_ref() == Some(chat) && !selected.is_empty()
@@ -150,6 +200,42 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         });
         actions.push(Action::CopyText(text));
     }
+    // The focused message list takes the arrows, Home, End and the page keys
+    // to move its current message, ahead of the scrolling below.
+    if app.chat_view()
+        && app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && (app.call.is_none() || app.call_surface_hidden)
+        && !menu_open
+        && let Some(chat) = app.open_chat.clone()
+        && ctx.memory(|memory| memory.has_focus(crate::ui::conversation::messages_list_id(&chat)))
+        && let Some(step) =
+            crate::ui::list_nav::take_step(ctx, || app.message_page_rows(ctx, &chat))
+    {
+        actions.push(Action::MessageCursor(step));
+    }
+    // The focused list's current message takes the keys that act on it.
+    if app.dialog.is_none()
+        && !app.show_update
+        && app.picker.is_none()
+        && app.reaction_target.is_none()
+        && app.recording.is_none()
+        && !menu_open
+        // The call screen covers the chats.
+        && (app.call.is_none() || app.call_surface_hidden)
+        && let Some((chat, id)) = focused_message(app, ctx)
+    {
+        let taken = message_keys(app, ctx, &chat, &id);
+        if !taken.is_empty() {
+            // Acting from the keyboard is keyboard navigation, as Tab is:
+            // the focus these keys move (into the menu, the picker, the
+            // input, a dialog) is shown.
+            ctx.data_mut(|data| data.insert_temp(crate::theme::keyboard_focus_id(), true));
+            actions.extend(taken);
+        }
+    }
     // PgUp/PgDn/Home/End scroll the open chat. PgUp/PgDn also work while the
     // composer has focus, since egui's TextEdit does not handle them itself;
     // Home/End keep moving the text cursor in a non-empty field, as ↑ keeps
@@ -162,7 +248,6 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         && app.reaction_target.is_none()
         && !menu_open
     {
-        let home_end_allowed = !editing_text || (composer_focused && app.composer.is_empty());
         ctx.input_mut(|input| {
             if take_plain(input, Key::PageUp) {
                 actions.push(Action::ScrollPage(Scroll::PageUp));
@@ -170,7 +255,7 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
             if take_plain(input, Key::PageDown) {
                 actions.push(Action::ScrollPage(Scroll::PageDown));
             }
-            if home_end_allowed {
+            if jump_allowed {
                 if take_plain(input, Key::Home) {
                     actions.push(Action::ScrollPage(Scroll::Top));
                 }
@@ -225,6 +310,8 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         } else if app.info_visible() && app.group_name_edit.is_some() {
             // Cancels the group rename and keeps the panel open.
             actions.push(Action::CloseGroupName);
+        } else if app.info_visible() && app.group_description_edit.is_some() {
+            actions.push(Action::CloseGroupDescription);
         } else if app.info_visible() && app.contact_edit.is_some() {
             actions.push(Action::CloseContactEdit);
         } else if app.info_visible() {
@@ -265,6 +352,9 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         } else if app.locked_folder {
             actions.push(Action::CloseLockedFolder);
         }
+    }
+    if escape {
+        keep_focus_on_escape(app, ctx);
     }
     // Enter sends a recording because the text field is hidden.
     if app.recording.is_some()
@@ -346,6 +436,143 @@ fn is_copy_event(event: &egui::Event) -> bool {
             key: Key::C, pressed: true, modifiers, ..
         } if (modifiers.command || modifiers.ctrl)
             && !modifiers.alt && !modifiers.shift)
+}
+
+/// The open chat's current message while its message list has keyboard
+/// focus: the message the cursor names, or the newest when it names none
+/// loaded, as the list itself resolves it. An album is one row, named by
+/// its first item. The Calls tab shows the open chat beside its history, so
+/// its list counts there too; a narrow window showing only the history has
+/// no list on screen, and so none with focus.
+pub fn focused_message(app: &App, ctx: &egui::Context) -> Option<(ChatId, String)> {
+    use crate::ui::conversation::{row_of, row_starts};
+    if !app.chat_view() {
+        return None;
+    }
+    let chat = app.open_chat.as_ref()?;
+    if !ctx.memory(|memory| memory.has_focus(crate::ui::conversation::messages_list_id(chat))) {
+        return None;
+    }
+    let messages = &app.conversations.get(chat)?.messages;
+    let index = app
+        .message_cursor
+        .get(chat)
+        .and_then(|id| messages.iter().position(|message| &message.id == id))
+        .or(messages.len().checked_sub(1))?;
+    let starts = row_starts(messages, app.selecting_in(chat));
+    let first = starts.get(row_of(&starts, index)).copied().unwrap_or(index);
+    Some((chat.clone(), messages.get(first)?.id.clone()))
+}
+
+/// Takes this frame's key for the focused message `id`, if any, and returns
+/// what it does: each key is the message menu's item of the same name, with
+/// the same conditions, so the keys never offer what the menu does not.
+/// Shift+F10 opens the menu itself: egui never reports the Applications
+/// key. Enter opens no message's menu: only a call, whose menu is all it
+/// offers, opens it on Space or Enter too. A key whose item the menu does
+/// not offer does nothing, except Shift+Delete, which says why.
+fn message_keys(app: &mut App, ctx: &egui::Context, chat: &str, id: &str) -> Vec<Action> {
+    use crate::ui::conversation as view;
+    // Every key below is a press: a frame without one has nothing to take.
+    // On Windows, Shift+Delete arrives as Cut alone.
+    if !ctx.input(|input| {
+        input.events.iter().any(|event| {
+            matches!(
+                event,
+                egui::Event::Key { pressed: true, .. } | egui::Event::Cut
+            )
+        })
+    }) {
+        return Vec::new();
+    }
+    // While this chat selects messages, a key acting on one message would
+    // act behind the selection's back, and the bubbles draw no menu then: one
+    // asked for would open only once the selection ends. The keys that move
+    // the list still move it.
+    if app.selecting_in(chat) {
+        return Vec::new();
+    }
+    let Some(message) = app
+        .conversations
+        .get(chat)
+        .and_then(|conversation| conversation.message(id))
+    else {
+        return Vec::new();
+    };
+    // A call in the chat is a record: its menu only calls back, so Space and
+    // Enter open that menu and the other keys that act on a message leave it
+    // alone.
+    let record = matches!(message.content, crate::model::Content::Call { .. });
+    let mut actions = Vec::new();
+    let mut revoke_refused = None;
+    ctx.input_mut(|input| {
+        if take_exact(input, Modifiers::SHIFT, Key::F10) {
+            actions.push(Action::OpenMessageMenu(id.to_owned()));
+        } else if record {
+            // Nothing else acts on a call.
+            if take_space_or_enter(input) {
+                actions.push(Action::OpenMessageMenu(id.to_owned()));
+            }
+        } else if take_plain(input, Key::R) {
+            if view::can_reply(&message.content) {
+                actions.push(Action::Reply(id.to_owned()));
+                actions.push(Action::FocusComposer);
+            }
+        } else if let Some(quoted) = &message.quoted
+            && take_plain_once(input, Key::G)
+        {
+            // The quote's jump: the list moves to the replied message, once
+            // for a key held down.
+            actions.push(view::quote_key_action(quoted));
+        } else if take_plain(input, Key::E) {
+            actions.push(view::open_reaction_picker_action(chat, id, true));
+        } else if take_plain(input, Key::C) {
+            let names = |mention: &str| app.mention_name(mention);
+            actions.extend(view::copy_key_action(message, &names));
+        } else if take_plain(input, Key::F) {
+            if crate::app::can_select(&message.content) {
+                actions.push(view::forward_action(chat, id));
+            }
+        } else if take_delete(input, Modifiers::SHIFT) {
+            // Never a deletion: the confirmation that "Delete for everyone"
+            // opens, where the menu offers it.
+            match view::revoke_blocker(message, crate::util::now()) {
+                None => actions.push(view::delete_for_everyone_action(chat, id)),
+                Some(blocker) => revoke_refused = Some(blocker),
+            }
+        } else if take_delete(input, Modifiers::NONE) {
+            // Never a deletion: the confirmation that "Delete for me" opens.
+            actions.push(view::delete_for_me_action(chat, id));
+        }
+    });
+    if let Some(blocker) = revoke_refused {
+        let text = view::revoke_refusal_said(app.locale, blocker);
+        app.announcer.say(crate::announcer::Category::Status, text);
+    }
+    actions
+}
+
+/// Takes this frame's first press of the Delete key with exactly
+/// `modifiers`. A Mac's Delete key is Backspace, and Fn with it is Delete.
+/// On Windows egui reports Shift+Delete as Cut, with no key, so a Cut while
+/// Shift alone is held is that press; Ctrl+X, also Cut, is left alone.
+fn take_delete(input: &mut egui::InputState, modifiers: Modifiers) -> bool {
+    if take_exact(input, modifiers, Key::Delete)
+        || (cfg!(target_os = "macos") && take_exact(input, modifiers, Key::Backspace))
+    {
+        return true;
+    }
+    if !cfg!(target_os = "windows") || modifiers != Modifiers::SHIFT || input.modifiers != modifiers
+    {
+        return false;
+    }
+    let mut taken = false;
+    input.events.retain(|event| {
+        let cut = !taken && matches!(event, egui::Event::Cut);
+        taken |= cut;
+        !cut
+    });
+    taken
 }
 
 /// Takes an exact Command/Ctrl+1..9 press, leaving modified number keys alone.
@@ -446,7 +673,41 @@ fn take_destination(input: &mut egui::InputState) -> Option<u8> {
 /// reports whether one was found. `consume_key` is unsuitable here: it also
 /// matches the key with Shift or Alt held, and a plain binding must leave
 /// those combinations, such as Shift+Home for text selection, alone.
-pub(super) fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
+pub(crate) fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
+    take_exact(input, Modifiers::NONE, key)
+}
+
+/// [`take_plain`] for a key that acts once however long it is held: its
+/// first press counts, and a repeat is taken without acting, so nothing
+/// else acts on it either.
+fn take_plain_once(input: &mut egui::InputState, key: Key) -> bool {
+    let mut taken = None;
+    input.events.retain(|event| {
+        if taken.is_some() {
+            return true;
+        }
+        if let egui::Event::Key {
+            key: found,
+            pressed: true,
+            repeat,
+            modifiers,
+            ..
+        } = event
+            && *found == key
+            && *modifiers == Modifiers::NONE
+        {
+            taken = Some(!repeat);
+            return false;
+        }
+        true
+    });
+    taken.unwrap_or(false)
+}
+
+/// Removes this frame's first press of `key` with exactly `modifiers`, if
+/// any, and reports whether one was found.
+pub(crate) fn take_exact(input: &mut egui::InputState, modifiers: Modifiers, key: Key) -> bool {
+    let wanted = modifiers;
     let mut taken = false;
     input.events.retain(|event| {
         if taken {
@@ -459,12 +720,19 @@ pub(super) fn take_plain(input: &mut egui::InputState, key: Key) -> bool {
                 pressed: true,
                 modifiers,
                 ..
-            } if *found == key && *modifiers == Modifiers::NONE
+            } if *found == key && *modifiers == wanted
         );
         taken |= matches;
         !matches
     });
     taken
+}
+
+/// Takes this frame's first plain Space or, failing that, its first plain
+/// Enter: the message list's current message takes the two alike, a held
+/// key acting on each repeat.
+fn take_space_or_enter(input: &mut egui::InputState) -> bool {
+    take_plain(input, Key::Space) || take_plain(input, Key::Enter)
 }
 
 /// Handles keys while the image preview is open. No chat shortcut runs, and
@@ -575,14 +843,42 @@ fn push_to_talk(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Handles keys while the cropper covers the window: Escape leaves the
-/// staged picture alone, Enter keeps the crop.
+/// staged picture alone, Enter keeps the crop. Enter on a focused button
+/// the reader can reach, the cropper's own or the window's above it,
+/// presses that button instead, as anywhere else, so Enter on Cancel
+/// cancels and Enter on Turn left turns the picture. A control under the
+/// cropper, such as the message field it was opened over, leaves Enter to
+/// the crop, also in the cropper's first frame, before egui knows it covers
+/// that control.
 fn editor_keys(app: &mut App, ctx: &egui::Context) {
+    let focused = ctx.memory(|memory| memory.focused()).and_then(|focused| {
+        ctx.viewport(|viewport| {
+            viewport
+                .prev_pass
+                .widgets
+                .get(focused)
+                .map(|widget| (widget.layer_id, widget.sense.senses_click()))
+        })
+    });
+    let cropper = egui::LayerId::new(egui::Order::Foreground, super::image_editor::area_id());
+    let on_button = focused.is_some_and(|(layer, clicks)| {
+        clicks
+            && ctx.memory(|memory| {
+                // The cropper is the modal layer from the pass after its
+                // first: until then everything takes the pointer and the
+                // keys, the message field under it too, so only a layer
+                // drawn above every Foreground one is surely above it.
+                memory.allows_interaction(layer)
+                    && (memory.top_modal_layer() == Some(cropper)
+                        || layer.order > egui::Order::Foreground)
+            })
+    });
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         if input.consume_key(Modifiers::NONE, Key::Escape) {
             actions.push(Action::CancelPictureEdit);
         }
-        if input.consume_key(Modifiers::NONE, Key::Enter) {
+        if !on_button && input.consume_key(Modifiers::NONE, Key::Enter) {
             actions.push(Action::ApplyPictureEdit);
         }
     });
@@ -703,6 +999,44 @@ fn next_account_action(app: &App) -> Option<Action> {
     Some(Action::SwitchAccount(app.accounts[next].id.clone()))
 }
 
+/// Control held with no other modifier: on macOS, Command+Control is
+/// Command's, which `consume_key` would also match as Control.
+fn control_alone(modifiers: Modifiers) -> bool {
+    modifiers.ctrl && !modifiers.command && !modifiers.mac_cmd && !modifiers.alt && !modifiers.shift
+}
+
+/// The message list's modifier held alone: Control on macOS, Alt elsewhere.
+fn messages_modifier_alone(modifiers: Modifiers) -> bool {
+    if cfg!(target_os = "macos") {
+        control_alone(modifiers)
+    } else {
+        modifiers.matches_exact(Modifiers::ALT)
+    }
+}
+
+/// The message list's shortcut: Alt+2, but Control+2 on macOS, where
+/// Command with a digit opens a chat. `label` shows "Control" as ⌃ there.
+const MESSAGES_KEYS: &str = if cfg!(target_os = "macos") {
+    "Control+2"
+} else {
+    "Alt+2"
+};
+
+/// Deletes the current message for me. A Mac's Delete key is Backspace, and
+/// Fn+Delete is Delete.
+const DELETE_KEYS: &str = if cfg!(target_os = "macos") {
+    "Delete / Fn+Delete"
+} else {
+    "Delete"
+};
+
+/// Deletes the current message for everyone, the same keys with Shift.
+const DELETE_FOR_EVERYONE_KEYS: &str = if cfg!(target_os = "macos") {
+    "Shift+Delete / Shift+Fn+Delete"
+} else {
+    "Shift+Delete"
+};
+
 /// Shortcuts shown in the help dialog.
 pub const SHORTCUTS: &[(&str, &str)] = &[
     ("Ctrl+K / Ctrl+Shift+F", "Search chats"),
@@ -733,7 +1067,29 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
     ),
     ("Ctrl+C", "Copy the selected messages"),
     ("Ctrl+B", "Collapse or expand the chat list"),
-    ("Ctrl+End", "Jump to the newest message"),
+    (
+        "Ctrl+End",
+        "Jump to the newest message (when the input is empty)",
+    ),
+    (MESSAGES_KEYS, "Go to the message list"),
+    (
+        "↑ / ↓, Home / End, PgUp / PgDn",
+        "Move through messages (in the message list)",
+    ),
+    ("Shift+F10", "Message menu (in the message list)"),
+    ("R", "Reply to the message (in the message list)"),
+    ("E", "React to the message (in the message list)"),
+    ("C", "Copy the message (in the message list)"),
+    ("F", "Forward the message (in the message list)"),
+    (
+        DELETE_KEYS,
+        "Delete the message for me (in the message list)",
+    ),
+    (
+        DELETE_FOR_EVERYONE_KEYS,
+        "Delete the message for everyone (in the message list)",
+    ),
+    ("G", "Go to the replied message (in the message list)"),
     ("PgUp / PgDn", "Scroll the open chat by a page"),
     (
         "Home / End",
@@ -752,7 +1108,8 @@ pub const SHORTCUTS: &[(&str, &str)] = &[
 /// Uses Command and Option labels on macOS.
 pub fn label(keys: &str) -> String {
     if cfg!(target_os = "macos") {
-        keys.replace("Ctrl", "⌘")
+        keys.replace("Control", "⌃")
+            .replace("Ctrl", "⌘")
             .replace("Strg", "⌘")
             .replace("Alt", "⌥")
     } else {
@@ -763,6 +1120,68 @@ pub fn label(keys: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An app whose open chat holds `messages`, by id and content, in order,
+    /// with the folder it keeps its files in, which goes when dropped.
+    fn app_with(messages: Vec<(&str, crate::model::Content)>) -> (tempfile::TempDir, App, String) {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let chat = "1@s.whatsapp.net".to_owned();
+        let conversation = app.conversations.entry(chat.clone()).or_default();
+        for (index, (id, content)) in messages.into_iter().enumerate() {
+            conversation.messages.push(crate::model::Message {
+                id: id.into(),
+                chat: chat.clone(),
+                sender: chat.clone(),
+                sender_name: None,
+                from_me: false,
+                timestamp: 1 + index as i64,
+                history_order: None,
+                content,
+                status: crate::model::Delivery::None,
+                delivered_at: None,
+                read_at: None,
+                quoted: None,
+                reactions: Vec::new(),
+                edited: false,
+                mentions: Vec::new(),
+                forwarded: false,
+                thumbnail: None,
+            });
+        }
+        app.open_chat = Some(chat.clone());
+        (root, app, chat)
+    }
+
+    /// G takes no key from a message that replies to nothing.
+    #[test]
+    fn g_is_left_alone_without_a_quote() {
+        let (_root, mut app, chat) = app_with(vec![("text", crate::model::Content::text("Hello"))]);
+        let ctx = egui::Context::default();
+        let mut left = 0;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: Key::G,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ui| {
+                assert!(message_keys(&mut app, ui.ctx(), &chat, "text").is_empty());
+                left = ui.input(|input| input.events.len());
+            },
+        );
+        output.textures_delta.clear();
+        assert_eq!(left, 1, "G is still there for others");
+    }
 
     #[test]
     fn ctrl_f_searches_the_open_chat_the_list_or_the_settings() {
@@ -780,6 +1199,327 @@ mod tests {
         assert!(matches!(find_action(&app), Action::FocusSettingsSearch));
         app.page = Page::Wallpaper;
         assert!(matches!(find_action(&app), Action::FocusSearch));
+    }
+
+    /// An app with three texts in its open chat, the message list focused.
+    fn focused_list() -> (tempfile::TempDir, App, String, egui::Context) {
+        let (root, mut app, chat) = app_with(vec![
+            ("one", crate::model::Content::text("One")),
+            (
+                "two",
+                crate::model::Content::text("Two https://a.org https://b.org"),
+            ),
+            ("three", crate::model::Content::text("Three")),
+        ]);
+        app.page = Page::Chats;
+        app.message_cursor.insert(chat.clone(), "two".into());
+        (root, app, chat, egui::Context::default())
+    }
+
+    /// `press` with the message list of `chat` focused, and the actions it
+    /// queued.
+    fn press_in_list(app: &mut App, ctx: &egui::Context, chat: &str, key: Key) -> Vec<Action> {
+        app.actions.clear();
+        let list = crate::ui::conversation::messages_list_id(chat);
+        ctx.memory_mut(|memory| memory.request_focus(list));
+        press(app, ctx, key, Modifiers::NONE);
+        std::mem::take(&mut app.actions)
+    }
+
+    /// The keys that act on one message (R, E, C, F, Delete) wait while the
+    /// chat selects messages: the bubbles draw no menu then, and the keys
+    /// would act behind the selection's back. Up and Down still move the
+    /// list.
+    #[test]
+    fn a_selection_holds_the_keys_that_act_on_a_message() {
+        let (_root, mut app, chat, ctx) = focused_list();
+        let keys = [Key::R, Key::E, Key::C, Key::F, Key::Delete];
+        for key in keys {
+            assert!(
+                !press_in_list(&mut app, &ctx, &chat, key).is_empty(),
+                "{key:?} acts without a selection"
+            );
+        }
+        app.selection = Some((chat.clone(), Vec::new()));
+        for key in keys {
+            let actions = press_in_list(&mut app, &ctx, &chat, key);
+            assert!(actions.is_empty(), "{key:?} while selecting: {actions:?}");
+        }
+        assert_eq!(
+            press_in_list(&mut app, &ctx, &chat, Key::ArrowUp),
+            [Action::MessageCursor(crate::ui::list_nav::Step::Previous)]
+        );
+    }
+
+    /// The call screen covers the chats: the message keys leave the list
+    /// behind it alone, and come back once the screen is put aside.
+    #[test]
+    fn the_call_screen_holds_the_message_keys() {
+        let (_root, mut app, chat, ctx) = focused_list();
+        app.call = Some(crate::calls::CallUpdate {
+            generation: 1,
+            chat: chat.clone(),
+            direction: crate::model::CallDirection::Outgoing,
+            video: false,
+            phase: crate::calls::CallPhase::Active,
+            started: Some(std::time::Instant::now()),
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        });
+        assert_eq!(press_in_list(&mut app, &ctx, &chat, Key::R), []);
+        app.call_surface_hidden = true;
+        assert_eq!(
+            press_in_list(&mut app, &ctx, &chat, Key::R),
+            [Action::Reply("two".into()), Action::FocusComposer]
+        );
+    }
+
+    /// One frame with the message list of `chat` focused, `events` in it and
+    /// `modifiers` held: the actions it queued, and what it said.
+    fn in_list_with(
+        app: &mut App,
+        ctx: &egui::Context,
+        chat: &str,
+        modifiers: Modifiers,
+        events: Vec<egui::Event>,
+    ) -> (Vec<Action>, String) {
+        app.actions.clear();
+        app.announcer = Default::default();
+        let list = crate::ui::conversation::messages_list_id(chat);
+        ctx.memory_mut(|memory| memory.request_focus(list));
+        let held = std::iter::once(egui::Event::ModifiersChanged(modifiers));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: held.chain(events).collect(),
+                ..Default::default()
+            },
+            |ui| {
+                handle(app, ui.ctx());
+                app.announcer.show(ui.ctx(), true);
+            },
+        );
+        output.textures_delta.clear();
+        let spoken = app.announcer.spoken().concat();
+        (std::mem::take(&mut app.actions), spoken)
+    }
+
+    /// Shift+Delete, as egui reports it outside Windows.
+    fn shift_delete() -> egui::Event {
+        egui::Event::Key {
+            key: Key::Delete,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::SHIFT,
+        }
+    }
+
+    /// The focused list's current message made ours, sent now.
+    fn own_recent(app: &mut App, chat: &str) {
+        let conversation = app.conversations.get_mut(chat).unwrap();
+        let message = conversation
+            .messages
+            .iter_mut()
+            .find(|message| message.id == "two")
+            .unwrap();
+        message.from_me = true;
+        message.timestamp = crate::util::now();
+    }
+
+    /// Shift+Delete on our own recent message opens the confirmation that
+    /// the menu's "Delete for everyone" opens, and deletes nothing itself.
+    /// On Windows egui reports the press as Cut alone, with Shift held;
+    /// Ctrl+X, also Cut, deletes nothing.
+    #[test]
+    fn shift_delete_asks_to_delete_the_message_for_everyone() {
+        let (_root, mut app, chat, ctx) = focused_list();
+        own_recent(&mut app, &chat);
+        let everyone = crate::ui::conversation::delete_for_everyone_action(&chat, "two");
+        let (actions, spoken) = in_list_with(
+            &mut app,
+            &ctx,
+            &chat,
+            Modifiers::SHIFT,
+            vec![shift_delete()],
+        );
+        assert_eq!(actions, std::slice::from_ref(&everyone));
+        assert_eq!(spoken, "");
+        assert!(
+            app.dialog.is_none(),
+            "the dialog opens from the action, not before"
+        );
+        let (actions, _) = in_list_with(
+            &mut app,
+            &ctx,
+            &chat,
+            Modifiers::SHIFT,
+            vec![egui::Event::Cut],
+        );
+        if cfg!(target_os = "windows") {
+            assert_eq!(actions, [everyone]);
+        } else {
+            assert_eq!(actions, []);
+        }
+        let (actions, _) = in_list_with(
+            &mut app,
+            &ctx,
+            &chat,
+            Modifiers::COMMAND,
+            vec![egui::Event::Cut],
+        );
+        assert_eq!(actions, [], "Ctrl+X");
+        assert!(
+            app.conversations[&chat]
+                .message("two")
+                .is_some_and(|message| !matches!(message.content, crate::model::Content::Revoked)),
+            "nothing deleted"
+        );
+    }
+
+    /// Where the menu offers no "Delete for everyone", Shift+Delete opens
+    /// nothing and says why, as the keyboard menu names an unavailable entry.
+    #[test]
+    fn shift_delete_says_why_a_message_cannot_be_deleted_for_everyone() {
+        let (_root, mut app, chat, ctx) = focused_list();
+        let said = |app: &mut App| {
+            let (actions, spoken) =
+                in_list_with(app, &ctx, &chat, Modifiers::SHIFT, vec![shift_delete()]);
+            assert_eq!(actions, []);
+            spoken
+        };
+        assert_eq!(
+            said(&mut app),
+            "Delete for everyone, unavailable: Only messages you sent"
+        );
+        own_recent(&mut app, &chat);
+        let two = app.conversations[&chat].message("two").unwrap().clone();
+        let mut old = two.clone();
+        old.timestamp = 1;
+        let mut deleted = two;
+        deleted.content = crate::model::Content::Revoked;
+        for (message, reason) in [
+            (old, "The time limit has passed"),
+            (deleted, "This message was deleted"),
+        ] {
+            let messages = &mut app.conversations.get_mut(&chat).unwrap().messages;
+            messages[1] = message;
+            assert_eq!(
+                said(&mut app),
+                format!("Delete for everyone, unavailable: {reason}")
+            );
+        }
+        assert!(app.dialog.is_none());
+    }
+
+    /// Shift+Delete waits during a selection and under the call screen, as
+    /// the other message keys do, and while the message field has focus it
+    /// is the field's.
+    #[test]
+    fn shift_delete_waits_as_the_other_message_keys_do() {
+        let (_root, mut app, chat, ctx) = focused_list();
+        own_recent(&mut app, &chat);
+        app.selection = Some((chat.clone(), Vec::new()));
+        let (actions, spoken) = in_list_with(
+            &mut app,
+            &ctx,
+            &chat,
+            Modifiers::SHIFT,
+            vec![shift_delete()],
+        );
+        assert_eq!((actions, spoken.as_str()), (Vec::new(), ""), "selecting");
+        app.selection = None;
+        app.call_surface_hidden = false;
+        app.call = Some(crate::calls::CallUpdate {
+            generation: 1,
+            chat: chat.clone(),
+            direction: crate::model::CallDirection::Outgoing,
+            video: false,
+            phase: crate::calls::CallPhase::Active,
+            started: Some(std::time::Instant::now()),
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        });
+        let (actions, spoken) = in_list_with(
+            &mut app,
+            &ctx,
+            &chat,
+            Modifiers::SHIFT,
+            vec![shift_delete()],
+        );
+        assert_eq!((actions, spoken.as_str()), (Vec::new(), ""), "call screen");
+        app.call = None;
+        // Focus on the message field, not the list: no message is current.
+        app.actions.clear();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![
+                    egui::Event::ModifiersChanged(Modifiers::SHIFT),
+                    shift_delete(),
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                ui.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-text")));
+                handle(&mut app, ui.ctx());
+            },
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.actions, [], "typing");
+    }
+
+    /// A Mac's Delete key is Backspace: there it asks to delete the message
+    /// for me, as Delete does; elsewhere Backspace is left alone.
+    #[test]
+    fn backspace_deletes_for_me_on_macos_only() {
+        let (_root, mut app, chat) = app_with(vec![("text", crate::model::Content::text("Hello"))]);
+        let mut key = |key: Key, modifiers: Modifiers| {
+            let ctx = egui::Context::default();
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    events: vec![egui::Event::Key {
+                        key,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                    }],
+                    ..Default::default()
+                },
+                |ui| actions = message_keys(&mut app, ui.ctx(), &chat, "text"),
+            );
+            output.textures_delta.clear();
+            actions
+        };
+        let actions = key(Key::Backspace, Modifiers::NONE);
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                actions,
+                [crate::ui::conversation::delete_for_me_action(&chat, "text")]
+            );
+        } else {
+            assert!(actions.is_empty(), "{actions:?}");
+        }
+        let actions = key(Key::Backspace, Modifiers::COMMAND);
+        assert!(actions.is_empty(), "only plain: {actions:?}");
     }
 
     #[test]
@@ -956,6 +1696,72 @@ mod tests {
         app.image_preview = showing("/cache/clip.mp4", "m2");
         copy(&mut app, &ctx);
         assert!(app.actions.is_empty(), "a clip is played, not copied");
+    }
+
+    /// Under the cropper, Enter on a focused button the reader can reach
+    /// presses that button, here one above the cropper, as ZapFast's own
+    /// window buttons are; with focus on a control under the cropper, such
+    /// as the message field it was opened over, Enter keeps the crop.
+    #[test]
+    fn the_croppers_enter_presses_a_reachable_button_and_keeps_the_crop_otherwise() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let ctx = egui::Context::default();
+        let cropper =
+            egui::LayerId::new(egui::Order::Foreground, crate::ui::image_editor::area_id());
+        let above = egui::Id::new("fixture-window-button");
+        let under = egui::Id::new("fixture-field-under");
+        let place = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(40.0, 40.0));
+        let enter = |app: &mut App, focus: egui::Id| {
+            app.actions.clear();
+            for events in [
+                Vec::new(),
+                vec![egui::Event::Key {
+                    key: Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            ] {
+                let pressed = !events.is_empty();
+                ctx.memory_mut(|memory| memory.request_focus(focus));
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        if pressed {
+                            editor_keys(app, ui.ctx());
+                        }
+                        let ctx = ui.ctx().clone();
+                        ctx.memory_mut(|memory| memory.set_modal_layer(cropper));
+                        egui::Area::new(egui::Id::new("fixture-under"))
+                            .order(egui::Order::Middle)
+                            .show(&ctx, |ui| {
+                                ui.interact(place, under, egui::Sense::click());
+                            });
+                        egui::Area::new(egui::Id::new("fixture-above"))
+                            .order(egui::Order::Tooltip)
+                            .show(&ctx, |ui| {
+                                ui.interact(place, above, egui::Sense::click());
+                            });
+                    },
+                );
+                output.textures_delta.clear();
+            }
+            std::mem::take(&mut app.actions)
+        };
+        assert!(
+            enter(&mut app, above).is_empty(),
+            "the button above the cropper takes Enter"
+        );
+        assert_eq!(enter(&mut app, under), [Action::ApplyPictureEdit]);
     }
 
     fn escape(app: &mut App, ctx: &egui::Context) {
@@ -1301,6 +2107,25 @@ mod tests {
                 assert_eq!(app.scroll_chat_into_view.as_ref(), Some(expected));
             }
         }
+    }
+
+    #[test]
+    fn only_control_alone_counts_as_the_macos_messages_key() {
+        assert!(control_alone(Modifiers::CTRL));
+        // Command+Control+2 stays Command+2's chat.
+        assert!(!control_alone(Modifiers {
+            ctrl: true,
+            command: true,
+            ..Modifiers::NONE
+        }));
+        assert!(!control_alone(Modifiers {
+            ctrl: true,
+            mac_cmd: true,
+            command: true,
+            ..Modifiers::NONE
+        }));
+        assert!(!control_alone(Modifiers::CTRL | Modifiers::SHIFT));
+        assert!(!control_alone(Modifiers::NONE));
     }
 
     #[test]
@@ -1654,6 +2479,123 @@ mod tests {
         }
     }
 
+    /// The focused message list takes the arrows, Home, End and the page
+    /// keys for its cursor; unfocused, the page keys still scroll.
+    #[test]
+    fn a_focused_message_list_takes_the_navigation_keys() {
+        use crate::ui::list_nav::Step;
+        let (_root, mut app, ids) = app_with_chats(1);
+        app.open_chat = Some(ids[0].clone());
+        let ctx = egui::Context::default();
+        let list = crate::ui::conversation::messages_list_id(&ids[0]);
+        for (key, expected) in [
+            (Key::ArrowUp, Step::Previous),
+            (Key::ArrowDown, Step::Next),
+            (Key::Home, Step::First),
+            (Key::End, Step::Last),
+            (Key::PageUp, Step::PageUp(8)),
+            (Key::PageDown, Step::PageDown(8)),
+        ] {
+            app.actions.clear();
+            ctx.memory_mut(|memory| memory.request_focus(list));
+            let survived = press(&mut app, &ctx, key, Modifiers::NONE);
+            assert!(!survived, "{key:?} reached the views");
+            assert_eq!(app.actions, [Action::MessageCursor(expected)], "{key:?}");
+        }
+        // Shift+Home and the like are not list keys.
+        app.actions.clear();
+        ctx.memory_mut(|memory| memory.request_focus(list));
+        assert!(press(&mut app, &ctx, Key::Home, Modifiers::SHIFT));
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        // Unfocused, PgUp scrolls as before and the arrows are left alone.
+        ctx.memory_mut(|memory| memory.surrender_focus(list));
+        app.actions.clear();
+        assert!(!press(&mut app, &ctx, Key::PageUp, Modifiers::NONE));
+        assert_eq!(app.actions, [Action::ScrollPage(Scroll::PageUp)]);
+        app.actions.clear();
+        assert!(press(&mut app, &ctx, Key::ArrowDown, Modifiers::NONE));
+        assert!(app.actions.is_empty());
+    }
+
+    #[test]
+    fn the_messages_shortcut_focuses_the_list() {
+        let (_root, mut app, ids) = app_with_chats(1);
+        app.open_chat = Some(ids[0].clone());
+        let ctx = egui::Context::default();
+        let modifiers = if cfg!(target_os = "macos") {
+            Modifiers::CTRL
+        } else {
+            Modifiers::ALT
+        };
+        assert!(!press(&mut app, &ctx, Key::Num2, modifiers));
+        assert_eq!(app.actions, [Action::FocusMessages]);
+        // The call screen covers the list, so the shortcut leaves it be.
+        app.actions.clear();
+        app.call = Some(crate::calls::CallUpdate {
+            generation: 1,
+            chat: ids[0].clone(),
+            direction: crate::model::CallDirection::Outgoing,
+            video: false,
+            phase: crate::calls::CallPhase::Active,
+            started: Some(std::time::Instant::now()),
+            muted: false,
+            camera_on: false,
+            remote_video: false,
+            video_requested: false,
+            outcome: None,
+            peer_audio: None,
+            lost_devices: Vec::new(),
+            microphone: None,
+            speaker: None,
+            camera: None,
+            group: None,
+        });
+        press(&mut app, &ctx, Key::Num2, modifiers);
+        assert!(app.actions.is_empty(), "{:?}", app.actions);
+        // Stepped away from the call, the chats are back, and so is the key.
+        app.call_surface_hidden = true;
+        assert!(!press(&mut app, &ctx, Key::Num2, modifiers));
+        assert_eq!(app.actions, [Action::FocusMessages]);
+    }
+
+    /// The list's shortcut and the rail's Ctrl+Shift+2 (Cmd on macOS) never
+    /// take each other's keys, and Shift does not turn one into the other.
+    #[test]
+    fn the_messages_shortcut_and_the_rail_keys_stay_apart() {
+        let (_root, mut app, ids) = app_with_chats(2);
+        app.link = crate::backend::LinkStatus::Connected;
+        app.open_chat = Some(ids[0].clone());
+        let ctx = egui::Context::default();
+        let messages = if cfg!(target_os = "macos") {
+            Modifiers::CTRL
+        } else {
+            Modifiers::ALT
+        };
+        press(&mut app, &ctx, Key::Num2, messages);
+        assert_eq!(app.actions, [Action::FocusMessages]);
+        app.actions.clear();
+        press(
+            &mut app,
+            &ctx,
+            Key::Num2,
+            Modifiers::COMMAND | Modifiers::SHIFT,
+        );
+        assert_eq!(app.actions, [Action::Open(Page::Calls)]);
+        app.actions.clear();
+        app.page = Page::Chats;
+        press(&mut app, &ctx, Key::Num2, messages | Modifiers::SHIFT);
+        assert!(
+            !app.actions.contains(&Action::Open(Page::Calls)),
+            "{:?}",
+            app.actions
+        );
+        assert!(
+            !app.actions.contains(&Action::FocusMessages),
+            "{:?}",
+            app.actions
+        );
+    }
+
     #[test]
     fn page_keys_leave_shift_and_ctrl_combinations_alone() {
         let (_root, mut app, ids) = app_with_chats(1);
@@ -1674,6 +2616,18 @@ mod tests {
         let survived = press(&mut app, &ctx, Key::End, Modifiers::COMMAND);
         assert!(!survived);
         assert_eq!(app.actions, [Action::ScrollToBottom]);
+    }
+
+    #[test]
+    fn ctrl_end_and_home_end_leave_a_field_with_text_alone() {
+        // No field focused, or an empty composer: the keys scroll the chat.
+        assert!(jump_keys_reach_chat(false, false, false));
+        assert!(jump_keys_reach_chat(true, true, true));
+        // A composer with text, or any other field (search, dialogs): the
+        // keys move the text cursor (#456).
+        assert!(!jump_keys_reach_chat(true, true, false));
+        assert!(!jump_keys_reach_chat(true, false, true));
+        assert!(!jump_keys_reach_chat(true, false, false));
     }
 
     #[test]

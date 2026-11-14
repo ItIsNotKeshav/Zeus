@@ -6,13 +6,13 @@ nav_order: 0
 
 ## File locations
 
-Zeus follows each platform's conventions. Each linked number has its own
+ZapFast follows each platform's conventions. Each linked number has its own
 folder, `<id>` below, so files, caches, and keys never mix between numbers.
 On Linux:
 
 | What | Where | Notes |
 | --- | --- | --- |
-| Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit; the app lock password and the locked-chats code are kept only as salted verifiers |
+| Settings | `~/.config/zapfast/settings.json` | JSON, safe to edit, or declared with the [Home Manager module](/download/); the app lock password and the locked-chats code are kept only as salted verifiers |
 | Account list | `~/.config/zapfast/accounts.json` | Which numbers are linked here and which one is showing |
 | Session keys | `~/.local/state/zapfast/accounts/<id>/session.db` | Deleting it unlinks that number |
 | Message archive | `~/.local/state/zapfast/accounts/<id>/archive.db` | Encrypted; the only copy of history WhatsApp will not send again |
@@ -25,16 +25,35 @@ On Linux:
 | Crash log | `~/.local/state/zapfast/panic.log` | Safe to delete |
 
 Back up the archive if you need its history. WhatsApp sends only recent
-history to a new device, although Zeus can request some older messages from
-the phone. Clearing the media cache makes Zeus download attachments again.
+history to a new device, although ZapFast can request some older messages from
+the phone. Clearing the media cache makes ZapFast download attachments again.
 Expired attachments may still be available through the phone.
-**Settings > Storage > Storage used** shows how much space the account on
-screen has in its media cache, split into images, videos and GIFs, stickers, and other
+If a downloaded file has gone when you try to open it, ZapFast says so and its
+message offers the download again, without a restart.
+A download is reported as complete only after its local path is recorded in
+the archive. If that write fails, the attachment shows a failure instead;
+the downloaded file is kept in its destination.
+**Settings > Files > Storage used** shows how much space the account on screen
+has in its media cache, split into images, videos and GIFs, stickers, and other
 files. **Clear…** there deletes that account's cached attachments after asking:
 its messages, its other caches, and the other accounts' files stay, and so do
 files in a download folder you chose.
-**Settings > Storage > Change…** sends new downloads to another folder, leaving
-earlier ones in place. There, documents keep the name they were sent with; a
+**Settings > Files > Change…** sends new downloads to another folder, leaving
+earlier ones in place. New downloads use one fixed layout inside that folder:
+`<account>/<chat name>/file`, where the account folder is the account's phone
+number, such as `+15550001111` (`Account 1` until the number is known). Chat
+names stay readable, with filesystem-unsafe characters replaced and long names
+shortened. When two chats of one account would share a folder, the first keeps
+it and the others become `Name (2)`, `Name (3)`, and so on; each chat keeps its
+folder. New downloads use the current name; existing files are not moved.
+The downloaded file itself goes there, without a second copy in the cache.
+If the destination is unavailable, downloads fall back to the account's normal
+cache as before. This also applies when the folder cannot accept new files or
+publishing the downloaded file fails. Restarting removes unfinished downloads
+from that account's chat folders, without following linked folders.
+If an account or chat folder is a symbolic link, new downloads use the cache
+instead.
+Documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
 become `_`.
@@ -46,21 +65,18 @@ On macOS, settings, state, and the logs are in
 `%LOCALAPPDATA%\paolino\zapfast\data`, and the caches in
 `%LOCALAPPDATA%\paolino\zapfast\cache`.
 
-`--profile <folder>` keeps everything in that folder instead (`config`,
-`state`, `cache` and `run` under it), with its own keyring key and its own
-running copy, so a second build can run beside the installed one. It links as
-a separate device: scan its code from the phone as for a new computer.
-
-On first start, Zeus moves the corresponding `fastsapp` directories (or
+On first start, ZapFast moves the corresponding `fastsapp` directories (or
 `fastwhatsapp` from earlier versions), including the session, archive, saved
-stickers, and window state. Existing Zeus directories are never overwritten.
-Quit FastsApp first; launching Zeus while it is running brings the existing
+stickers, and window state. Existing ZapFast directories are never overwritten.
+Quit FastsApp first; launching ZapFast while it is running brings the existing
 window forward. A single-number setup from before 0.19 moves into
 `accounts/1/` on first start, keyring key included; if that cannot finish (a
-locked keyring, or a folder already in the way), Zeus stops without moving
-anything and says why in its log.
+locked keyring, or a folder already in the way), ZapFast stops without moving
+anything and says why in its log. If `accounts/1/` already holds a linked
+session, ZapFast uses it and leaves any older files beside it alone; an older
+ZapFast still installed can leave such files.
 
-On Linux and macOS, Zeus restricts its configuration, state, and cache
+On Linux and macOS, ZapFast restricts its configuration, state, and cache
 directories to your user (`0700`) and stops at startup if it cannot. Windows
 uses the permissions inherited from your user profile.
 
@@ -73,7 +89,7 @@ Credential Manager. Back up both the archive and its keyring entry: copying
 only `archive.db` to another computer is not enough.
 
 If the keyring is locked or unavailable, unlock it and click **Retry**;
-Zeus keeps the archive intact and waits before connecting. It never saves
+ZapFast keeps the archive intact and waits before connecting. It never saves
 a replacement plaintext archive.
 
 A missing key is different from a locked keyring. Restore the original
@@ -82,7 +98,7 @@ creating new credentials will not help: neither can decrypt the existing
 archive. If the key cannot come back, **Start over…** renames the unreadable
 archive to `archive-unreadable-<date>.db`, forgets the linked session, and
 shows the linking screen; linking again brings recent history back from your
-phone. Remove the old Zeus entry under **Linked devices** on the phone
+phone. Remove the old ZapFast entry under **Linked devices** on the phone
 afterwards.
 
 Only the archive and its SQLite journal are encrypted. Session keys,
@@ -103,88 +119,66 @@ name or description, in the interface language or in English.
 
 **Appearance**
 
-- **Preview**: a small conversation at the top of the section, drawn in the
-  colours chosen below, so every change shows before you leave Settings.
-- **Colours**: **Custom** or **Themes**. Picking a card opens the new
-  colours from that card outwards. Each side remembers its last choice, so
-  switching back returns to it.
-  - **Custom** makes a look your own. **Look** is **Zeus** (monochrome
-    glass), **WhatsApp**, or **Messages**, which draws bubbles shaped, spaced
-    and coloured as Messages on the Mac draws them (yours in iMessage blue,
-    shading deeper down the window), the Mac's system blue for buttons and
-    highlights, and photos without a bubble. **Appearance** is **Auto**,
-    **Light** or **Dark**; Auto follows the operating system's appearance
-    (on Linux, the desktop portal's, and Omarchy's colours with the Zeus
-    look). **Accent** is the look's own, or red, orange, yellow, green, teal,
-    blue, purple or pink, for buttons, switches, links, ticks and your own
-    bubbles. In a light mode a bright accent is darkened until it reads on
-    white. Messages keeps the system blue. The colour wheel picks an accent
-    of your own: its centre is the theme's own accent, the angle is the hue
-    and the distance from the centre is the strength. **Tint the wallpaper**
-    washes the chat wallpaper with the accent.
-  - **Themes** are the twenty ready-made themes of
-    [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
-    (Orchestrate, Vercel, GitHub, One, Catppuccin, Tokyo Night, Dracula, Nord,
-    Gruvbox, Rosé Pine, Solarized, Kanagawa, VS Code, Monokai, Material, Ayu,
-    Night Owl, Everforest, Vitesse and Flexoki), each in light and dark with
-    its own accent. **Mode** picks between them here too.
-- **Blur**: every theme but WhatsApp draws glass: a frosted header that
-  messages scroll under, a frosted message field, and the desktop through
-  the sidebar and conversation where the platform offers a material:
-  AppKit's on macOS, Mica on Windows 11 22H2 and later, and Hyprland's blur
-  on Linux. Elsewhere, including other Linux desktops, the window is opaque
-  in the theme's colours. Turning Blur off makes every one of those surfaces
-  solid at once; turning it on again shows the desktop through a window
-  opened after the change. On macOS, which Zeus draws with Metal to hold
-  less memory, the header and message field are always solid, and Blur
-  decides only whether the desktop shows through the Messages theme's
-  window.
-- **Always show time**: the time and ticks inside every message, as
-  WhatsApp shows them. Off, the Zeus look shows them below a message you
-  click, and below your last message.
+- **Theme**: dark, light, follow the system, Messages, or a local JSON
+  palette from the themes folder. See [Making a theme]({{ '/themes/' | relative_url }}).
+  **Messages** follows the system's light or dark appearance in macOS's
+  greys, with bubbles shaped, spaced and coloured as Messages on the Mac
+  draws them (yours in iMessage blue, shading deeper down the window), the
+  Mac's system blue for buttons and highlights, a frosted header that
+  messages scroll under, and photos without a bubble. Its sidebar and
+  conversation show the desktop through the window where the platform
+  offers a material: AppKit's on macOS, Mica on Windows 11 22H2 and later,
+  and Hyprland's blur on Linux. Elsewhere, including other Linux desktops,
+  where an unblurred desktop behind the sidebar would cost its text
+  contrast, and in a window opened before choosing it on Windows or Linux,
+  the window is opaque in the theme's colours; it turns translucent from
+  the next window. On macOS, changing between an opaque and translucent
+  theme replaces the window while keeping the current chat and connection.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
-- **Motion**: how much the interface moves. **Auto** (the default) follows
-  the system's reduce-motion setting (Reduce motion on macOS, Animation
-  effects on Windows, Animations on GNOME or the desktop portal's reduced
-  motion on Linux) and holds still while a screen reader is attached.
-  **Full** plays every animation whatever the system asks. **Reduced** lands
-  every change at once: panels, bubbles and lists appear in place without
-  sliding, growing or fading. Spinners and typing dots still move, since
-  they show that something is happening.
 - **Zoom**: interface scale, also `Ctrl+Plus`, `Ctrl+Minus` and `Ctrl+0`.
 - **Language**: the interface language, or **Auto** to follow the system.
   Brazilian Portuguese, German, Spanish, Italian, French, Russian, Simplified
-  Chinese, Traditional Chinese, Turkish, and Indonesian are available; otherwise English.
+  Chinese, Traditional Chinese, Turkish, Indonesian, and Dutch are available; otherwise English.
   Message contents, names, and logs are never translated.
+- **Custom title bar** (Windows and Linux, off by default): ZapFast draws
+  its own title bar instead of the desktop's. The window buttons sit in the
+  top corner of whichever pane is there (the open chat's header, the info
+  panel, Settings, the Calls page, the call screen), on the left or the
+  right as GNOME's button layout says, or Windows' three square buttons;
+  the headers drag the window and a double-click maximizes or restores it,
+  and the window's edges resize it. Turning it on or off replaces the
+  window at once, keeping the open chat and any call. It is off by default
+  because some Intel graphics drivers draw a frameless window with a black
+  band at the top, with clicks landing below where they are drawn. macOS
+  always keeps its own traffic lights.
 
 **Chats**
 
-- **Open the last chat**: off by default. When on, quitting and opening Zeus
-  again reopens the chat that was open, for each number on its own. When off,
-  Zeus starts on the chat list with no chat open. Hiding the window still
-  shows the chat that was already open.
 - **Enter sends**: when off, Enter adds a line and `Ctrl+Enter` (Command+Enter
   on macOS) sends.
-- **Motion**: Default runs the chat's springs and animations at the speed they
-  were tuned at; Fast runs them in 70% of that time. With a screen reader
-  they are instant either way.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
 - **Fetch older history**: off by default, and set for
-  each number. When on, Zeus asks the phone for older messages without you
+  each number. When on, ZapFast asks the phone for older messages without you
   scrolling: the open chat first, then pinned chats and the ten most recently
-  active ones (never channels). It sends at most one request every twenty
-  seconds, and only while no other history request is waiting. Each chat is
-  asked for at most five pages each time Zeus runs, and a chat the phone
-  does not answer goes to the back of the queue. Pages fetched this way go into
-  the archive without moving the view. A chat the phone says has nothing older
-  is not asked again.
+  active ones (never channels). It sends at most one request every five
+  minutes, since each one wakes the phone, and only while no other history request is waiting. Each chat is
+  asked for at most five pages each time ZapFast runs, and a chat the phone
+  does not answer goes to the back of the queue. Unanswered requests back off
+  for that chat only; other chats keep the normal twenty-second gap. After
+  three unanswered requests in a row, that chat's background recovery pauses
+  until one of those requests gets a late reply, or ZapFast reconnects or
+  restarts. This does not mark history complete or prevent manual requests.
+  A matched background reply resets that chat's timeout count, even if late.
+  Requests that cannot be sent still back off the whole account. Pages fetched
+  this way go into the archive without moving the view. A chat the phone says
+  has nothing older is not asked again.
 - **Keep chats archived**: on by default. When off, a new message, received or
   sent, brings an archived chat back to the list. Applies to all accounts here
   whose phone has not sent its own **Keep chats archived**; once a phone has,
-  Zeus follows the phone for that account. It does not change the phone's
+  ZapFast follows the phone for that account. It does not change the phone's
   setting.
 - **Pause other media while recording or playing**: pause music and videos in
   other apps while you record, or while a voice message, audio, or video plays
@@ -192,22 +186,20 @@ name or description, in the interface language or in English.
 - **Locked chats code**: the local code that opens the **Locked** tab. It hides
   chats and adds no encryption beyond the encrypted message archive.
 
-*Touchpad swipes*, at the end of Chats, chooses what each of the four
-swipes does.
-
 **Notifications**
 
 - **Desktop notifications**: for chats you are not looking at. Muted chats stay
-  quiet.
+  quiet. The bell beside each number in the account switcher turns the same
+  setting off and on for that number without switching to it.
 - **Show message content in notifications**: on by default. When off, every
-  notification says only "New message" from Zeus, without the chat, the
+  notification says only "New message" from ZapFast, without the chat, the
   sender, the text, or a picture, as behind the app lock, and plays only the
   message sound. Clicking one still opens the message. Applies to every
   account.
 - **Message sound** and **Mention sound**: Pidgin's sounds, the system sound,
   none, or an audio file. On macOS, Pidgin's sounds and the system sound play
   with the notification, so Do Not Disturb, Focus, and the notification
-  settings for Zeus silence them; an audio file of your own plays
+  settings for ZapFast silence them; an audio file of your own plays
   regardless.
 - **Play sounds for group messages**: when off, only mentions and replies to
   you make a sound in groups.
@@ -217,30 +209,7 @@ swipes does.
   chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
   notifies. Settings for this account.
 
-**Calls and voice**
-
-- **Microphone**: the input device calls and voice messages use. **System
-  default** follows your system's choice. A picked microphone that is not
-  connected is named here, and calls and recordings use the system default
-  until it is back. The refresh button looks for devices again. Applies to
-  every account.
-- **Check your microphone**: listens to the picked microphone for up to 30
-  seconds and shows how loud it hears you. Nothing is recorded or sent, and
-  the check is not available during a call.
-- **Push to talk**: off by default. During calls the microphone stays silent
-  until you hold the push to talk key, or the talk button above the call
-  controls. The other side is not told, as it is with mute, and mute still
-  wins over a held key.
-- **Push to talk key**: Space by default. Click the button and press the key
-  to use; Escape cancels. The key works while Zeus is the window in
-  front. On the call screen any key works; with the call screen put aside and
-  a message being typed, only the F keys and Insert do, so other keys still
-  type.
-
-**Account**
-
-The account block edits your WhatsApp name, About, and picture, and
-unlinks this computer. Below it, **Privacy**:
+**Privacy**
 
 - **Send read receipts**: the blue ticks others see, subject to the account
   setting below. When account read receipts are off, read ticks are also hidden
@@ -251,43 +220,46 @@ unlinks this computer. Below it, **Privacy**:
 - **Last seen**, **Online**, **Profile photo**, **About**, **Groups**, **Read
   receipts**, **Calls**: your WhatsApp account privacy, stored on WhatsApp's
   servers and shared with your phone. They can be changed while connected.
-- **App lock**: hide Zeus behind a password. See [App lock](#app-lock).
+- **Blocked contacts**: view your WhatsApp account’s blocked contacts and unblock
+  them, including people without a local chat. Changes require a connection.
+- **App lock**: hide ZapFast behind a password. See [App lock](#app-lock).
 
-**Storage** (called Files before) shows the archive, the downloads folder
-(which you can change; earlier downloads stay where they are), the storage
-used, and the cache size limit.
+**System**
 
-**General**
-
-- **Keep running when the window closes**: keep Zeus linked in the tray.
+- **Keep running when the window closes** (Linux and Windows): keep ZapFast
+  linked in the tray. With this off ZapFast has no tray icon; an icon already
+  there leaves at the next start.
+- **Show in the menu bar** (macOS): the menu bar icon. Closing the window
+  always keeps ZapFast running in the Dock, which reopens it; **Quit**
+  (Command+Q) quits. With this off ZapFast has no menu bar icon; an icon
+  already there leaves at the next start, and **Start at login** opens the
+  window, since the Dock cannot bring back a window that was never made.
 - **Start at login**: start in the tray without a window, where the platform
-  supports it. If the desktop's tray is not up yet, Zeus waits up to 30
+  supports it. If the desktop's tray is not up yet, ZapFast waits up to 30
   seconds for it, then opens the window, since a desktop without a tray could
   not bring it back. On macOS this is a login item under System Settings >
   General > Login Items, which macOS may ask you to allow there; inside a
   Flatpak the desktop's background portal asks first.
-- **Download updates automatically** (on by default): download and verify a
-  new release in the background; restarting stays your choice. Package
-  managers and Flatpak update Zeus themselves.
+- **Check for updates**: ask GitHub once a day whether a newer release exists.
+- **Download updates automatically**: download and verify a new release in the
+  background; restarting stays your choice. Package managers and Flatpak update
+  ZapFast themselves.
 - **Proxy**: for the WhatsApp connection, media, profile pictures, GIF search,
-  Signal sticker imports, and update checks. It accepts `socks5h://host:port`
-  (the proxy resolves names, as Tor expects), `socks5://host:port`, and
-  `http://host:port`, each with an optional `user:password@`; a bare
-  `host:port` is an HTTP proxy. Changing it reconnects at once. Empty uses
-  `ALL_PROXY` or `HTTPS_PROXY` from the environment and honors `NO_PROXY`.
-  A call's signaling goes through the proxy, but its audio and video do not:
-  they travel over UDP straight to WhatsApp's call relays, which see this
-  computer's address.
+  Signal sticker imports, link previews for the messages you write, and update
+  checks. It accepts `socks5h://host:port` (the proxy resolves names, as Tor
+  expects), `socks5://host:port`, and `http://host:port`, each with an optional
+  `user:password@`; a bare `host:port` is an HTTP proxy. Changing it reconnects
+  at once. Empty uses `ALL_PROXY` or `HTTPS_PROXY` from the environment and
+  honors `NO_PROXY`. A call's signaling goes through the proxy, but its audio
+  and video do not: they travel over UDP straight to WhatsApp's call relays,
+  which see this computer's address.
 - **GIPHY API key**: for GIF search, unless the build includes one. Set
   `ZAPFAST_GIPHY_KEY` at compile time to include a default key. The earlier
   `FASTSAPP_GIPHY_KEY` remains a fallback for existing builds.
-- **Log**: **Open** shows this run's log. See [The log](#the-log).
 
-*Experimental*: **Split view** and **Chat bubbles**, both off until turned
-on.
-
-*About*: the version, **Keyboard shortcuts**, the source code, and the
-[performance benchmark](#performance-benchmark).
+**Account** edits your WhatsApp name, About, and picture, and unlinks this
+computer. **Files** shows the archive, the downloads folder (which you can
+change; earlier downloads stay where they are), and this run's log.
 
 Some choices are made where they are used and remembered in `settings.json`:
 the shortcut hints bar under the composer (its × hides it, and **Show shortcut
@@ -298,7 +270,7 @@ playback speed, and the chat list and search pane widths.
 Development builds also remember the window's size, position, and maximized
 state in `settings.json`, including when reopening from the tray or a
 notification. The window opens at the same size whatever the interface's
-zoom. On Wayland the compositor controls placement, so Zeus keeps the size
+zoom. On Wayland the compositor controls placement, so ZapFast keeps the size
 without choosing the position. These window changes and **Keep chats
 archived** are not yet included in 0.19.0.
 
@@ -314,11 +286,11 @@ the one above: it stays on only if both were on.
 
 ## App lock
 
-Like WhatsApp Web's screen lock, **Settings > Account > Privacy > App
-lock** hides Zeus behind a password of at least six characters. Zeus then starts
+Like WhatsApp Web's screen lock, **Settings > Privacy > App lock** hides
+ZapFast behind a password of at least six characters. ZapFast then starts
 locked and locks again after 1 minute, 15 minutes (the default), or 1 hour
 without input, a choice under **Lock after**; time hidden in the tray counts.
-**Lock Zeus** in the tray menu and `Ctrl+Shift+L` lock it at once.
+**Lock ZapFast** in the tray menu and `Ctrl+Shift+L` lock it at once.
 
 While locked, the window shows only the lock screen. Messages keep arriving
 but stay unread, and notifications say only "New message", without the chat,
@@ -338,9 +310,9 @@ opens the other.
 
 ## Updates
 
-Zeus asks GitHub once a day for a newer release, sending only its
-version; there is no switch for it. **Update** in the status message at the
-bottom left downloads and verifies it, and **Restart to update** installs it when convenient. Downloads are checked against the
+With **Check for updates** on, ZapFast asks GitHub once a day for a newer
+release. **Update** in the banner downloads and verifies it, and **Restart to
+update** installs it when convenient. Downloads are checked against the
 release's SHA-256 checksums, whose manifest must carry a valid Ed25519
 publisher signature; a missing or invalid signature stops the update. The
 updater keeps a backup and restores it if the new version cannot start.
@@ -353,36 +325,12 @@ Applications. AUR, DEB, RPM, Flatpak, Nix, Cargo, and Homebrew installations
 update through their package manager; an AppImage is replaced by downloading
 the new one.
 
-## Performance benchmark
-
-**Settings > General > About > Run benchmark** opens a second Zeus window
-with the built-in sample chats, in a temporary folder, and plays a test of about three minutes in
-it: it settles, scrolls a chat full of photos, switches through chats, opens
-the sticker picker, minimizes and idles, then closes itself. Your archive,
-keys and WhatsApp connection are never opened, and nothing goes over the
-network. Leave the computer alone while it runs.
-
-Zeus measures that window from outside every 2 seconds: memory (PSS on Linux,
-the physical footprint on macOS, private bytes on Windows), CPU time, and GPU
-use where the system reports it (the window's 3D engine on Linux and Windows,
-the whole GPU on macOS). The window records its own frame times. The results
-show frames a second, median and 99th-percentile frame time, jitter, missed
-frames and the slowest frame for scrolling, switching chats and the sticker
-picker, and memory, CPU and GPU for every phase.
-
-**Save results…** writes them as JSON that `scripts/bench/compare.py` reads.
-**Share on GitHub…** first shows the exact text it would share: the app
-version, system, processor, core count, memory, graphics chip and the
-numbers, never chats, names or account details. **Open GitHub issue** opens a
-new issue with that text in your browser; nothing is sent unless you submit
-it there, and the issue is public under your GitHub account.
-
 ## The log
 
 Each run starts `zapfast.log` afresh and records warnings and errors, never
 message contents, phone numbers, or keys. Include the end of this file when
-reporting an issue. **Settings > General > Log > Open** shows it. The run before
-is kept beside it as `zapfast.previous.log`: if Zeus froze and you had to
+reporting an issue. **Settings > Files > Log > Open** shows it. The run before
+is kept beside it as `zapfast.previous.log`: if ZapFast froze and you had to
 restart it, that file holds what happened.
 
 During a call the log also records the call's numbers every few seconds: the
@@ -391,7 +339,7 @@ health. They are counts and sizes only.
 
 ### Saving a call's video for diagnosis
 
-To work on a video call's picture quality, start Zeus with
+To work on a video call's picture quality, start ZapFast with
 `ZAPFAST_CALL_VIDEO_DUMP` set to a folder. Each video call then writes the
 video it sends and the video it receives there, as raw H.264
 (`<time>-<call>-sent.h264` and `-received.h264`), which `ffmpeg` and media
@@ -401,7 +349,7 @@ agreed, and delete the files when you are done.
 
 ### Saving a call's audio for diagnosis
 
-To work on echo cancellation, start Zeus with `ZAPFAST_CALL_AUDIO_DUMP` set
+To work on echo cancellation, start ZapFast with `ZAPFAST_CALL_AUDIO_DUMP` set
 to a folder. Each call's microphone stream then writes four files there,
 `<time>-<stream>-reference.wav` (the other side's voice as your speaker played
 it), `-microphone.wav` (your microphone before any processing), `-output.wav`
@@ -413,3 +361,16 @@ with the options listed at the top of `examples/aec_replay.rs`).
 Nothing is written without the variable. The files are both people's voices,
 so only set it for a call whose other side agreed, and delete the files when
 you are done.
+
+## Chat exports
+
+Choose **Export chat…** from a conversation's menu to save all of its locally
+stored messages as a UTF-8 text file. **Include downloaded attachments (ZIP)**
+adds the existing files and `_chat.txt` to one ZIP. The text uses UTC timestamps
+and preserves multiline messages and captions. Missing attachments are listed as
+unavailable; this never downloads files or requests older history from the phone.
+
+Exports are unencrypted. Locked chats cannot be exported. Cancel stops the job;
+locking the app, clearing/deleting the chat or unlinking the account also cancels
+it. A cancelled or failed export removes its partial files and preserves an
+existing destination. Completed exports remain where you chose to save them.

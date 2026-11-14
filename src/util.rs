@@ -244,7 +244,6 @@ fn stamp_relative_to(locale: Locale, date: Date, today: Date, when: &Zoned) -> S
         0 => hour_minute(when),
         1 => crate::i18n::gettext(locale, "Yesterday").into_owned(),
         2..=6 => weekday_name(locale, date.weekday()),
-        _ if date.year() == today.year() => day_and_month(locale, date),
         _ => short_date(locale, date),
     }
 }
@@ -472,13 +471,8 @@ pub fn weekday_headings(locale: Locale) -> [String; 7] {
 
 /// A date as "23 Sep 2026".
 pub fn short_date(locale: Locale, date: Date) -> String {
-    format!("{} {}", day_and_month(locale, date), date.year())
-}
-
-/// A date as "23 Sep", for a list where the year goes without saying.
-fn day_and_month(locale: Locale, date: Date) -> String {
     let month: String = month_name(locale, date.month()).chars().take(3).collect();
-    format!("{} {month}", date.day())
+    format!("{} {month} {}", date.day(), date.year())
 }
 
 /// A date with its weekday, as "Wednesday, 23 September 2026".
@@ -498,24 +492,7 @@ pub fn now() -> i64 {
     if let Some(clock) = fixed_clock::get() {
         return clock.now;
     }
-    #[cfg(feature = "demo")]
-    if let Some(now) = DEMO_NOW.get() {
-        return *now;
-    }
     Timestamp::now().as_second()
-}
-
-/// The time a demo screenshot is taken at, whenever it is taken.
-#[cfg(feature = "demo")]
-static DEMO_NOW: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
-
-/// Stops the clock at a fixed moment (12 March 2026, 14:30 UTC) for demo
-/// screenshots, so the same page shows the same times from any build on the
-/// same machine and their pictures can be compared pixel for pixel. Call
-/// before the sample is made.
-#[cfg(feature = "demo")]
-pub fn freeze_demo_clock() {
-    let _ = DEMO_NOW.set(1_773_325_800);
 }
 
 /// A clock for tests whose layout depends on the time: the current time, the
@@ -559,18 +536,53 @@ pub mod fixed_clock {
 /// Case- and accent-insensitive matching without changing displayed names.
 pub fn search_key(text: &str) -> String {
     use icu_normalizer::DecomposingNormalizerBorrowed;
-    use icu_properties::{CodePointMapData, props::GeneralCategory};
+    use icu_properties::{CodePointMapData, CodePointMapDataBorrowed, props::GeneralCategory};
 
     if text.is_ascii() {
         return text.to_ascii_lowercase();
     }
-    DecomposingNormalizerBorrowed::new_nfd()
-        .normalize_iter(text.chars())
-        .filter(|c| {
-            CodePointMapData::<GeneralCategory>::new().get(*c) != GeneralCategory::NonspacingMark
-        })
-        .flat_map(char::to_lowercase)
+    // Lowercasing the whole string after stripping the marks is four times
+    // faster than mapping every character through `char::to_lowercase`.
+    static MARKS: std::sync::OnceLock<CodePointMapDataBorrowed<'static, GeneralCategory>> =
+        std::sync::OnceLock::new();
+    let marks = MARKS.get_or_init(CodePointMapData::<GeneralCategory>::new);
+    let decomposed = DecomposingNormalizerBorrowed::new_nfd().normalize(text);
+    let mut stripped = String::with_capacity(decomposed.len());
+    stripped.extend(
+        decomposed
+            .chars()
+            .filter(|c| marks.get(*c) != GeneralCategory::NonspacingMark),
+    );
+    // A word-final Σ lowercases to ς, which would never match a query typed
+    // with Σ: both forms become σ so one sigma matches the other.
+    stripped
+        .to_lowercase()
+        .chars()
+        .map(|c| if c == 'ς' { 'σ' } else { c })
         .collect()
+}
+
+/// Whether a contact search finds `name`. The whole `needle` may appear
+/// anywhere in it, or each of its words may start a word of `name`, in
+/// order: "will shak" finds "William Shakespeare", and "j d" finds
+/// "John Doe". Both are search keys.
+pub fn search_matches(name: &str, needle: &str) -> bool {
+    if name.contains(needle) {
+        return true;
+    }
+    let mut parts = search_words(needle).peekable();
+    if parts.peek().is_none() {
+        return false;
+    }
+    let mut words = search_words(name);
+    parts.all(|part| words.any(|word| word.starts_with(part)))
+}
+
+/// The words of a name or query. Spaces and ASCII punctuation separate them,
+/// so "~John Doe" and "John-Doe" both have "john" and "doe".
+fn search_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c: char| c.is_whitespace() || c.is_ascii_punctuation())
+        .filter(|word| !word.is_empty())
 }
 
 /// Duration such as "0:12".
@@ -594,85 +606,21 @@ pub fn bytes(size: u64) -> String {
     }
 }
 
-/// The button that shows a file in the system's file manager.
-pub const REVEAL: &str = if cfg!(target_os = "macos") {
-    "Show in Finder"
-} else if cfg!(windows) {
-    "Show in File Explorer"
-} else {
-    "Show in folder"
-};
-
-/// What to say when no application opens `path`, in plain words: "No app
-/// on this Mac opens PDF files." The system's own message and code go to
-/// the log.
-pub fn no_app_opens(path: &std::path::Path) -> String {
-    let device = if cfg!(target_os = "macos") {
-        "Mac"
-    } else if cfg!(windows) {
-        "PC"
-    } else {
-        "computer"
-    };
-    match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .filter(|extension| !extension.is_empty() && extension.len() <= 8)
-    {
-        Some(extension) => format!(
-            "No app on this {device} opens {} files.",
-            extension.to_uppercase()
-        ),
-        None => format!("No app on this {device} opens this file."),
-    }
-}
-
-/// `message` without the error codes systems add for developers, as
-/// "(error -10814)" or "(os error 2)": those belong in the log.
-pub fn without_error_codes(message: &str) -> String {
-    fn is_code(inner: &str) -> bool {
-        let inner = inner.trim().to_lowercase();
-        let rest = inner
-            .strip_prefix("os error")
-            .or_else(|| inner.strip_prefix("error"))
-            .or_else(|| inner.strip_prefix("code"))
-            .unwrap_or(&inner)
-            .trim_start_matches([':', ' ', '=']);
-        let digits = rest.strip_prefix('-').unwrap_or(rest);
-        !digits.is_empty() && digits.chars().all(|character| character.is_ascii_digit())
-    }
-    let mut out = String::with_capacity(message.len());
-    let mut rest = message;
-    while let Some(open) = rest.find('(') {
-        let Some(close) = rest[open..].find(')') else {
-            break;
-        };
-        let (before, inner) = (&rest[..open], &rest[open + 1..open + close]);
-        if is_code(inner) {
-            out.push_str(before.trim_end());
-        } else {
-            out.push_str(&rest[..=open + close]);
-        }
-        rest = &rest[open + close + 1..];
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Up to two initials for a fallback avatar: letters only, so an unsaved
-/// contact named by a phone number has none, and the avatar draws a person
-/// instead of the number's digits (#27).
+/// Up to two initials for a fallback avatar.
 pub fn initials(name: &str) -> String {
     let mut words = name
         .split(|character: char| character.is_whitespace() || character == '-')
-        .filter(|word| word.chars().any(char::is_alphabetic));
+        .filter(|word| word.chars().any(char::is_alphanumeric));
     let first = words.next();
     let last = words.next_back();
     let mut initials = String::new();
     for word in [first, last].into_iter().flatten() {
-        if let Some(character) = word.chars().find(|character| character.is_alphabetic()) {
+        if let Some(character) = word.chars().find(|character| character.is_alphanumeric()) {
             initials.extend(character.to_uppercase());
         }
+    }
+    if initials.is_empty() {
+        initials.push('#');
     }
     initials
 }
@@ -714,7 +662,7 @@ pub fn phone(digits: &str) -> String {
     if digits.is_empty() {
         return String::new();
     }
-    if let Some(formatted) = brazilian_phone(&digits) {
+    if let Some(formatted) = brazilian_phone(&digits).or_else(|| french_phone(&digits)) {
         return formatted;
     }
     let (country, national) = digits.split_at(country_code_len(&digits).min(digits.len()));
@@ -774,6 +722,34 @@ fn brazilian_phone(digits: &str) -> Option<String> {
     ))
 }
 
+/// Formats France's `+33` numbers as `+33 6 12 34 56 78`, and the overseas
+/// departments that share its nine-digit plan (`+262` Réunion and Mayotte,
+/// `+590` Guadeloupe, `+594` French Guiana, `+596` Martinique) as
+/// `+262 692 12 34 56`.
+///
+/// French numbers are written in pairs. A metropolitan number leads with
+/// one digit, except the `8` service numbers, which lead with three like the
+/// overseas ones; these are libphonenumber's international formats.
+fn french_phone(digits: &str) -> Option<String> {
+    let (country, national) = ["33", "262", "590", "594", "596"]
+        .into_iter()
+        .find_map(|code| Some((code, digits.strip_prefix(code)?)))?;
+    if national.len() != 9 {
+        return None;
+    }
+    let lead = if country == "33" && !national.starts_with('8') {
+        1
+    } else {
+        3
+    };
+    let mut out = format!("+{country} {}", &national[..lead]);
+    for start in (lead..national.len()).step_by(2) {
+        out.push(' ');
+        out.push_str(&national[start..start + 2]);
+    }
+    Some(out)
+}
+
 /// The machine's hostname, or an empty string if it cannot be read.
 pub fn hostname() -> String {
     gethostname::gethostname().to_string_lossy().into_owned()
@@ -790,9 +766,9 @@ pub fn hue(seed: &str) -> f32 {
 }
 
 /// Embedded SVG app logo used across platform surfaces.
-const MARK: &[u8] = include_bytes!("../packaging/icons/zeus.svg");
+const MARK: &[u8] = include_bytes!("../packaging/icons/zapfast.svg");
 /// The same mark without its rim and shading, which blur below this size.
-const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-small.svg");
+const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zapfast-small.svg");
 const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.
@@ -827,62 +803,6 @@ fn render_mark(mark: &[u8], size: usize) -> Option<Vec<u8>> {
     )
 }
 
-/// Rounded single-stroke digits on a 6 by 10 grid, for the unread badge:
-/// resvg renders no text without fonts, and these stay legible at 32 px.
-const DIGITS: [&str; 10] = [
-    "M3 0.6C5 0.6 5.5 2.9 5.5 5S5 9.4 3 9.4 0.5 7.1 0.5 5 1 0.6 3 0.6Z",
-    "M1.4 2.4L3.6 0.6V9.4",
-    "M0.8 2.5C1.2 1.2 2 0.6 3.1 0.6 4.5 0.6 5.3 1.5 5.3 2.8 5.3 4.4 3.9 5.5 0.6 9.4H5.6",
-    "M0.8 1.6C1.4 0.9 2.2 0.6 3 0.6 4.4 0.6 5.2 1.5 5.2 2.6 5.2 3.9 4.2 4.7 2.6 4.7 4.5 4.7 5.5 5.7 5.5 7 5.5 8.5 4.4 9.4 2.9 9.4 1.9 9.4 1 9 0.5 8.2",
-    "M4.3 9.4V0.6L0.5 6.8H5.7",
-    "M5.2 0.6H1.3L0.9 4.6C1.6 4 2.3 3.8 3 3.8 4.6 3.8 5.5 5 5.5 6.6 5.5 8.3 4.4 9.4 2.9 9.4 1.9 9.4 1.1 9 0.5 8.3",
-    "M4.8 0.9C4.3 0.7 3.8 0.6 3.3 0.6 1.5 0.6 0.5 2.4 0.5 5.6 0.5 8.2 1.5 9.4 3 9.4 4.5 9.4 5.5 8.3 5.5 6.8 5.5 5.2 4.5 4.2 3.1 4.2 2 4.2 1 4.8 0.6 5.8",
-    "M0.5 0.6H5.5L2.2 9.4",
-    "M3 4.7C1.6 4.7 0.8 3.9 0.8 2.6S1.7 0.6 3 0.6 5.2 1.3 5.2 2.6 4.4 4.7 3 4.7C1.4 4.7 0.5 5.6 0.5 7.1S1.5 9.4 3 9.4 5.5 8.6 5.5 7.1 4.6 4.7 3 4.7Z",
-    "M5.4 4.2C5 5.2 4 5.8 2.9 5.8 1.5 5.8 0.5 4.8 0.5 3.2S1.5 0.6 3 0.6 5.5 1.8 5.5 4.4C5.5 7.6 4.5 9.4 2.7 9.4 2.2 9.4 1.7 9.3 1.2 9.1",
-];
-const PLUS: &str = "M3 2.6V7.4M0.6 5H5.4";
-
-/// The logo with a red unread badge in its top-right corner, as straight
-/// RGBA, or the plain logo at zero. Counts past 99 read "99+".
-pub fn badged_icon_rgba(size: usize, count: u32) -> Vec<u8> {
-    if count == 0 {
-        return app_icon_rgba(size);
-    }
-    let label = if count > 99 {
-        "99+".to_owned()
-    } else {
-        count.to_string()
-    };
-    // In the logo's 128-unit box: glyphs 6 units wide, a unit apart, drawn
-    // 3.4 times over; the pill fits them and is never narrower than tall.
-    let scale = 3.4;
-    let glyphs = label.chars().count() as f32;
-    let text = (glyphs * 7.0 - 1.0) * scale;
-    let height = 64.0;
-    let width = (text + 26.0).max(height);
-    // Inset so its white ring stays inside the icon.
-    let left = 125.0 - width;
-    let mut paths = String::new();
-    for (index, character) in label.chars().enumerate() {
-        let d = character
-            .to_digit(10)
-            .map_or(PLUS, |digit| DIGITS[digit as usize]);
-        paths.push_str(&format!(
-            r#"<path d="{d}" transform="translate({} 0)"/>"#,
-            index as f32 * 7.0
-        ));
-    }
-    let badge = format!(
-        r##"<rect x="{left}" y="3" width="{width}" height="{height}" rx="{r}" fill="#ff3b30" stroke="#ffffff" stroke-width="5"/><g transform="translate({tx} {ty}) scale({scale})" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{paths}</g>"##,
-        r = height / 2.0,
-        tx = left + (width - text) / 2.0,
-        ty = 3.0 + (height - 10.0 * scale) / 2.0,
-    );
-    let svg = String::from_utf8_lossy(MARK).replace("</svg>", &format!("{badge}</svg>"));
-    render_mark(svg.as_bytes(), size).unwrap_or_else(|| app_icon_rgba(size))
-}
-
 fn plain_disc(size: usize) -> Vec<u8> {
     let mut rgba = vec![0u8; size * size * 4];
     let center = size as f32 / 2.0;
@@ -902,22 +822,47 @@ fn plain_disc(size: usize) -> Vec<u8> {
     rgba
 }
 
-/// Converts the logo to a monochrome macOS menu-bar template: the square,
-/// with the Z cut out of it.
+/// Converts the logo to a monochrome macOS menu-bar template: the disc,
+/// with the bubble cut out of it.
 pub fn tray_template_rgba(size: usize) -> Vec<u8> {
     // The flat mark at every size: a template has no room for shading.
     let mut rgba = render_mark(SMALL_MARK, size).unwrap_or_else(|| plain_disc(size));
-    // The square's red against the white Z's says how much of a pixel is Z.
-    const SQUARE: f32 = 91.0;
-    const BOLT: f32 = 255.0;
+    // The disc's green against the ink's says how much of a pixel is disc.
+    const INK: f32 = 14.0;
+    const DISC: f32 = 168.0;
     for pixel in rgba.as_chunks_mut::<4>().0 {
-        let bolt = ((f32::from(pixel[0]) - SQUARE) / (BOLT - SQUARE)).clamp(0.0, 1.0);
-        pixel[3] = (f32::from(pixel[3]) * (1.0 - bolt)).round() as u8;
+        let disc = ((f32::from(pixel[1]) - INK) / (DISC - INK)).clamp(0.0, 1.0);
+        pixel[3] = (f32::from(pixel[3]) * disc).round() as u8;
         pixel[0] = 0;
         pixel[1] = 0;
         pixel[2] = 0;
     }
     rgba
+}
+
+/// Whether the Windows taskbar is dark, when Windows says.
+#[cfg(windows)]
+pub fn windows_taskbar_dark() -> Option<bool> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_DWORD, RegGetValueW};
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let key = wide(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+    let value = wide("SystemUsesLightTheme");
+    let mut light = 0u32;
+    let mut size = size_of::<u32>() as u32;
+    // SAFETY: both names end in NUL and `light` holds the `size` bytes asked for.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            key.as_ptr(),
+            value.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            std::ptr::from_mut(&mut light).cast(),
+            &mut size,
+        )
+    };
+    (status == ERROR_SUCCESS).then_some(light == 0)
 }
 
 /// The largest count the tray icon spells out; more reads "9+".
@@ -1026,6 +971,15 @@ fn badged(mut rgba: Vec<u8>, size: usize, level: u32, template: bool) -> Vec<u8>
 
 #[cfg(test)]
 mod tests {
+    /// A title ending in Σ and a query typed with Σ compare as the same letter.
+    #[test]
+    fn one_sigma_matches_the_other() {
+        let key = super::search_key;
+        assert_eq!(key("ΟΣ"), key("Οσ"));
+        assert_eq!(key("ΜΆΙΟΣ"), "μαιοσ");
+        assert!(key("ΜΆΙΟΣ").contains(&key("Σ")));
+    }
+
     #[test]
     fn a_call_length_reads_the_way_the_phone_shows_it() {
         assert_eq!(super::call_duration(0), "0:00");
@@ -1197,43 +1151,54 @@ mod tests {
     fn initials_take_first_and_last_word() {
         assert_eq!(initials("Ada Lovelace"), "AL");
         assert_eq!(initials("ada"), "A");
-        assert_eq!(initials("  "), "");
+        assert_eq!(initials("  "), "#");
         assert_eq!(initials("🎉 Party Planning"), "PP");
-        assert_eq!(initials("Room 101"), "R");
     }
 
     #[test]
-    fn a_phone_number_has_no_initials() {
-        assert_eq!(initials("+91 98765 43210"), "");
-        assert_eq!(initials("+55 (11) 99999-9999"), "");
-    }
-
-    #[test]
-    fn error_codes_go_to_the_log() {
-        assert_eq!(
-            without_error_codes("The file couldn't be opened (error -10814)."),
-            "The file couldn't be opened."
+    fn a_contact_search_matches_words_in_order() {
+        let name = search_key("William Shakespeare");
+        assert!(search_matches(&name, "will shak"));
+        assert!(search_matches(&name, "w s"));
+        assert!(search_matches(&name, "shake"));
+        assert!(
+            search_matches(&name, "liam"),
+            "a plain substring still finds"
         );
-        assert_eq!(
-            without_error_codes("No such file or directory (os error 2)"),
-            "No such file or directory"
+        assert!(search_matches(&name, ""));
+        assert!(
+            !search_matches(&name, "-"),
+            "a query with no words matches nothing"
         );
-        assert_eq!(
-            without_error_codes("Sent to Ada (work) at noon"),
-            "Sent to Ada (work) at noon"
+        assert!(
+            !search_matches(&name, "shak will"),
+            "words keep their order"
         );
-        assert_eq!(
-            without_error_codes("Unclosed (error -1"),
-            "Unclosed (error -1"
+        assert!(!search_matches(&name, "will x"));
+        assert!(!search_matches(&name, "w w"), "one word cannot start two");
+        let name = search_key("Ângela Ávila");
+        assert!(search_matches(&name, "ang avi"), "accents are ignored");
+        let name = search_key("John-Doe");
+        assert!(search_matches(&name, "j d"), "a hyphen starts a new word");
+        assert!(
+            search_matches(&name, "-"),
+            "punctuation alone still matches as a plain substring"
         );
-    }
-
-    #[test]
-    fn a_file_no_app_opens_is_named_by_its_kind() {
-        let said = no_app_opens(std::path::Path::new("/tmp/report.pdf"));
-        assert!(said.starts_with("No app on this "), "{said}");
-        assert!(said.ends_with(" opens PDF files."), "{said}");
-        assert!(no_app_opens(std::path::Path::new("/tmp/README")).ends_with(" opens this file."));
+        assert!(
+            !search_matches(&search_key("Ada Lovelace"), "-"),
+            "but never a name without it"
+        );
+        let name = search_key("~John Doe");
+        assert!(
+            search_matches(&name, "j d"),
+            "a profile name's tilde is no word"
+        );
+        assert!(search_matches(&name, "jo"));
+        let name = search_key("O'Brien");
+        assert!(
+            search_matches(&name, "o b"),
+            "an apostrophe starts a new word"
+        );
     }
 
     #[test]
@@ -1257,6 +1222,16 @@ mod tests {
         assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
         assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");
         assert_eq!(phone("+55 (11) 99999-9999"), "+55 (11) 99999-9999");
+        assert_eq!(phone("33612345678"), "+33 6 12 34 56 78");
+        assert_eq!(phone("33142685300"), "+33 1 42 68 53 00");
+        assert_eq!(phone("33899123456"), "+33 899 12 34 56");
+        assert_eq!(phone("+33 6 12 34 56 78"), "+33 6 12 34 56 78");
+        assert_eq!(phone("262692123456"), "+262 692 12 34 56");
+        assert_eq!(phone("590690123456"), "+590 690 12 34 56");
+        assert_eq!(phone("594694123456"), "+594 694 12 34 56");
+        assert_eq!(phone("596696123456"), "+596 696 12 34 56");
+        // A French number of the wrong length keeps the general grouping.
+        assert_eq!(phone("3361234567"), "+33 612 345 67");
         assert_eq!(phone(""), "");
     }
 
@@ -1288,15 +1263,6 @@ mod tests {
                 Locale::English,
                 date,
                 date.checked_add(jiff::Span::new().days(30)).expect("date"),
-                &when
-            ),
-            "14 Nov"
-        );
-        assert_eq!(
-            stamp_relative_to(
-                Locale::English,
-                date,
-                date.checked_add(jiff::Span::new().days(60)).expect("date"),
                 &when
             ),
             "14 Nov 2023"
@@ -1443,6 +1409,23 @@ mod tests {
     }
 
     #[test]
+    fn a_timer_change_notice_names_who_and_to_what() {
+        let notice = crate::util::disappearing_change;
+        assert_eq!(
+            notice(Locale::English, "You", 604_800),
+            "You changed the disappearing messages setting to 7 days"
+        );
+        assert_eq!(
+            notice(Locale::English, "Ada", 7_776_000),
+            "Ada changed the disappearing messages setting to 90 days"
+        );
+        assert_eq!(
+            notice(Locale::English, "You", 0),
+            "You turned off disappearing messages"
+        );
+    }
+
+    #[test]
     fn icon_is_opaque_in_the_middle_and_clear_at_the_corners() {
         let icon = app_icon_rgba(32);
         assert_eq!(icon[3], 0);
@@ -1487,14 +1470,15 @@ mod tests {
     }
 
     #[test]
-    fn the_tray_template_cuts_the_z_out_of_the_square() {
+    fn the_tray_template_cuts_the_bubble_out_of_the_disc() {
         let size = 64;
         let template = tray_template_rgba(size);
         let alpha = |x: usize, y: usize| template[(y * size + x) * 4 + 3];
-        assert_eq!(alpha(0, 0), 0, "the rounded corner is clear");
-        assert_eq!(alpha(6, 32), 255, "beside the Z is square");
-        assert!(alpha(32, 14) < 40, "the Z's top bar is cut out");
-        assert!(alpha(32, 32) < 40, "and so is its bolt");
+        assert_eq!(alpha(0, 0), 0);
+        assert_eq!(alpha(32, 32), 255, "inside the bubble is disc");
+        assert_eq!(alpha(32, 4), 255, "so is the rim above it");
+        let outline = (0..32).map(|y| alpha(32, y)).min().unwrap();
+        assert!(outline < 40, "the outline is cut out: {outline}");
         assert!(
             template
                 .as_chunks::<4>()
@@ -1502,32 +1486,6 @@ mod tests {
                 .iter()
                 .all(|p| p[..3] == [0, 0, 0])
         );
-    }
-
-    #[test]
-    fn the_taskbar_icon_wears_a_red_badge_only_when_something_is_unread() {
-        let size = 64;
-        assert_eq!(super::badged_icon_rgba(size, 0), super::app_icon_rgba(size));
-        for count in [5, 42, 120] {
-            let rgba = super::badged_icon_rgba(size, count);
-            // The badge's middle, in the top-right corner, is the badge red.
-            let at = (8 * size + size - 10) * 4;
-            assert!(
-                rgba[at] > 200 && rgba[at + 1] < 120 && rgba[at + 2] < 120,
-                "{count}: {:?}",
-                &rgba[at..at + 4]
-            );
-            if std::env::var_os("ZEUS_BADGE_DUMP").is_some() {
-                let file = std::fs::File::create(format!("badge-{count}.png")).unwrap();
-                let mut encoder = png::Encoder::new(file, size as u32, size as u32);
-                encoder.set_color(png::ColorType::Rgba);
-                encoder
-                    .write_header()
-                    .unwrap()
-                    .write_image_data(&rgba)
-                    .unwrap();
-            }
-        }
     }
 
     /// Both marks render, the large one with its filters.

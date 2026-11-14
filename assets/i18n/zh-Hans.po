@@ -1,4 +1,4 @@
-# Simplified Chinese translation of Zeus.
+# Simplified Chinese translation of ZapFast.
 # Distributed under the same MIT license as Zeus.
 #
 msgid ""
@@ -6,7 +6,7 @@ msgstr ""
 "Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-23 16:22+0200\n"
+"POT-Creation-Date: 2026-11-01 20:11+0100\n"
 "PO-Revision-Date: 2026-09-25 23:00-0300\n"
 "Last-Translator: Zeus contributors\n"
 "Language-Team: Chinese (Simplified)\n"
@@ -911,9 +911,9 @@ msgid ""
 "your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"Zeus 会把无法读取的存档另存为单独的文件，新建一个存档，并请你重新关联。重"
-"新关联后，最近的历史记录会从手机恢复。之后，请在手机的“已关联的设备”中移除旧"
-"的 Zeus 条目。"
+"Zeus 会把无法读取的存档另存为单独的文件，新建一个存档，并请你重新关联。重新关"
+"联后，最近的历史记录会从手机恢复。之后，请在手机的“已关联的设备”中移除旧的 "
+"Zeus 条目。"
 
 #: src/ui/dialogs.rs:1277
 msgid ""
@@ -1162,8 +1162,7 @@ msgid "Custom title bar"
 msgstr "自定义标题栏"
 
 #: src/ui/settings.rs:424
-msgid ""
-"Draw Zeus's own title bar and window buttons instead of the desktop's."
+msgid "Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr "使用 Zeus 自己的标题栏和窗口按钮，而不是桌面环境提供的。"
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:293
@@ -1287,8 +1286,7 @@ msgid "Show when you are typing"
 msgstr "显示“正在输入”"
 
 #: src/ui/settings.rs:600
-msgid ""
-"Could not load your account privacy. Trying again when Zeus reconnects."
+msgid "Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr "无法加载账号隐私设置。Zeus 重新连接后会再试一次。"
 
 #: src/ui/settings.rs:605
@@ -1337,8 +1335,8 @@ msgstr "自动下载更新"
 
 #: src/ui/settings.rs:696
 msgid ""
-"You still choose when to restart. Package managers and Flatpak update "
-"Zeus themselves."
+"You still choose when to restart. Package managers and Flatpak update Zeus "
+"themselves."
 msgstr "重启时机仍由你决定。包管理器和 Flatpak 会自行更新 Zeus。"
 
 #: src/ui/settings.rs:709
@@ -1498,10 +1496,9 @@ msgstr "锁定时间"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using Zeus, also counted while it is in the tray. "
-"Ctrl+Shift+L locks it at once."
-msgstr ""
-"未使用 Zeus 的时长，在托盘中时也会计时。按 Ctrl+Shift+L 可立即锁定。"
+"Time without using Zeus, also counted while it is in the tray. Ctrl+Shift+L "
+"locks it at once."
+msgstr "未使用 Zeus 的时长，在托盘中时也会计时。按 Ctrl+Shift+L 可立即锁定。"
 
 #: src/ui/settings.rs:979
 msgid "Set an app lock password"
@@ -1907,16 +1904,15 @@ msgstr "来电"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
-"your phone."
-msgstr ""
-"{caller} 正在呼叫 {group}。Zeus 暂时无法加入群组通话：请在手机上接听。"
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on your "
+"phone."
+msgstr "{caller} 正在呼叫 {group}。Zeus 暂时无法加入群组通话：请在手机上接听。"
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. Zeus can't join group calls yet: "
-"answer on your phone."
+"{caller} is calling you and others. Zeus can't join group calls yet: answer "
+"on your phone."
 msgstr ""
 "{caller} 正在呼叫你和其他人。Zeus 暂时无法加入群组通话：请在手机上接听。"
 
@@ -2981,3 +2977,92 @@ msgstr ""
 
 #~ msgid "Next pinned message"
 #~ msgstr "下一条置顶消息"
+
+#, fuzzy, rust-format
+#~ msgid "{name} turned off disappearing messages"
+#~ msgstr "限时消息"
+
+#, fuzzy
+#~ msgid "Locked chats"
+#~ msgstr "已锁定的聊天"
+
+#, fuzzy
+#~ msgid "recording audio…"
+#~ msgstr "正在发送贴图包…"
+
+#, fuzzy
+#~ msgid "Delete chat"
+#~ msgstr "要删除聊天吗？"
+
+#, fuzzy
+#~ msgid "Unarchive"
+#~ msgstr "已归档"
+
+#, fuzzy
+#~ msgid "Archive"
+#~ msgstr "已归档"
+
+#, fuzzy
+#~ msgid "Unlock chat"
+#~ msgstr "已锁定的聊天"
+
+#, fuzzy
+#~ msgid "Lock chat"
+#~ msgstr "已锁定的聊天"
+
+#, fuzzy
+#~ msgid "Default"
+#~ msgstr "使用默认"
+
+#, fuzzy
+#~ msgid "System sound"
+#~ msgstr "系统"
+
+#, fuzzy
+#~ msgid "No sound"
+#~ msgstr "提及提示音"
+
+#, fuzzy
+#~ msgid "Notification sound"
+#~ msgstr "通知"
+
+#, fuzzy
+#~ msgid "8 hours"
+#~ msgstr "24 小时"
+
+#, fuzzy
+#~ msgid "Close chat"
+#~ msgstr "清空聊天"
+
+#, fuzzy
+#~ msgid "You blocked this contact"
+#~ msgstr "你已退出此频道"
+
+#: src/ui/conversation.rs:1530
+msgid "Channels are read-only in ZapFast"
+msgstr "ZapFast 中的频道为只读"
+
+#: src/ui/settings.rs:703
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr "每天向 GitHub 查询一次，只发送 ZapFast 版本号。"
+
+#: src/app.rs:4907 src/app.rs:8029
+msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgstr "ZapFast 暂时无法加入群组通话：请在手机上打开此链接。"
+
+#: src/app.rs:5740
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "未发送：ZapFast 未连接到 WhatsApp。"
+
+#: src/app.rs:9279 src/ui/labels.rs:257
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "你已有 {limit} 个标签，这是 ZapFast 的上限。"
+
+#: src/ui/image_preview.rs:738
+msgid "This image could not be displayed in ZapFast."
+msgstr "ZapFast 无法显示此图片。"
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "ZapFast 已锁定"

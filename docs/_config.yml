@@ -1,5 +1,5 @@
 title: ZapFast
-zapfast_version: "0.20.0"
+zapfast_version: "0.21.2"
 release_asset_prefix: zapfast
 release_app_name: ZapFast
 description: A fast, lightweight WhatsApp app for Linux, macOS, and Windows.
@@ -48,6 +48,8 @@ defaults:
       layout: default
 
 jekyll_vitepress:
+  versions:
+    next: true
   seo:
     page_type: TechArticle
     image:

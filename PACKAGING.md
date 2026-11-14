@@ -92,10 +92,10 @@ native-packages build \
 Secret configuration applies to future builds. Existing published DMGs retain
 their original signatures; this setup does not replace release assets.
 
-Linux releases build on Ubuntu 24.04, so the binaries need glibc 2.39 or newer
-and the packages install on Ubuntu 24.04 and Debian 13 onwards: 22.04's
-libpipewire is older than the 0.3.53 fastframe-audio's PipeWire output builds
-against. native-packages derives the `libc6`/`glibc` floor from the binary; do
+Linux releases build in a Debian 12 container, so the binaries need glibc 2.36
+or newer and the packages install on Debian 12, Ubuntu 22.10 and Fedora 37
+onwards. Ubuntu 22.04 is not supported: its libpipewire is older than the
+0.3.53 fastframe-audio's PipeWire output builds against. native-packages derives the `libc6`/`glibc` floor from the binary; do
 not declare one. DEB/RPM recipes declare runtime-loaded Wayland, X11 and EGL
 libraries as well as ALSA (`libasound2t64 | libasound2`, the package's name
 before and after the 64-bit time transition) and libpipewire
@@ -108,6 +108,59 @@ verify desktop and theme assets. Run the same check locally with
 `bash packaging/test-install.sh ubuntu:24.04 /path/to/native-packages-output`. The macOS job selects `macos-universal`
 from the same configuration with `--defer-recipes`, leaving Linux inputs and AUR
 recipe generation to the Linux packaging job after release assets exist.
+
+## Windows installer
+
+Windows releases ship the portable zip and a per-user Windows Installer
+package, `zapfast-vX.Y.Z-<target>.msi`, built by native-packages from
+`packaging/windows/zapfast.wxs` (`packaging/windows/msi.rb`). Releases up to
+0.20.1 also shipped an Inno Setup program (`-setup.exe`); it is gone, because
+the package is the one winget's manifests install, and the one signed and tested.
+
+The package takes over a copy the Inno Setup program installed: it installs
+into that folder, removes Inno's uninstaller and its Settings > Apps entry, and
+leaves the user's data (session, archive, settings) alone, as they live
+outside the program folder. ZapFast 0.20.0 and later update to the package by
+themselves (the updater prefers the `.msi`). Older versions look for a
+`-setup.exe` that new releases no longer have, so they stop finding updates;
+their users download the `.msi` once (`docs/_guide/download.md` says so).
+`packaging/windows/zapfast.iss` stays only so `test-installer.ps1` can make an
+Inno install for the package to take over.
+
+## Windows signing
+
+Tag releases sign `zapfast.exe` and the MSI with Azure Artifact Signing, as
+**PlentyLabs UG (haftungsbeschränkt) & Co. KG**, through native-packages:
+`windows.signing` in `native-packages.yaml` turns it on,
+`native-packages sign-windows` signs `zapfast.exe` before the zip and the MSI
+pack it, and `native-packages build` signs the MSI before recording its
+checksum. Each
+signature is SHA-256 Authenticode with Microsoft's RFC 3161 timestamp, checked
+to be `Valid` and PlentyLabs' before anything is attested or uploaded (see
+native-packages'
+[Windows code signing](https://github.com/crmne/native-packages/blob/v0.11.0/docs/_guides/windows-signing.md)).
+The account, `plentylabs` in West Europe,
+is shared by Carmine's Windows apps and managed in `crmne/terraform`
+(`azure/signing.tf`, its README's "Code signing").
+
+No secret is involved. The Windows build jobs run in this repository's
+`windows-signing` environment, which deploys only from `v*` tags, and sign in
+through GitHub's OIDC token as the Entra app `GitHub zapfast Windows signing`.
+That app trusts only `repo:crmne@106617/zapfast@1350713137:environment:windows-signing` (GitHub's immutable subject, with the owner's and repository's ids) and holds
+the "Artifact Signing Certificate Profile Signer" role on the account. The
+environment's variables, none of them secret, are `AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `AZURE_SIGNING_ENDPOINT`,
+`AZURE_SIGNING_ACCOUNT` and `AZURE_SIGNING_PROFILE`.
+
+`AZURE_SIGNING_PROFILE` names the Public Trust certificate profile
+`plentylabs`, created once PlentyLabs' identity validation completed
+(2026-10-26), so every tag release signs. Without the environment's signing
+variables releases build unsigned; with only some of them, the Windows build
+fails rather than ship unsigned.
+
+A signature doesn't silence SmartScreen at once: reputation builds as people
+download releases signed by the same publisher, so keep signing every release
+with this identity.
 
 ## Flatpak
 
@@ -133,6 +186,27 @@ disclosure of generated material. Review the manifests and these changes before
 submitting. The manifests use the current Freedesktop 26.08 runtime; the CI builder
 container is 25.08 and installs the runtime and SDK named by the manifest. The GitHub release job includes the bundle
 in `checksums.txt`. No existing release files are replaced by this change.
+
+## Fedora COPR and openSUSE OBS
+
+`packaging/rpm/zapfast.spec` builds ZapFast from its release source for the
+[paolino/zapfast](https://copr.fedorainfracloud.org/coprs/paolino/zapfast/) COPR
+and the `home:paolino` OBS project. Fill in `@VERSION@` and `@DATE@` (in RPM
+changelog form, such as `Tue Nov 03 2026`), then build a source RPM and submit
+it. Cargo fetches the locked dependencies during the build, so the COPR project
+has network access turned on for builds. Fedora 44 and newer ship a new enough
+Rust. Submissions are a manual maintainer step that needs a COPR API token:
+`~/.config/copr`, also in 1Password as "Fedora COPR API". It lasts 180 days
+from the COPR API page; the current one expires on 2026-12-03. `copr-cli` is
+not packaged for Arch, so run it from a Fedora container with the config
+mounted read-only.
+
+```sh
+sed -e "s/@VERSION@/X.Y.Z/g" -e "s/@DATE@/$(LC_ALL=C date '+%a %b %d %Y')/" \
+  packaging/rpm/zapfast.spec > zapfast.spec
+spectool -g -R zapfast.spec && rpmbuild -bs zapfast.spec
+copr-cli build paolino/zapfast ~/rpmbuild/SRPMS/zapfast-X.Y.Z-1.*.src.rpm
+```
 
 ## winget
 

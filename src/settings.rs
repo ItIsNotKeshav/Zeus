@@ -947,7 +947,9 @@ pub struct Settings {
     pub reaction_emoji: Vec<(String, u32)>,
     /// User GIPHY API key. Empty uses the optional built-in key.
     pub giphy_key: String,
-    /// Keep the app linked in the tray when the window closes.
+    /// Keep the app linked in the tray when the window closes. On macOS,
+    /// where a closed ZapFast always stays in the Dock, whether it has a
+    /// menu-bar item.
     pub keep_running_in_background: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,
@@ -1677,6 +1679,37 @@ impl AccountRoster {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_defaults_to_follow_system_for_new_and_missing_settings() {
+        assert_eq!(ThemeChoice::default(), ThemeChoice::System);
+
+        let dir = tempfile::tempdir().unwrap();
+        let missing_path = dir.path().join("missing-settings.json");
+        assert_eq!(Settings::load(&missing_path).legacy_theme(), ThemeChoice::System);
+
+        let path = dir.path().join("settings.json");
+        std::fs::write(&path, "{}").unwrap();
+        assert_eq!(Settings::load(&path).legacy_theme(), ThemeChoice::System);
+    }
+
+    #[test]
+    fn explicitly_saved_themes_survive_load_and_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+
+        for theme in [
+            ThemeChoice::Dark,
+            ThemeChoice::Light,
+            ThemeChoice::System,
+            ThemeChoice::Messages,
+        ] {
+            let mut settings = Settings::default();
+            settings.set_theme(theme);
+            settings.save(&path).unwrap();
+            assert_eq!(Settings::load(&path).legacy_theme(), theme);
+        }
+    }
 
     #[test]
     fn tint_wallpaper_moves_toward_the_accent() {

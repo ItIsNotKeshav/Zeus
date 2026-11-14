@@ -282,52 +282,6 @@ pub struct DeviceList {
     pub cameras: Vec<CameraDevice>,
 }
 
-/// What Settings say about a call's microphone: the device it opens, and
-/// whether push to talk keeps it silent until the key is held.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct InputPreferences {
-    /// The microphone a call opens, and the name it was picked under; `None`
-    /// is the system default.
-    pub microphone: Option<crate::settings::SavedDevice>,
-    pub push_to_talk: bool,
-    /// Whether the push to talk key is held now.
-    pub talking: bool,
-}
-
-impl InputPreferences {
-    /// Whether the engine hears the microphone.
-    pub fn mic_open(&self) -> bool {
-        !self.push_to_talk || self.talking
-    }
-
-    /// The picked microphone's id.
-    pub fn microphone_id(&self) -> Option<String> {
-        self.microphone.as_ref().map(|device| device.id.clone())
-    }
-
-    /// The picked microphone checked against `list`. One the machine no
-    /// longer has falls back to the system default and is named as it was
-    /// picked, since the list cannot name it any more.
-    pub fn resolve(&self, list: &DeviceList) -> ResolvedDevices {
-        let mut resolved = resolve_devices(list, self.microphone_id(), None, None);
-        resolved.camera = None;
-        self.name_lost(&mut resolved.lost_devices);
-        resolved
-    }
-
-    /// Names the picked microphone, among devices a call gave up, as it was
-    /// picked rather than by its id.
-    pub fn name_lost(&self, lost: &mut [LostDevice]) {
-        if let Some(saved) = &self.microphone {
-            for lost in lost {
-                if lost.kind == DeviceKind::Microphone && lost.name == saved.id {
-                    lost.name.clone_from(&saved.name);
-                }
-            }
-        }
-    }
-}
-
 /// Which of the three kinds of call device a selection belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceKind {
@@ -1550,7 +1504,7 @@ impl std::fmt::Display for Cancelled {
 
 impl std::error::Error for Cancelled {}
 
-/// Whether ZapFast takes part in group calls: starts them from a group's header or the Calls
+/// Whether Zeus takes part in group calls: starts them from a group's header or the Calls
 /// page, rings for them, answers them, and joins call links.
 ///
 /// On since 0.20, as an experiment: a three-person test carried audio every way and video both
@@ -1672,9 +1626,6 @@ pub struct Call {
     /// Active only once the peer has answered *and* there is a media path to talk over.
     media_ready: bool,
     mic: Option<AudioInput>,
-    /// Whether the engine hears the microphone: push to talk closes it
-    /// between presses. Kept for a microphone not yet open, as while ringing.
-    mic_open: bool,
     speaker: Option<AudioOutput>,
     video_pipe: Option<VideoPipeline>,
     remote_video: bool,
@@ -1717,6 +1668,20 @@ struct GroupRoster {
     /// Us (our privacy id and phone number), on a call we started: the roster lists our own entry
     /// as on the call from the start, which is not anyone answering.
     own: Vec<Jid>,
+    /// The people the service has reported as on the call, one record per person, as the snapshot
+    /// that first named them did, so someone who leaves before the end is still counted as having
+    /// been on it.
+    seen: Vec<GroupCallParticipant>,
+}
+
+/// Whether two roster records are the same person. The service names one person by phone number
+/// in one snapshot and by privacy id in another, or by both at once.
+fn same_person(first: &GroupCallParticipant, second: &GroupCallParticipant) -> bool {
+    let ids = |person: &GroupCallParticipant| {
+        std::iter::once(person.jid.to_non_ad()).chain(person.pn.as_ref().map(Jid::to_non_ad))
+    };
+    let theirs: Vec<Jid> = ids(second).collect();
+    ids(first).any(|id| theirs.contains(&id))
 }
 
 impl GroupRoster {
@@ -1729,6 +1694,23 @@ impl GroupRoster {
             };
             person.is_connected() && !self.own.iter().any(ours)
         })
+    }
+
+    /// Notes everyone a newer snapshot puts on the call. A snapshot is the whole roster, so a
+    /// member who has left is in none that follows: they are remembered here, where the call's
+    /// history entry is what needs them, while `participants` stays the newest word on who is on
+    /// the call now. Our own entry is remembered with the rest; the worker, which knows which id
+    /// is ours, leaves it out of the count.
+    fn note_joined(&mut self, update: &GroupCallUpdate) {
+        for person in &update.participants {
+            if !person.is_connected() {
+                continue;
+            }
+            if self.seen.iter().any(|known| same_person(known, person)) {
+                continue;
+            }
+            self.seen.push(person.clone());
+        }
     }
 
     /// The roster an offer rang with: `None` unless the offer is a group call's.
@@ -1765,6 +1747,7 @@ impl GroupRoster {
             return false;
         }
         self.transaction = Some(update.transaction_id);
+        self.note_joined(update);
         if self.participants == update.participants {
             return false;
         }
@@ -1954,7 +1937,6 @@ impl Call {
                 handle: Some(handle),
                 media_ready: false,
                 mic: Some(mic),
-                mic_open: true,
                 speaker: Some(output),
                 camera_wanted: video_pipe
                     .as_ref()
@@ -1998,7 +1980,6 @@ impl Call {
             handle: None,
             media_ready: false,
             mic: None,
-            mic_open: true,
             speaker: None,
             video_pipe: None,
             remote_video: false,
@@ -2024,12 +2005,11 @@ impl Call {
         generation: u64,
         token: String,
         video: bool,
-        microphone: Option<String>,
         camera: Option<String>,
         cancel: &AtomicBool,
         done: async_channel::Sender<std::result::Result<CallHandle, String>>,
     ) -> Result<(Self, Option<async_channel::Receiver<VideoTick>>)> {
-        if let Some(missing) = missing_audio_device_off_thread(microphone.clone(), None).await {
+        if let Some(missing) = missing_audio_device_off_thread(None, None).await {
             return Err(anyhow!("no {missing} is available; a call needs one"));
         }
         let mut pipe = None;
@@ -2046,7 +2026,7 @@ impl Call {
             return Err(Cancelled.into());
         }
         let far_end = crate::call_audio::FarEnd::new();
-        let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
+        let (mic, mic_rx) = AudioInput::spawn(None, &far_end);
         let (output, output_tx) = AudioOutput::spawn(None, &far_end);
         let endpoints = pipe
             .as_ref()
@@ -2086,7 +2066,6 @@ impl Call {
                 handle: None,
                 media_ready: false,
                 mic: Some(mic),
-                mic_open: true,
                 speaker: Some(output),
                 camera_wanted: video_pipe
                     .as_ref()
@@ -2095,7 +2074,7 @@ impl Call {
                 began: crate::util::now(),
                 video_pipe,
                 remote_video: false,
-                microphone,
+                microphone: None,
                 speaker_device: None,
                 camera,
                 lost_devices: Vec::new(),
@@ -2200,7 +2179,6 @@ impl Call {
                 handle: None,
                 media_ready: false,
                 mic: Some(mic),
-                mic_open: true,
                 speaker: Some(output),
                 camera_wanted: video_pipe
                     .as_ref()
@@ -2322,7 +2300,6 @@ impl Call {
             handle: None,
             media_ready: false,
             mic: None,
-            mic_open: true,
             speaker: None,
             video_pipe: None,
             remote_video: false,
@@ -2401,6 +2378,21 @@ impl Call {
     /// Whether the call carried video at any point.
     pub fn carried_video(&self) -> bool {
         self.video
+    }
+
+    /// Everyone the call service reported as on a group call, over every roster it sent, each
+    /// person once and under the id their tile is drawn under: one who joined and left before the
+    /// end still counts as having been on the call, and one the service only asked to it does not.
+    /// `None` for a one-to-one call. Our own entry is among them when the service lists it, which
+    /// it does on a call we started; the caller knows which id is ours and leaves it out.
+    pub fn group_people(&self) -> Option<Vec<String>> {
+        self.group.as_ref().map(|roster| {
+            roster
+                .seen
+                .iter()
+                .map(participant_id)
+                .collect::<Vec<String>>()
+        })
     }
 
     /// The id that tells one call from the next, for a caller that keeps the last snapshot.
@@ -2540,7 +2532,6 @@ impl Call {
         require_video(self.video, pipe.is_some())?;
         let far_end = crate::call_audio::FarEnd::new();
         let (mic, mic_rx) = AudioInput::spawn(microphone.clone(), &far_end);
-        mic.set_open(self.mic_open);
         let (output, output_tx) = AudioOutput::spawn(speaker.clone(), &far_end);
 
         let voip = client.voip();
@@ -3416,28 +3407,6 @@ impl Call {
         log::warn!("[CALL] video upgrade refused call_id={}", self.call_id);
     }
 
-    /// Lets the engine hear the microphone, or feeds it silence, for push to
-    /// talk. Unlike [`Call::set_muted`] the peer is told nothing, so a press
-    /// costs no signaling and takes effect on the next frame.
-    pub fn set_mic_open(&mut self, open: bool) {
-        if self.mic_open != open {
-            log::debug!(
-                "[CALL] push to talk {}",
-                if open { "open" } else { "closed" }
-            );
-        }
-        self.mic_open = open;
-        if let Some(mic) = &self.mic {
-            mic.set_open(open);
-        }
-    }
-
-    /// Whether the engine hears the microphone, for tests.
-    #[cfg(test)]
-    pub(crate) fn mic_is_open(&self) -> bool {
-        self.mic_open
-    }
-
     /// Rebinds the microphone. The engine's channel is untouched.
     pub fn set_microphone(&mut self, device: Option<String>) -> CallUpdate {
         self.microphone = device.clone();
@@ -3616,65 +3585,6 @@ mod tests {
                 label: "Laptop Camera".to_owned(),
             }],
         }
-    }
-
-    /// A microphone picked in Settings opens while the machine has it; once it is gone the call
-    /// takes the default and names it as it was picked, not by the system's id.
-    #[test]
-    fn a_picked_microphone_falls_back_by_the_name_it_was_picked_under() {
-        let list = DeviceList {
-            microphones: vec![AudioDevice {
-                id: "usb-mic".into(),
-                label: "USB Microphone".into(),
-            }],
-            ..DeviceList::default()
-        };
-        let mut input = InputPreferences {
-            microphone: Some(crate::settings::SavedDevice {
-                id: "usb-mic".into(),
-                name: "USB Microphone".into(),
-            }),
-            ..InputPreferences::default()
-        };
-        let resolved = input.resolve(&list);
-        assert_eq!(resolved.microphone.as_deref(), Some("usb-mic"));
-        assert!(resolved.lost_devices.is_empty());
-        assert_eq!(resolved.camera, None, "a voice call opens no camera here");
-
-        input.microphone = Some(crate::settings::SavedDevice {
-            id: "{0.0.1.00000000}.{headset}".into(),
-            name: "Wireless Headset".into(),
-        });
-        let resolved = input.resolve(&list);
-        assert_eq!(resolved.microphone, None, "the system default instead");
-        assert_eq!(
-            resolved.lost_devices,
-            vec![LostDevice {
-                kind: DeviceKind::Microphone,
-                name: "Wireless Headset".into(),
-            }]
-        );
-
-        // An empty list means discovery could not run, and the pick stands.
-        let resolved = input.resolve(&DeviceList::default());
-        assert_eq!(
-            resolved.microphone.as_deref(),
-            Some("{0.0.1.00000000}.{headset}")
-        );
-    }
-
-    /// Push to talk keeps the microphone closed until the key is held; off, it is always open.
-    #[test]
-    fn push_to_talk_opens_the_microphone_only_while_held() {
-        let mut input = InputPreferences::default();
-        assert!(
-            input.mic_open(),
-            "without push to talk the microphone is heard"
-        );
-        input.push_to_talk = true;
-        assert!(!input.mic_open());
-        input.talking = true;
-        assert!(input.mic_open());
     }
 
     /// The pickers list what rodio reports, each device named and labelled.
@@ -4781,7 +4691,6 @@ mod tests {
             handle: None,
             media_ready: false,
             mic: None,
-            mic_open: true,
             speaker: None,
             video_pipe: None,
             remote_video: false,
@@ -5022,6 +4931,80 @@ mod tests {
         let ended = call.hangup(None).await;
         assert_eq!(ended.phase, CallPhase::Ended);
         assert_eq!(ended.outcome, Some(CallOutcome::NoAnswer));
+    }
+
+    /// The people on a group call come from every roster the service sent: someone who joined and
+    /// left before the end is still one of them, someone it only asked is not, and one member
+    /// named by two ids is one person. A one-to-one call has no roster to name anyone from.
+    #[tokio::test]
+    async fn a_group_calls_people_are_everyone_who_was_on_it() {
+        let mut call = dialing();
+        assert_eq!(call.group_people(), None, "a one-to-one call has no roster");
+        call.chat = GROUP.to_owned();
+        call.group = Some(GroupRoster {
+            own: vec!["200000000000099@lid".parse().unwrap()],
+            ..GroupRoster::default()
+        });
+        assert_eq!(call.group_people(), Some(Vec::new()), "nobody is on it yet");
+
+        call.media(&CallEvent::GroupUpdated(Box::new(roster(
+            1,
+            vec![
+                member("200000000000099", true),
+                member("200000000000001", true),
+                member("200000000000002", false),
+            ],
+        ))));
+        assert_eq!(
+            call.group_people().unwrap(),
+            ["200000000000099@lid", "200000000000001@lid"],
+            "the member on the call and our own entry, not the one only asked"
+        );
+
+        call.media(&CallEvent::GroupUpdated(Box::new(roster(
+            2,
+            vec![
+                member("200000000000099", true),
+                member("200000000000001", true),
+                member("200000000000002", true),
+            ],
+        ))));
+        assert_eq!(
+            call.group_people().unwrap().len(),
+            3,
+            "the second member joined too"
+        );
+
+        // The same member, now named by their phone number as well: one person, not two.
+        let mut with_number = member("200000000000001", true);
+        with_number.pn = Some("15550001111@s.whatsapp.net".parse().unwrap());
+        call.media(&CallEvent::GroupUpdated(Box::new(roster(
+            3,
+            vec![
+                member("200000000000099", true),
+                with_number,
+                member("200000000000002", true),
+            ],
+        ))));
+        assert_eq!(
+            call.group_people().unwrap().len(),
+            3,
+            "a second id for one person is one person"
+        );
+
+        // One of them leaves before the call ends: who was on the call does not shrink.
+        call.media(&CallEvent::GroupUpdated(Box::new(roster(
+            4,
+            vec![
+                member("200000000000099", true),
+                member("200000000000001", true),
+            ],
+        ))));
+        assert_eq!(
+            call.group_people().unwrap().len(),
+            3,
+            "a member who left was still on the call"
+        );
     }
 
     /// The call service refusing a group call we started fails it as a call that never came up,

@@ -1,0 +1,36 @@
+name: Policy
+
+# The required check. It runs on every change, documentation included, so
+# CI's paths-ignore never leaves a pull request waiting for it.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: policy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Dependencies come only from the approved sources in CONTRIBUTING.md, and
+  # review evidence (captures, comparison pages, recordings) stays in the pull
+  # request instead of the tree. See CONTRIBUTING.md.
+  policy:
+    name: policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Dependency sources
+        run: python3 .github/scripts/check-dependency-sources.py
+      - name: No review evidence in the tree
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/check-review-evidence.py
+      - name: Policy check regressions
+        if: ${{ !cancelled() }}
+        run: python3 .github/scripts/test-policy-checks.py

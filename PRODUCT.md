@@ -30,6 +30,7 @@ separated action rows.
 ## Boundaries and accessibility
 
 No browser engine, hosted backend, telemetry, or ZapFast-operated account system.
+WhatsApp only: no other networks or protocols (Matrix, Signal, Telegram) and no bridges to them.
 No automation: no bots, MCP server, or interface for other programs to read or
 send messages, and no scheduled, bulk or automatic replies.
 Several WhatsApp accounts may be linked locally. Current feature limitations

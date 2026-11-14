@@ -11,6 +11,8 @@ use crate::model::{
     Chat, ChatKind, Contact, Content, Delivery, GroupSettings, LastMessage, MediaItem, Message,
 };
 
+mod broadcast_lists;
+pub use broadcast_lists::Adopted;
 mod calls;
 pub mod chat_export;
 pub use calls::CALL_LOG_LIMIT;
@@ -28,7 +30,6 @@ mod receipts;
 mod reconcile;
 #[cfg(test)]
 mod reconcile_tests;
-mod search_index;
 mod stars;
 mod stickers;
 pub use polls::PollVote;
@@ -69,8 +70,6 @@ pub type Result<T> = std::result::Result<T, rusqlite::Error>;
 
 /// Marks an archived photo whose clip is known as a motion photo. Only the
 /// photo's own sender can give it a clip.
-const LINK_PREVIEWS_DISABLED: &str = "link_previews_disabled";
-const LINK_PREVIEWS_DISABLED_AT: &str = "link_previews_disabled_at";
 const MARK_MOTION: &str = "UPDATE messages SET content = json_set(content, '$.motion', json('{}'))
     WHERE chat = ?1 AND id = ?2 AND json_valid(content)
       AND json_extract(content, '$.kind') = 'image'
@@ -90,8 +89,6 @@ CREATE TABLE IF NOT EXISTS chats (
     muted_until INTEGER,
     locked INTEGER NOT NULL DEFAULT 0
 );
--- The chat list reads newest first; this order spares it a sort of the whole joined result.
-CREATE INDEX IF NOT EXISTS chats_by_activity ON chats (last_activity);
 CREATE TABLE IF NOT EXISTS messages (
     chat TEXT NOT NULL,
     id TEXT NOT NULL,
@@ -234,7 +231,57 @@ const MIGRATIONS: &[(&str, &str, &str)] = &[
     // A group's permissions and admins as JSON; NULL until its metadata says.
     ("chats", "group_settings", "TEXT"),
     ("contacts", "first_name", "TEXT"),
+    // The broadcast list a received message came through, for its receipts.
+    ("messages", "broadcast_list", "TEXT"),
 ];
+
+/// One copy of a message that a merge meets twice, as stored.
+struct MessageCopy {
+    chat: String,
+    json: String,
+    /// What this build reads `json` as; `None` for content a newer build
+    /// wrote that it cannot read.
+    content: Option<Content>,
+    edited: bool,
+    reactions: Vec<crate::model::Reaction>,
+}
+
+impl MessageCopy {
+    fn new(chat: &str, json: String, edited: bool, reactions: &str) -> Self {
+        Self {
+            chat: chat.to_owned(),
+            content: serde_json::from_str(&json).ok(),
+            json,
+            edited,
+            reactions: serde_json::from_str(reactions).unwrap_or_default(),
+        }
+    }
+}
+
+/// How a merge settles the reactions of a message it meets twice.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reactions {
+    /// As the upsert left them: the kept row's, or the other copy's when
+    /// the kept row has none. A privacy-id merge keeps this rule.
+    Kept,
+    /// Both copies', one per person.
+    Both,
+}
+
+/// Whether a merge may replace this content with another copy's: an
+/// unsupported or unreadable placeholder, or a phone-only one other than
+/// view-once, which is the message's final state on a linked device.
+fn replaceable(content: &Content) -> bool {
+    matches!(
+        content,
+        Content::Unsupported { .. }
+            | Content::PhoneOnly {
+                view_once: false,
+                ..
+            }
+    )
+}
+
 const CHAT_JOIN: &str = "FROM chats c
              LEFT JOIN messages m ON m.chat = c.id AND m.rowid = (
                  SELECT rowid FROM messages WHERE chat = c.id ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC LIMIT 1
@@ -333,22 +380,6 @@ fn search_pattern(needle: &str) -> Option<String> {
     })
 }
 
-/// The same `LIKE` pattern applied to the stored JSON text rather than to the
-/// parsed fields, or `None` when the needle has a character JSON writes
-/// escaped (a quote, a backslash, a control character) or is blank.
-///
-/// JSON escapes nothing else, so a needle without those characters that
-/// occurs in a field's text occurs verbatim in the stored `content` too. The
-/// scan can therefore skip every row whose raw text lacks it without parsing
-/// the row, and the parsed match then decides the rest.
-fn raw_prefilter(needle: &str) -> Option<String> {
-    let plain = needle
-        .trim()
-        .chars()
-        .all(|c| c != '"' && c != '\\' && c >= ' ');
-    search_pattern(needle).filter(|_| plain)
-}
-
 /// A message from a row of [`SEARCH_COLUMNS`].
 fn searched_message(row: &rusqlite::Row<'_>) -> rusqlite::Result<Message> {
     let content: String = row.get(6)?;
@@ -432,18 +463,12 @@ fn kind_from_name(name: &str) -> ChatKind {
 /// rather than every photo it ever held.
 pub const GALLERY_PAGE: usize = 200;
 
-/// How many raw protobufs one startup backfill holds at a time.
-///
-/// `messages` is not `WITHOUT ROWID`, and its primary key is `(chat, id)`
-/// rather than an integer, so pages walk the table's implicit `rowid`.
-pub const BACKFILL_BATCH: usize = 256;
-
-/// One archived message for a backfill: its rowid, chat, id and raw protobuf.
-pub type RawRow = (i64, String, String, Vec<u8>);
-
 /// `meta` keys for the phone's "Keep chats archived" and when it changed.
 const UNARCHIVE_CHATS: &str = "unarchive_chats";
 const UNARCHIVE_CHATS_AT: &str = "unarchive_chats_at";
+/// `meta` keys for the phone's "Disable link previews" and when it changed.
+const LINK_PREVIEWS_DISABLED: &str = "link_previews_disabled";
+const LINK_PREVIEWS_DISABLED_AT: &str = "link_previews_disabled_at";
 
 impl Archive {
     /// Unlocks the on-disk archive with its OS keyring key, migrating plaintext
@@ -461,14 +486,6 @@ impl Archive {
         Self::prepare(Connection::open_in_memory()?)
     }
 
-    /// Hands the connection's page cache back to the allocator. SQLite keeps
-    /// the pages of the last big read for good otherwise; the next query
-    /// reads what it needs again. Called after a scan and when idle, never
-    /// per message.
-    pub fn release_memory(&self) {
-        let _ = self.connection.release_memory();
-    }
-
     fn prepare(connection: Connection) -> Result<Self> {
         connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         connection.execute_batch(SCHEMA)?;
@@ -479,7 +496,6 @@ impl Archive {
         connection.execute_batch(favorites::SCHEMA)?;
         connection.execute_batch(stars::SCHEMA)?;
         connection.execute_batch(pins::SCHEMA)?;
-        connection.execute_batch(&search_index::schema())?;
         for (table, column, definition) in MIGRATIONS {
             let exists = connection
                 .prepare(&format!("PRAGMA table_info({table})"))?
@@ -491,12 +507,7 @@ impl Archive {
                 ))?;
             }
         }
-        // Newest first in the order the search lists, so a search for common
-        // text stops once it has its page of hits instead of parsing every
-        // message. Created after the migrations, which add `history_order`.
-        connection.execute_batch(
-            "CREATE INDEX IF NOT EXISTS messages_by_recency ON messages (timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC);",
-        )?;
+        connection.execute_batch(broadcast_lists::INDEX)?;
         favorites::adopt_local_marks(&connection)?;
         Self::prune_receipts(&connection)?;
         Ok(Self { connection })
@@ -625,16 +636,6 @@ impl Archive {
         Ok(())
     }
 
-    /// Records who may post, from an "only admins can send" switch announced
-    /// by WhatsApp, ahead of the metadata refresh that confirms it.
-    pub fn set_read_only(&self, id: &str, read_only: bool) -> Result<()> {
-        self.connection.execute(
-            "UPDATE chats SET read_only = ?2 WHERE id = ?1",
-            params![id, read_only],
-        )?;
-        Ok(())
-    }
-
     /// Records a lock or unlock of the group's info announced by WhatsApp,
     /// which leaves our own role as it was.
     pub fn set_info_locked(&self, id: &str, info_locked: bool) -> Result<()> {
@@ -686,10 +687,6 @@ impl Archive {
             params![id, name],
         )?;
         Ok(())
-    }
-
-    pub fn set_archived(&self, id: &str, archived: bool) -> Result<()> {
-        self.set_archived_at(id, archived, jiff::Timestamp::now().as_millisecond())
     }
 
     /// Apply archive state in timestamp order, like pin and mute, so history
@@ -816,12 +813,33 @@ impl Archive {
     }
 
     pub fn mark_read(&self, id: &str) -> Result<()> {
+        let through = self
+            .latest_real_message_timestamp(id, i64::MAX)?
+            .unwrap_or(0);
         self.connection.execute(
             "UPDATE chats SET unread = 0, marked_unread = 0, pending_unread = NULL,
-             read_through = MAX(COALESCE(read_through, 0), last_activity) WHERE id = ?1",
-            params![id],
+             read_through = MAX(COALESCE(read_through, 0), ?2) WHERE id = ?1",
+            params![id, through],
         )?;
         Ok(())
+    }
+
+    /// A zero-unread history snapshot reads real messages through its activity
+    /// timestamp, but a protocol-only timer change is not a message position.
+    pub fn mark_history_read_through(&self, id: &str, activity: i64) -> Result<()> {
+        let through = self
+            .latest_real_message_timestamp(id, activity)?
+            .unwrap_or(0);
+        self.mark_read_through(id, through)
+    }
+
+    fn latest_real_message_timestamp(&self, id: &str, through: i64) -> Result<Option<i64>> {
+        self.connection.query_row(
+            "SELECT MAX(timestamp) FROM messages
+                 WHERE chat = ?1 AND id NOT LIKE 'zapfast-timer-%' AND timestamp <= ?2",
+            params![id, through],
+            |row| row.get(0),
+        )
     }
 
     /// A read on another device covers messages up to its position, not newer
@@ -830,7 +848,7 @@ impl Archive {
         self.connection.execute(
             "UPDATE chats SET read_through = MAX(COALESCE(read_through, 0), ?2),
              unread = MIN(unread, (SELECT COUNT(*) FROM messages
-                 WHERE chat = ?1 AND from_me = 0
+                 WHERE chat = ?1 AND from_me = 0 AND id NOT LIKE 'zapfast-timer-%'
                  AND timestamp > MAX(COALESCE(read_through, 0), ?2))) WHERE id = ?1",
             params![id, timestamp],
         )?;
@@ -846,7 +864,7 @@ impl Archive {
                  (SELECT timestamp FROM messages WHERE chat = ?1 AND id = ?2)),
              unread = MIN(unread, (SELECT COUNT(*) FROM messages m
                  JOIN messages boundary ON boundary.chat = m.chat AND boundary.id = ?2
-                 WHERE m.chat = ?1 AND m.from_me = 0
+                 WHERE m.chat = ?1 AND m.from_me = 0 AND m.id NOT LIKE 'zapfast-timer-%'
                  AND (m.timestamp > boundary.timestamp
                       OR (m.timestamp = boundary.timestamp AND
                           (COALESCE(m.history_order, 9223372036854775807), m.rowid) >
@@ -897,7 +915,8 @@ impl Archive {
             return Ok(unread);
         };
         let remaining: u32 = self.connection.query_row(
-            "SELECT COUNT(*) FROM messages WHERE chat = ?1 AND from_me = 0 AND timestamp > ?2",
+            "SELECT COUNT(*) FROM messages WHERE chat = ?1 AND from_me = 0
+             AND id NOT LIKE 'zapfast-timer-%' AND timestamp > ?2",
             params![id, through],
             |row| row.get(0),
         )?;
@@ -1002,7 +1021,7 @@ impl Archive {
     pub fn unread_incoming(&self, chat: &str, limit: u32) -> Result<Vec<(String, String)>> {
         let mut statement = self.connection.prepare(
             "SELECT id, sender FROM messages WHERE chat = ?1 AND from_me = 0
-             AND id NOT LIKE 'zapfast-call-%'
+             AND id NOT LIKE 'zapfast-call-%' AND id NOT LIKE 'zapfast-timer-%'
              AND timestamp >= COALESCE((SELECT read_through FROM chats WHERE id = ?1), -1)
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC LIMIT ?2",
         )?;
@@ -1040,8 +1059,11 @@ impl Archive {
             return Ok(None);
         };
         media.path = path.map(Path::to_path_buf);
-        self.set_content(chat, id, &message.content, message.edited)?;
-        Ok(Some(message))
+        if self.set_content(chat, id, &message.content, message.edited)? {
+            Ok(Some(message))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Keeps the download keys of a motion photo's clip and marks its photo.
@@ -1079,15 +1101,16 @@ impl Archive {
             .optional()
     }
 
-    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<()> {
+    /// Returns whether the photo's updated path was actually written.
+    pub fn put_motion_path(&self, chat: &str, id: &str, path: Option<&Path>) -> Result<bool> {
         let Some(mut message) = self.message(chat, id)? else {
-            return Ok(());
+            return Ok(false);
         };
         if let Content::Image { motion, .. } = &mut message.content {
             motion.get_or_insert_default().path = path.map(Path::to_path_buf);
-            self.set_content(chat, id, &message.content, message.edited)?;
+            return self.set_content(chat, id, &message.content, message.edited);
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Returns all recorded motion clip paths.
@@ -1216,9 +1239,10 @@ impl Archive {
              FROM chats WHERE id = ?1",
             params![lid_chat, phone_chat],
         )?;
+        let copies = self.duplicate_copies(&lid_chat, &phone_chat)?;
         transaction.execute(
-            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order)
-             SELECT ?2, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
+            "INSERT INTO messages (chat, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, broadcast_list)
+             SELECT ?2, id, sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, raw, thumbnail, mentions, forwarded, delivered_at, read_at, history_order, broadcast_list
              FROM messages WHERE chat = ?1 AND timestamp > COALESCE(
                 (SELECT through FROM chat_removals WHERE chat = ?2), -1)
              ON CONFLICT(chat, id) DO UPDATE SET
@@ -1235,10 +1259,12 @@ impl Archive {
                 forwarded = MAX(messages.forwarded, excluded.forwarded),
                 delivered_at = COALESCE(messages.delivered_at, excluded.delivered_at),
                 read_at = COALESCE(messages.read_at, excluded.read_at),
-                history_order = COALESCE(messages.history_order, excluded.history_order)",
+                history_order = COALESCE(messages.history_order, excluded.history_order),
+                broadcast_list = COALESCE(messages.broadcast_list, excluded.broadcast_list)",
             params![lid_chat, phone_chat],
         )?;
         Self::move_message_metadata(&transaction, &lid_chat, &phone_chat)?;
+        self.settle_duplicates(&phone_chat, copies, Reactions::Kept)?;
         transaction.execute(
             "INSERT OR IGNORE INTO polls (chat, id, creator, secret) SELECT ?2, id, creator, secret FROM polls WHERE chat = ?1",
             params![lid_chat, phone_chat],
@@ -1329,6 +1355,196 @@ impl Archive {
         transaction.execute("DELETE FROM chats WHERE id = ?1", params![lid_chat])?;
         transaction.commit()?;
         Ok(changed > 0 || favorite || removed > 0 || had_lid_chat)
+    }
+
+    /// Both copies of each message that merging `from` into `to` meets and
+    /// on which they differ: the rows of `from` past `to`'s removal point
+    /// that `to` holds as well. Raw messages are not read here: a merge
+    /// fetches one only for the copy whose content it takes.
+    fn duplicate_copies(&self, from: &str, to: &str) -> Result<Vec<(String, [MessageCopy; 2])>> {
+        let mut statement = self.connection.prepare(
+            "SELECT f.id, f.content, f.edited, f.reactions, t.content, t.edited, t.reactions
+             FROM messages f JOIN messages t ON t.chat = ?2 AND t.id = f.id
+             WHERE f.chat = ?1 AND f.timestamp > COALESCE(
+                (SELECT through FROM chat_removals WHERE chat = ?2), -1)
+             AND (f.content <> t.content OR f.reactions <> t.reactions)
+             ORDER BY f.id",
+        )?;
+        let rows = statement.query_map(params![from, to], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                [
+                    MessageCopy::new(from, row.get(1)?, row.get(2)?, &row.get::<_, String>(3)?),
+                    MessageCopy::new(to, row.get(4)?, row.get(5)?, &row.get::<_, String>(6)?),
+                ],
+            ))
+        })?;
+        rows.collect()
+    }
+
+    fn stored_copy(&self, chat: &str, id: &str) -> Result<Option<MessageCopy>> {
+        self.connection
+            .query_row(
+                "SELECT content, edited, reactions FROM messages WHERE chat = ?1 AND id = ?2",
+                params![chat, id],
+                |row| {
+                    Ok(MessageCopy::new(
+                        chat,
+                        row.get(0)?,
+                        row.get(1)?,
+                        &row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()
+    }
+
+    /// Settles a merged message that `chat` met twice, after the merge's
+    /// upsert kept one copy's content. `copies` are the copy merged in and
+    /// the copy that was there, as they were before it.
+    ///
+    /// Content this build cannot read, which a newer build wrote, is kept as
+    /// it is. Otherwise a deletion for everyone on either copy stands; real
+    /// content beats a placeholder (unsupported or unreadable, or phone-only
+    /// other than view-once, which is final), together with its raw
+    /// message; and a file either copy downloaded stays. With
+    /// [`Reactions::Both`] the reactions of both copies are kept, one per
+    /// person; with [`Reactions::Kept`] they stay as the upsert left them.
+    fn settle_duplicates(
+        &self,
+        chat: &str,
+        copies: Vec<(String, [MessageCopy; 2])>,
+        reactions: Reactions,
+    ) -> Result<()> {
+        for (id, copies) in copies {
+            let Some(row) = self.stored_copy(chat, &id)? else {
+                continue;
+            };
+            let [_, there] = &copies;
+            if there.content.is_none() {
+                // What was there cannot be read here: it stays as it was.
+                if row.json != there.json || row.edited != there.edited {
+                    self.connection.execute(
+                        "UPDATE messages SET content = ?3, edited = ?4 WHERE chat = ?1 AND id = ?2",
+                        params![chat, id, there.json, there.edited],
+                    )?;
+                }
+            } else if let Some(kept) = &row.content {
+                self.settle_content(chat, &id, kept, row.edited, &copies)?;
+            }
+            if reactions == Reactions::Both {
+                self.merge_reactions(chat, &id, &row.reactions, &copies)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn settle_content(
+        &self,
+        chat: &str,
+        id: &str,
+        kept: &Content,
+        kept_edited: bool,
+        copies: &[MessageCopy; 2],
+    ) -> Result<()> {
+        if copies
+            .iter()
+            .any(|copy| matches!(copy.content, Some(Content::Revoked)))
+        {
+            if !matches!(kept, Content::Revoked) {
+                self.set_content(chat, id, &Content::Revoked, false)?;
+            }
+            return Ok(());
+        }
+        let real = if replaceable(kept) {
+            copies.iter().find(|copy| {
+                copy.content
+                    .as_ref()
+                    .is_none_or(|content| !replaceable(content))
+            })
+        } else {
+            None
+        };
+        if let Some(real) = real {
+            self.connection.execute(
+                "UPDATE messages SET raw = COALESCE(
+                    (SELECT raw FROM messages WHERE chat = ?3 AND id = ?2), raw)
+                 WHERE chat = ?1 AND id = ?2",
+                params![chat, id, real.chat],
+            )?;
+        }
+        let (mut content, edited) = match real {
+            Some(real) => match &real.content {
+                Some(content) => (content.clone(), real.edited),
+                None => {
+                    // Real content from a newer build goes in as it is stored.
+                    self.connection.execute(
+                        "UPDATE messages SET content = ?3, edited = ?4 WHERE chat = ?1 AND id = ?2",
+                        params![chat, id, real.json, real.edited],
+                    )?;
+                    return Ok(());
+                }
+            },
+            None => (kept.clone(), kept_edited),
+        };
+        for copy in copies {
+            if let Some(other) = &copy.content {
+                content.fill_local_paths(other);
+            }
+        }
+        if content != *kept || edited != kept_edited {
+            self.set_content(chat, id, &content, edited)?;
+        }
+        Ok(())
+    }
+
+    /// Adds the reactions of both copies to the kept row's, one per person:
+    /// a reactor known by a privacy id counts as its phone number. Where
+    /// both copies hold one from the same person, the kept row's stays.
+    fn merge_reactions(
+        &self,
+        chat: &str,
+        id: &str,
+        kept: &[crate::model::Reaction],
+        copies: &[MessageCopy; 2],
+    ) -> Result<()> {
+        let mut merged = kept.to_vec();
+        let mut people = kept
+            .iter()
+            .map(|reaction| self.reactor(&reaction.sender))
+            .collect::<Result<Vec<_>>>()?;
+        for reaction in copies.iter().flat_map(|copy| &copy.reactions) {
+            let person = self.reactor(&reaction.sender)?;
+            if !people.contains(&person) {
+                merged.push(crate::model::Reaction {
+                    sender: person.clone(),
+                    ..reaction.clone()
+                });
+                people.push(person);
+            }
+        }
+        if merged != kept {
+            self.connection.execute(
+                "UPDATE messages SET reactions = ?3 WHERE chat = ?1 AND id = ?2",
+                params![chat, id, serde_json::to_string(&merged).unwrap_or_default()],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// A reactor's phone-number id, when they reacted under a privacy id
+    /// whose number is known.
+    fn reactor(&self, sender: &str) -> Result<String> {
+        let Some(lid) = sender.strip_suffix("@lid") else {
+            return Ok(sender.to_owned());
+        };
+        let pn: Option<String> = self
+            .connection
+            .query_row("SELECT pn FROM lids WHERE lid = ?1", params![lid], |row| {
+                row.get(0)
+            })
+            .optional()?;
+        Ok(pn.map_or_else(|| sender.to_owned(), |pn| format!("{pn}@s.whatsapp.net")))
     }
 
     pub fn lids(&self) -> Result<Vec<(String, String)>> {
@@ -1474,17 +1690,16 @@ impl Archive {
         limit: usize,
     ) -> Result<Vec<Message>> {
         // Concrete bounds rather than `?2 IS NULL OR ...`, so SQLite walks the
-        // `(chat, timestamp)` index over just the range. The pane lists text
-        // and opens the message by id, so the preview blobs stay behind.
+        // `(chat, timestamp)` index over just the range.
         let sql = format!(
-            "SELECT {BARE_COLUMNS}
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND timestamp >= ?2 AND timestamp < ?3
-             AND (?4 IS NULL OR content LIKE ?4 ESCAPE '\\')
              AND json_valid(content)
-             AND (?5 IS NULL OR {SEARCHED_TEXT} LIKE ?5 ESCAPE '\\')
+             AND json_extract(content, '$.kind') != 'disappearing_timer'
+             AND (?4 IS NULL OR {SEARCHED_TEXT} LIKE ?4 ESCAPE '\\')
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
-             LIMIT ?6"
+             LIMIT ?5"
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(
@@ -1492,7 +1707,6 @@ impl Archive {
                 chat,
                 from.unwrap_or(i64::MIN),
                 until.unwrap_or(i64::MAX),
-                raw_prefilter(needle),
                 search_pattern(needle),
                 limit as i64
             ],
@@ -1505,10 +1719,8 @@ impl Archive {
     /// chat's pictures and videos, its documents, and its text messages that
     /// hold a web link, each kind newest first and cut at `limit`.
     pub fn media_docs_links(&self, chat: &str, limit: usize) -> Result<Vec<Message>> {
-        // Pictures and videos are drawn from their preview; a document row is
-        // an icon and a name.
-        let mut rows = self.rows_of_kind(chat, "IN ('image', 'video')", SEARCH_COLUMNS, limit)?;
-        rows.extend(self.rows_of_kind(chat, "= 'document'", BARE_COLUMNS, limit)?);
+        let mut rows = self.rows_of_kind(chat, "IN ('image', 'video')", limit)?;
+        rows.extend(self.rows_of_kind(chat, "= 'document'", limit)?);
         // Only text rows with a preview or an address that names its scheme
         // or starts with `www.` are read: finding a bare domain the way the
         // bubble underlines it would parse every text row of a long chat on
@@ -1517,7 +1729,7 @@ impl Archive {
         // address, and the reading stops at the newest `limit` of those, so
         // text such as "http://x" never takes the place of an older link.
         let sql = format!(
-            "SELECT {SEARCH_COLUMNS}
+            "SELECT {BARE_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND json_valid(content)
                AND json_extract(content, '$.kind') = 'text'
@@ -1530,19 +1742,8 @@ impl Archive {
         let mut statement = self.connection.prepare(&sql)?;
         let mut links = 0;
         for row in statement.query_map(params![chat], searched_message)? {
-            let mut row = row?;
+            let row = row?;
             if !row.content.web_links().is_empty() {
-                // A preview's picture is what the Links tab draws; the blob
-                // a text row without a preview holds is not.
-                if !matches!(
-                    row.content,
-                    Content::Text {
-                        preview: Some(_),
-                        ..
-                    }
-                ) {
-                    row.thumbnail = None;
-                }
                 rows.push(row);
                 links += 1;
                 if links == limit {
@@ -1555,17 +1756,10 @@ impl Archive {
     }
 
     /// One chat's newest messages whose content kind matches the SQL
-    /// comparison `kinds`, such as `= 'document'`, read as `columns`
-    /// ([`SEARCH_COLUMNS`] or [`BARE_COLUMNS`]).
-    fn rows_of_kind(
-        &self,
-        chat: &str,
-        kinds: &str,
-        columns: &str,
-        limit: usize,
-    ) -> Result<Vec<Message>> {
+    /// comparison `kinds`, such as `= 'document'`.
+    fn rows_of_kind(&self, chat: &str, kinds: &str, limit: usize) -> Result<Vec<Message>> {
         let sql = format!(
-            "SELECT {columns}
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
              WHERE chat = ?1 AND json_valid(content)
                AND json_extract(content, '$.kind') {kinds}
@@ -1580,36 +1774,25 @@ impl Archive {
     /// Searches visible message text, filenames, polls, contacts, and places.
     /// ASCII matching is case-insensitive; other text follows SQLite behavior.
     pub fn search_messages(&self, needle: &str, limit: usize) -> Result<Vec<Message>> {
-        // The result list shows text and opens the message by id, so the
-        // preview blobs stay behind.
-        if let Some(phrase) = search_index::phrase(needle)
-            && self.search_index_ready()?
-        {
-            let sql = format!(
-                "SELECT {BARE_COLUMNS}
-                 FROM messages
-                 WHERE rowid IN (SELECT rowid FROM message_text WHERE message_text MATCH ?1)
-                 ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
-                 LIMIT ?2"
-            );
-            let mut statement = self.connection.prepare(&sql)?;
-            let rows = statement.query_map(params![phrase, limit as i64], searched_message)?;
-            return rows.collect();
-        }
         let sql = format!(
-            "SELECT {BARE_COLUMNS}
+            "SELECT {SEARCH_COLUMNS}
              FROM messages
-             WHERE (?1 IS NULL OR content LIKE ?1 ESCAPE '\\')
-             AND json_valid(content) AND {SEARCHED_TEXT} LIKE ?2 ESCAPE '\\'
+             WHERE json_valid(content) AND {SEARCHED_TEXT} LIKE ?1 ESCAPE '\\'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC, rowid DESC
-             LIMIT ?3"
+             LIMIT ?2"
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map(
-            params![raw_prefilter(needle), search_pattern(needle), limit as i64],
+            params![search_pattern(needle), limit as i64],
             searched_message,
         )?;
         rows.collect()
+    }
+
+    /// Runs `sql` on the archive, for tests that need a row it cannot read.
+    #[cfg(test)]
+    pub(crate) fn execute_for_tests(&self, sql: &str) {
+        self.connection.execute_batch(sql).unwrap();
     }
 
     /// Returns messages from `from` through `before`, ascending and limited.
@@ -1665,26 +1848,18 @@ impl Archive {
     /// Returns downloaded stickers we sent (`from_me`) or received, newest
     /// first. Received stickers stay out of Recent, as in WhatsApp's own apps,
     /// and get their own shelf, which leaves out locked chats so a sticker
-    /// cannot hint at who is behind the lock. Grouping and the limit work on
-    /// narrow columns; `raw` is read only for each path's newest row (the bare
-    /// `rowid` beside `MAX` comes from the row holding the maximum).
+    /// cannot hint at who is behind the lock.
     pub fn recent_stickers(&self, limit: usize, from_me: bool) -> Result<Vec<ArchivedSticker>> {
         let mut statement = self.connection.prepare(
-            "SELECT latest.path, latest.used, messages.raw
-             FROM (
-                 SELECT json_extract(content, '$.media.path') AS path,
-                        MAX(timestamp) AS used, rowid AS winner
-                 FROM messages
-                 WHERE json_extract(content, '$.kind') = 'sticker' AND path IS NOT NULL
-                   AND from_me = ?2
-                   AND (from_me OR NOT EXISTS (
-                       SELECT 1 FROM chats WHERE chats.id = messages.chat AND chats.locked))
-                 GROUP BY path
-                 ORDER BY used DESC
-                 LIMIT ?1
-             ) AS latest
-             JOIN messages ON messages.rowid = latest.winner
-             ORDER BY latest.used DESC",
+            "SELECT json_extract(content, '$.media.path') AS path, MAX(timestamp), raw
+             FROM messages
+             WHERE json_extract(content, '$.kind') = 'sticker' AND path IS NOT NULL
+               AND from_me = ?2
+               AND (from_me OR NOT EXISTS (
+                   SELECT 1 FROM chats WHERE chats.id = messages.chat AND chats.locked))
+             GROUP BY path
+             ORDER BY 2 DESC
+             LIMIT ?1",
         )?;
         let rows = statement.query_map(params![limit as i64, from_me], |row| {
             Ok(ArchivedSticker {
@@ -1763,75 +1938,57 @@ impl Archive {
         Ok(())
     }
 
-    /// One page of `(rowid, chat, id, raw)` after `after_rowid`, at most [`BACKFILL_BATCH`].
-    fn raw_page(&self, sql: &str, after_rowid: i64) -> Result<Vec<RawRow>> {
-        let mut statement = self.connection.prepare(sql)?;
-        let rows = statement.query_map(params![after_rowid, BACKFILL_BATCH as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })?;
+    /// Returns raw messages for re-deriving fields in newer versions.
+    pub fn rows_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL")?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
         rows.collect()
     }
 
-    /// Raw messages for re-deriving fields, in `rowid` order, after `after_rowid`.
-    pub fn rows_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
-        self.raw_page(
-            "SELECT rowid, chat, id, raw FROM messages
-             WHERE raw IS NOT NULL AND rowid > ?1
-             ORDER BY rowid LIMIT ?2",
-            after_rowid,
-        )
+    /// Video messages with their raw protobuf.
+    pub fn videos_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') = 'video'",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
     }
 
-    /// Video messages with their raw protobuf, in `rowid` order, after `after_rowid`.
-    pub fn videos_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
-        self.raw_page(
-            "SELECT rowid, chat, id, raw FROM messages
-             WHERE raw IS NOT NULL AND json_valid(content)
-             AND json_extract(content, '$.kind') = 'video'
-             AND rowid > ?1
-             ORDER BY rowid LIMIT ?2",
-            after_rowid,
-        )
-    }
-
-    /// Photo, video, and audio messages with their raw protobuf, after `after_rowid`.
-    pub fn media_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
-        self.raw_page(
-            "SELECT rowid, chat, id, raw FROM messages
-             WHERE raw IS NOT NULL AND json_valid(content)
-             AND json_extract(content, '$.kind') IN ('image', 'video', 'audio')
-             AND rowid > ?1
-             ORDER BY rowid LIMIT ?2",
-            after_rowid,
-        )
+    /// Photo, video, and audio messages with their raw protobuf.
+    pub fn media_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
+             AND json_extract(content, '$.kind') IN ('image', 'video', 'audio')",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
     }
 
     /// Messages filed as unsupported without a named kind, with their raw protobuf.
-    pub fn unsupported_with_raw(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
-        self.raw_page(
-            "SELECT rowid, chat, id, raw FROM messages
-             WHERE raw IS NOT NULL AND json_valid(content)
+    pub fn unsupported_with_raw(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND json_valid(content)
              AND json_extract(content, '$.kind') = 'unsupported'
-             AND json_extract(content, '$.what') = 'message'
-             AND rowid > ?1
-             ORDER BY rowid LIMIT ?2",
-            after_rowid,
-        )
+             AND json_extract(content, '$.what') = 'message'",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
     }
 
     /// Interactive messages eligible for a derived presentation upgrade.
     /// Deleted and edited rows are left intact; callers preserve local media paths.
-    pub fn interactive_placeholders(&self, after_rowid: i64) -> Result<Vec<RawRow>> {
-        self.raw_page(
-            "SELECT rowid, chat, id, raw FROM messages
-             WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
+    pub fn interactive_placeholders(&self) -> Result<Vec<(String, String, Vec<u8>)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT chat, id, raw FROM messages WHERE raw IS NOT NULL AND edited = 0 AND json_valid(content)
              AND ((json_extract(content, '$.kind') = 'unsupported'
                    AND json_extract(content, '$.what') = 'interactive message')
-                  OR json_extract(content, '$.kind') = 'interactive')
-             AND rowid > ?1
-             ORDER BY rowid LIMIT ?2",
-            after_rowid,
-        )
+                  OR json_extract(content, '$.kind') = 'interactive')",
+        )?;
+        let rows = statement.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
+        rows.collect()
     }
 
     /// Replaces protobuf-derived fields. Callers must retain local media paths.
@@ -2017,7 +2174,8 @@ impl Archive {
             )?;
             self.connection.execute(
                 "UPDATE chats SET unread = MIN(unread, (SELECT COUNT(*) FROM messages
-                    WHERE chat = ?1 AND from_me = 0 AND timestamp > COALESCE(read_through, 0))),
+                    WHERE chat = ?1 AND from_me = 0 AND id NOT LIKE 'zapfast-timer-%'
+                    AND timestamp > COALESCE(read_through, 0))),
                     pending_read = CASE WHEN pending_read <= ?2 THEN NULL ELSE pending_read END
                  WHERE id = ?1",
                 params![chat, through],
@@ -2301,6 +2459,7 @@ impl Archive {
         }
         let mut statement = self.connection.prepare(
             "SELECT id, mentions FROM messages WHERE chat = ?1 AND from_me = 0
+             AND id NOT LIKE 'zapfast-timer-%'
              ORDER BY timestamp DESC, COALESCE(history_order, 9223372036854775807) DESC,
                       rowid DESC
              LIMIT ?2",
@@ -2324,20 +2483,10 @@ impl Archive {
     }
 
     pub fn message(&self, chat: &str, id: &str) -> Result<Option<Message>> {
-        self.message_with(chat, id, "thumbnail")
-    }
-
-    /// The message without its preview blob, for a row that only lists it.
-    pub fn message_bare(&self, chat: &str, id: &str) -> Result<Option<Message>> {
-        self.message_with(chat, id, "NULL AS thumbnail")
-    }
-
-    /// Reads one message, with `thumbnail` standing for the preview column.
-    fn message_with(&self, chat: &str, id: &str, thumbnail: &str) -> Result<Option<Message>> {
-        let mut statement = self.connection.prepare(&format!(
-            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, {thumbnail}, mentions, forwarded, delivered_at, read_at, history_order
-             FROM messages WHERE chat = ?1 AND id = ?2"
-        ))?;
+        let mut statement = self.connection.prepare(
+            "SELECT sender, sender_name, from_me, timestamp, content, status, quoted, reactions, edited, thumbnail, mentions, forwarded, delivered_at, read_at, history_order
+             FROM messages WHERE chat = ?1 AND id = ?2",
+        )?;
         statement
             .query_row(params![chat, id], |row| {
                 let content: String = row.get(4)?;
@@ -2374,7 +2523,9 @@ impl Archive {
         let id: Option<String> = self
             .connection
             .query_row(
-                "SELECT id FROM messages WHERE chat = ?1 ORDER BY timestamp ASC, COALESCE(history_order, 9223372036854775807) ASC, rowid ASC LIMIT 1",
+                "SELECT id FROM messages WHERE chat = ?1
+                 AND id NOT LIKE 'zapfast-call-%' AND id NOT LIKE 'zapfast-timer-%'
+                 ORDER BY timestamp ASC, COALESCE(history_order, 9223372036854775807) ASC, rowid ASC LIMIT 1",
                 params![chat],
                 |row| row.get(0),
             )
@@ -2457,7 +2608,16 @@ impl Archive {
         Ok(true)
     }
 
-    /// Advances outgoing messages through `timestamp` to `status` and returns changed ids.
+    /// Marks an incoming message as played and returns whether it was not yet.
+    pub fn mark_played(&self, chat: &str, id: &str) -> Result<bool> {
+        let changed = self.connection.execute(
+            "UPDATE messages SET status = ?3 WHERE chat = ?1 AND id = ?2 AND from_me = 0 AND status < ?3",
+            params![chat, id, status_rank(Delivery::Played)],
+        )?;
+        Ok(changed > 0)
+    }
+
+    /// Advances acknowledged outgoing messages through `timestamp` to `status` and returns changed ids.
     pub fn advance_statuses(
         &self,
         chat: &str,
@@ -2466,24 +2626,25 @@ impl Archive {
         at: i64,
     ) -> Result<Vec<String>> {
         let rank = status_rank(status);
+        let sent = status_rank(Delivery::Sent);
         let mut statement = self.connection.prepare(
-            "SELECT id FROM messages WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status > 0 AND status < ?3",
+            "SELECT id FROM messages WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status >= ?4 AND status < ?3",
         )?;
         let ids: Vec<String> = statement
-            .query_map(params![chat, up_to, rank], |row| row.get(0))?
+            .query_map(params![chat, up_to, rank, sent], |row| row.get(0))?
             .collect::<Result<_>>()?;
         if let Some(column) = stamp_column(status) {
             self.connection.execute(
                 &format!(
                     "UPDATE messages SET status = ?3, {column} = COALESCE({column}, ?4)
-                     WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status > 0 AND status < ?3"
+                     WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status >= ?5 AND status < ?3"
                 ),
-                params![chat, up_to, rank, at],
+                params![chat, up_to, rank, at, sent],
             )?;
         } else {
             self.connection.execute(
-                "UPDATE messages SET status = ?3 WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status > 0 AND status < ?3",
-                params![chat, up_to, rank],
+                "UPDATE messages SET status = ?3 WHERE chat = ?1 AND from_me = 1 AND timestamp <= ?2 AND status >= ?4 AND status < ?3",
+                params![chat, up_to, rank, sent],
             )?;
         }
         Ok(ids)
@@ -2721,6 +2882,12 @@ impl Archive {
 
 #[cfg(test)]
 pub(crate) mod tests {
+    pub(crate) fn reject_archive_updates(archive: &super::Archive) {
+        archive.connection.execute_batch(
+            "CREATE TRIGGER reject_archive_update BEFORE UPDATE OF archived ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
+        ).unwrap();
+    }
+
     pub(crate) fn set_derived_update_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "CREATE TRIGGER reject_derived_update BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
@@ -2735,75 +2902,6 @@ pub(crate) mod tests {
         } else {
             "DROP TRIGGER reject_message_deletion"
         }).unwrap();
-    }
-
-    /// Raw pages stay within one batch and, together, return every raw row
-    /// once in `rowid` order. A cursor on a middle row resumes after it.
-    #[test]
-    fn raw_pages_cover_every_row_and_resume_after_a_rowid() {
-        let archive = super::Archive::in_memory().unwrap();
-        let chat = "backfill-fixture@s.whatsapp.net";
-        archive.ensure_chat(chat, "Fixture").unwrap();
-        let total = super::BACKFILL_BATCH * 3 + 1;
-        for n in 0..total {
-            if n == super::BACKFILL_BATCH {
-                let skipped = message(chat, "no-raw", n as i64, true);
-                archive.insert_message(&skipped, None).unwrap();
-            }
-            let row = message(chat, &format!("m{n:04}"), n as i64, true);
-            let raw = format!("fixture-{n}");
-            archive.insert_message(&row, Some(raw.as_bytes())).unwrap();
-        }
-
-        let mut after = 0;
-        let mut seen = Vec::new();
-        let mut short = false;
-        loop {
-            let page = archive.rows_with_raw(after).unwrap();
-            if page.is_empty() {
-                break;
-            }
-            assert!(!short, "a short page ended the scan");
-            assert!(page.windows(2).all(|pair| pair[0].0 < pair[1].0));
-            assert!(page.iter().all(|row| row.0 > after));
-            if page.len() < super::BACKFILL_BATCH {
-                assert_eq!(page.len(), 1);
-                short = true;
-            } else {
-                assert_eq!(page.len(), super::BACKFILL_BATCH);
-            }
-            after = page.last().unwrap().0;
-            seen.extend(page.into_iter().map(|(rowid, _, id, _)| (rowid, id)));
-        }
-        assert!(short);
-        assert_eq!(seen.len(), total);
-        assert!(seen.iter().all(|row| row.1 != "no-raw"));
-        let expected: Vec<String> = (0..total).map(|n| format!("m{n:04}")).collect();
-        assert_eq!(
-            seen.iter().map(|row| row.1.as_str()).collect::<Vec<_>>(),
-            expected.iter().map(String::as_str).collect::<Vec<_>>()
-        );
-        // Plain text must not leak into the filtered pages.
-        assert!(archive.videos_with_raw(0).unwrap().is_empty());
-        assert!(archive.media_with_raw(0).unwrap().is_empty());
-        assert!(archive.unsupported_with_raw(0).unwrap().is_empty());
-        assert!(archive.interactive_placeholders(0).unwrap().is_empty());
-
-        let cursor = seen[super::BACKFILL_BATCH * 2 - 1].0;
-        let mut rest = Vec::new();
-        after = cursor;
-        loop {
-            let page = archive.rows_with_raw(after).unwrap();
-            if page.is_empty() {
-                break;
-            }
-            after = page.last().unwrap().0;
-            rest.extend(page);
-        }
-        assert_eq!(rest.len(), super::BACKFILL_BATCH + 1);
-        assert_eq!(rest[0].2, format!("m{:04}", super::BACKFILL_BATCH * 2));
-        assert_eq!(rest.last().unwrap().2, format!("m{:04}", total - 1));
-        assert!(rest.iter().all(|row| row.0 > cursor));
     }
 
     /// Failed unlink cannot apply the previous account's terminal barriers.
@@ -3090,6 +3188,19 @@ pub(crate) mod tests {
             forwarded: false,
             thumbnail: None,
         }
+    }
+
+    /// A disappearing-timer notice as the worker files it, under the prefix
+    /// the archive's queries filter on, so a change to either fails a test.
+    pub(crate) fn timer_notice(chat: &str, suffix: &str, timestamp: i64) -> Message {
+        let mut notice = message(
+            chat,
+            &format!("{}{suffix}", crate::model::TIMER_NOTICE_PREFIX),
+            timestamp,
+            false,
+        );
+        notice.content = Content::DisappearingTimer { seconds: 86_400 };
+        notice
     }
 
     #[test]
@@ -3606,62 +3717,6 @@ pub(crate) mod tests {
 
     /// Checks that archive search indexes fixture text, attachment captions and file names.
     #[test]
-    fn search_with_raw_prefilter_matches_quotes_backslashes_and_accents() {
-        let archive = Archive::in_memory().expect("opens");
-        archive
-            .ensure_chat("1@s.whatsapp.net", "Ada")
-            .expect("chat");
-        let texts = [
-            ("m1", 10, "He said \"hi\" to Zoë"),
-            ("m2", 20, "path C:\\temp\\new"),
-            ("m3", 30, "café crème"),
-            ("m4", 40, "line one\nline two"),
-        ];
-        for (id, at, text) in texts {
-            let mut row = message("1@s.whatsapp.net", id, at, false);
-            row.content = Content::text(text);
-            archive.insert_message(&row, None).expect("insert");
-        }
-        let ids =
-            |hits: Vec<Message>| -> Vec<String> { hits.into_iter().map(|hit| hit.id).collect() };
-        // Needles JSON escapes skip the raw prefilter but still match.
-        assert_eq!(
-            ids(archive.search_messages("\"hi\"", 10).expect("search")),
-            ["m1"]
-        );
-        assert_eq!(
-            ids(archive.search_messages("c:\\temp", 10).expect("search")),
-            ["m2"]
-        );
-        assert_eq!(
-            ids(archive.search_messages("one\nline", 10).expect("search")),
-            ["m4"]
-        );
-        // Accented needles take the raw prefilter and still match.
-        assert_eq!(
-            ids(archive.search_messages("café", 10).expect("search")),
-            ["m3"]
-        );
-        assert_eq!(
-            ids(archive.search_messages("ZOË", 10).expect("search")),
-            ["m1"],
-            "the needle is lowercased before it is compared"
-        );
-        assert_eq!(
-            ids(archive
-                .search_chat_messages("1@s.whatsapp.net", "café", None, None, 10)
-                .expect("search")),
-            ["m3"]
-        );
-        assert_eq!(
-            ids(archive
-                .search_chat_messages("1@s.whatsapp.net", "\"hi\"", None, None, 10)
-                .expect("search")),
-            ["m1"]
-        );
-    }
-
-    #[test]
     fn search_finds_text_captions_and_file_names() {
         let archive = Archive::in_memory().expect("opens");
         archive
@@ -3919,6 +3974,114 @@ pub(crate) mod tests {
         assert_eq!(loaded.disappearing_timer(), Some(86_400));
     }
 
+    /// The system row a timer change leaves is stored as structured content
+    /// and reloads as the same variant, not as prose; search never matches it.
+    #[test]
+    fn a_timer_notice_round_trips_and_stays_out_of_search() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        let mut notice = message(chat, "timer", 100, false);
+        notice.content = Content::DisappearingTimer { seconds: 604_800 };
+        archive.insert_message(&notice, None).expect("insert");
+
+        let loaded = archive
+            .message(chat, "timer")
+            .expect("reads")
+            .expect("exists");
+        assert_eq!(
+            loaded.content,
+            Content::DisappearingTimer { seconds: 604_800 }
+        );
+        assert_eq!(loaded.summary(), "Disappearing messages: 7 days");
+        assert!(
+            archive
+                .search_messages("Disappearing", 10)
+                .expect("search")
+                .is_empty(),
+            "a timer notice is not searchable"
+        );
+        // A date-only search in the chat (an empty needle) is not a text
+        // search: the notice must be kept out of it as well, or it shows as a
+        // result nothing can scroll to.
+        archive
+            .insert_message(&message(chat, "hello", 150, false), None)
+            .expect("insert");
+        let found: Vec<String> = archive
+            .search_chat_messages(chat, "", Some(0), Some(200), 10)
+            .expect("search")
+            .into_iter()
+            .map(|message| message.id)
+            .collect();
+        assert_eq!(found, vec!["hello"], "only real messages are listed");
+    }
+
+    #[test]
+    fn reading_a_chat_uses_the_latest_real_message_not_a_timer_notice() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive
+            .insert_message(&message(chat, "real", 100, false), None)
+            .expect("real message");
+        let notice = timer_notice(chat, "change", 300);
+        archive.insert_message(&notice, None).expect("timer notice");
+
+        archive.mark_read(chat).expect("read");
+
+        assert_eq!(
+            archive.read_through(chat).expect("read position"),
+            Some(100)
+        );
+    }
+
+    #[test]
+    fn a_zero_unread_snapshot_does_not_read_through_a_timer_notice() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive
+            .insert_message(&message(chat, "real", 100, false), None)
+            .expect("real message");
+        let notice = timer_notice(chat, "change", 300);
+        archive.insert_message(&notice, None).expect("timer notice");
+        archive.bump_unread(chat).expect("unread");
+
+        archive
+            .mark_history_read_through(chat, 300)
+            .expect("history snapshot");
+
+        assert_eq!(
+            archive.read_through(chat).expect("read position"),
+            Some(100)
+        );
+        assert_eq!(archive.chat(chat).expect("chat").unwrap().unread, 0);
+    }
+
+    /// A timer notice is not a message the reader owes a receipt for, and it
+    /// must not keep a chat looking unread after the real message was read.
+    #[test]
+    fn a_timer_notice_does_not_keep_a_chat_unread() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "Ada").expect("chat");
+        archive
+            .insert_message(&message(chat, "real", 100, false), None)
+            .expect("insert");
+        let notice = timer_notice(chat, "x", 200);
+        archive.insert_message(&notice, None).expect("insert");
+
+        // The id path counts only the real incoming messages after the read.
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_to(chat, "real").expect("read");
+        assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
+
+        // The timestamp path counts the same way.
+        archive.bump_unread(chat).expect("bump");
+        archive.mark_read_through(chat, 100).expect("read through");
+        assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
+    }
+
     /// An archive from before group editing learns who may edit a group's
     /// info: its rows start as unknown, not as open to everyone, and the
     /// metadata's answer and later lock notices are kept.
@@ -4049,6 +4212,19 @@ pub(crate) mod tests {
             .ensure_chat("1@s.whatsapp.net", "Initial history")
             .unwrap();
         assert!(!fresh.take_preferences_refresh().unwrap());
+    }
+
+    #[test]
+    fn link_preview_setting_newest_wins() {
+        let archive = Archive::in_memory().unwrap();
+        assert_eq!(archive.link_previews_disabled().unwrap(), None);
+        assert!(archive.set_link_previews_disabled_at(true, 200).unwrap());
+        assert_eq!(archive.link_previews_disabled().unwrap(), Some(true));
+        // A replayed older change does not undo it; a newer one does.
+        assert!(archive.set_link_previews_disabled_at(false, 100).unwrap());
+        assert_eq!(archive.link_previews_disabled().unwrap(), Some(true));
+        assert!(!archive.set_link_previews_disabled_at(false, 300).unwrap());
+        assert_eq!(archive.link_previews_disabled().unwrap(), Some(false));
     }
 
     #[test]
@@ -4488,10 +4664,7 @@ pub(crate) mod tests {
         assert!(archive.chat(lid).unwrap().is_none());
         assert!(archive.messages(lid, None, 50).unwrap().is_empty());
         assert_eq!(archive.chat_labels(phone).unwrap(), [label.id]);
-        assert_eq!(
-            archive.drafts().unwrap(),
-            [(phone.into(), "unsent".into(), 100)]
-        );
+        assert_eq!(archive.drafts().unwrap(), [(phone.into(), "unsent".into())]);
         assert_eq!(archive.read_through(phone).unwrap(), None);
         let ephemeral_timestamp: Option<i64> = archive
             .connection
@@ -4860,15 +5033,16 @@ pub(crate) mod tests {
         assert_eq!(stored.reactions[0].sender, "3@s.whatsapp.net");
     }
 
+    /// A cumulative receipt advances earlier acknowledged sends, preserving later and incoming rows.
     #[test]
     fn a_read_receipt_covers_everything_before_it() {
         let archive = Archive::in_memory().expect("opens");
         let chat = "1@s.whatsapp.net";
         archive.ensure_chat(chat, "A").expect("chat");
         for (id, timestamp) in [("m1", 100), ("m2", 200), ("m3", 300)] {
-            archive
-                .insert_message(&message(chat, id, timestamp, true), None)
-                .expect("insert");
+            let mut sent = message(chat, id, timestamp, true);
+            sent.status = Delivery::Sent;
+            archive.insert_message(&sent, None).expect("insert");
         }
         archive
             .insert_message(&message(chat, "theirs", 250, false), None)
@@ -4885,10 +5059,58 @@ pub(crate) mod tests {
                 Delivery::Read,
                 Delivery::Read,
                 Delivery::None,
-                Delivery::Pending
+                Delivery::Sent
             ]
         );
         assert_eq!(messages[0].read_at, Some(400));
+    }
+
+    /// A receipt for a later send is no proof that a still-pending send went out.
+    #[test]
+    fn later_receipts_leave_unacknowledged_sends_and_other_chats_alone() {
+        for receipt in [Delivery::Delivered, Delivery::Read, Delivery::Played] {
+            let archive = Archive::in_memory().unwrap();
+            let chat = "1@s.whatsapp.net";
+            let other = "2@s.whatsapp.net";
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            archive.ensure_chat(other, "Other fixture").unwrap();
+            for (id, status) in [
+                ("pending", Delivery::Pending),
+                ("failed", Delivery::Failed),
+                ("sent", Delivery::Sent),
+            ] {
+                let mut row = message(chat, id, 100, true);
+                row.status = status;
+                archive.insert_message(&row, None).unwrap();
+            }
+            let mut other_row = message(other, "other", 100, true);
+            other_row.status = Delivery::Sent;
+            archive.insert_message(&other_row, None).unwrap();
+            assert_eq!(
+                archive.advance_statuses(chat, 200, receipt, 300).unwrap(),
+                ["sent"]
+            );
+            for (id, expected) in [("pending", Delivery::Pending), ("failed", Delivery::Failed)] {
+                let row = archive.message(chat, id).unwrap().unwrap();
+                assert_eq!(row.status, expected);
+                assert_eq!(row.delivered_at, None);
+                assert_eq!(row.read_at, None);
+            }
+            assert_eq!(
+                archive.message(chat, "sent").unwrap().unwrap().status,
+                receipt
+            );
+            assert_eq!(
+                archive.message(other, "other").unwrap().unwrap().status,
+                Delivery::Sent
+            );
+            assert!(
+                archive
+                    .advance_statuses(chat, 200, Delivery::Delivered, 400)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 
     #[test]
@@ -5359,6 +5581,42 @@ pub(crate) mod tests {
         assert_eq!(archive.chat(chat).expect("chat").expect("exists").unread, 0);
     }
 
+    /// The local rows Zeus invents (call entries, disappearing-timer
+    /// notices) have no counterpart on the phone: a receipt for their id would
+    /// name a message the phone never sent, and a history anchor for one would
+    /// ask for something it does not hold.
+    #[test]
+    fn synthetic_rows_stay_out_of_receipts_and_history_anchors() {
+        let archive = Archive::in_memory().expect("opens");
+        let chat = "1@s.whatsapp.net";
+        archive.ensure_chat(chat, "A").expect("chat");
+        let call = format!("{}1", crate::model::CALL_ENTRY_PREFIX);
+        let notice = format!("{}1", crate::model::TIMER_NOTICE_PREFIX);
+        for (id, at) in [(call.as_str(), 40), (notice.as_str(), 50)] {
+            archive
+                .insert_message(&message(chat, id, at, false), None)
+                .expect("insert");
+        }
+        archive
+            .insert_message(&message(chat, "m1", 100, false), None)
+            .expect("insert");
+        archive
+            .insert_message(&message(chat, "m2", 200, false), None)
+            .expect("insert");
+        assert_eq!(
+            archive.oldest(chat).expect("oldest").expect("row").id,
+            "m1",
+            "the phone-history anchor is a real message"
+        );
+        let ids: Vec<String> = archive
+            .unread_incoming(chat, 10)
+            .expect("ids")
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, vec!["m2", "m1"], "receipts name only real messages");
+    }
+
     #[test]
     fn marked_unread_stays_a_dot_until_read_or_a_real_count() {
         let archive = Archive::in_memory().expect("opens");
@@ -5445,6 +5703,61 @@ pub(crate) mod tests {
             assert!(archive.read_through(chat).unwrap().is_none());
         }
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A statement that succeeds without changing a row cannot confirm either media path.
+    #[test]
+    fn media_path_updates_must_actually_write_the_row() {
+        let archive = Archive::in_memory().unwrap();
+        let chat = "fixture@s.whatsapp.net";
+        archive.ensure_chat(chat, "Fixture").unwrap();
+        let mut picture = message(chat, "picture", 100, false);
+        picture.content = Content::Image {
+            caption: None,
+            motion: Some(crate::model::Motion::default()),
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 7,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: Default::default(),
+            },
+        };
+        archive.insert_message(&picture, None).unwrap();
+        archive.connection.execute_batch("CREATE TRIGGER ignore_media_paths BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(IGNORE); END;").unwrap();
+        let path = Path::new("synthetic/download.jpg");
+        assert!(
+            archive
+                .put_media_path_at(chat, "picture", None, Some(path))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            !archive
+                .put_motion_path(chat, "picture", Some(path))
+                .unwrap()
+        );
+        assert_eq!(
+            archive.message(chat, "picture").unwrap().unwrap().content,
+            picture.content
+        );
+        archive
+            .connection
+            .execute_batch("DROP TRIGGER ignore_media_paths")
+            .unwrap();
+        assert!(
+            archive
+                .put_media_path_at(chat, "picture", None, Some(path))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            archive
+                .put_motion_path(chat, "picture", Some(path))
+                .unwrap()
+        );
     }
 
     /// Checks that persisting a downloaded path updates the attachment content stored in the archive.
@@ -5536,6 +5849,174 @@ pub(crate) mod tests {
             .insert_message(&message(chat, "m1", 100, false), None)
             .expect("insert");
         assert_eq!(archive.raw(chat, "m1").expect("raw"), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn a_privacy_id_merge_keeps_a_download_and_a_deletion_from_either_copy() {
+        let archive = Archive::in_memory().unwrap();
+        let (phone, lid) = ("1@s.whatsapp.net", "9@lid");
+        let photo = || Content::Image {
+            motion: None,
+            caption: None,
+            media: crate::model::Media {
+                mime: "image/jpeg".into(),
+                size: 10,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: Default::default(),
+            },
+        };
+        archive.ensure_chat(phone, "Fixture").unwrap();
+        archive.ensure_chat(lid, "Fixture").unwrap();
+        for chat in [phone, lid] {
+            for (id, content) in [("photo", photo()), ("gone", Content::text("Hello fixture"))] {
+                let row = Message {
+                    content,
+                    ..message(chat, id, 100, false)
+                };
+                archive.insert_message(&row, None).unwrap();
+            }
+        }
+        archive
+            .set_media_path(lid, "photo", Path::new("C:/fixture/lid.jpg"))
+            .unwrap();
+        archive
+            .set_content(lid, "gone", &Content::Revoked, false)
+            .unwrap();
+
+        archive.put_lid("9", "1").unwrap();
+
+        let photo = archive.message(phone, "photo").unwrap().unwrap();
+        assert_eq!(
+            photo
+                .content
+                .media()
+                .and_then(|media| media.path.as_deref()),
+            Some(Path::new("C:/fixture/lid.jpg"))
+        );
+        assert_eq!(
+            archive.message(phone, "gone").unwrap().unwrap().content,
+            Content::Revoked
+        );
+    }
+    /// A privacy-id chat and its phone-number chat, each holding message
+    /// `m` from that person, with `edit` applied to each copy.
+    fn both_copies(edit: impl Fn(&mut Message, &str)) -> Archive {
+        let archive = Archive::in_memory().unwrap();
+        for chat in ["1@s.whatsapp.net", "9@lid"] {
+            archive.ensure_chat(chat, "Fixture").unwrap();
+            let mut row = message(chat, "m", 100, false);
+            edit(&mut row, chat);
+            archive.insert_message(&row, None).unwrap();
+        }
+        archive
+    }
+
+    fn reacted(sender: &str, emoji: &str) -> crate::model::Reaction {
+        crate::model::Reaction {
+            sender: sender.into(),
+            from_me: false,
+            emoji: emoji.into(),
+        }
+    }
+
+    #[test]
+    fn a_privacy_id_merge_keeps_one_reaction_per_person() {
+        let archive = both_copies(|row, chat| {
+            row.reactions = vec![reacted(chat, if chat == "9@lid" { "B" } else { "A" })];
+        });
+        archive.put_lid("9", "1").unwrap();
+        assert_eq!(
+            archive
+                .message("1@s.whatsapp.net", "m")
+                .unwrap()
+                .unwrap()
+                .reactions,
+            [reacted("1@s.whatsapp.net", "A")]
+        );
+    }
+
+    /// The phone-number copy saw a reaction removed that the privacy-id
+    /// copy still holds; the merge keeps the copy it keeps.
+    #[test]
+    fn a_privacy_id_merge_does_not_bring_back_a_removed_reaction() {
+        let archive = both_copies(|row, chat| {
+            row.reactions = vec![reacted("5@s.whatsapp.net", "A")];
+            if chat == "9@lid" {
+                row.reactions.push(reacted("6@s.whatsapp.net", "X"));
+            }
+        });
+        archive.put_lid("9", "1").unwrap();
+        assert_eq!(
+            archive
+                .message("1@s.whatsapp.net", "m")
+                .unwrap()
+                .unwrap()
+                .reactions,
+            [reacted("5@s.whatsapp.net", "A")]
+        );
+    }
+
+    /// A view-once message is final on a linked device: an older copy filed
+    /// as a plain attachment does not replace it.
+    #[test]
+    fn a_privacy_id_merge_keeps_a_view_once_placeholder() {
+        let once = Content::PhoneOnly {
+            view_once: true,
+            live_location: false,
+            once: None,
+        };
+        let archive = both_copies(|row, chat| {
+            row.content = if chat == "9@lid" {
+                Content::Image {
+                    motion: None,
+                    caption: None,
+                    media: crate::model::Media {
+                        mime: "image/jpeg".into(),
+                        size: 10,
+                        width: None,
+                        height: None,
+                        album: None,
+                        path: None,
+                        state: Default::default(),
+                    },
+                }
+            } else {
+                once.clone()
+            };
+        });
+        archive.put_lid("9", "1").unwrap();
+        assert_eq!(
+            archive
+                .message("1@s.whatsapp.net", "m")
+                .unwrap()
+                .unwrap()
+                .content,
+            once
+        );
+    }
+
+    /// A merge reads only the copies it has something to settle on, and
+    /// never their raw messages.
+    #[test]
+    fn a_merge_reads_only_the_copies_that_differ() {
+        let archive = both_copies(|row, _| row.id = "same".into());
+        for chat in ["1@s.whatsapp.net", "9@lid"] {
+            let row = Message {
+                content: Content::text(format!("copy in {chat}")),
+                ..message(chat, "different", 100, false)
+            };
+            archive.insert_message(&row, Some(b"raw")).unwrap();
+        }
+        let copies = archive
+            .duplicate_copies("9@lid", "1@s.whatsapp.net")
+            .unwrap();
+        assert_eq!(
+            copies.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["different"]
+        );
     }
 }
 
@@ -5660,48 +6141,6 @@ mod sticker_tests {
             archive.stickers_without_file(10).expect("lists").is_empty(),
             "a received sticker is not fetched for Recent"
         );
-    }
-
-    #[test]
-    fn recent_stickers_keep_the_newest_row_of_each_path_with_its_raw() {
-        let dir = tempfile::tempdir().expect("temp");
-        let file = |name: &str| {
-            let path = dir.path().join(name);
-            std::fs::write(&path, b"webp").expect("writes");
-            path.display().to_string()
-        };
-        let (one, two, three) = (file("one.webp"), file("two.webp"), file("three.webp"));
-        let archive = Archive::in_memory().expect("opens");
-        archive.ensure_chat("a@s.whatsapp.net", "A").expect("chat");
-        for (id, timestamp, path, raw) in [
-            ("s1", 10, &one, &b"one-old"[..]),
-            ("s2", 30, &one, &b"one-new"[..]),
-            ("s3", 20, &two, &b"two-only"[..]),
-            ("s4", 5, &three, &b"three-old"[..]),
-        ] {
-            archive
-                .insert_message(
-                    &sticker("a@s.whatsapp.net", id, timestamp, Some(path)),
-                    Some(raw),
-                )
-                .expect("inserted");
-        }
-        let listed = archive.recent_stickers(10, true).expect("lists");
-        let summary: Vec<_> = listed
-            .iter()
-            .map(|sticker| (sticker.last_used, sticker.raw.clone()))
-            .collect();
-        assert_eq!(
-            summary,
-            vec![
-                (30, Some(b"one-new".to_vec())),
-                (20, Some(b"two-only".to_vec())),
-                (5, Some(b"three-old".to_vec())),
-            ]
-        );
-        let limited = archive.recent_stickers(2, true).expect("lists");
-        assert_eq!(limited.len(), 2);
-        assert_eq!(limited[1].last_used, 20);
     }
 
     #[test]
@@ -6144,19 +6583,10 @@ mod media_path_tests {
         }
         let ids = |rows: Vec<Message>| rows.into_iter().map(|row| row.id).collect::<Vec<_>>();
         let rows = archive.media_docs_links(chat, 10).expect("rows");
-        // Pictures, videos and a link's preview keep their picture: the panel
-        // draws those. Documents and other text rows leave their blob behind.
+        // Text rows leave their preview blob behind: the panel never draws it.
         for row in &rows {
-            let kept = matches!(
-                row.content,
-                Content::Image { .. }
-                    | Content::Video { .. }
-                    | Content::Text {
-                        preview: Some(_),
-                        ..
-                    }
-            );
-            assert_eq!(row.thumbnail.is_some(), kept, "{}", row.id);
+            let text = matches!(row.content, Content::Text { .. });
+            assert_eq!(row.thumbnail.is_none(), text, "{}", row.id);
         }
         assert_eq!(ids(rows), ["preview", "clip", "link", "doc", "photo"]);
         // The limit applies to each kind, so a chat full of photos still

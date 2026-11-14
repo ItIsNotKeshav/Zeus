@@ -214,6 +214,24 @@ pub(super) fn canonical_jid(jid: &Jid, lids: &HashMap<String, String>) -> String
     jid.to_non_ad_string()
 }
 
+/// The privacy ids WhatsApp names a phone number for in a group's members,
+/// as (privacy id, number). A member's number is otherwise only learned from
+/// their messages, and until then they show as WhatsApp's masked label.
+pub(super) fn known_numbers(participants: &[GroupParticipant]) -> Vec<(String, String)> {
+    participants
+        .iter()
+        .filter_map(|participant| {
+            let phone = participant.phone_number.as_ref()?;
+            let lid = participant
+                .lid
+                .as_ref()
+                .or(Some(&participant.jid))
+                .filter(|jid| jid.is_lid())?;
+            Some((lid.user_base().to_owned(), phone.user_base().to_owned()))
+        })
+        .collect()
+}
+
 /// A group's members under canonical chat ids, and whether one of `me`
 /// (our phone and privacy ids) is an admin.
 pub(super) fn group_members(
@@ -293,6 +311,24 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_groups_metadata_teaches_the_numbers_it_names() {
+        let mut named = GroupParticipant::new("100@lid".parse().unwrap());
+        named.phone_number = Some("233201234542@s.whatsapp.net".parse().unwrap());
+        let mut addressed_by_phone =
+            GroupParticipant::new("393331234567@s.whatsapp.net".parse().unwrap());
+        addressed_by_phone.phone_number = Some("393331234567@s.whatsapp.net".parse().unwrap());
+        addressed_by_phone.lid = Some("200@lid".parse().unwrap());
+        let hidden = GroupParticipant::new("300@lid".parse().unwrap());
+        assert_eq!(
+            known_numbers(&[named, addressed_by_phone, hidden]),
+            [
+                ("100".to_owned(), "233201234542".to_owned()),
+                ("200".to_owned(), "393331234567".to_owned())
+            ]
+        );
     }
 
     fn create(subject: &str, members: &[&str]) -> Command {

@@ -40,20 +40,34 @@ jobs:
       id-token: write
       attestations: write
     runs-on: ${{ matrix.os }}
+    # The Windows jobs sign in to Azure Artifact Signing as the app
+    # registration that trusts only this environment, which deploys only
+    # from v* tags (PACKAGING.md, "Windows signing").
+    environment: ${{ startsWith(matrix.os, 'windows') && 'windows-signing' || '' }}
+    # The Artifact Signing account native-packages signs with; empty
+    # outside the windows-signing environment, which leaves builds unsigned.
+    env:
+      AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+      AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+      AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+    # Linux builds run in Debian 12: the binary needs the glibc it was built
+    # against or newer (2.36), and bookworm's libpipewire (0.3.65) meets the
+    # PipeWire output's 0.3.53, which Ubuntu 22.04's does not. The packages
+    # install on Debian 12, Ubuntu 22.10, Fedora 37 and newer. Windows rows
+    # leave it empty and run on the host.
+    container: ${{ matrix.container }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          # The oldest supported Ubuntu: the binary needs the glibc it was
-          # built against or newer (2.39), so the packages install on
-          # Ubuntu 24.04 and Debian 13 and newer. 22.04's libpipewire is too
-          # old for the PipeWire output.
           - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
+            container: debian:12
           # A native arm64 runner, so the GUI's system libraries need no
           # cross-compilation sysroot.
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
+            container: debian:12
           - os: windows-latest
             target: x86_64-pc-windows-msvc
           # Cross-compiled from x64: the MSVC arm64 linker ships with the
@@ -61,6 +75,16 @@ jobs:
           - os: windows-latest
             target: aarch64-pc-windows-msvc
     steps:
+      # Before checkout and rustup: the bare image has no curl, git or
+      # certificates. Steps run as root, without sudo.
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
+            libpipewire-0.3-dev clang libclang-dev cmake perl
       - uses: actions/checkout@v7
       - name: Check release version
         shell: bash
@@ -73,14 +97,33 @@ jobs:
       # The repository pins its toolchain; add the cross-target's standard
       # library to the toolchain the pin actually resolves to.
       - run: rustup target add ${{ matrix.target }}
-      - name: GUI build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev libpipewire-0.3-dev clang libclang-dev cmake perl
       # No compiler cache: published binaries never build from outputs
       # restored from an Actions cache.
       - run: cargo build --locked --release --target ${{ matrix.target }}
+
+      # native-packages signs the Windows code (native-packages.yaml,
+      # windows.signing) through the Azure CLI sign-in below, once the
+      # windows-signing environment names a certificate profile.
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        if: runner.os == 'Windows'
+        with:
+          ruby-version: '4.0'
+      - name: Install native-packages
+        if: runner.os == 'Windows'
+        run: gem install native-packages --version 0.11.0 --no-document
+      - name: Sign in to Azure for code signing
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      # Signed before anything packs them, so the zip and the MSI both carry
+      # signed binaries.
+      - name: Sign the binaries
+        if: runner.os == 'Windows' && vars.AZURE_SIGNING_PROFILE != ''
+        shell: pwsh
+        run: native-packages sign-windows target\${{ matrix.target }}\release\zapfast.exe
 
       - name: Package
         shell: bash
@@ -104,35 +147,14 @@ jobs:
             tar czf "$name.tar.gz" "$name"
           fi
 
-      # Inno Setup ships with the runner image. PowerShell, because bash on
-      # Windows rewrites /D... arguments as paths.
-      - name: Installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          $arch = "${{ matrix.target }}".Split("-")[0]
-          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
-          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
-          $numericVersion = $version.Split("-")[0]
-          & $iscc "/DVersion=$version" "/DNumericVersion=$numericVersion" "/DArch=$arch" `
-            "/DBinary=$PWD\target\${{ matrix.target }}\release\zapfast.exe" `
-            "/DOutputDir=$PWD\dist" packaging\windows\zapfast.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      # The Windows Installer package, which replaces the setup program
-      # above once every install has updated through one release carrying
-      # both.
-      - uses: ruby/setup-ruby@v1
-        if: runner.os == 'Windows'
-        with:
-          ruby-version: '4.0'
+      # The Windows installer: a per-user Windows Installer package, which also
+      # takes over a copy the Inno Setup program of 0.20.1 and earlier
+      # installed (PACKAGING.md, "Windows installer"). native-packages signs
+      # it before recording its checksum.
       - name: Windows Installer package
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          gem install native-packages --version 0.10.0 --no-document
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet tool install --global wix --version 5.0.2
           wix extension add --global WixToolset.Util.wixext/5.0.2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -149,14 +171,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item "$env:RUNNER_TEMP\windows-packages\packages\$packageTarget\msi\*.msi" dist\
           Remove-Item -Recurse $payload
-
       - name: Attest release packages
-        uses: crmne/native-packages/.github/actions/attest@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*-setup.exe
             dist/*.msi
       - uses: actions/upload-artifact@v7
         with:
@@ -164,7 +184,6 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
-            dist/*-setup.exe
             dist/*.msi
           if-no-files-found: error
 
@@ -212,7 +231,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Install native packaging
-        run: gem install native-packages --version 0.10.0 --no-document
+        run: gem install native-packages --version 0.11.0 --no-document
 
       - name: App bundle
         run: |
@@ -232,7 +251,7 @@ jobs:
         run: bash packaging/macos/verify.sh "dist/zapfast-${GITHUB_REF_NAME}-macos-universal.dmg"
 
       - name: Attest macOS package
-        uses: crmne/native-packages/.github/actions/attest@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: dist/*.dmg
       - uses: actions/upload-artifact@v7
@@ -272,7 +291,7 @@ jobs:
           cache: false
           upload-artifact: false
       - name: Attest Flatpak bundle
-        uses: crmne/native-packages/.github/actions/attest@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/attest@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           subject-path: "*.flatpak"
       - uses: actions/upload-artifact@v7
@@ -300,7 +319,7 @@ jobs:
         with:
           ruby-version: '4.0'
       - name: Sign update manifest
-        uses: crmne/native-packages/.github/actions/sign-release@226fb48cb375c7cb309a3e642c7228a6e00e9ebf # v0.10.0
+        uses: crmne/native-packages/.github/actions/sign-release@25a4214d2f203357c84b069f39de7c17c0be6253 # v0.11.0
         with:
           directory: dist
           public-key: assets/update-public-key.hex

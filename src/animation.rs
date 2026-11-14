@@ -1,6 +1,6 @@
 //! Playback for WhatsApp GIFs, animated WebP and Lottie stickers, and downloaded media posters.
 //!
-//! Decoding runs off the UI thread. WebP, GIF, and H.264 MP4 decode in-process;
+//! Decoding runs off the UI thread. Photos, GIFs, and H.264 MP4 decode in-process;
 //! other MP4 codecs use `ffmpeg` when available. Idle animations are removed
 //! from memory, and a paused one keeps only its first frame, the poster, until
 //! it plays.
@@ -20,47 +20,26 @@ const MAX_WIDTH: u32 = 320;
 const MAX_FRAMES: usize = 150;
 /// Time an unseen animation remains decoded.
 const IDLE: Duration = Duration::from_secs(20);
+/// A playing animation not drawn within this window has left the viewport.
+const VISIBLE: Duration = Duration::from_millis(500);
 /// Maximum concurrent decoders.
 const MAX_DECODERS: usize = 2;
-/// How long a decoder holds its slot. One still running after this, stuck
-/// on a broken file, no longer keeps other animations from decoding.
-const DECODE_DEADLINE: Duration = Duration::from_secs(10);
+/// Bound source pixels before either poster decoder allocates its full canvas.
+const MAX_IMAGE_SIDE: u32 = 4096;
+/// Encoded sources and each image decoder use at most this allocation allowance.
+const MAX_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Global texture-frame budget. Least-recently-used animations are removed first.
 const MAX_RESIDENT_FRAMES: usize = 450;
-/// Frames that media playing on its own, such as the stickers in a chat, may
-/// hold in one pass. The rest of the budget keeps room for one animation
-/// under the pointer and the posters of the others, so a sticker playing on
-/// its own never evicts another one that is also playing.
-const AUTOPLAY_FRAMES: usize = MAX_RESIDENT_FRAMES - MAX_FRAMES - 60;
 
-/// The decoders holding a slot, by number, and when each started.
-static DECODING: Mutex<Vec<(u64, Instant)>> = Mutex::new(Vec::new());
-static NEXT_SLOT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static DECODING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Guard for one decoder slot.
-struct DecodeSlot(u64);
-
-impl DecodeSlot {
-    /// Takes a slot when fewer than `MAX_DECODERS` decoders started within
-    /// the deadline.
-    fn take(now: Instant) -> Option<Self> {
-        let mut decoding = DECODING.lock().unwrap_or_else(|p| p.into_inner());
-        decoding.retain(|(_, started)| now.saturating_duration_since(*started) < DECODE_DEADLINE);
-        if decoding.len() >= MAX_DECODERS {
-            return None;
-        }
-        let id = NEXT_SLOT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        decoding.push((id, now));
-        Some(Self(id))
-    }
-}
+struct DecodeSlot;
 
 impl Drop for DecodeSlot {
     fn drop(&mut self) {
-        DECODING
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .retain(|(id, _)| *id != self.0);
+        DECODING.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
     }
 }
 
@@ -78,10 +57,9 @@ struct Playing {
     /// another place, such as a chat bubble behind the sticker viewer, must
     /// not restart it from the first frame on every pass.
     played_in: u64,
-    /// Whether every frame is decoded. A paused animation decodes only its
-    /// poster: a picker full of animated stickers would otherwise hold more
-    /// frames than the budget, and each decode would evict a visible tile that
-    /// then decodes again, flickering endlessly (#165).
+    /// Whether every frame is decoded. Paused animations can fall back to
+    /// their poster under the shared budget; playing visible animations keep
+    /// their frames until they leave the viewport.
     complete: bool,
     /// A decode of every frame is running for this poster.
     upgrading: bool,
@@ -103,9 +81,6 @@ struct Animations {
     idle: HashSet<PathBuf>,
     /// When the eviction sweep last ran.
     last_sweep: Option<Instant>,
-    /// How many frames each resident animation has, once every frame was
-    /// decoded, kept when it drops back to its poster.
-    lengths: HashMap<PathBuf, usize>,
 }
 
 #[derive(Clone, Default)]
@@ -119,54 +94,30 @@ type Delivery = (PathBuf, Option<Decoded>, bool);
 #[derive(Clone, Default)]
 struct Inbox(Arc<Mutex<Vec<Delivery>>>);
 
-fn cache_id() -> egui::Id {
-    egui::Id::new("animations")
-}
-
 fn cache(ctx: &egui::Context) -> Cache {
-    ctx.data_mut(|data| data.get_temp_mut_or_default::<Cache>(cache_id()).clone())
+    cache_for(ctx, egui::Id::new("default"))
 }
 
-/// Texture frames held across every resident animation. A poster counts as
-/// one. Zero when nothing has been decoded, and this does not create the
-/// cache to find out.
-pub fn resident_frames(ctx: &egui::Context) -> usize {
-    let Some(cache) = ctx.data(|data| data.get_temp::<Cache>(cache_id())) else {
-        return 0;
-    };
-    cache
-        .0
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .entries
-        .values()
-        .map(|entry| match entry {
-            Entry::Ready(playing) => playing.frames.len(),
-            Entry::Decoding | Entry::Failed => 0,
-        })
-        .sum()
-}
-
-fn inbox(ctx: &egui::Context) -> Inbox {
+fn cache_for(ctx: &egui::Context, scope: egui::Id) -> Cache {
     ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Inbox>(egui::Id::new("animation-inbox"))
+        data.get_temp_mut_or_default::<Cache>(egui::Id::new(("animations", scope)))
             .clone()
     })
 }
 
-/// Drops every decoded animation: a minimized window shows none, and decodes
-/// them again once it is back.
-pub fn release(ctx: &egui::Context) {
-    let cache = cache(ctx);
-    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
-    // A decode under way still delivers, and a failed file is not tried again.
-    animations
-        .entries
-        .retain(|_, entry| !matches!(entry, Entry::Ready(_)));
-    animations.idle.clear();
+#[cfg(test)]
+fn inbox(ctx: &egui::Context) -> Inbox {
+    inbox_for(ctx, egui::Id::new("default"))
 }
 
-/// Current display state for an animated file.
+fn inbox_for(ctx: &egui::Context, scope: egui::Id) -> Inbox {
+    ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<Inbox>(egui::Id::new(("animation-inbox", scope)))
+            .clone()
+    })
+}
+
+/// Current display state for a media file.
 pub enum Frame {
     /// Current animation frame.
     Ready(TextureHandle),
@@ -181,14 +132,35 @@ pub enum Frame {
 /// A visible but paused animation returns its first frame without scheduling
 /// another repaint. This keeps animated media idle until playback is wanted.
 pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Frame {
+    frame_with_cache(ui, path, rect, animate, egui::Id::new("default"))
+}
+
+/// Returns an animation frame from a separate cache.
+pub fn frame_with_cache(
+    ui: &egui::Ui,
+    path: &Path,
+    rect: egui::Rect,
+    animate: bool,
+    scope: egui::Id,
+) -> Frame {
+    frame_inner(ui, path, rect, animate, scope)
+}
+
+fn frame_inner(
+    ui: &egui::Ui,
+    path: &Path,
+    rect: egui::Rect,
+    animate: bool,
+    scope: egui::Id,
+) -> Frame {
     // ScrollArea still lays out clipped rows. They must neither start decoders
     // nor keep the window repainting while their pixels are off screen.
     if !ui.is_rect_visible(rect) {
         return Frame::Pending;
     }
     let ctx = ui.ctx();
-    let cache = cache(ctx);
-    let inbox = inbox(ctx);
+    let cache = cache_for(ctx, scope);
+    let inbox = inbox_for(ctx, scope);
     // Upload decoded frames on the UI thread.
     let arrived: Vec<Delivery> =
         std::mem::take(&mut *inbox.0.lock().unwrap_or_else(|p| p.into_inner()));
@@ -207,13 +179,8 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                 continue;
             }
             Some(decoded) if !decoded.frames.is_empty() => {
-                if complete {
-                    animations
-                        .lengths
-                        .insert(arrived_path.clone(), decoded.frames.len());
-                }
                 let mut total = Duration::ZERO;
-                let frames = decoded
+                let frames: Vec<_> = decoded
                     .frames
                     .into_iter()
                     .enumerate()
@@ -223,12 +190,13 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
                         (ctx.load_texture(name, image, TextureOptions::LINEAR), delay)
                     })
                     .collect();
+                let animating = complete && frames.len() > 1;
                 Entry::Ready(Playing {
                     frames,
                     total: total.max(Duration::from_millis(50)),
                     started: Instant::now(),
                     last_drawn: Instant::now(),
-                    animating: false,
+                    animating,
                     played_in: 0,
                     complete,
                     upgrading: false,
@@ -265,9 +233,29 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     // that misses a whole sweep interval undrawn is evicted. That trades up to
     // one extra `IDLE` of resident frames for a stable poster while the media
     // is visible.
-    // New frames can also exceed the budget between sweeps.
-    if sweep_idle(&mut animations, now) || uploaded {
-        enforce_budget(&mut animations, path, now, ctx.cumulative_frame_nr());
+    if animations
+        .last_sweep
+        .is_none_or(|last| now.duration_since(last) >= IDLE)
+    {
+        animations.last_sweep = Some(now);
+        let previously_idle = std::mem::take(&mut animations.idle);
+        let mut idle = HashSet::new();
+        animations.entries.retain(|entry_path, entry| match entry {
+            Entry::Ready(playing) if now.duration_since(playing.last_drawn) >= IDLE => {
+                if previously_idle.contains(entry_path) {
+                    false
+                } else {
+                    idle.insert(entry_path.clone());
+                    true
+                }
+            }
+            _ => true,
+        });
+        animations.idle = idle;
+        enforce_budget(&mut animations, path, now);
+    } else if uploaded {
+        // New frames can exceed the budget between sweeps.
+        enforce_budget(&mut animations, path, now);
     }
     match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
@@ -338,103 +326,38 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     }
 }
 
-/// Like [`frame`], for media that plays and loops on its own while it is on
-/// screen, as stickers in a chat do. While `animate` (the window is in use),
-/// what the pointer is over always plays; the rest play in the order they are
-/// drawn for as long as their frames fit `AUTOPLAY_FRAMES` in this pass,
-/// and the others keep their first frame. Within that allowance the playing
-/// set stays the same from pass to pass, so nothing is evicted and decoded
-/// again in turn.
-pub fn autoplay(
-    ui: &egui::Ui,
-    path: &Path,
-    rect: egui::Rect,
-    animate: bool,
-    hovered: bool,
-) -> Frame {
-    if !animate || !ui.is_rect_visible(rect) {
-        return frame(ui, path, rect, false);
-    }
-    let ctx = ui.ctx();
-    // `None` until every frame was decoded once.
-    let length = {
-        let cache = cache(ctx);
-        let animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
-        match animations.entries.get(path) {
-            Some(Entry::Failed) => Some(0),
-            _ => animations.lengths.get(path).copied(),
-        }
-    };
-    let pass = ctx.cumulative_frame_nr();
-    let plays = ctx.data_mut(|data| {
-        let (counted, claimed) =
-            data.get_temp_mut_or_default::<(u64, usize)>(egui::Id::new("animation-autoplay"));
-        if *counted != pass {
-            *counted = pass;
-            *claimed = 0;
-        }
-        if hovered {
-            return true;
-        }
-        // One of unknown length starts while there is room left, and holds
-        // the most an animation can until its length is known. One that
-        // turns out not to fit keeps that length after the budget trims it,
-        // so it is not decoded again only to be trimmed again.
-        let fits = match length {
-            Some(length) => *claimed + length <= AUTOPLAY_FRAMES,
-            None => *claimed < AUTOPLAY_FRAMES,
-        };
-        if fits {
-            *claimed += length.unwrap_or(MAX_FRAMES);
-        }
-        fits
-    });
-    frame(ui, path, rect, plays)
-}
-
-/// One rate-limited two-strike sweep: marks animations undrawn for `IDLE`,
-/// and drops the ones already marked by the previous sweep. Returns whether
-/// a sweep ran.
-fn sweep_idle(animations: &mut Animations, now: Instant) -> bool {
-    if !animations
-        .last_sweep
-        .is_none_or(|last| now.duration_since(last) >= IDLE)
-    {
-        return false;
-    }
-    animations.last_sweep = Some(now);
-    let previously_idle = std::mem::take(&mut animations.idle);
-    let mut idle = HashSet::new();
-    animations.entries.retain(|entry_path, entry| match entry {
-        Entry::Ready(playing) if now.duration_since(playing.last_drawn) >= IDLE => {
-            if previously_idle.contains(entry_path) {
-                false
-            } else {
-                idle.insert(entry_path.clone());
-                true
-            }
-        }
-        _ => true,
-    });
-    animations.idle = idle;
-    let Animations {
-        entries, lengths, ..
-    } = animations;
-    lengths.retain(|path, _| entries.contains_key(path));
-    true
-}
-
-/// Frees animations nothing has drawn for a while, for frames that run without
-/// drawing any (the sticker picker closed, the chat left). Call it after the
-/// views have drawn, so whatever is on screen was just refreshed by `frame`.
-/// It shares `frame`'s two-strike rule and rate limit, makes no cache of its
-/// own and never asks for a repaint.
-pub fn sweep(ctx: &egui::Context) {
-    let Some(cache) = ctx.data(|data| data.get_temp::<Cache>(cache_id())) else {
-        return;
-    };
+/// Forgets what is known of `path`, a failure included, so the file there is
+/// decoded afresh the next time it is drawn.
+pub fn forget(ctx: &egui::Context, path: &Path) {
+    let cache = cache(ctx);
     let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
-    sweep_idle(&mut animations, Instant::now());
+    animations.entries.remove(path);
+    animations.idle.remove(path);
+}
+
+/// Drops everything a [`frame_with_cache`] scope holds. The idle sweep runs
+/// only inside `frame`, so a scope whose only caller stopped drawing would
+/// otherwise keep its textures. A decode still running delivers to the inbox
+/// and is dropped by the next call, which is why a closed view calls this on
+/// every pass. It takes two uncontended locks when there is nothing to drop.
+pub fn release(ctx: &egui::Context, scope: egui::Id) {
+    let cache = cache_for(ctx, scope);
+    let inbox = inbox_for(ctx, scope);
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    animations.entries.clear();
+    animations.idle.clear();
+    inbox.0.lock().unwrap_or_else(|p| p.into_inner()).clear();
+}
+
+/// How many files a scope holds, with one placed there first when `seed`.
+#[cfg(test)]
+pub(crate) fn resident(ctx: &egui::Context, scope: egui::Id, seed: Option<&Path>) -> usize {
+    let cache = cache_for(ctx, scope);
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(path) = seed {
+        animations.entries.insert(path.to_path_buf(), Entry::Failed);
+    }
+    animations.entries.len()
 }
 
 /// Whether a decoder thread could be started.
@@ -448,9 +371,11 @@ enum Start {
 /// Decodes `path` on a thread, every frame when `all` and otherwise only the
 /// poster, and delivers the result to `inbox`.
 fn start_decode(ctx: &egui::Context, inbox: &Inbox, path: &Path, all: bool) -> Start {
-    let Some(slot) = DecodeSlot::take(Instant::now()) else {
+    if DECODING.load(std::sync::atomic::Ordering::Acquire) >= MAX_DECODERS {
         return Start::Busy;
-    };
+    }
+    DECODING.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    let slot = DecodeSlot;
     let file = path.to_path_buf();
     let ctx = ctx.clone();
     let inbox = inbox.clone();
@@ -517,10 +442,65 @@ fn decode(path: &Path, limit: usize) -> Option<Decoded> {
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
+        "jpg" | "jpeg" | "png" => decode_still(path),
+        "webp" if limit == 1 => {
+            decode_image(path, &extension, limit).or_else(|| decode_still(path))
+        }
         "webp" | "gif" => decode_image(path, &extension, limit),
         "was" => crate::lottie::decode(path, limit).map(|frames| Decoded { frames }),
         _ => decode_video(path, limit),
     }
+}
+
+/// Strict source dimensions plus a decoder allocation allowance, applied before decoding.
+fn image_limits() -> image::Limits {
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_SIDE);
+    limits.max_image_height = Some(MAX_IMAGE_SIDE);
+    limits.max_alloc = Some(MAX_IMAGE_BYTES);
+    limits
+}
+
+/// Read a bounded encoded source even if its file grows while it is being read.
+fn image_source(path: &Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_IMAGE_BYTES {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() as u64 <= MAX_IMAGE_BYTES).then_some(bytes)
+}
+
+/// Header parsing enforces dimensions before the image or WebP canvas is allocated.
+fn image_reader(bytes: &[u8]) -> Option<image::ImageReader<std::io::Cursor<&[u8]>>> {
+    let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    reader.limits(image_limits());
+    Some(reader)
+}
+
+/// A downloaded photo's small poster, built on the decoder thread, never the UI thread.
+fn decode_still(path: &Path) -> Option<Decoded> {
+    use image::ImageDecoder;
+    let bytes = image_source(path)?;
+    let mut decoder = image_reader(&bytes)?.into_decoder().ok()?;
+    let orientation = decoder.orientation().ok()?;
+    let mut limits = image_limits();
+    limits.reserve(decoder.total_bytes()).ok()?;
+    decoder.set_limits(limits).ok()?;
+    let mut image = image::DynamicImage::from_decoder(decoder).ok()?;
+    if image.width() > MAX_WIDTH || image.height() > MAX_WIDTH {
+        image = image.thumbnail(MAX_WIDTH, MAX_WIDTH);
+    }
+    image.apply_orientation(orientation);
+    let image = image.to_rgba8();
+    Some(Decoded {
+        frames: vec![(to_color_image(&image), Duration::ZERO)],
+    })
 }
 
 /// Decodes animated GIF with the `image` crate.
@@ -548,7 +528,11 @@ fn decode_image(path: &Path, extension: &str, limit: usize) -> Option<Decoded> {
 /// Decodes animated WebP with libwebp. It returns complete canvas frames,
 /// unlike the `image` decoder, which did not apply frame disposal correctly.
 fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = image_source(path)?;
+    let announced = webp_moves(&bytes);
+    // libwebp allocates its canvas in Decoder::new, so inspect with the
+    // dimension-limited header reader first, including for animated files.
+    image_reader(&bytes)?.into_dimensions().ok()?;
     let decoder = webp_animation::Decoder::new(&bytes).ok()?;
     let (width, height) = decoder.dimensions();
     let mut decoded = Vec::new();
@@ -558,12 +542,19 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
         let image = image::RgbaImage::from_raw(width, height, frame.data().to_vec())?;
         let delay = (i64::from(frame.timestamp()) - previous).max(20) as u64;
         previous = i64::from(frame.timestamp());
+        let image = if limit == 1 && (width > MAX_WIDTH || height > MAX_WIDTH) {
+            image::DynamicImage::ImageRgba8(image)
+                .thumbnail(MAX_WIDTH, MAX_WIDTH)
+                .to_rgba8()
+        } else {
+            image
+        };
         decoded.push((to_color_image(&image), Duration::from_millis(delay)));
     }
-    // Single-frame stills use the static-image path. A single frame in a file
-    // that says it moves, as many of WhatsApp's stickers do, is drawn as an
-    // animation, so it must give its picture.
-    if decoded.is_empty() || (decoded.len() < 2 && !webp_moves(&bytes[..bytes.len().min(64)])) {
+    // A single frame is a still for the static-image path, unless the file
+    // announces an animation: callers draw such a file only through this
+    // path, so its one frame shows here.
+    if decoded.is_empty() || (decoded.len() < 2 && !announced) {
         return None;
     }
     decoded.truncate(limit);
@@ -608,7 +599,7 @@ fn decode_mp4_from<R: std::io::Read + std::io::Seek>(
     limit: usize,
 ) -> Option<Decoded> {
     let mut mp4 = crate::mp4_guard::read_header(reader, size).ok()?;
-    let (track_id, timescale, sps, pps, count) = {
+    let (track_id, timescale, shift, end, sps, pps, count) = {
         let track = mp4
             .tracks()
             .values()
@@ -616,50 +607,84 @@ fn decode_mp4_from<R: std::io::Read + std::io::Seek>(
         (
             track.track_id(),
             u64::from(track.timescale().max(1)),
+            edit_shift(track) as i64,
+            track.duration(),
             track.sequence_parameter_set().ok()?.to_vec(),
             track.picture_parameter_set().ok()?.to_vec(),
             track.sample_count(),
         )
     };
-    let mut decoder = openh264::decoder::Decoder::new().ok()?;
-    let mut frames: Vec<(ColorImage, Duration)> = Vec::new();
-    let mut delays: std::collections::VecDeque<Duration> = std::collections::VecDeque::new();
+    let end = (end.as_nanos() * u128::from(timescale) / 1_000_000_000) as i64;
+    // Flushing after every packet, the default, breaks streams with
+    // B-frames: the decoder then gives up at the first one. Reordered frames
+    // come out on their own and the rest with `flush_remaining`.
+    let mut decoder = openh264::decoder::Decoder::with_api_config(
+        openh264::OpenH264API::from_source(),
+        openh264::decoder::DecoderConfig::new()
+            .flush_after_decode(openh264::decoder::Flush::NoFlush),
+    )
+    .ok()?;
+    let mut images = Vec::new();
+    // Presentation times of the samples fed. H.264 returns frames in display
+    // order, so sorting these lines them up with the images.
+    let mut times: Vec<i64> = Vec::new();
     // Send parameter sets and samples to the decoder in Annex B format.
     let mut parameters = Vec::new();
     push_annex_b(&mut parameters, &sps);
     push_annex_b(&mut parameters, &pps);
     let _ = decoder.decode(&parameters);
+    let mut truncated = false;
     for sample_id in 1..=count {
-        if frames.len() >= limit {
+        if images.len() >= limit {
+            truncated = true;
             break;
         }
         let Ok(Some(sample)) = mp4.read_sample(track_id, sample_id) else {
             break;
         };
-        let delay =
-            Duration::from_millis((u64::from(sample.duration) * 1000 / timescale).clamp(20, 1000));
-        delays.push_back(delay);
+        times.push(sample.start_time as i64 + i64::from(sample.rendering_offset));
         let mut annex_b = Vec::with_capacity(sample.bytes.len() + 16);
         avcc_to_annex_b(&mut annex_b, &sample.bytes);
-        if let Ok(Some(yuv)) = decoder.decode(&annex_b) {
-            let delay = delays.pop_front().unwrap_or(delay);
-            if let Some(frame) = frame_of(&yuv, delay) {
-                frames.push(frame);
-            }
+        if let Ok(Some(yuv)) = decoder.decode(&annex_b)
+            && let Some(image) = frame_of(&yuv)
+        {
+            images.push(image);
         }
     }
     if let Ok(rest) = decoder.flush_remaining() {
         for yuv in &rest {
-            if frames.len() >= limit {
+            if images.len() >= limit {
+                truncated = true;
                 break;
             }
-            let delay = delays.pop_front().unwrap_or(Duration::from_millis(66));
-            if let Some(frame) = frame_of(yuv, delay) {
-                frames.push(frame);
+            if let Some(image) = frame_of(yuv) {
+                images.push(image);
             }
         }
     }
-    (!frames.is_empty()).then_some(Decoded { frames })
+    if images.is_empty() {
+        return None;
+    }
+    times.sort_unstable();
+    let delay = |ticks: i64| {
+        Duration::from_millis(
+            (u64::try_from(ticks.max(0)).unwrap_or(0) * 1000 / timescale).clamp(20, 1000),
+        )
+    };
+    let mut frames = Vec::with_capacity(images.len());
+    for (index, image) in images.into_iter().enumerate() {
+        let delay = if let Some(next) = times.get(index + 1) {
+            delay(next - times[index])
+        } else if truncated {
+            frames
+                .last()
+                .map_or(Duration::from_millis(20), |(_, delay)| *delay)
+        } else {
+            delay(end - (times[index] - shift))
+        };
+        frames.push((image, delay));
+    }
+    Some(Decoded { frames })
 }
 
 /// What an MP4 says about itself, with a picture from its start: what the
@@ -717,12 +742,9 @@ pub(crate) fn video_frame(path: &Path, index: usize) -> Option<ColorImage> {
 }
 
 /// Trims animations until the resident frames fit the budget, sparing the
-/// one being drawn. What the last sweep found idle goes first; an animation
-/// drawn since only drops back to its poster, so a tile that is still on
-/// screen never flashes its placeholder, and posters go last. Among those,
-/// one shown paused gives up its frames before one still playing in `pass`,
-/// which would otherwise decode them all again on its next draw.
-fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant, pass: u64) {
+/// one being drawn and any animation still playing on screen. Paused entries
+/// lose their decoded frames; unseen entries are evicted.
+fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant) {
     let mut resident: usize = animations
         .entries
         .values()
@@ -736,48 +758,44 @@ fn enforce_budget(animations: &mut Animations, path: &Path, now: Instant, pass: 
             .entries
             .iter()
             .filter(|(entry_path, entry)| {
-                entry_path.as_path() != path && matches!(entry, Entry::Ready(_))
+                entry_path.as_path() != path
+                    && matches!(entry, Entry::Ready(playing)
+                        if !playing.animating
+                            || now.duration_since(playing.last_drawn) >= VISIBLE)
             })
             .min_by_key(|(entry_path, entry)| match entry {
                 Entry::Ready(playing) => (
                     u8::from(!animations.idle.contains(*entry_path)),
-                    u8::from(playing.frames.len() == 1),
-                    u8::from(playing.animating && playing.played_in + 1 >= pass),
+                    u8::from(playing.animating),
                     playing.last_drawn,
                 ),
-                _ => (1, 1, 1, now),
+                _ => (1, 1, now),
             })
             .map(|(entry_path, _)| entry_path.clone());
         let Some(victim) = victim else {
             break;
         };
-        let idle = animations.idle.contains(&victim);
         match animations.entries.get_mut(&victim) {
-            Some(Entry::Ready(playing)) if !idle && playing.frames.len() > 1 => {
+            Some(Entry::Ready(playing)) if !playing.animating && playing.frames.len() > 1 => {
                 resident -= playing.frames.len() - 1;
+                playing.total = playing.frames[0].1;
                 playing.frames.truncate(1);
                 playing.complete = false;
                 playing.upgrading = false;
-                playing.animating = false;
             }
             Some(Entry::Ready(playing)) => {
                 resident -= playing.frames.len();
                 animations.entries.remove(&victim);
-                animations.lengths.remove(&victim);
             }
             _ => {
                 animations.entries.remove(&victim);
-                animations.lengths.remove(&victim);
             }
         }
     }
 }
 
 /// Converts and scales one decoded frame.
-fn frame_of(
-    yuv: &openh264::decoder::DecodedYUV<'_>,
-    delay: Duration,
-) -> Option<(ColorImage, Duration)> {
+fn frame_of(yuv: &openh264::decoder::DecodedYUV<'_>) -> Option<ColorImage> {
     use openh264::formats::YUVSource;
 
     let (width, height) = yuv.dimensions();
@@ -799,7 +817,25 @@ fn frame_of(
             image::imageops::FilterType::Triangle,
         )
     };
-    Some((to_color_image(&scaled), delay))
+    Some(to_color_image(&scaled))
+}
+
+/// Media time an MP4's edit list starts showing from, in track time units.
+pub(crate) fn edit_shift(track: &mp4::Mp4Track) -> u64 {
+    track
+        .trak
+        .edts
+        .as_ref()
+        .and_then(|edts| edts.elst.as_ref())
+        .and_then(|elst| {
+            // An empty edit, a delay before the track starts, has a
+            // media time of -1.
+            elst.entries
+                .iter()
+                .map(|entry| entry.media_time)
+                .find(|&time| time != u64::from(u32::MAX) && time != u64::MAX)
+        })
+        .unwrap_or(0)
 }
 
 pub(crate) fn push_annex_b(out: &mut Vec<u8>, nal: &[u8]) {
@@ -925,6 +961,175 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn small_posters_keep_their_original_dimensions() {
+        let dir = tempfile::tempdir().unwrap();
+        for extension in ["jpg", "png", "webp"] {
+            let path = dir.path().join(format!("small.{extension}"));
+            image::RgbImage::from_pixel(64, 48, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            assert_eq!(decode(&path, 1).unwrap().frames[0].0.size, [64, 48]);
+        }
+        let path = dir.path().join("animated.webp");
+        let mut encoder = webp_animation::Encoder::new((64, 48)).unwrap();
+        for (index, shade) in [40, 200].into_iter().enumerate() {
+            let frame = image::RgbaImage::from_pixel(64, 48, image::Rgba([shade, 0, 0, 255]));
+            encoder.add_frame(&frame, index as i32 * 100).unwrap();
+        }
+        std::fs::write(&path, &*encoder.finalize(200).unwrap()).unwrap();
+        assert_eq!(decode(&path, 1).unwrap().frames[0].0.size, [64, 48]);
+    }
+
+    /// Tall animated posters stay bounded while playback retains its previous resolution.
+    #[test]
+    fn animated_webp_posters_bound_both_sides_without_shrinking_playback() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tall.webp");
+        let mut encoder = webp_animation::Encoder::new((320, 4096)).unwrap();
+        for (index, shade) in [40, 200].into_iter().enumerate() {
+            let frame = image::RgbaImage::from_pixel(320, 4096, image::Rgba([shade, 0, 0, 255]));
+            encoder.add_frame(&frame, index as i32 * 100).unwrap();
+        }
+        std::fs::write(&path, &*encoder.finalize(200).unwrap()).unwrap();
+        let poster = decode(&path, 1).unwrap();
+        assert_eq!(poster.frames.len(), 1);
+        let size = poster.frames[0].0.size;
+        assert!(size.into_iter().all(|side| side <= MAX_WIDTH as usize));
+        assert!((size[0] as f32 / size[1] as f32 - 320.0 / 4096.0).abs() < 0.005);
+        let playback = decode(&path, MAX_FRAMES).unwrap();
+        assert_eq!(playback.frames.len(), 2);
+        assert_eq!(playback.frames[0].0.size, [320, 4096]);
+        assert_eq!(poster.frames[0].1, playback.frames[0].1);
+    }
+
+    /// JPEG orientation rotates the poster's pixels, not just its reported dimensions.
+    #[test]
+    fn downloaded_jpeg_poster_applies_exif_orientation() {
+        use image::ImageEncoder;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rotated.jpg");
+        let image = image::RgbImage::from_fn(800, 400, |x, _| {
+            image::Rgb(if x < 400 {
+                [240, 10, 10]
+            } else {
+                [10, 10, 240]
+            })
+        });
+        let mut bytes = Vec::new();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
+        // Little-endian TIFF IFD: one SHORT Orientation entry, value 6 (90 degrees clockwise).
+        encoder
+            .set_exif_metadata(vec![
+                0x49, 0x49, 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 1, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0,
+                0, 0,
+            ])
+            .unwrap();
+        encoder
+            .encode(&image, 800, 400, image::ExtendedColorType::Rgb8)
+            .unwrap();
+        std::fs::write(&path, bytes).unwrap();
+        let decoded = decode(&path, 1).unwrap();
+        let poster = &decoded.frames[0].0;
+        assert_eq!(poster.size, [160, 320]);
+        let top = poster.pixels[80 * 160 + 80];
+        let bottom = poster.pixels[240 * 160 + 80];
+        assert!(top.r() > 200 && top.b() < 30, "red rotates to the top");
+        assert!(
+            bottom.b() > 200 && bottom.r() < 30,
+            "blue rotates to the bottom"
+        );
+    }
+
+    /// Oversized PNG and animated WebP headers fail the limit check before pixel decoding.
+    #[test]
+    fn oversized_poster_sources_are_rejected_before_decoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("huge.png");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([80, 120, 180]))
+            .save(&png)
+            .unwrap();
+        let mut bytes = std::fs::read(&png).unwrap();
+        bytes[16..20].copy_from_slice(&10_000_u32.to_be_bytes());
+        bytes[20..24].copy_from_slice(&10_000_u32.to_be_bytes());
+        let mut crc = u32::MAX;
+        for byte in &bytes[12..29] {
+            crc ^= u32::from(*byte);
+            for _ in 0..8 {
+                crc = (crc >> 1) ^ ((crc & 1).wrapping_neg() & 0xedb8_8320);
+            }
+        }
+        bytes[29..33].copy_from_slice(&(!crc).to_be_bytes());
+        std::fs::write(&png, &bytes).unwrap();
+        let webp = animated_webp(dir.path(), "huge.webp", 2);
+        let mut webp_bytes = std::fs::read(&webp).unwrap();
+        assert_eq!(&webp_bytes[12..16], b"VP8X");
+        for start in [24, 27] {
+            webp_bytes[start..start + 3].copy_from_slice(&9_999_u32.to_le_bytes()[..3]);
+        }
+        std::fs::write(&webp, &webp_bytes).unwrap();
+        for encoded in [&bytes, &webp_bytes] {
+            let dimensions = image::ImageReader::new(std::io::Cursor::new(encoded))
+                .with_guessed_format()
+                .unwrap()
+                .into_dimensions()
+                .unwrap();
+            assert_eq!(dimensions, (10_000, 10_000), "a valid oversized header");
+            assert!(
+                matches!(
+                    image_reader(encoded).unwrap().into_decoder(),
+                    Err(image::ImageError::Limits(_))
+                ),
+                "rejected by limits before decoding pixels"
+            );
+        }
+        assert!(decode_still(&png).is_none());
+        assert!(decode_webp(&webp, 1).is_none());
+        let oversized_file = dir.path().join("too-many-bytes.png");
+        std::fs::File::create(&oversized_file)
+            .unwrap()
+            .set_len(MAX_IMAGE_BYTES + 1)
+            .unwrap();
+        assert!(image_source(&oversized_file).is_none());
+    }
+
+    #[test]
+    fn downloaded_photos_have_small_idle_posters() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut paths = Vec::new();
+        for (extension, width, height) in [("jpg", 900, 300), ("png", 300, 900), ("webp", 900, 900)]
+        {
+            let path = dir.path().join(format!("photo.{extension}"));
+            image::RgbImage::from_pixel(width, height, image::Rgb([80, 120, 180]))
+                .save(&path)
+                .unwrap();
+            paths.push(path);
+        }
+        let ctx = egui::Context::default();
+        settle(&ctx, &paths, false);
+        for shown in draw_all(&ctx, &paths, false) {
+            let Frame::Ready(texture) = shown else {
+                panic!("a photo poster")
+            };
+            assert!(
+                texture
+                    .size()
+                    .into_iter()
+                    .all(|side| side <= MAX_WIDTH as usize)
+            );
+        }
+        let cache = cache(&ctx);
+        let cached = cache.0.lock().unwrap();
+        for path in &paths {
+            let Some(Entry::Ready(playing)) = cached.entries.get(path) else {
+                panic!("cached poster")
+            };
+            assert_eq!(playing.frames.len(), 1);
+            assert!(!playing.animating, "a thumbnail never starts playback");
+        }
+        assert!(decode_still(&dir.path().join("missing.jpg")).is_none());
+    }
+
     /// A video being sent gets its picture, size, and length from its bytes.
     #[test]
     fn a_video_says_its_size_and_length_and_shows_a_frame() {
@@ -938,6 +1143,30 @@ mod tests {
         let last = picture.get_pixel(picture.width() - 4, picture.height() / 2);
         assert_ne!(first, last);
         assert!(super::poster(b"not a video").is_none());
+    }
+
+    /// Some encoders put the pixel aspect box before the decoder's
+    /// configuration in the sample entry; such a video still opens.
+    #[test]
+    fn a_video_with_its_aspect_box_first_still_opens() {
+        let bytes = include_bytes!("../tests/fixtures/video/sample.mp4");
+        let find = |name: &[u8]| {
+            bytes
+                .windows(4)
+                .position(|window| window == name)
+                .expect("the box")
+                - 4
+        };
+        let size = |at: usize| u32::from_be_bytes(bytes[at..at + 4].try_into().unwrap()) as usize;
+        let (avcc, pasp) = (find(b"avcC"), find(b"pasp"));
+        assert_eq!(avcc + size(avcc), pasp, "the fixture has them side by side");
+        let end = pasp + size(pasp);
+        // Swapping two neighbours changes no size or offset around them.
+        let mut swapped = bytes.to_vec();
+        swapped[avcc..end].copy_from_slice(&[&bytes[pasp..end], &bytes[avcc..pasp]].concat());
+        let poster = poster(&swapped).expect("an MP4");
+        assert_eq!((poster.width, poster.height), (320, 180));
+        assert!(poster.picture.is_some(), "it decodes");
     }
 
     /// Verifies animated WebP frame disposal.
@@ -1006,40 +1235,13 @@ mod tests {
     }
 
     #[test]
-    fn an_mp4_with_a_box_of_size_zero_fails_instead_of_hanging() {
-        let bytes = crate::mp4_guard::tests::zero_size_box();
-        let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let size = bytes.len() as u64;
-            let decoded = decode_mp4_from(std::io::Cursor::new(&bytes), size, MAX_FRAMES);
-            let _ = sender.send((decoded.is_none(), poster(&bytes).is_none()));
-        });
-        let failed = receiver
-            .recv_timeout(Duration::from_secs(1))
-            .expect("the decoder returns instead of hanging");
-        assert_eq!(failed, (true, true));
-    }
-
-    #[test]
-    fn a_stuck_decoder_gives_up_its_slot_after_the_deadline() {
-        // Far ahead of every other test's slots, which the deadline clears.
-        let start = Instant::now() + Duration::from_secs(3600);
-        let held: Vec<_> = (0..MAX_DECODERS)
-            .map_while(|_| DecodeSlot::take(start))
-            .collect();
-        assert_eq!(held.len(), MAX_DECODERS);
-        assert!(DecodeSlot::take(start + Duration::from_secs(1)).is_none());
-        assert!(DecodeSlot::take(start + DECODE_DEADLINE).is_some());
-    }
-
-    #[test]
-    fn an_mp4_made_by_ffmpeg_decodes_in_process() {
+    fn a_variable_duration_mp4_with_b_frames_keeps_its_timing() {
         if !can_play_video() {
             return;
         }
-        let dir = std::env::temp_dir().join(format!("zapfast-mp4-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("zapfast-mp4-vfr-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("dir");
-        let path = dir.join("clip.mp4");
+        let path = dir.join("variable.mp4");
         let made = Command::new("ffmpeg")
             .args([
                 "-v",
@@ -1048,9 +1250,13 @@ mod tests {
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc=duration=0.5:size=64x48:rate=10",
+                "testsrc=duration=3:size=64x48:rate=10",
+                "-vf",
+                "select='not(eq(mod(n,6),2))*not(eq(mod(n,6),4))*not(eq(mod(n,6),5))'",
+                "-fps_mode",
+                "vfr",
             ])
-            .args(["-pix_fmt", "yuv420p"])
+            .args(["-c:v", "libx264", "-bf", "2", "-pix_fmt", "yuv420p"])
             .arg(&path)
             .status()
             .is_ok_and(|status| status.success());
@@ -1059,10 +1265,23 @@ mod tests {
             return;
         }
         let decoded = decode(&path, MAX_FRAMES).expect("decodes");
-        // Five frames at 10 fps. The in-process path preserves their timing.
-        assert_eq!(decoded.frames.len(), 5);
-        assert_eq!(decoded.frames[0].1, Duration::from_millis(100));
+        let delays: Vec<u128> = decoded
+            .frames
+            .iter()
+            .map(|(_, delay)| delay.as_millis())
+            .collect();
+        // The frames are 100, 200, and 300 ms apart in display order.
+        // Decode order would put the durations in a different order.
+        assert_eq!(
+            delays,
+            [
+                100, 200, 300, 100, 200, 300, 100, 200, 300, 100, 200, 300, 100, 200, 100
+            ]
+        );
+        assert_eq!(decoded.frames.len(), 15);
         assert_eq!(decoded.frames[0].0.size, [64, 48]);
+        let total: Duration = decoded.frames.iter().map(|(_, delay)| *delay).sum();
+        assert_eq!(total, Duration::from_millis(2800), "the whole loop plays");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1075,6 +1294,61 @@ mod tests {
             .save(&path)
             .expect("saves");
         assert!(decode(&path, MAX_FRAMES).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_webp_announcing_an_animation_shows_its_only_frame() {
+        // Some sticker makers wrap one still frame in the animation container.
+        let dir = std::env::temp_dir().join(format!("zapfast-one-frame-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let still = dir.join("still.webp");
+        image::RgbaImage::from_pixel(4, 4, image::Rgba([1, 2, 3, 255]))
+            .save(&still)
+            .expect("saves");
+        let bytes = std::fs::read(&still).expect("reads");
+        // The still's bitstream chunk becomes the animation's one frame.
+        let mut at = 12;
+        let bitstream = loop {
+            let size = u32::from_le_bytes(bytes[at + 4..at + 8].try_into().expect("size")) as usize;
+            let end = (at + 8 + size + size % 2).min(bytes.len());
+            if matches!(&bytes[at..at + 4], b"VP8L" | b"VP8 ") {
+                break &bytes[at..end];
+            }
+            at = end;
+        };
+        let chunk = |tag: &[u8], payload: &[u8]| {
+            let mut out = tag.to_vec();
+            out.extend((payload.len() as u32).to_le_bytes());
+            out.extend(payload);
+            if !payload.len().is_multiple_of(2) {
+                out.push(0);
+            }
+            out
+        };
+        // Canvas and frame are 4x4, written as width - 1 and height - 1.
+        let side = [3u8, 0, 0];
+        let mut header = vec![0x12u8, 0, 0, 0];
+        header.extend(side);
+        header.extend(side);
+        let mut frame = vec![0u8; 6];
+        frame.extend(side);
+        frame.extend(side);
+        frame.extend([100, 0, 0, 0]);
+        frame.extend(bitstream);
+        let mut body = b"WEBP".to_vec();
+        body.extend(chunk(b"VP8X", &header));
+        body.extend(chunk(b"ANIM", &[0; 6]));
+        body.extend(chunk(b"ANMF", &frame));
+        let mut webp = b"RIFF".to_vec();
+        webp.extend((body.len() as u32).to_le_bytes());
+        webp.extend(body);
+        assert!(webp_moves(&webp));
+        let path = dir.join("one-frame.webp");
+        std::fs::write(&path, &webp).expect("writes");
+        let decoded = decode(&path, MAX_FRAMES).expect("decodes");
+        assert_eq!(decoded.frames.len(), 1);
+        assert!(decode(&still, MAX_FRAMES).is_none(), "a plain still is not");
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -1347,39 +1621,6 @@ mod tests {
     }
 
     #[test]
-    fn sweep_frees_unseen_animations_without_any_frame_call() {
-        let ctx = egui::Context::default();
-        let path = PathBuf::from("closed-picker.gif");
-        let texture = ctx.load_texture(
-            "closed-picker",
-            ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
-            TextureOptions::LINEAR,
-        );
-        {
-            let store = cache(&ctx);
-            store.0.lock().expect("animation cache").entries.insert(
-                path.clone(),
-                Entry::Ready(Playing {
-                    frames: vec![(texture, Duration::from_secs(60))],
-                    total: Duration::from_secs(60),
-                    started: Instant::now(),
-                    last_drawn: Instant::now() - IDLE - Duration::from_secs(10),
-                    animating: false,
-                    played_in: 0,
-                    complete: true,
-                    upgrading: false,
-                }),
-            );
-        }
-        sweep(&ctx);
-        assert_eq!(resident_frames(&ctx), 1, "the first sweep only marks");
-        cache(&ctx).0.lock().expect("animation cache").last_sweep =
-            Some(Instant::now() - IDLE - Duration::from_secs(1));
-        sweep(&ctx);
-        assert_eq!(resident_frames(&ctx), 0, "the second sweep frees it");
-    }
-
-    #[test]
     fn frames_arriving_between_sweeps_still_respect_the_budget() {
         let ctx = egui::Context::default();
         let old = PathBuf::from("old.gif");
@@ -1460,6 +1701,145 @@ mod tests {
         assert!(!old.complete, "it decodes again when it next plays");
     }
 
+    #[test]
+    fn a_visible_playing_animation_keeps_its_frames_past_the_budget() {
+        let ctx = egui::Context::default();
+        let old = PathBuf::from("visible-old.gif");
+        let new = PathBuf::from("visible-new.gif");
+        let count = MAX_RESIDENT_FRAMES / 2 + 1;
+        let old_frames: Vec<_> = (0..count)
+            .map(|index| {
+                (
+                    ctx.load_texture(
+                        format!("visible-old-{index}"),
+                        ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+                        TextureOptions::LINEAR,
+                    ),
+                    Duration::from_millis(50),
+                )
+            })
+            .collect();
+        {
+            let store = cache(&ctx);
+            let mut animations = store.0.lock().expect("animation cache");
+            animations.entries.insert(
+                old.clone(),
+                Entry::Ready(Playing {
+                    frames: old_frames,
+                    total: Duration::from_secs(10),
+                    started: Instant::now(),
+                    last_drawn: Instant::now(),
+                    animating: true,
+                    played_in: 0,
+                    complete: true,
+                    upgrading: false,
+                }),
+            );
+            // No sweep is due during this frame.
+            animations.last_sweep = Some(Instant::now());
+        }
+        inbox(&ctx).0.lock().expect("inbox").push((
+            new.clone(),
+            Some(Decoded {
+                frames: (0..count)
+                    .map(|_| {
+                        (
+                            ColorImage::new([1, 1], vec![egui::Color32::BLACK]),
+                            Duration::from_millis(50),
+                        )
+                    })
+                    .collect(),
+            }),
+            true,
+        ));
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(frame(ui, &new, rect, true), Frame::Ready(_)));
+            },
+        );
+        output.textures_delta.clear();
+        let store = cache(&ctx);
+        let animations = store.0.lock().expect("animation cache");
+        for path in [&old, &new] {
+            let Some(Entry::Ready(playing)) = animations.entries.get(path) else {
+                panic!("{} is not resident", path.display());
+            };
+            assert_eq!(
+                playing.frames.len(),
+                count,
+                "a playing animation on screen keeps every frame"
+            );
+        }
+        assert!(
+            animations
+                .entries
+                .values()
+                .map(|entry| match entry {
+                    Entry::Ready(playing) => playing.frames.len(),
+                    _ => 0,
+                })
+                .sum::<usize>()
+                > MAX_RESIDENT_FRAMES,
+            "the budget gives way to what is on screen"
+        );
+    }
+
+    /// Releasing a scope frees its textures and anything still to upload,
+    /// and leaves the shared cache alone.
+    #[test]
+    fn releasing_a_scope_drops_its_frames_and_only_its_own() {
+        let ctx = egui::Context::default();
+        let scope = egui::Id::new("released");
+        let default = egui::Id::new("default");
+        let decoded = || Decoded {
+            frames: vec![(
+                ColorImage::new([1, 1], vec![egui::Color32::WHITE]),
+                Duration::from_millis(50),
+            )],
+        };
+        let path = PathBuf::from("released.gif");
+        for id in [scope, default] {
+            let delivery = (path.clone(), Some(decoded()), true);
+            inbox_for(&ctx, id).0.lock().unwrap().push(delivery);
+        }
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(200.0, 200.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::vec2(50.0, 50.0), egui::Sense::hover());
+                assert!(matches!(
+                    frame_with_cache(ui, &path, rect, true, scope),
+                    Frame::Ready(_)
+                ));
+                assert!(matches!(frame(ui, &path, rect, true), Frame::Ready(_)));
+            },
+        );
+        output.textures_delta.clear();
+        let resident = |id| cache_for(&ctx, id).0.lock().unwrap().entries.len();
+        assert_eq!((resident(scope), resident(default)), (1, 1));
+
+        let late = (path.clone(), Some(decoded()), true);
+        inbox_for(&ctx, scope).0.lock().unwrap().push(late);
+        release(&ctx, scope);
+        assert_eq!((resident(scope), resident(default)), (0, 1));
+        assert!(inbox_for(&ctx, scope).0.lock().unwrap().is_empty());
+    }
+
     /// WhatsApp stickers can carry their EXIF metadata ahead of the animation.
     #[test]
     fn a_sticker_with_metadata_before_its_frames_still_plays() {
@@ -1479,63 +1859,6 @@ mod tests {
         assert!(webp_moves(&bytes));
         let decoded = decode(&path, MAX_FRAMES).expect("decodes");
         assert_eq!(decoded.frames.len(), 3);
-    }
-
-    /// An animated WebP of one 8x8 frame, laid out as WhatsApp's stickers
-    /// often are (`VP8X`, `ANIM`, one `ANMF`). libwebp's encoder writes a
-    /// still for a single frame, so the chunks are put together here.
-    fn one_frame_animation(dir: &Path, name: &str) -> PathBuf {
-        let still = dir.join("still-frame.webp");
-        image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 40, 90, 255]))
-            .save(&still)
-            .expect("saves");
-        let bitstream = std::fs::read(&still).expect("reads")[12..].to_vec();
-        let chunk = |tag: &[u8], payload: &[u8]| {
-            let mut chunk = tag.to_vec();
-            chunk.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-            chunk.extend_from_slice(payload);
-            if payload.len() % 2 == 1 {
-                chunk.push(0);
-            }
-            chunk
-        };
-        let side = [7u8, 0, 0];
-        let header = [&[0x12u8, 0, 0, 0][..], &side, &side].concat();
-        // Background colour and loop count.
-        let anim = [0u8; 6];
-        // Offset, size, 100 ms and no blending, then the frame itself.
-        let frame = [&[0u8; 6][..], &side, &side, &[100, 0, 0, 0], &bitstream].concat();
-        let body = [
-            &b"WEBP"[..],
-            &chunk(b"VP8X", &header),
-            &chunk(b"ANIM", &anim),
-            &chunk(b"ANMF", &frame),
-        ]
-        .concat();
-        let mut file = b"RIFF".to_vec();
-        file.extend_from_slice(&(body.len() as u32).to_le_bytes());
-        file.extend_from_slice(&body);
-        let path = dir.join(name);
-        std::fs::write(&path, file).expect("writes");
-        path
-    }
-
-    /// A one-frame animation says it moves, so the sticker is drawn as an
-    /// animation; it must still give its picture rather than leave the
-    /// sticker's placeholder in the bubble.
-    #[test]
-    fn a_one_frame_animation_decodes_to_its_frame() {
-        let dir = std::env::temp_dir().join(format!("zapfast-one-frame-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).expect("dir");
-        let path = one_frame_animation(&dir, "one.webp");
-        let bytes = std::fs::read(&path).expect("reads");
-        assert!(webp_moves(&bytes[..bytes.len().min(64)]));
-        for limit in [1, MAX_FRAMES] {
-            let decoded = decode(&path, limit).expect("decodes");
-            assert_eq!(decoded.frames.len(), 1);
-            assert_eq!(decoded.frames[0].0.size, [8, 8]);
-        }
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -1721,106 +2044,6 @@ mod tests {
         assert_eq!(playing.frames.len(), 3);
         drop(animations);
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    /// A hovered sticker plays round and round, not once.
-    #[test]
-    fn a_playing_sticker_loops() {
-        let dir = tempfile::tempdir().expect("temp");
-        let paths = vec![animated_webp(dir.path(), "loop.webp", 3)];
-        let ctx = egui::Context::default();
-        settle(&ctx, &paths, false);
-        let mut shown = Vec::new();
-        let deadline = Instant::now() + Duration::from_secs(20);
-        // Three frames of 40 ms: a loop takes 120 ms.
-        let mut loops = 0;
-        while loops < 4 {
-            assert!(Instant::now() < deadline, "it played {loops} loops");
-            let complete = |ctx: &egui::Context| {
-                matches!(
-                    cache(ctx).0.lock().expect("cache").entries.get(&paths[0]),
-                    Some(Entry::Ready(playing)) if playing.complete
-                )
-            };
-            let was_complete = complete(&ctx);
-            if let Frame::Ready(texture) = &draw_all(&ctx, &paths, true)[0]
-                && was_complete
-            {
-                let id = texture.id();
-                if shown.last() != Some(&id) {
-                    if shown.len() >= 3 && shown.first() == Some(&id) {
-                        loops += 1;
-                    }
-                    shown.push(id);
-                }
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-
-    /// Stickers in a chat loop on their own, as many as fit the allowance,
-    /// and the ones playing keep playing instead of evicting each other.
-    #[test]
-    fn stickers_on_screen_play_on_their_own_within_the_allowance() {
-        let dir = tempfile::tempdir().expect("temp");
-        let per_file = 60;
-        let fit = AUTOPLAY_FRAMES / per_file as usize;
-        let paths: Vec<_> = (0..fit + 2)
-            .map(|index| animated_webp(dir.path(), &format!("chat-{index}.webp"), per_file))
-            .collect();
-        let ctx = egui::Context::default();
-        let draw = || {
-            let mut shown = Vec::new();
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(800.0, 200.0),
-                    )),
-                    ..Default::default()
-                },
-                |ui| {
-                    ui.horizontal(|ui| {
-                        for path in &paths {
-                            let (rect, _) = ui
-                                .allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                            shown.push(match autoplay(ui, path, rect, true, false) {
-                                Frame::Ready(texture) => Some(texture.id()),
-                                _ => None,
-                            });
-                        }
-                    });
-                },
-            );
-            output.textures_delta.clear();
-            shown
-        };
-        // Each sticker starts once the one before it knows its length.
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while !paths.iter().take(fit).all(|path| {
-            matches!(
-                cache(&ctx).0.lock().expect("cache").entries.get(path),
-                Some(Entry::Ready(playing)) if playing.complete
-            )
-        }) {
-            assert!(Instant::now() < deadline, "the stickers never all played");
-            draw();
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let mut seen = vec![HashSet::new(); paths.len()];
-        for _ in 0..60 {
-            for (index, shown) in draw().into_iter().enumerate() {
-                seen[index].insert(shown.expect("a sticker fell back to its placeholder"));
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        for (index, ids) in seen.iter().enumerate() {
-            if index < fit {
-                assert!(ids.len() > 2, "sticker {index} showed {} frames", ids.len());
-            } else {
-                assert_eq!(ids.len(), 1, "sticker {index} beyond the allowance played");
-            }
-        }
     }
 
     #[test]

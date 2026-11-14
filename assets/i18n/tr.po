@@ -1,12 +1,12 @@
-# Turkish translation of Zeus.
+# Turkish translation of the Zeus navigation pilot.
 # Distributed under the same MIT license as Zeus.
 msgid ""
 msgstr ""
 "Project-Id-Version: Zeus\n"
 "Report-Msgid-Bugs-To: https://github.com/crmne/zapfast/issues/new?"
 "template=translation.yml\n"
-"POT-Creation-Date: 2026-10-23 16:22+0200\n"
-"PO-Revision-Date: 2026-10-02 03:00+0300\n"
+"POT-Creation-Date: 2026-11-01 20:11+0100\n"
+"PO-Revision-Date: 2026-10-30 02:00+0300\n"
 "Last-Translator: Barış Berke Çetin <brsberkectn@gmail.com>\n"
 "Language-Team: Turkish\n"
 "Language: tr\n"
@@ -790,7 +790,6 @@ msgstr "Yeni grup"
 msgid "Add contact"
 msgstr "Kişi ekle"
 
-#
 #: src/ui/dialogs.rs:505
 msgid "Forward message"
 msgstr "Mesajı ilet"
@@ -830,7 +829,6 @@ msgid_plural "{count} recipients selected"
 msgstr[0] "{count} alıcı seçildi"
 msgstr[1] "{count} alıcı seçildi"
 
-#
 #: src/ui/dialogs.rs:738
 msgid "Review recipients"
 msgstr "Alıcıları gözden geçir"
@@ -936,10 +934,10 @@ msgid ""
 "your phone. Afterwards, remove the old Zeus entry under Linked devices on "
 "your phone."
 msgstr ""
-"Zeus okunamayan arşivinizi ayrı bir dosya olarak saklar, yenisini "
-"oluşturur ve sizden tekrar bağlamanızı ister. Tekrar bağlandığınızda son "
-"geçmiş telefonunuzdan geri gelir. Ardından telefonunuzda Bağlı cihazlar "
-"altındaki eski Zeus kaydını kaldırın."
+"Zeus okunamayan arşivinizi ayrı bir dosya olarak saklar, yenisini oluşturur "
+"ve sizden tekrar bağlamanızı ister. Tekrar bağlandığınızda son geçmiş "
+"telefonunuzdan geri gelir. Ardından telefonunuzda Bağlı cihazlar altındaki "
+"eski Zeus kaydını kaldırın."
 
 #: src/ui/dialogs.rs:1277
 msgid ""
@@ -1072,21 +1070,23 @@ msgstr ""
 
 #: src/ui/dialogs.rs:1480
 msgid "Reset the invite link?"
-msgstr ""
+msgstr "Davet bağlantısı sıfırlansın mı?"
 
 #: src/ui/dialogs.rs:1486
 msgid ""
 "The current link will stop working, and nobody can join with it any more. A "
 "new link replaces it."
 msgstr ""
+"Mevcut bağlantı çalışmayı durdurur ve artık hiç kimse bu bağlantıyla "
+"katılamaz. Yerine yeni bir bağlantı oluşturulur."
 
 #: src/ui/dialogs.rs:1495 src/ui/info.rs:1608
 msgid "Reset link"
-msgstr ""
+msgstr "Bağlantıyı sıfırla"
 
 #: src/ui/dialogs.rs:1512
 msgid "Remove from the group?"
-msgstr ""
+msgstr "Gruptan çıkarılsın mı?"
 
 #: src/ui/dialogs.rs:1518
 #, rust-format
@@ -1094,6 +1094,8 @@ msgid ""
 "{name} will no longer receive messages from {group}. You can add them again "
 "later."
 msgstr ""
+"{name} artık {group} grubundan mesaj almayacak. Daha sonra tekrar "
+"ekleyebilirsiniz."
 
 #: src/ui/dialogs.rs:1561
 msgid "Leave this channel?"
@@ -1205,11 +1207,9 @@ msgid "Custom title bar"
 msgstr "Özel başlık çubuğu"
 
 #: src/ui/settings.rs:424
-msgid ""
-"Draw Zeus's own title bar and window buttons instead of the desktop's."
+msgid "Draw Zeus's own title bar and window buttons instead of the desktop's."
 msgstr ""
-"Masaüstünün yerine Zeus'in kendi başlık çubuğunu ve pencere düğmelerini "
-"çiz."
+"Masaüstünün yerine Zeus'in kendi başlık çubuğunu ve pencere düğmelerini çiz."
 
 #: src/ui/settings.rs:430 src/ui/rail.rs:293
 msgid "Chats"
@@ -1338,11 +1338,9 @@ msgid "Show when you are typing"
 msgstr "Yazıyor bilgisini göster"
 
 #: src/ui/settings.rs:600
-msgid ""
-"Could not load your account privacy. Trying again when Zeus reconnects."
+msgid "Could not load your account privacy. Trying again when Zeus reconnects."
 msgstr ""
-"Hesap gizliliğiniz yüklenemedi. Zeus yeniden bağlandığında tekrar "
-"denenecek."
+"Hesap gizliliğiniz yüklenemedi. Zeus yeniden bağlandığında tekrar denenecek."
 
 #: src/ui/settings.rs:605
 msgid "Connect to WhatsApp to change your account privacy."
@@ -1382,8 +1380,7 @@ msgstr "Güncellemeleri denetle"
 
 #: src/ui/settings.rs:688
 msgid "Asks GitHub once a day, sending only the Zeus version."
-msgstr ""
-"Günde bir kez yalnızca Zeus sürümünü göndererek GitHub'ı kontrol eder."
+msgstr "Günde bir kez yalnızca Zeus sürümünü göndererek GitHub'ı kontrol eder."
 
 #: src/ui/settings.rs:693
 msgid "Download updates automatically"
@@ -1391,8 +1388,8 @@ msgstr "Güncellemeleri otomatik indir"
 
 #: src/ui/settings.rs:696
 msgid ""
-"You still choose when to restart. Package managers and Flatpak update "
-"Zeus themselves."
+"You still choose when to restart. Package managers and Flatpak update Zeus "
+"themselves."
 msgstr ""
 "Yeniden başlatma zamanını yine siz seçersiniz. Paket yöneticileri ve "
 "Flatpak, Zeus'i kendileri günceller."
@@ -1560,8 +1557,8 @@ msgstr "Kilitlenme süresi"
 
 #: src/ui/settings.rs:937
 msgid ""
-"Time without using Zeus, also counted while it is in the tray. "
-"Ctrl+Shift+L locks it at once."
+"Time without using Zeus, also counted while it is in the tray. Ctrl+Shift+L "
+"locks it at once."
 msgstr ""
 "Zeus kullanılmadan geçen süre (sistem tepsisindeyken de sayılır). "
 "Ctrl+Shift+L anında kilitler."
@@ -1976,17 +1973,17 @@ msgstr "Gelen arama"
 #: src/app/calls.rs:613
 #, rust-format
 msgid ""
-"{caller} is calling {group}. Zeus can't join group calls yet: answer on "
-"your phone."
+"{caller} is calling {group}. Zeus can't join group calls yet: answer on your "
+"phone."
 msgstr ""
-"{caller}, {group} grubunu arıyor. Zeus henüz grup aramalarına "
-"katılamıyor: telefonunuzdan yanıtlayın."
+"{caller}, {group} grubunu arıyor. Zeus henüz grup aramalarına katılamıyor: "
+"telefonunuzdan yanıtlayın."
 
 #: src/app/calls.rs:621
 #, rust-format
 msgid ""
-"{caller} is calling you and others. Zeus can't join group calls yet: "
-"answer on your phone."
+"{caller} is calling you and others. Zeus can't join group calls yet: answer "
+"on your phone."
 msgstr ""
 "{caller} sizi ve başkalarını arıyor. Zeus henüz grup aramalarına "
 "katılamıyor: telefonunuzdan yanıtlayın."
@@ -2153,7 +2150,6 @@ msgstr ""
 "Gönderilmedi: tek seferlik görüntüleme aynı anda yalnızca bir fotoğraf için "
 "kullanılabilir."
 
-#
 #: src/app.rs:6861
 msgid "A selected chat is no longer writable"
 msgstr "Seçilen sohbetlerden birine artık mesaj gönderilemiyor"
@@ -2173,7 +2169,7 @@ msgstr "Zeus'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız
 
 #: src/app.rs:8272
 msgid "Invite link copied"
-msgstr ""
+msgstr "Davet bağlantısı kopyalandı"
 
 #. Translators: an announcement from an account that is not on screen:
 #. the account's name, then what it announced.
@@ -2184,14 +2180,14 @@ msgstr "{}: {}"
 
 #: src/app.rs:8649
 msgid "The old link no longer works. Here is a new one."
-msgstr ""
+msgstr "Eski bağlantı artık çalışmıyor. İşte yeni bağlantı."
 
 #: src/app.rs:8691
 #, rust-format
 msgid "{count} person added to the group"
 msgid_plural "{count} people added to the group"
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{count} kişi gruba eklendi"
+msgstr[1] "{count} kişi gruba eklendi"
 
 #: src/app.rs:9095
 msgid "App lock password saved"
@@ -2738,20 +2734,20 @@ msgstr "Açıklama"
 
 #: src/ui/info.rs:566 src/ui/info.rs:1691
 msgid "Group permissions"
-msgstr ""
+msgstr "Grup izinleri"
 
 #: src/ui/info.rs:741 src/ui/new_group.rs:69
 msgid "Add members"
-msgstr ""
+msgstr "Üye ekle"
 
 #: src/ui/info.rs:795
 #, rust-format
 msgid "Options for {name}"
-msgstr ""
+msgstr "{name} için seçenekler"
 
 #: src/ui/info.rs:847
 msgid "Group admin"
-msgstr ""
+msgstr "Grup yöneticisi"
 
 #: src/ui/info.rs:975
 #, rust-format
@@ -2818,35 +2814,35 @@ msgstr "Bağlantılar"
 
 #: src/ui/info.rs:1546
 msgid "Invite via link"
-msgstr ""
+msgstr "Bağlantıyla davet et"
 
 #: src/ui/info.rs:1556
 msgid "Getting the link…"
-msgstr ""
+msgstr "Bağlantı alınıyor…"
 
 #: src/ui/info.rs:1593
 msgid "Copy link"
-msgstr ""
+msgstr "Bağlantıyı kopyala"
 
 #: src/ui/info.rs:1657
 msgid "Make group admin"
-msgstr ""
+msgstr "Grup yöneticisi yap"
 
 #: src/ui/info.rs:1661
 msgid "Dismiss as admin"
-msgstr ""
+msgstr "Yöneticilikten çıkar"
 
 #: src/ui/info.rs:1665
 msgid "Remove from group"
-msgstr ""
+msgstr "Gruptan çıkar"
 
 #: src/ui/info.rs:1730
 msgid "Admins can:"
-msgstr ""
+msgstr "Yöneticiler şunları yapabilir:"
 
 #: src/ui/info.rs:1732
 msgid "Members can:"
-msgstr ""
+msgstr "Üyeler şunları yapabilir:"
 
 #: src/ui/info.rs:1875
 msgid "Change group photo"
@@ -2922,7 +2918,7 @@ msgstr[1] "{count} seçildi"
 #: src/ui/new_group.rs:149
 msgctxt "add group members"
 msgid "Add"
-msgstr ""
+msgstr "Ekle"
 
 #: src/ui/new_group.rs:151
 msgid "Next"
@@ -2958,67 +2954,68 @@ msgstr "Grup oluşturuluyor…"
 
 #: src/group_admin.rs:60
 msgid "Edit group settings"
-msgstr ""
+msgstr "Grup ayarlarını düzenle"
 
 #: src/group_admin.rs:61
 msgid "Send new messages"
-msgstr ""
+msgstr "Yeni mesaj gönder"
 
 #: src/group_admin.rs:62
 msgid "Add other members"
-msgstr ""
+msgstr "Diğer üyeleri ekle"
 
 #: src/group_admin.rs:63
 msgid "Approve new members"
-msgstr ""
+msgstr "Yeni üyeleri onayla"
 
 #: src/group_admin.rs:73
 msgid "Change the group's name, photo, description and disappearing messages."
 msgstr ""
+"Grubun adını, fotoğrafını, açıklamasını ve süreli mesajları değiştirebilme."
 
 #: src/group_admin.rs:75
 msgid "Write in the group."
-msgstr ""
+msgstr "Grupta yazabilme."
 
 #: src/group_admin.rs:76
 msgid "Add people to the group."
-msgstr ""
+msgstr "Gruba kişi ekleyebilme."
 
 #: src/group_admin.rs:79
 msgid "When turned on, admins must approve anyone who wants to join."
-msgstr ""
+msgstr "Açıldığında, katılmak isteyen herkesi yöneticiler onaylamalıdır."
 
 #: src/group_admin.rs:216
 msgid "Connect to WhatsApp to change the group."
-msgstr ""
+msgstr "Grubu değiştirmek için WhatsApp'a bağlanın."
 
 #: src/group_admin.rs:217
 msgid "WhatsApp did not answer in time. Try again."
-msgstr ""
+msgstr "WhatsApp zamanında yanıt vermedi. Tekrar deneyin."
 
 #: src/group_admin.rs:218
 msgid "Only group admins can do that."
-msgstr ""
+msgstr "Bunu yalnızca grup yöneticileri yapabilir."
 
 #: src/group_admin.rs:219
 msgid "Too many changes at once. Try again later."
-msgstr ""
+msgstr "Aynı anda çok fazla değişiklik yapıldı. Daha sonra tekrar deneyin."
 
 #: src/group_admin.rs:220
 msgid "Could not change the group. Try again."
-msgstr ""
+msgstr "Grup değiştirilemedi. Tekrar deneyin."
 
 #: src/group_admin.rs:228
 msgid "Connect to WhatsApp to see the invite link."
-msgstr ""
+msgstr "Davet bağlantısını görmek için WhatsApp'a bağlanın."
 
 #: src/group_admin.rs:229
 msgid "Only group admins can see the invite link."
-msgstr ""
+msgstr "Davet bağlantısını yalnızca grup yöneticileri görebilir."
 
 #: src/group_admin.rs:230
 msgid "Could not get the invite link."
-msgstr ""
+msgstr "Davet bağlantısı alınamadı."
 
 #: src/group_admin.rs:291
 #, rust-format
@@ -3026,36 +3023,38 @@ msgid ""
 "{names} could not be added to the group. Their privacy settings may not "
 "allow it. You can send them the invite link."
 msgstr ""
+"{names} gruba eklenemedi. Gizlilik ayarları buna izin vermiyor olabilir. "
+"Kendilerine davet bağlantısını gönderebilirsiniz."
 
 #: src/group_admin.rs:295
 #, rust-format
 msgid "{names} left the group recently and cannot be added back yet."
-msgstr ""
+msgstr "{names} yakın zamanda gruptan ayrıldı ve henüz tekrar eklenemiyor."
 
 #: src/group_admin.rs:297
 #, rust-format
 msgid "The group is full. {names} could not be added."
-msgstr ""
+msgstr "Grup dolu. {names} eklenemedi."
 
 #: src/group_admin.rs:298
 #, rust-format
 msgid "{names} could not be added to the group."
-msgstr ""
+msgstr "{names} gruba eklenemedi."
 
 #: src/group_admin.rs:308
 #, rust-format
 msgid "{name} is now a group admin."
-msgstr ""
+msgstr "{name} artık bir grup yöneticisi."
 
 #: src/group_admin.rs:309
 #, rust-format
 msgid "{name} is no longer a group admin."
-msgstr ""
+msgstr "{name} artık bir grup yöneticisi değil."
 
 #: src/group_admin.rs:310
 #, rust-format
 msgid "{name} was removed from the group."
-msgstr ""
+msgstr "{name} gruptan çıkarıldı."
 
 #~ msgid "Back to the chats"
 #~ msgstr "Sohbetlere dön"
@@ -3075,3 +3074,124 @@ msgstr ""
 
 #~ msgid "Channel"
 #~ msgstr "Kanal"
+
+#, fuzzy, rust-format
+#~ msgid "{name} turned off disappearing messages"
+#~ msgstr "Süreli mesajlar"
+
+#~ msgid "Locked chats"
+#~ msgstr "Kilitli sohbetler"
+
+#, fuzzy
+#~ msgid "recording audio…"
+#~ msgstr "Oy gönderiliyor…"
+
+#~ msgid "Delete chat"
+#~ msgstr "Sohbeti sil"
+
+#~ msgid "Mark as read"
+#~ msgstr "Okundu olarak işaretle"
+
+#~ msgid "Mark as unread"
+#~ msgstr "Okunmadı olarak işaretle"
+
+#~ msgid "Unpin"
+#~ msgstr "Sabitlemeyi kaldır"
+
+#~ msgid "Pin to top"
+#~ msgstr "Başa sabitle"
+
+#~ msgid "Unarchive"
+#~ msgstr "Arşivden çıkar"
+
+#~ msgid "Archive"
+#~ msgstr "Arşivle"
+
+#~ msgid "Unlock chat"
+#~ msgstr "Sohbet kilidini aç"
+
+#~ msgid "Lock chat"
+#~ msgstr "Sohbeti kilitle"
+
+#~ msgid "Info"
+#~ msgstr "Bilgi"
+
+#~ msgid "Default"
+#~ msgstr "Varsayılan"
+
+#~ msgid "System sound"
+#~ msgstr "Sistem sesi"
+
+#~ msgid "No sound"
+#~ msgstr "Ses yok"
+
+#~ msgid "Custom"
+#~ msgstr "Özel"
+
+#~ msgid "Notification sound"
+#~ msgstr "Bildirim sesi"
+
+#~ msgid "8 hours"
+#~ msgstr "8 saat"
+
+#~ msgid "1 week"
+#~ msgstr "1 hafta"
+
+#~ msgid "Always"
+#~ msgstr "Her zaman"
+
+#~ msgid "Your chats appear on the left as they load."
+#~ msgstr "Sohbetleriniz yüklendikçe solda görünecektir."
+
+#~ msgid "Select a chat on the left."
+#~ msgstr "Soldan bir sohbet seçin."
+
+#~ msgid "More"
+#~ msgstr "Daha fazla"
+
+#~ msgid "Close chat"
+#~ msgstr "Sohbeti kapat"
+
+#, fuzzy
+#~ msgid "You blocked this contact"
+#~ msgstr "Bu kanaldan ayrıldınız"
+
+#: src/ui/conversation.rs:1530
+msgid "Channels are read-only in ZapFast"
+msgstr "ZapFast'te kanallar salt okunurdur"
+
+#: src/ui/settings.rs:703
+msgid "Asks GitHub once a day, sending only the ZapFast version."
+msgstr ""
+"Günde bir kez yalnızca ZapFast sürümünü göndererek GitHub'ı kontrol eder."
+
+#: src/app.rs:4907 src/app.rs:8029
+msgid "ZapFast can't join group calls yet: open the link on your phone."
+msgstr ""
+"ZapFast henüz grup aramalarına katılamıyor: bağlantıyı telefonunuzda açın."
+
+#: src/app.rs:5740
+msgid "Not sent: ZapFast is not connected to WhatsApp."
+msgstr "Gönderilmedi: ZapFast WhatsApp'a bağlı değil."
+
+#: src/app.rs:9279 src/ui/labels.rs:257
+#, rust-format
+msgid "You have {limit} labels, the most ZapFast keeps."
+msgstr "ZapFast'in tutabileceği maksimum sınır olan {limit} etikete ulaştınız."
+
+#: src/ui/image_preview.rs:738
+msgid "This image could not be displayed in ZapFast."
+msgstr "Bu görüntü ZapFast'te gösterilemedi."
+
+#: src/ui/lock.rs:17
+msgid "ZapFast is locked"
+msgstr "ZapFast kilitli"
+
+#: src/ui/mod.rs:579
+#, rust-format
+msgid "ZapFast {version} is available"
+msgstr "ZapFast {version} sürümü mevcut"
+
+#: src/ui/update.rs:25 src/ui/update.rs:38
+msgid "Update ZapFast"
+msgstr "ZapFast'i Güncelle"

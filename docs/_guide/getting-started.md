@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: Install Zeus, link your phone, and load chat history.
+description: Install ZapFast, link your phone, and load chat history.
 nav_order: 2
 ---
 
@@ -19,7 +19,7 @@ zapfast
 ```
 
 On Linux, `cargo install` puts the binary on your `PATH` but does not add a
-launcher entry. To get one (Zeus under your application launcher, with its
+launcher entry. To get one (ZapFast under your application launcher, with its
 own icon and no terminal), install a release build instead:
 
 ```sh
@@ -57,7 +57,10 @@ The packaged desktop entry is `packaging/applications/zapfast.desktop`;
 
 ## Link with your phone
 
-Zeus links as a companion device, like WhatsApp Web. Start it and either:
+On first launch, ZapFast follows your system appearance. Choose another theme
+in **Settings > Appearance**; ZapFast remembers your choice.
+
+ZapFast links as a companion device, like WhatsApp Web. Start it and either:
 
 - scan the QR code with your phone (WhatsApp, **Settings**, **Linked
   devices**, **Link a device**). The phone's camera app also reads the code
@@ -66,7 +69,7 @@ Zeus links as a companion device, like WhatsApp Web. Start it and either:
   phone.
 
 The link survives restarts. Your phone does not need to stay on the same
-network or be online to read messages already stored in Zeus.
+network or be online to read messages already stored in ZapFast.
 
 Several numbers can stay linked in one window. Click your own picture at the
 bottom of the rail beside the chat list to switch between them or to add
@@ -74,14 +77,18 @@ another (**Settings >
 Account > Add account** works too); a dot on it means another number has
 unread chats. `Ctrl+Shift+A` (Command+Shift+A on macOS) switches to the next
 number. Each number keeps its own keys, archive, media, and
-notification, receipt, download, and wallpaper settings.
+notification, receipt, download, and wallpaper settings. To silence a number
+without unlinking it, click the bell beside it in the switcher: it stays
+connected and its chats stay readable, but it sends no desktop notifications
+until you click the bell again. A muted number shows a crossed-out bell there,
+and its unread chats count toward neither the dot nor the app icon's badge.
 
 ## Message history
 
 After linking, the phone sends recent history. The chat list appears within
-seconds, and messages can take a few minutes to finish loading. Zeus stores
+seconds, and messages can take a few minutes to finish loading. ZapFast stores
 new messages in its own archive. When you scroll past the stored history,
-Zeus asks your phone for older messages. The phone must be online.
+ZapFast asks your phone for older messages. The phone must be online.
 
 ## Try it in your own chat
 

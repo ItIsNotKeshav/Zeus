@@ -1688,6 +1688,8 @@ pub fn icon_button(
         let scale = 1.0 - 0.08 * press;
         paint_icon(ui, icon, rect, size * scale, tint);
     }
+    #[cfg(any(test, feature = "demo"))]
+    crate::ui::focus::name_button(ui.ctx(), tooltip, response.id);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response
@@ -1718,6 +1720,8 @@ pub fn circle_button(
         let icon_rect = egui::Rect::from_center_size(rect.center(), Vec2::splat(icon_size));
         icon.image(icon_color, icon_size).paint_at(ui, icon_rect);
     }
+    #[cfg(any(test, feature = "demo"))]
+    crate::ui::focus::name_button(ui.ctx(), tooltip, response.id);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if tooltip.is_empty() {
         response
@@ -1916,6 +1920,22 @@ pub fn logo(ui: &egui::Ui, center: egui::Pos2, diameter: f32, disc: Color32, gly
         .paint_at(ui, icon_rect);
 }
 
+/// A button's label on one line. egui lays right-to-left text out in logical
+/// order, so such a label is put in visual order or it reads backwards. Only
+/// then is the shared galley copied: buttons are drawn every frame.
+pub(crate) fn button_label(
+    ui: &egui::Ui,
+    label: &str,
+    font: egui::FontId,
+    color: Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    if label.chars().any(crate::bidi::is_rtl) {
+        crate::bidi::reorder_rtl_runs(std::sync::Arc::make_mut(&mut galley));
+    }
+    galley
+}
+
 /// A pill-shaped text button: filled for the primary action, outlined otherwise.
 pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: bool) -> Response {
     let font = semibold(13.0);
@@ -1924,7 +1944,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     } else {
         palette.text
     };
-    let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    let galley = button_label(ui, label, font, color);
     let padding = Vec2::new(18.0, 8.0);
     let size = galley.size() + padding * 2.0;
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
@@ -1984,7 +2004,7 @@ pub fn soft_button(
 ) -> Response {
     let font = medium(13.0);
     let color = if active { palette.accent } else { palette.text };
-    let galley = ui.painter().layout_no_wrap(label.to_string(), font, color);
+    let galley = button_label(ui, label, font, color);
     let icon_size = 15.0;
     let icon_width = if icon.is_some() { icon_size + 6.0 } else { 0.0 };
     let padding = Vec2::new(12.0, 7.0);
@@ -2194,6 +2214,41 @@ pub fn paint_spinner(ui: &egui::Ui, rect: egui::Rect, size: f32, color: Color32)
         .collect();
     ui.painter()
         .add(egui::Shape::line(points, Stroke::new(2.0, color)));
+}
+
+/// A ring filled to `fraction` of the way round, or a spinner while how far
+/// it has got is unknown.
+pub fn paint_progress(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    size: f32,
+    fraction: Option<f32>,
+    color: Color32,
+) {
+    let Some(fraction) = fraction else {
+        paint_spinner(ui, rect, size, color);
+        return;
+    };
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let radius = size / 2.0 - 2.0;
+    ui.painter().circle_stroke(
+        rect.center(),
+        radius,
+        Stroke::new(2.0, color.gamma_multiply(0.3)),
+    );
+    ui.painter().add(egui::Shape::line(
+        crate::video::arc(rect.center(), radius, fraction),
+        Stroke::new(2.0, color),
+    ));
+}
+
+/// [`paint_progress`] in space of its own, like [`spinner`].
+pub fn progress(ui: &mut egui::Ui, size: f32, fraction: Option<f32>, color: Color32) -> Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+    paint_progress(ui, rect, size, fraction, color);
+    response
 }
 
 /// Truncated single-line text.
