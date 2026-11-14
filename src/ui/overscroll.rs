@@ -1,7 +1,8 @@
-//! The chat's springy overscroll, as on Android: a touchpad swipe that runs
-//! on past the newest message or the oldest one pulls the rows beyond their
-//! place against a growing resistance, and when the fingers lift (and the
-//! touchpad's glide dies down) they spring back with a slight bounce.
+//! The chat's rubber band, as on a phone: a touchpad swipe that runs on
+//! past the newest message or the oldest one pulls the rows with the
+//! finger, resisting more the further they go, and holds there while the
+//! finger stays down. When the finger lifts they snap back. The glide or
+//! momentum that follows the lift does not keep pulling.
 //!
 //! Only precise scrolling stretches the list: a touchpad or a touch screen
 //! reports its distance in points, a mouse wheel in lines and never
@@ -12,20 +13,25 @@
 use crate::motion::Spring;
 use egui::Rect;
 
-/// The release: a shade over a third of a second, bouncing a little, in
-/// step with the app's other springs.
-pub(crate) const SPRING: Spring = Spring::new(0.3, 0.2);
+/// How quickly the rows return once the finger lifts. Short, with a little
+/// give, so the band snaps home instead of easing for a third of a second.
+pub(crate) const SPRING: Spring = Spring::new(0.22, 0.12);
 
-/// The furthest the rows stretch, in points.
+/// The furthest the rows stretch, in points. The band approaches this and
+/// does not reach it.
 pub(crate) const MAX: f32 = 56.0;
 
-/// How much of a swipe the first stretch takes; it falls to nothing at
-/// [`MAX`].
+/// How freely the first point of a pull moves. It falls off as the rows
+/// near [`MAX`].
 const PULL: f32 = 0.55;
 
-/// How long after the last precise wheel event a swipe counts as live,
-/// for the frames between events.
-const LIVE: f64 = 0.35;
+/// How long a platform that never says the finger lifted may pause before
+/// the band lets go. A frame or two between events is not a lift.
+const HOLD: f64 = 0.15;
+
+/// A press this soon after a lift is the momentum phase starting, not a
+/// new finger.
+const COAST_START: f64 = 0.12;
 
 /// Nearer rest than this, and slower, the stretch is over.
 const REST_POSITION: f32 = 0.25;
@@ -56,12 +62,61 @@ pub(crate) fn read_wheel(input: &egui::InputState, list: Rect) -> Wheel {
     {
         return Wheel::default();
     }
-    Wheel {
-        precise: input.raw.events.iter().any(|event| {
-            matches!(event, egui::Event::MouseWheel { unit, delta, .. } if is_precise(*unit, delta.y))
-        }),
-        delta: input.smooth_scroll_delta.y,
+    let mut precise = false;
+    let mut began = false;
+    let mut lifted = false;
+    for event in &input.raw.events {
+        let egui::Event::MouseWheel {
+            unit, delta, phase, ..
+        } = event
+        else {
+            continue;
+        };
+        if is_precise(*unit, delta.y) {
+            precise = true;
+        }
+        match phase {
+            egui::TouchPhase::Start => {
+                // A start after the finger lifted, in the same frame, is the
+                // momentum phase beginning.
+                if !lifted {
+                    began = true;
+                }
+            }
+            egui::TouchPhase::End | egui::TouchPhase::Cancel => {
+                lifted = true;
+                began = false;
+            }
+            egui::TouchPhase::Move => {}
+        }
     }
+    Wheel {
+        precise,
+        delta: input.smooth_scroll_delta.y,
+        began,
+        lifted,
+    }
+}
+
+/// Where a pull of `raw` points lands, resisting more as it nears [`MAX`].
+fn rubber(raw: f32) -> f32 {
+    let x = raw.abs();
+    if x == 0.0 {
+        return 0.0;
+    }
+    let band = (1.0 - 1.0 / (x * PULL / MAX + 1.0)) * MAX;
+    band.copysign(raw)
+}
+
+/// The pull that [`rubber`] would draw at `position`, so a finger that
+/// lands again mid-snap continues from what is on screen.
+fn inverse_rubber(position: f32) -> f32 {
+    let y = position.abs().min(MAX * 0.98);
+    if y < 0.01 {
+        return 0.0;
+    }
+    let raw = MAX / PULL * (1.0 / (1.0 - y / MAX) - 1.0);
+    raw.copysign(position)
 }
 
 /// Which ends of the list the view is at.
@@ -88,6 +143,10 @@ pub(crate) struct Wheel {
     pub precise: bool,
     /// The frame's smoothed scroll, positive when the content moves down.
     pub delta: f32,
+    /// A finger pressed this frame, and not the momentum that follows a lift.
+    pub began: bool,
+    /// The finger lifted this frame.
+    pub lifted: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -95,8 +154,21 @@ pub(crate) struct Overscroll {
     /// How far below its place the rows are drawn; negative above it.
     position: f32,
     velocity: f32,
+    /// The finger's travel past the edge, before the band resists it.
+    raw: f32,
     time: Option<f64>,
-    live_until: f64,
+    /// The finger is down and the band follows it. Frames with no delta hold.
+    tracking: bool,
+    /// The platform said the finger went down, so a pause is not a lift.
+    held: bool,
+    /// The finger has lifted. Later precise deltas are momentum.
+    coasting: bool,
+    /// When the gesture last moved, for a platform that never says it lifted.
+    moved_at: f64,
+    /// A press before this time, after a lift, is momentum beginning.
+    ignore_begin_until: f64,
+    /// Momentum counts as finished once this time passes with no more of it.
+    coast_until: f64,
     edges: Edges,
 }
 
@@ -112,7 +184,12 @@ impl Overscroll {
 
     pub fn store(self, ctx: &egui::Context, chat: &str) {
         ctx.data_mut(|data| {
-            if self.position == 0.0 && self.velocity == 0.0 && self.edges == Edges::default() {
+            if self.position == 0.0
+                && self.velocity == 0.0
+                && !self.coasting
+                && !self.held
+                && self.edges == Edges::default()
+            {
                 data.remove::<Self>(Self::id(chat));
             } else {
                 data.insert_temp(Self::id(chat), self);
@@ -134,11 +211,24 @@ impl Overscroll {
     pub fn clear(&mut self) {
         self.position = 0.0;
         self.velocity = 0.0;
+        self.raw = 0.0;
+        self.tracking = false;
+        self.held = false;
     }
 
     /// Records where the view ended this frame.
     pub fn set_edges(&mut self, edges: Edges) {
         self.edges = edges;
+    }
+
+    fn release(&mut self, now: f64) {
+        self.tracking = false;
+        self.held = false;
+        self.coasting = true;
+        self.ignore_begin_until = now + COAST_START;
+        self.coast_until = now + HOLD;
+        self.raw = 0.0;
+        self.velocity = 0.0;
     }
 
     /// Brings the stretch to `now`. A pass egui redoes has the same time
@@ -150,21 +240,59 @@ impl Overscroll {
             None => 0.0,
         };
         self.time = Some(now);
-        if wheel.precise {
-            self.live_until = now + LIVE;
+        if self.coasting {
+            if wheel.precise {
+                self.coast_until = now + HOLD;
+            } else if now >= self.coast_until {
+                self.coasting = false;
+            }
+        }
+        if wheel.began && !wheel.lifted && now >= self.ignore_begin_until {
+            self.coasting = false;
+            self.held = true;
+            self.tracking = true;
+            self.raw = inverse_rubber(self.position);
+        } else if wheel.precise && !self.coasting && !self.held && !self.tracking {
+            self.tracking = true;
         }
         let outward =
             (wheel.delta > 0.0 && self.edges.top) || (wheel.delta < 0.0 && self.edges.bottom);
-        let stretched_same_way = self.position * wheel.delta > 0.0;
-        if self.live_until > now && wheel.delta != 0.0 && (outward || stretched_same_way) {
+        let follow = self.tracking && !self.coasting && wheel.precise && wheel.delta != 0.0;
+        if follow && (outward || self.raw != 0.0) {
             let before = self.position;
-            let room = (1.0 - self.position.abs() / MAX).max(0.0);
-            self.position = (self.position + wheel.delta * PULL * room * room).clamp(-MAX, MAX);
+            let before_raw = self.raw;
+            self.raw += wheel.delta;
+            if before_raw != 0.0 && before_raw.signum() != self.raw.signum() {
+                self.raw = 0.0;
+            }
+            self.raw = self.raw.clamp(-2000.0, 2000.0);
+            self.position = rubber(self.raw);
+            self.moved_at = now;
             self.velocity = if dt > 0.0 {
                 ((self.position - before) / dt as f32).clamp(-4000.0, 4000.0)
             } else {
                 0.0
             };
+            if wheel.lifted {
+                self.release(now);
+            }
+            return;
+        }
+        if wheel.lifted {
+            self.release(now);
+        } else if self.held || (self.tracking && now - self.moved_at < HOLD) {
+            return;
+        }
+        // The first frame away from the finger drops the pull's speed, so
+        // the band returns from where it is. Later frames keep the spring's
+        // own speed.
+        if self.tracking {
+            self.velocity = 0.0;
+        }
+        self.tracking = false;
+        self.held = false;
+        self.raw = 0.0;
+        if self.position == 0.0 && self.velocity == 0.0 {
             return;
         }
         (self.position, self.velocity) = SPRING.advance(self.position, self.velocity, dt);
@@ -191,6 +319,7 @@ mod tests {
         Wheel {
             precise: true,
             delta,
+            ..Wheel::default()
         }
     }
 
@@ -212,13 +341,44 @@ mod tests {
     }
 
     #[test]
+    fn a_quiet_frame_holds_the_band() {
+        let mut over = top();
+        over.advance(0.0, swipe(40.0));
+        let held = over.position();
+        assert!(held > 0.0);
+        over.advance(0.05, Wheel::default());
+        assert_eq!(over.position(), held);
+    }
+
+    #[test]
+    fn a_lift_snaps_back_and_momentum_does_not_keep_stretching() {
+        let mut over = top();
+        over.advance(0.0, swipe(80.0));
+        let stretched = over.position();
+        over.advance(
+            0.05,
+            Wheel {
+                lifted: true,
+                ..Wheel::default()
+            },
+        );
+        let after_lift = over.position();
+        assert!(after_lift < stretched);
+        over.advance(0.07, swipe(80.0));
+        assert!(
+            over.position() <= after_lift,
+            "momentum must not pull the band out again"
+        );
+    }
+
+    #[test]
     fn it_springs_back_and_comes_to_rest() {
         let mut over = top();
         for frame in 0..10 {
             over.advance(frame as f64 / 60.0, swipe(20.0));
         }
         assert!(over.position() > 10.0);
-        // The glide ends: no more events, past the live window.
+        // The finger has paused: no more events, past the hold.
         for frame in 10..240 {
             over.advance(frame as f64 / 60.0, Wheel::default());
         }
@@ -235,6 +395,7 @@ mod tests {
                 Wheel {
                     precise: false,
                     delta: 20.0,
+                    ..Wheel::default()
                 },
             );
         }
