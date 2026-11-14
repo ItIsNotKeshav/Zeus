@@ -101,6 +101,11 @@ const PHONE_BATCH: i32 = 50;
 const ON_DEMAND: i32 = 6;
 /// Maximum attachment-preview dimension.
 const THUMBNAIL_SIDE: u32 = 96;
+/// Maximum dimension of the picture a sent video carries. It stands in for
+/// the whole video in the bubble until the video plays, here and on the
+/// phone that receives it, so at [`THUMBNAIL_SIDE`] it showed as a smear of
+/// blocks. This is as large as the frame read from the video for it.
+const VIDEO_THUMBNAIL_SIDE: u32 = 320;
 /// WhatsApp's profile pictures are 640 pixels square.
 const PROFILE_PICTURE_SIDE: u32 = 640;
 /// Sticker download batch size for the picker.
@@ -12888,6 +12893,17 @@ fn thumbnail_jpeg(image: &image::DynamicImage) -> Option<Vec<u8>> {
     encode_jpeg(&small, 60).ok()
 }
 
+/// Builds the picture a sent video shows until it plays.
+fn video_thumbnail_jpeg(frame: image::RgbImage) -> Option<Vec<u8>> {
+    let frame = image::DynamicImage::ImageRgb8(frame);
+    let small = if frame.width().max(frame.height()) > VIDEO_THUMBNAIL_SIDE {
+        frame.thumbnail(VIDEO_THUMBNAIL_SIDE, VIDEO_THUMBNAIL_SIDE)
+    } else {
+        frame
+    };
+    encode_jpeg(&small, 70).ok()
+}
+
 tokio::task_local! {
     /// Where the upload of the file a task is sending reports its progress,
     /// set by [`follow_upload`] around the task's work.
@@ -13157,7 +13173,7 @@ async fn prepare_media(
         let thumbnail = poster
             .as_ref()
             .and_then(|poster| poster.picture.clone())
-            .and_then(|picture| thumbnail_jpeg(&image::DynamicImage::ImageRgb8(picture)));
+            .and_then(video_thumbnail_jpeg);
         let size_in_pixels = poster.as_ref().map(|poster| (poster.width, poster.height));
         let seconds = poster.as_ref().map(|poster| poster.seconds);
         let upload = upload_media(client, &mut bytes, MediaType::Video)
@@ -17811,6 +17827,25 @@ mod tests {
         let thumbnail = thumbnail_jpeg(&image).expect("thumbnail");
         let small = image::load_from_memory(&thumbnail).expect("decodes");
         assert!(small.width() <= THUMBNAIL_SIDE && small.height() <= THUMBNAIL_SIDE);
+    }
+
+    #[test]
+    fn a_sent_video_carries_a_picture_large_enough_for_its_bubble() {
+        // The frame read from a portrait video, as `animation::poster` gives it.
+        let frame = image::RgbImage::from_fn(320, 568, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8])
+        });
+        let thumbnail = video_thumbnail_jpeg(frame).expect("thumbnail");
+        let picture = image::load_from_memory(&thumbnail).expect("decodes");
+        assert_eq!((picture.width(), picture.height()), (180, 320));
+        assert!(picture.height() > THUMBNAIL_SIDE);
+        // It travels inside the message itself, so it stays small.
+        assert!(thumbnail.len() < 32 * 1024, "{} bytes", thumbnail.len());
+        // A smaller frame is sent as it is rather than enlarged.
+        let small = image::RgbImage::from_pixel(160, 90, image::Rgb([20, 90, 200]));
+        let thumbnail = video_thumbnail_jpeg(small).expect("thumbnail");
+        let picture = image::load_from_memory(&thumbnail).expect("decodes");
+        assert_eq!((picture.width(), picture.height()), (160, 90));
     }
 
     #[test]
