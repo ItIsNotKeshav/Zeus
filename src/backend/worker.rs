@@ -890,6 +890,7 @@ pub async fn run(
         link_previews_reading: false,
         preview_fetch: None,
         downloads: HashSet::new(),
+        hd_upgrades: HashSet::new(),
         download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
         download_turns: HashMap::new(),
         avatar_gate: Arc::new(tokio::sync::Semaphore::new(AVATAR_DOWNLOADS)),
@@ -1449,6 +1450,9 @@ struct Worker {
     stars_recovering: bool,
     /// Active attachment downloads by chat, message id, and carousel card.
     downloads: HashSet<(ChatId, String, Option<usize>)>,
+    /// Photos and videos whose HD copy arrived while their standard copy was
+    /// downloading: they are downloaded again, in HD, once that ends.
+    hd_upgrades: HashSet<(ChatId, String)>,
     /// Lets only a few automatic attachment downloads run at once.
     download_gate: Arc<tokio::sync::Semaphore>,
     /// Automatic downloads that may still wait for their turn, so a click on
@@ -1604,10 +1608,12 @@ struct ParsedChat {
     poll_updates: Vec<HistoryPollUpdate>,
     reactions: Vec<HistoryReaction>,
     clips: Vec<HistoryClip>,
+    hd_copies: Vec<HistoryClip>,
     pins: Vec<HistoryPin>,
 }
 
-/// A motion photo's clip from history, filed for its photo.
+/// A motion photo's clip, or the HD copy of a photo or video, from history,
+/// filed for the message it belongs to.
 struct HistoryClip {
     parent: String,
     sender: Option<String>,
@@ -5073,6 +5079,10 @@ impl Worker {
             self.file_motion_clip(&chat, &parent, &sender, &clip);
             return;
         }
+        if let Some((parent, copy)) = hd_media(base) {
+            self.file_hd_copy(&chat, &parent, &sender, &copy);
+            return;
+        }
         let Some(mut content) = classify(message) else {
             return;
         };
@@ -6423,6 +6433,17 @@ impl Worker {
                     .unwrap_or_else(|| id.clone())
             };
             self.file_motion_clip(&id, &clip.parent, &sender, &clip.raw);
+        }
+        for copy in chat.hd_copies {
+            let sender = if copy.from_me {
+                self.me()
+            } else {
+                copy.sender
+                    .as_deref()
+                    .map(|sender| self.canonical_str(sender))
+                    .unwrap_or_else(|| id.clone())
+            };
+            self.file_hd_copy(&id, &copy.parent, &sender, &copy.raw);
         }
         if (metadata || existing.is_none())
             && let Some(snapshot_unread) = chat.unread
@@ -9856,6 +9877,15 @@ impl Worker {
                 return;
             }
         };
+        // The HD copy of a photo or video is what is downloaded when there is
+        // one; the standard copy stays the fallback if that fails.
+        let hd = card
+            .is_none()
+            .then(|| self.archive.hd_copy(&chat, &id).ok().flatten())
+            .flatten()
+            .and_then(|raw| wa::Message::decode_from_slice(&raw).ok())
+            .and_then(|copy| hd_downloadable(&base, &copy))
+            .filter(|(copy, _)| manual || !attachment_is_too_large(copy.file_length()));
         let (downloadable, mime, file_name): (Box<dyn Downloadable>, String, Option<String>) =
             if let Some(image) = base.image_message.as_option() {
                 (
@@ -9913,7 +9943,10 @@ impl Worker {
         } else {
             ATTACHMENT_DOWNLOAD_LIMIT
         };
-        let deadline = attachment_deadline(downloadable.file_length());
+        let mut deadline = attachment_deadline(downloadable.file_length());
+        if let Some((copy, _)) = &hd {
+            deadline += attachment_deadline(copy.file_length());
+        }
         // Keep metadata needed for one media re-upload request and retry.
         let media_key = base
             .image_message
@@ -10027,6 +10060,25 @@ impl Worker {
             let path = named
                 .unwrap_or_else(|| media_path(&dir, &chat, &cache_id, &mime, file_name.as_deref()));
             let result = with_attachment_deadline(deadline, async {
+                if let Some((copy, mime)) = &hd {
+                    let hd_path =
+                        media_path(&dir, &chat, &format!("{cache_id}{HD_SUFFIX}"), mime, None);
+                    match fetch_attachment(&client, &**copy, &dir, &hd_path, limit, false).await {
+                        Ok(hd_path) => {
+                            // The standard copy it replaces is no longer shown.
+                            // One in the reader's own folder is theirs to keep.
+                            if path != hd_path && !own_folder {
+                                let _ = tokio::fs::remove_file(&path).await;
+                            }
+                            return Ok(hd_path);
+                        }
+                        Err(error) => {
+                            log::info!(
+                                "an HD copy did not download ({error}); using the standard one"
+                            );
+                        }
+                    }
+                }
                 match fetch_attachment(&client, &*downloadable, &dir, &path, limit, keep_others)
                     .await
                 {
@@ -10101,6 +10153,37 @@ impl Worker {
         }
     }
 
+    /// Keeps the HD copy of a photo or video, which may not be here yet. One
+    /// already downloaded in standard quality, or on its way, is downloaded
+    /// again in HD; one not downloaded yet waits to be asked for as before.
+    fn file_hd_copy(&mut self, chat: &str, parent: &str, sender: &str, copy: &[u8]) {
+        match self.archive.put_hd_copy(chat, parent, sender, copy) {
+            Ok(true) => {}
+            Ok(false) => return,
+            Err(error) => {
+                log::warn!("could not store an HD copy: {error}");
+                return;
+            }
+        }
+        if self
+            .downloads
+            .contains(&(chat.to_owned(), parent.to_owned(), None))
+        {
+            self.hd_upgrades
+                .insert((chat.to_owned(), parent.to_owned()));
+            return;
+        }
+        let downloaded = self
+            .archive
+            .message(chat, parent)
+            .ok()
+            .flatten()
+            .and_then(|row| row.content.media().and_then(|media| media.path.clone()));
+        if downloaded.is_some_and(|path| !is_hd_path(&path)) {
+            self.download(chat.to_owned(), parent.to_owned());
+        }
+    }
+
     /// Downloads a motion photo's clip into the cache. It is fetched like any
     /// attachment: verified, under the size limit, and within the deadline.
     fn download_motion(&mut self, chat: ChatId, id: String) {
@@ -10154,6 +10237,9 @@ impl Worker {
         self.download_turns
             .remove(&(chat.clone(), id.clone(), card));
         let key = (chat.clone(), id.clone());
+        // Its HD copy arrived while the standard one was on its way.
+        let upgrade = (card.is_none() && self.hd_upgrades.remove(&key) && result.is_ok())
+            .then(|| key.clone());
         let for_picker = self.sticker_downloads.remove(&key);
         let clicked = self.sticker_clicked.remove(&key);
         let retried = self.sticker_retried.remove(&key);
@@ -10187,6 +10273,9 @@ impl Worker {
             // The next missing ones take the freed places.
             self.fetch_missing_stickers();
             self.picker_sticker_settled(result_ok);
+        }
+        if let Some((chat, id)) = upgrade {
+            self.download(chat, id);
         }
     }
 
@@ -12733,6 +12822,93 @@ fn hd_copy(base: &wa::Message) -> bool {
         )
 }
 
+/// What the cached file of an HD copy is named after, beside its message id.
+/// It survives [`sanitize`] unchanged, so [`is_hd_path`] finds it again.
+const HD_SUFFIX: &str = "_hd";
+
+/// Whether `path` is where an HD copy was downloaded to.
+fn is_hd_path(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with(HD_SUFFIX))
+}
+
+/// The id of the photo or video an HD copy belongs to, and the copy as a bare
+/// photo or video message: what a later download needs and nothing else.
+/// `None` for an HEVC copy, which is not decoded here, so the standard copy
+/// stays the one that plays.
+fn hd_media(base: &wa::Message) -> Option<(String, Vec<u8>)> {
+    use wa::context_info::PairedMediaType;
+    use wa::message_association::AssociationType;
+    if !hd_copy(base) {
+        return None;
+    }
+    let child = base
+        .associated_child_message
+        .as_option()?
+        .message
+        .as_option()?;
+    let association = |message: &wa::Message| {
+        message
+            .message_context_info
+            .as_option()?
+            .message_association
+            .as_option()
+            .cloned()
+    };
+    let hevc = [base, child].into_iter().any(|message| {
+        association(message).and_then(|association| association.association_type)
+            == Some(AssociationType::HEVC_VIDEO_DUAL_UPLOAD)
+    }) || child
+        .video_message
+        .as_option()
+        .and_then(|video| video.context_info.as_option())
+        .and_then(|context| context.paired_media_type)
+        == Some(PairedMediaType::HEVC_VIDEO_CHILD);
+    if hevc {
+        return None;
+    }
+    let parent = [base, child].into_iter().find_map(|message| {
+        association(message)?
+            .parent_message_key
+            .as_option()?
+            .id
+            .clone()
+            .filter(|id| !id.is_empty())
+    })?;
+    let mut copy = wa::Message::default();
+    if let Some(image) = child.image_message.as_option() {
+        copy.image_message = MessageField::some(image.clone());
+    } else {
+        let video = child.video_message.as_option()?;
+        copy.video_message = MessageField::some(video.clone());
+    }
+    Some((parent, copy.encode_to_vec()))
+}
+
+/// The HD `copy` of the photo or video in `base` as something to download,
+/// with its type. `None` unless both are photos or both are videos.
+fn hd_downloadable(
+    base: &wa::Message,
+    copy: &wa::Message,
+) -> Option<(Box<dyn Downloadable>, String)> {
+    if let (Some(_), Some(image)) = (
+        base.image_message.as_option(),
+        copy.image_message.as_option(),
+    ) {
+        let mime = image.mimetype.clone().unwrap_or_default();
+        return Some((Box::new(image.clone()), mime));
+    }
+    if let (Some(_), Some(video)) = (
+        base.video_message.as_option(),
+        copy.video_message.as_option(),
+    ) {
+        let mime = video.mimetype.clone().unwrap_or_default();
+        return Some((Box::new(video.clone()), mime));
+    }
+    None
+}
+
 /// The id of the photo a motion photo's clip belongs to, and the clip as a
 /// bare video message: what a later download needs and nothing else.
 fn motion_clip(base: &wa::Message) -> Option<(String, Vec<u8>)> {
@@ -13717,6 +13893,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
     let mut poll_updates = Vec::new();
     let mut reactions = Vec::new();
     let mut clips = Vec::new();
+    let mut hd_copies = Vec::new();
     let mut pins = Vec::new();
     let mut newest = 0;
     for entry in &conversation.messages {
@@ -13918,6 +14095,15 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
             });
             continue;
         }
+        if let Some((parent, raw)) = hd_media(base) {
+            hd_copies.push(HistoryClip {
+                parent,
+                sender,
+                from_me,
+                raw,
+            });
+            continue;
+        }
         let Some(mut content) = classify(message) else {
             diagnostics.unclassified += 1;
             continue;
@@ -14083,6 +14269,7 @@ fn parse_conversation(conversation: wa::Conversation) -> ParsedChat {
         messages,
         revoked,
         clips,
+        hd_copies,
         poll_updates,
         reactions,
         pins,
@@ -16248,6 +16435,161 @@ mod tests {
             classify(&copy(None, false)),
             Some(Content::Unsupported { .. })
         ));
+    }
+
+    /// The HD copy of a photo or video as it arrives beside the standard one.
+    fn hd_copy_of(
+        parent: Option<&str>,
+        association_type: wa::message_association::AssociationType,
+        video: bool,
+    ) -> wa::Message {
+        let mut proto = wa::Message::default();
+        proto.associated_child_message = MessageField::some({
+            let mut proto = wa::message::FutureProofMessage::default();
+            proto.message = MessageField::some({
+                let mut proto = wa::Message::default();
+                if video {
+                    proto.video_message = MessageField::some({
+                        let mut proto = wa::message::VideoMessage::default();
+                        proto.mimetype = Some("video/mp4".into());
+                        proto.file_length = Some(9_000_000);
+                        proto
+                    });
+                } else {
+                    proto.image_message = MessageField::some({
+                        let mut proto = wa::message::ImageMessage::default();
+                        proto.mimetype = Some("image/jpeg".into());
+                        proto
+                    });
+                }
+                proto
+            });
+            proto
+        });
+        proto.message_context_info = MessageField::some({
+            let mut proto = wa::MessageContextInfo::default();
+            proto.message_association = MessageField::some({
+                let mut proto = wa::MessageAssociation::default();
+                proto.association_type = Some(association_type);
+                if let Some(parent) = parent {
+                    proto.parent_message_key = MessageField::some({
+                        let mut proto = wa::MessageKey::default();
+                        proto.id = Some(parent.into());
+                        proto
+                    });
+                }
+                proto
+            });
+            proto
+        });
+        proto
+    }
+
+    #[test]
+    fn an_hd_copy_is_kept_for_the_photo_or_video_it_belongs_to() {
+        use wa::message_association::AssociationType;
+        let video = hd_copy_of(Some("clip"), AssociationType::HD_VIDEO_DUAL_UPLOAD, true);
+        let (parent, raw) = hd_media(&video).expect("an HD video");
+        assert_eq!(parent, "clip");
+        // Only the video itself is kept: what a download needs.
+        let kept = wa::Message::decode_from_slice(&raw).expect("decodes");
+        assert_eq!(
+            kept.video_message
+                .as_option()
+                .and_then(|video| video.file_length),
+            Some(9_000_000)
+        );
+        assert!(!kept.message_context_info.is_set());
+        let photo = hd_copy_of(Some("photo"), AssociationType::HD_IMAGE_DUAL_UPLOAD, false);
+        let (parent, raw) = hd_media(&photo).expect("an HD photo");
+        assert_eq!(parent, "photo");
+        let kept_photo = wa::Message::decode_from_slice(&raw).expect("decodes");
+        assert!(kept_photo.image_message.is_set());
+        // Without the id of its standard copy there is nothing to attach it to.
+        assert_eq!(
+            hd_media(&hd_copy_of(
+                None,
+                AssociationType::HD_VIDEO_DUAL_UPLOAD,
+                true
+            )),
+            None
+        );
+        // An HEVC copy is not played here, so the standard copy stays.
+        assert_eq!(
+            hd_media(&hd_copy_of(
+                Some("clip"),
+                AssociationType::HEVC_VIDEO_DUAL_UPLOAD,
+                true
+            )),
+            None
+        );
+        // Neither is shown as a message of its own.
+        assert_eq!(classify(&video), None);
+
+        // A copy replaces only media of its own kind.
+        let standard = |video: bool| {
+            let mut proto = wa::Message::default();
+            if video {
+                proto.video_message = MessageField::some(wa::message::VideoMessage::default());
+            } else {
+                proto.image_message = MessageField::some(wa::message::ImageMessage::default());
+            }
+            proto
+        };
+        let (copy, mime) = hd_downloadable(&standard(true), &kept).expect("video for video");
+        assert_eq!(mime, "video/mp4");
+        assert_eq!(copy.file_length(), Some(9_000_000));
+        assert!(hd_downloadable(&standard(false), &kept).is_none());
+        assert!(hd_downloadable(&standard(false), &kept_photo).is_some());
+        assert!(hd_downloadable(&standard(true), &kept_photo).is_none());
+
+        let dir = Path::new("/cache");
+        let hd = media_path(
+            dir,
+            "1@s.whatsapp.net",
+            &format!("ABC{HD_SUFFIX}"),
+            "video/mp4",
+            None,
+        );
+        assert!(is_hd_path(&hd));
+        assert!(!is_hd_path(&media_path(
+            dir,
+            "1@s.whatsapp.net",
+            "ABC",
+            "video/mp4",
+            None
+        )));
+    }
+
+    #[tokio::test]
+    async fn an_hd_copy_arriving_mid_download_is_fetched_once_that_ends() {
+        use wa::message_association::AssociationType;
+        let (mut worker, _events, _, _) = receipt_tests::worker();
+        let chat = "1@s.whatsapp.net";
+        let (parent, raw) = hd_media(&hd_copy_of(
+            Some("clip"),
+            AssociationType::HD_VIDEO_DUAL_UPLOAD,
+            true,
+        ))
+        .expect("an HD video");
+        // Nothing is downloading: the copy is kept and nothing else happens.
+        worker.file_hd_copy(chat, &parent, chat, &raw);
+        assert!(worker.hd_upgrades.is_empty());
+        assert!(worker.downloads.is_empty());
+        // The standard copy is on its way when a newer HD copy arrives.
+        worker
+            .downloads
+            .insert((chat.to_owned(), parent.clone(), None));
+        worker.file_hd_copy(chat, &parent, chat, b"newer");
+        assert!(
+            worker
+                .hd_upgrades
+                .contains(&(chat.to_owned(), parent.clone()))
+        );
+        // The same copy again, as history repeats it, asks for nothing more.
+        worker.hd_upgrades.clear();
+        worker.file_hd_copy(chat, &parent, chat, b"newer");
+        assert!(worker.hd_upgrades.is_empty());
     }
 
     #[tokio::test]
@@ -19258,6 +19600,7 @@ mod receipt_tests {
             stars_recovering: false,
             first_names_recovering: false,
             downloads: HashSet::new(),
+            hd_upgrades: HashSet::new(),
             download_gate: Arc::new(tokio::sync::Semaphore::new(AUTOMATIC_DOWNLOADS)),
             download_turns: HashMap::new(),
             avatar_gate: Arc::new(tokio::sync::Semaphore::new(AVATAR_DOWNLOADS)),
@@ -23847,6 +24190,7 @@ mod chat_removal_tests {
                     .collect(),
                 revoked: Vec::new(),
                 clips: Vec::new(),
+                hd_copies: Vec::new(),
                 poll_updates: Vec::new(),
                 reactions: Vec::new(),
                 pins: Vec::new(),
