@@ -118,6 +118,16 @@ CREATE TABLE IF NOT EXISTS motion_clips (
 CREATE TRIGGER IF NOT EXISTS delete_motion_clips AFTER DELETE ON messages BEGIN
     DELETE FROM motion_clips WHERE chat = OLD.chat AND parent = OLD.id;
 END;
+CREATE TABLE IF NOT EXISTS hd_copies (
+    chat TEXT NOT NULL,
+    parent TEXT NOT NULL,
+    sender TEXT NOT NULL,
+    raw BLOB NOT NULL,
+    PRIMARY KEY (chat, parent, sender)
+);
+CREATE TRIGGER IF NOT EXISTS delete_hd_copies AFTER DELETE ON messages BEGIN
+    DELETE FROM hd_copies WHERE chat = OLD.chat AND parent = OLD.id;
+END;
 CREATE INDEX IF NOT EXISTS messages_stickers ON messages (from_me, timestamp)
     WHERE json_extract(content, '$.kind') = 'sticker';
 CREATE INDEX IF NOT EXISTS messages_calls ON messages (timestamp)
@@ -1071,6 +1081,44 @@ impl Archive {
         self.connection
             .query_row(
                 "SELECT c.raw FROM motion_clips c
+                 JOIN messages m ON m.chat = c.chat AND m.id = c.parent AND m.sender = c.sender
+                 WHERE c.chat = ?1 AND c.parent = ?2",
+                params![chat, parent],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// Keeps the download keys of the HD copy of a photo or video, which may
+    /// not be here yet. Returns whether the copy is new or has changed.
+    pub fn put_hd_copy(&self, chat: &str, parent: &str, sender: &str, raw: &[u8]) -> Result<bool> {
+        if self.message_removed(chat, parent)? {
+            return Ok(false);
+        }
+        let known: Option<Vec<u8>> = self
+            .connection
+            .query_row(
+                "SELECT raw FROM hd_copies WHERE chat = ?1 AND parent = ?2 AND sender = ?3",
+                params![chat, parent, sender],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if known.as_deref() == Some(raw) {
+            return Ok(false);
+        }
+        self.connection.execute(
+            "INSERT OR REPLACE INTO hd_copies (chat, parent, sender, raw) VALUES (?1, ?2, ?3, ?4)",
+            params![chat, parent, sender, raw],
+        )?;
+        Ok(true)
+    }
+
+    /// The raw photo or video message of the HD copy of `parent`. Only the
+    /// sender of a photo or video can give it an HD copy.
+    pub fn hd_copy(&self, chat: &str, parent: &str) -> Result<Option<Vec<u8>>> {
+        self.connection
+            .query_row(
+                "SELECT c.raw FROM hd_copies c
                  JOIN messages m ON m.chat = c.chat AND m.id = c.parent AND m.sender = c.sender
                  WHERE c.chat = ?1 AND c.parent = ?2",
                 params![chat, parent],
@@ -2069,6 +2117,7 @@ impl Archive {
         for table in [
             "messages",
             "motion_clips",
+            "hd_copies",
             "group_receipts",
             "polls",
             "poll_history",
@@ -2714,7 +2763,7 @@ impl Archive {
     /// Clears all archived data during unlinking.
     pub fn clear(&self) -> Result<()> {
         self.connection.execute_batch(
-            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
+            "DELETE FROM poll_history; DELETE FROM poll_votes; DELETE FROM polls; DELETE FROM group_receipts; DELETE FROM messages; DELETE FROM stars; DELETE FROM motion_clips; DELETE FROM hd_copies; DELETE FROM chats; DELETE FROM chat_removals; DELETE FROM message_removals; DELETE FROM pending_message_removals; DELETE FROM contacts; DELETE FROM meta; DELETE FROM lids; DELETE FROM drafts; DELETE FROM local_chat_labels; DELETE FROM local_labels; DELETE FROM removed_recent_stickers; DELETE FROM favorite_stickers; DELETE FROM favorites; DELETE FROM favorite_changes;",
         )
     }
 }
@@ -4168,6 +4217,54 @@ pub(crate) mod tests {
         assert_eq!(left, 2);
     }
 
+    #[test]
+    fn only_the_sender_of_a_video_gives_it_an_hd_copy() {
+        let archive = Archive::in_memory().expect("archive");
+        let chat = "group@g.us";
+        archive.ensure_chat(chat, "Group").expect("chat");
+        let mut video = message(chat, "video", 100, false);
+        video.sender = "alice@s.whatsapp.net".into();
+        archive.insert_message(&video, None).expect("insert");
+        assert!(
+            archive
+                .put_hd_copy(chat, "video", "mallory@s.whatsapp.net", b"theirs")
+                .unwrap()
+        );
+        assert_eq!(archive.hd_copy(chat, "video").unwrap(), None);
+        assert!(
+            archive
+                .put_hd_copy(chat, "video", "alice@s.whatsapp.net", b"hers")
+                .unwrap()
+        );
+        assert_eq!(
+            archive.hd_copy(chat, "video").unwrap().as_deref(),
+            Some(&b"hers"[..])
+        );
+        // The same copy again, as history repeats it, is nothing new.
+        assert!(
+            !archive
+                .put_hd_copy(chat, "video", "alice@s.whatsapp.net", b"hers")
+                .unwrap()
+        );
+        // A copy that came first waits for its video, and leaves with it.
+        archive
+            .put_hd_copy(chat, "later", "alice@s.whatsapp.net", b"early")
+            .unwrap();
+        assert_eq!(archive.hd_copy(chat, "later").unwrap(), None);
+        video.id = "later".into();
+        archive.insert_message(&video, None).expect("insert");
+        assert_eq!(
+            archive.hd_copy(chat, "later").unwrap().as_deref(),
+            Some(&b"early"[..])
+        );
+        archive.delete_message(chat, "later").expect("delete");
+        let left: i64 = archive
+            .connection
+            .query_row("SELECT COUNT(*) FROM hd_copies", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(left, 2);
+    }
+
     fn furnished_chat(archive: &Archive, chat: &str, media: &Path) -> String {
         archive.ensure_chat(chat, "Somebody").expect("chat");
         archive
@@ -4195,6 +4292,9 @@ pub(crate) mod tests {
         archive
             .put_motion_clip(chat, "absent", chat, b"clip")
             .expect("motion clip");
+        archive
+            .put_hd_copy(chat, "absent", chat, b"copy")
+            .expect("HD copy");
         archive.set_unread(chat, 3).expect("unread");
         archive
             .connection
@@ -4218,9 +4318,10 @@ pub(crate) mod tests {
     }
 
     /// Every table keyed by chat besides `chats` itself.
-    const CHAT_TABLES: [&str; 8] = [
+    const CHAT_TABLES: [&str; 9] = [
         "messages",
         "motion_clips",
+        "hd_copies",
         "group_receipts",
         "polls",
         "poll_history",

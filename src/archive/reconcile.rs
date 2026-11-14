@@ -63,6 +63,23 @@ impl Archive {
                 AND (current.id IS NULL OR json_extract(current.content, '$.kind') = 'image')",
             params![source, target],
         )?;
+        transaction.execute(
+            "INSERT OR IGNORE INTO hd_copies (chat, parent, sender, raw)
+             SELECT ?2, c.parent,
+                CASE WHEN c.sender IN (?1, ?2) AND current.sender IN (?1, ?2)
+                    THEN current.sender
+                    WHEN c.sender = ?1 AND current.id IS NULL THEN ?2
+                    ELSE c.sender END, c.raw
+             FROM hd_copies c
+             LEFT JOIN messages original ON original.chat = ?1 AND original.id = c.parent
+             LEFT JOIN messages current ON current.chat = ?2 AND current.id = c.parent
+             WHERE c.chat = ?1 AND (original.id IS NULL OR current.id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM message_removals r WHERE r.chat = ?2 AND r.id = c.parent
+                    AND r.account = COALESCE((SELECT value FROM meta WHERE key = 'me_pn'), ''))
+                AND (current.id IS NULL
+                    OR json_extract(current.content, '$.kind') IN ('image', 'video'))",
+            params![source, target],
+        )?;
         // A canonical copy may predate the clip. Mark it only when the clip's
         // sender is the photo's sender (the two mapped ids are equivalent).
         transaction.execute(
