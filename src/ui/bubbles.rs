@@ -34,6 +34,15 @@ const CARD_RADIUS: f32 = 24.0;
 const HEADER: f32 = 56.0;
 /// An attachment's thumbnail above the reply field.
 const THUMB: f32 = 48.0;
+/// How long a bubble's glow breathes after a message arrives, before it
+/// settles to a steady light: three breaths. The window is not redrawn for
+/// it after that.
+const GLOW_BREATHING: f64 = 3.6;
+/// One breath of the glow, in seconds.
+const GLOW_BREATH: f64 = 1.2;
+/// How far the glow reaches past the bubble: inside [`PAD`].
+const GLOW_REACH: f32 = 9.0;
+const _: () = assert!(GLOW_REACH < PAD);
 /// How long after the window was moved or resized its position is read back
 /// as where the column is: the platform reports the new frame a little late.
 const SETTLE: f64 = 0.4;
@@ -291,9 +300,70 @@ fn lay_out_window(
     }
 }
 
+/// How strong a bubble's glow is, 0 to 1, `since` seconds after its unread
+/// count last rose: it breathes between dim and full for
+/// [`GLOW_BREATHING`], then rests at a steady light. `still` (a screen
+/// reader is attached) skips the breathing.
+fn glow_strength(since: f64, still: bool) -> f32 {
+    const REST: f32 = 0.6;
+    if still || since >= GLOW_BREATHING {
+        return REST;
+    }
+    // Starts and ends at the resting light, so settling shows no step.
+    let wave = (since / GLOW_BREATH * std::f64::consts::TAU).sin() as f32;
+    (REST + 0.4 * wave).clamp(0.2, 1.0)
+}
+
+/// The glow of a bubble whose chat has unread messages, in the accent,
+/// around `shown`: it breathes when a message arrives and then stays lit
+/// until the chat is read. Returns nothing to draw once `unread` is 0.
+fn paint_glow(
+    ctx: &egui::Context,
+    painter: &egui::Painter,
+    id: egui::Id,
+    shown: Rect,
+    unread: u32,
+    accent: egui::Color32,
+) {
+    let now = ctx.input(|input| input.time);
+    let key = id.with("glow");
+    // The count it last saw, and when that count last rose.
+    let (seen, since) = ctx
+        .data(|data| data.get_temp::<(u32, f64)>(key))
+        .unwrap_or((0, now));
+    let since = if unread > seen { now } else { since };
+    ctx.data_mut(|data| data.insert_temp(key, (unread, since)));
+    let lit = theme::animate(ctx, key.with("lit"), unread > 0, theme::MOTION_PANEL);
+    if lit <= 0.0 {
+        return;
+    }
+    let still = crate::motion::screen_reader_attached(ctx);
+    let elapsed = now - since;
+    if unread > 0 && !still && elapsed < GLOW_BREATHING {
+        ctx.request_repaint();
+    }
+    let strength = glow_strength(elapsed, still) * lit;
+    // Soft rings from the bubble's edge outward, each fainter than the last.
+    const RINGS: usize = 6;
+    let radius = shown.width() / 2.0;
+    for ring in 0..RINGS {
+        let t = (ring as f32 + 0.5) / RINGS as f32;
+        let alpha = strength * (1.0 - t).powi(2) * 0.55;
+        painter.circle_stroke(
+            shown.center(),
+            radius + t * GLOW_REACH,
+            Stroke::new(
+                GLOW_REACH / RINGS as f32 + 0.5,
+                accent.gamma_multiply(alpha),
+            ),
+        );
+    }
+}
+
 /// One bubble: the chat's picture on a shadow, growing a little under the
 /// pointer, ringed in the accent while its card is open, with the unread
-/// count on it and a close button that shows on hover.
+/// count on it and a close button that shows on hover. It glows in the
+/// accent while its chat has unread messages.
 fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool) {
     let ctx = ui.ctx().clone();
     let palette = app.palette;
@@ -335,6 +405,7 @@ fn bubble(app: &mut App, ui: &mut egui::Ui, chat: &str, centre: Pos2, open: bool
     layer.set_opacity(arrive);
     let painter = layer.painter().clone();
     painter.add(palette.float_shadow().as_shape(shown, shown.width() / 2.0));
+    paint_glow(&ctx, &painter, id, shown, known.unread, palette.accent);
     let picture = app.avatar(chat);
     super::widgets::paint_avatar(&layer, &palette, shown, &title, chat, picture.as_deref());
     if ring > 0.0 {
@@ -758,6 +829,71 @@ mod tests {
         fn bytes(&self) -> Result<Vec<u8>, String> {
             Ok(Vec::new())
         }
+    }
+
+    /// The glow breathes when a message arrives and then rests, with no
+    /// step where it settles, and stays inside the window's padding.
+    #[test]
+    fn the_glow_breathes_then_rests() {
+        let rest = glow_strength(GLOW_BREATHING + 1.0, false);
+        assert_eq!(glow_strength(0.0, false), rest, "it starts from rest");
+        assert!((glow_strength(GLOW_BREATHING - 1e-6, false) - rest).abs() < 1e-3);
+        let peak = glow_strength(GLOW_BREATH / 4.0, false);
+        let trough = glow_strength(GLOW_BREATH * 3.0 / 4.0, false);
+        assert!(peak > rest && trough < rest, "{peak} {rest} {trough}");
+        assert_eq!(
+            glow_strength(GLOW_BREATH / 4.0, true),
+            rest,
+            "still: no breathing"
+        );
+        let breaths = GLOW_BREATHING / GLOW_BREATH;
+        assert!((breaths - breaths.round()).abs() < 1e-9, "whole breaths");
+    }
+
+    /// A bubble asks for frames only while its glow breathes: lit and
+    /// resting, or with nothing unread, it leaves the window asleep.
+    #[test]
+    fn a_glowing_bubble_stops_asking_for_frames() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("glow-test");
+        let repaints = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = repaints.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            if info.delay.is_zero() {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        });
+        let asked = |time: f64, unread: u32| {
+            let raw = egui::RawInput {
+                time: Some(time),
+                ..Default::default()
+            };
+            // Let the fade-in spring of an earlier frame finish first.
+            let before = repaints.load(std::sync::atomic::Ordering::Relaxed);
+            let mut output = ctx.run_ui(raw, |ui| {
+                let shown = Rect::from_center_size(pos2(50.0, 50.0), Vec2::splat(BUBBLE));
+                paint_glow(
+                    ui.ctx(),
+                    ui.painter(),
+                    id,
+                    shown,
+                    unread,
+                    egui::Color32::GREEN,
+                );
+            });
+            output.textures_delta.clear();
+            repaints.load(std::sync::atomic::Ordering::Relaxed) > before
+        };
+        // A new context asks for a frame or two of its own.
+        asked(0.0, 0);
+        asked(0.1, 0);
+        assert!(!asked(0.2, 0), "nothing unread, nothing drawn");
+        assert!(asked(1.0, 1), "a message arrived: it breathes");
+        assert!(asked(2.0, 1));
+        // Long past the breathing and the fade-in.
+        asked(1.0 + GLOW_BREATHING + 5.0, 1);
+        assert!(!asked(1.0 + GLOW_BREATHING + 6.0, 1), "lit and at rest");
+        assert!(asked(1.0 + GLOW_BREATHING + 7.0, 2), "another message");
     }
 
     /// A bubble opens, draws its card, takes a dropped file and goes away.
