@@ -2080,14 +2080,19 @@ fn uploads_sample(app: &mut App) {
         let id = app.next_upload;
         app.next_upload += 1;
         let total: u64 = 2_480_000;
+        let sent = (total as f64 * fraction) as u64;
+        let total = if fraction > 0.0 { total } else { 0 };
         app.uploads.push(crate::model::Upload {
             id,
+            gate: crate::model::UploadGate::default(),
             chat: chat.clone(),
             kind,
             name: name.to_owned(),
             preview,
-            sent: (total as f64 * fraction) as u64,
-            total: if fraction > 0.0 { total } else { 0 },
+            sent,
+            total,
+            percent: (fraction * 100.0) as u8,
+            seconds_left: None,
         });
     }
 }
@@ -3832,7 +3837,11 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     gate: crate::model::UploadGate::default(),
                     id: 1,
                     chat: chat.into(),
+                    kind: crate::model::UploadKind::Document,
                     name: "Quarterly report.pdf".into(),
+                    preview: None,
+                    sent: 0,
+                    total: 0,
                     percent: 62,
                     seconds_left: Some(18),
                 });

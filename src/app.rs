@@ -4827,7 +4827,11 @@ impl App {
                     id,
                     gate,
                     chat,
+                    kind: crate::model::UploadKind::Document,
                     name,
+                    preview: None,
+                    sent: 0,
+                    total: 0,
                     percent,
                     seconds_left,
                 }),
@@ -7382,12 +7386,15 @@ impl App {
         self.next_upload += 1;
         self.uploads.push(crate::model::Upload {
             id,
+            gate: crate::model::UploadGate::default(),
             chat: chat.clone(),
             kind,
             name,
             preview,
             sent: 0,
             total: 0,
+            percent: 0,
+            seconds_left: None,
         });
         id
     }

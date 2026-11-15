@@ -1962,17 +1962,92 @@ impl UploadGate {
     }
 }
 
-/// A file going out, for the strip above its chat's composer. An empty name
-/// is a pasted picture.
+/// A file going out, for the strip above its chat's composer and the row at
+/// the end of the transcript. An empty name is a pasted picture.
 #[derive(Clone, Debug)]
 pub struct Upload {
-    pub id: u64,
+    pub id: UploadId,
     pub gate: UploadGate,
     pub chat: ChatId,
+    pub kind: UploadKind,
+    /// The file's name, or nothing for a pasted picture.
     pub name: String,
+    pub preview: Option<UploadPreview>,
+    /// Encrypted bytes on their way, of `total`; nothing is known before the
+    /// upload begins, while the file is read, converted and encrypted.
+    pub sent: u64,
+    pub total: u64,
     pub percent: u8,
     /// Roughly how long the rest takes, once the pace is known.
     pub seconds_left: Option<u32>,
+}
+
+impl Upload {
+    /// How much of it is uploaded, once the upload has begun.
+    ///
+    /// Byte counts win. A progress report that only has a percent still fills
+    /// the ring.
+    pub fn fraction(&self) -> Option<f32> {
+        if self.total > 0 {
+            Some((self.sent as f64 / self.total as f64).clamp(0.0, 1.0) as f32)
+        } else if self.percent > 0 {
+            Some(f32::from(self.percent) / 100.0)
+        } else {
+            None
+        }
+    }
+}
+
+/// What an upload is sent as.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UploadKind {
+    Image,
+    Video,
+    Audio,
+    Document,
+    /// A sticker, which flies in from the picker and waits in place.
+    Sticker,
+}
+
+impl UploadKind {
+    /// What a file at `path` goes as: a document when asked, otherwise by
+    /// its type, as the backend decides.
+    pub fn of(path: &std::path::Path, document: bool) -> Self {
+        if document {
+            return Self::Document;
+        }
+        let mime = mime_guess2::from_path(path).first_or_octet_stream();
+        match mime.type_().as_str() {
+            // The pictures the backend converts to a photo; others go as
+            // documents.
+            "image"
+                if matches!(
+                    mime.subtype().as_str(),
+                    "jpeg" | "png" | "webp" | "bmp" | "tiff"
+                ) =>
+            {
+                Self::Image
+            }
+            "video" => Self::Video,
+            "audio" => Self::Audio,
+            _ => Self::Document,
+        }
+    }
+}
+
+/// The picture an upload shows while it goes.
+#[derive(Clone, Debug)]
+pub enum UploadPreview {
+    /// A picture file on disk.
+    File(PathBuf),
+    /// A pasted picture, as straight-alpha RGBA.
+    Pixels {
+        width: usize,
+        height: usize,
+        rgba: std::sync::Arc<Vec<u8>>,
+        /// The composer's thumbnail of it, when it made one.
+        texture: Option<egui::TextureHandle>,
+    },
 }
 
 /// Decoded straight-alpha RGBA image bytes ready for the clipboard.
