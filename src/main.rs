@@ -1142,11 +1142,7 @@ mod log_filter_tests {
             log::Level::Error,
             "arboard::platform::linux"
         ));
-        assert!(matches(
-            filter,
-            log::Level::Warn,
-            "zeus::backend::worker"
-        ));
+        assert!(matches!(filter, log::Level::Warn, "zeus::backend::worker"));
     }
 
     /// Every log names the face chosen for each fallback script, without
