@@ -5115,6 +5115,8 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 || album.is_some_and(|items| items.iter().any(|item| item.id == id))
                         };
                         let row_is_anchor = view.anchor.is_some_and(row_contains);
+                        let current = cursor == Some(index);
+                        let notices_before = placed;
                         let before = ui.cursor().top();
                         let new_day = previous.is_none_or(|previous| {
                             crate::util::day_key(previous.timestamp)
@@ -5482,214 +5484,80 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 {
                                     keyboard_navigation.set(true);
                                 }
-                                if let (Some(selected), Some(response), Some((slot, top))) =
-                                    (&selection, &response, band)
-                                {
-                                    let checked = selected.contains(&message.id);
-                                    let selectable = crate::app::can_select(&message.content);
-                                    // While selecting, a click anywhere on the row picks
-                                    // the message: its check box, text, links and media,
-                                    // and the strip beside it, from one edge of the view
-                                    // to the other (#241). Registered after the row, so
-                                    // it takes those clicks, and drags, which sweep
-                                    // messages rather than text (#246).
-                                    // Half the gap to each neighbour, so the space
-                                    // between rows picks one of them too.
-                                    let row = Rect::from_x_y_ranges(
-                                        viewport.x_range(),
-                                        top..=ui.min_rect().bottom(),
-                                    )
-                                    .expand2(vec2(0.0, ui.spacing().item_spacing.y / 2.0));
-                                    let pick = ui.interact(
-                                        row,
-                                        bubble_id(&chat.id, &message.id).with("pick"),
-                                        if selectable {
-                                            Sense::click_and_drag()
-                                        } else {
-                                            Sense::hover()
-                                        },
-                                    );
-                                    let fill = if checked {
-                                        palette.accent.gamma_multiply(0.16)
-                                    } else if pick.hovered() {
-                                        palette.text.gamma_multiply(0.05)
+                                theme::reveal_focus(&pick);
+                                theme::focus_outline(ui, pick.id, check.expand(3.0), 4.0);
+                                pick.widget_info(|| {
+                                    let sender = if message.from_me {
+                                        crate::i18n::gettext(view.locale, "You").into_owned()
                                     } else {
-                                        Color32::TRANSPARENT
-                                    };
-                                    ui.painter()
-                                        .set(slot, egui::Shape::rect_filled(row, 0.0, fill));
-                                    // Beside the bubble as drawn this frame: the
-                                    // response carries the rect it had the frame before.
-                                    let drawn = ui
-                                        .ctx()
-                                        .data(|data| {
-                                            data.get_temp::<Rect>(
-                                                bubble_id(&chat.id, &message.id).with("rect"),
-                                            )
-                                        })
-                                        .unwrap_or(response.rect);
-                                    let check = Rect::from_center_size(
-                                        pos2(
-                                            ui.max_rect().left() + SELECT_BOX / 2.0,
-                                            drawn.center().y,
-                                        ),
-                                        Vec2::splat(SELECT_BOX),
-                                    );
-                                    // Only forwardable messages get a box.
-                                    if selectable {
-                                        select_box(ui, &palette, check, checked);
-                                        if pick.has_focus()
-                                            && ui.ctx().data(|data| {
-                                                data.get_temp::<bool>(theme::keyboard_focus_id())
-                                                    .unwrap_or(false)
-                                            })
-                                        {
-                                            keyboard_navigation.set(true);
-                                        }
-                                        theme::reveal_focus(&pick);
-                                        theme::focus_outline(ui, pick.id, check.expand(3.0), 4.0);
-                                        pick.widget_info(|| {
-                                            let sender = if message.from_me {
-                                                crate::i18n::gettext(view.locale, "You")
-                                                    .into_owned()
-                                            } else {
-                                                (view.names_or)(
-                                                    &message.sender,
-                                                    message.sender_name.as_deref(),
-                                                )
-                                            };
-                                            let summary: String = message
-                                                .content
-                                                .summary_in(view.locale)
-                                                .chars()
-                                                .take(120)
-                                                .collect();
-                                            let label = crate::i18n::gettext(
-                                                view.locale,
-                                                "Select message from {sender}, {time}: {summary}",
-                                            )
-                                            .replace("{sender}", &sender)
-                                            .replace(
-                                                "{time}",
-                                                &crate::util::moment_stamp(
-                                                    view.locale,
-                                                    message.timestamp,
-                                                ),
-                                            )
-                                            .replace("{summary}", &summary);
-                                            egui::WidgetInfo::selected(
-                                                egui::WidgetType::Checkbox,
-                                                pick.enabled(),
-                                                checked,
-                                                label,
-                                            )
-                                        });
-                                        #[cfg(any(test, feature = "demo"))]
-                                        ui.ctx().data_mut(|data| {
-                                            data.insert_temp(
-                                                bubble_id(&chat.id, &message.id).with("check"),
-                                                check,
-                                            );
-                                        });
-                                    }
-                                    if pick.drag_started() {
-                                        actions.push(Action::SweepMessages {
-                                            anchor: message.id.clone(),
-                                            to: message.id.clone(),
-                                        });
-                                    }
-                                    let keyboard_clicked = (pick.clicked() && pick.has_focus()
-                                        || response.clicked() && response.has_focus())
-                                        && ui.input(|input| {
-                                            input.raw.events.iter().any(|event| {
-                                                matches!(
-                                                    event,
-                                                    egui::Event::Key {
-                                                        key: egui::Key::Enter,
-                                                        pressed: true,
-                                                        ..
-                                                    }
-                                                )
-                                            })
-                                        });
-                                    theme::focus_outline(ui, response.id, check.expand(3.0), 4.0);
-                                    let popup = egui::Popup::menu(&pick)
-                                        .open_memory(
-                                            if pick.secondary_clicked() || keyboard_clicked {
-                                                Some(egui::SetOpenCommand::Bool(true))
-                                            } else {
-                                                None
-                                            },
+                                        (view.names_or)(
+                                            &message.sender,
+                                            message.sender_name.as_deref(),
                                         )
-                                        .frame(widgets::menu_frame(&palette));
-                                    let popup = if keyboard_clicked {
-                                        popup.at_position(row.left_top() + vec2(12.0, 8.0))
-                                    } else {
-                                        popup.at_pointer_fixed()
                                     };
-                                    popup.show(|ui| {
-                                        selection_menu(
-                                            ui,
-                                            &view,
-                                            &conversation.messages,
-                                            selected,
-                                            &mut actions,
-                                        );
-                                    });
-                                    if selectable
-                                        && !keyboard_clicked
-                                        && (response.clicked() || pick.clicked())
-                                    {
-                                        let shift = ui.input(|input| input.modifiers.shift);
-                                        actions.push(if shift {
-                                            Action::SelectRange(message.id.clone())
-                                        } else {
-                                            Action::ToggleSelected(message.id.clone())
-                                        });
-                                    }
-                                } else if let Some(response) = &response
-                                    && response.clicked()
-                                    && ui.input(|input| input.modifiers.command)
-                                    && crate::app::can_select(&message.content)
-                                {
-                                    // Ctrl-click (Command-click on macOS) starts a selection.
-                                    actions.push(Action::SelectMessage(message.id.clone()));
-                                }
-                                if current && let Some(response) = &response {
-                                    // The list's focus ring goes around its
-                                    // current message, the bubble only, as a
-                                    // focused bubble's own ring does.
-                                    if list_focused {
-                                        theme::focus_outline(ui, list_id, response.rect, 10.0);
-                                    }
-                                    if reveal {
-                                        // As `theme::reveal_focus`: at once, with
-                                        // room for the ring.
-                                        let mut target = response.clone();
-                                        target.rect = target.rect.expand(4.0);
-                                        target.scroll_to_me_animation(
-                                            None,
-                                            egui::style::ScrollAnimation::none(),
-                                        );
-                                    }
-                                }
-                                if let Some(response) = response
-                                    && row_is_anchor
-                                {
-                                    response.scroll_to_me(Some(Align::Center));
-                                    anchored = true;
-                                }
-                                ui.unique_id()
-                            },
-                        );
-                        // Built only while a screen reader is attached; the
-                        // probe returns None when AccessKit is off, so idle
-                        // frames pay nothing for the label.
-                        if ui.ctx().accesskit_node_builder(row.inner, |_| ()).is_some() {
-                            let sender = if message.from_me {
-                                crate::i18n::gettext(view.locale, "You").into_owned()
+                                    let summary: String = message
+                                        .content
+                                        .summary_in(view.locale)
+                                        .chars()
+                                        .take(120)
+                                        .collect();
+                                    let label = crate::i18n::gettext(
+                                        view.locale,
+                                        "Select message from {sender}, {time}: {summary}",
+                                    )
+                                    .replace("{sender}", &sender)
+                                    .replace(
+                                        "{time}",
+                                        &crate::util::moment_stamp(view.locale, message.timestamp),
+                                    )
+                                    .replace("{summary}", &summary);
+                                    egui::WidgetInfo::selected(
+                                        egui::WidgetType::Checkbox,
+                                        pick.enabled(),
+                                        checked,
+                                        label,
+                                    )
+                                });
+                                #[cfg(any(test, feature = "demo"))]
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(
+                                        bubble_id(&chat.id, &message.id).with("check"),
+                                        check,
+                                    );
+                                });
+                            }
+                            if pick.drag_started() {
+                                actions.push(Action::SweepMessages {
+                                    anchor: message.id.clone(),
+                                    to: message.id.clone(),
+                                });
+                            }
+                            let keyboard_clicked = (pick.clicked() && pick.has_focus()
+                                || response.clicked() && response.has_focus())
+                                && ui.input(|input| {
+                                    input.raw.events.iter().any(|event| {
+                                        matches!(
+                                            event,
+                                            egui::Event::Key {
+                                                key: egui::Key::Enter,
+                                                pressed: true,
+                                                ..
+                                            }
+                                        )
+                                    })
+                                });
+                            theme::focus_outline(ui, response.id, check.expand(3.0), 4.0);
+                            let popup = egui::Popup::menu(&pick)
+                                .open_memory(if pick.secondary_clicked() || keyboard_clicked {
+                                    Some(egui::SetOpenCommand::Bool(true))
+                                } else {
+                                    None
+                                })
+                                .frame(widgets::menu_frame(&palette));
+                            let popup = if keyboard_clicked {
+                                popup.at_position(row.left_top() + vec2(12.0, 8.0))
                             } else {
-                                (view.names_or)(&message.sender, message.sender_name.as_deref())
+                                popup.at_pointer_fixed()
                             };
                             popup.show_frosted(ui.ctx(), |ui| {
                                 selection_menu(
@@ -5699,6 +5567,65 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                     selected,
                                     &mut actions,
                                 );
+                            });
+                            if selectable
+                                && !keyboard_clicked
+                                && (response.clicked() || pick.clicked())
+                            {
+                                let shift = ui.input(|input| input.modifiers.shift);
+                                actions.push(if shift {
+                                    Action::SelectRange(message.id.clone())
+                                } else {
+                                    Action::ToggleSelected(message.id.clone())
+                                });
+                            }
+                        } else if let Some(response) = &response
+                            && response.clicked()
+                            && ui.input(|input| input.modifiers.command)
+                            && crate::app::can_select(&message.content)
+                        {
+                            // Ctrl-click (Command-click on macOS) starts a selection.
+                            actions.push(Action::SelectMessage(message.id.clone()));
+                        }
+                        if current && let Some(response) = &response {
+                            // The list's focus ring goes around its
+                            // current message, the bubble only, as a
+                            // focused bubble's own ring does.
+                            if list_focused {
+                                theme::focus_outline(ui, list_id, response.rect, 10.0);
+                            }
+                            if reveal {
+                                // As `theme::reveal_focus`: at once, with
+                                // room for the ring.
+                                let mut target = response.clone();
+                                target.rect = target.rect.expand(4.0);
+                                target.scroll_to_me_animation(
+                                    None,
+                                    egui::style::ScrollAnimation::none(),
+                                );
+                            }
+                        }
+                        // Built only while a screen reader is attached; the
+                        // probe returns None when AccessKit is off, so idle
+                        // frames pay nothing for the label.
+                        if ui.ctx().accesskit_node_builder(egui::Id::new(("message-row", chat.id.as_str(), message.id.as_str())), |_| ()).is_some() {
+                            let sender = if message.from_me {
+                                crate::i18n::gettext(view.locale, "You").into_owned()
+                            } else {
+                                (view.names_or)(&message.sender, message.sender_name.as_deref())
+                            };
+                            // The same text the bubble draws as its body or caption.
+                            let text = match &message.content {
+                                Content::Text { text, .. } | Content::Interactive { text, .. } => {
+                                    Some(text)
+                                }
+                                Content::Image { caption, .. }
+                                | Content::Video { caption, .. }
+                                | Content::Document { caption, .. } => caption.as_ref(),
+                                _ => None,
+                            };
+                            let text = text.map_or_else(String::new, |text| {
+                                markup::plain(text, &mentions_of(&view, message))
                             });
                             // An album row reads as its bubble draws it: the
                             // items, every member's quote and reactions, and the
@@ -5797,11 +5724,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                             );
                             super::list_nav::mark_row(
                                 ui.ctx(),
-                                row.inner,
+                                egui::Id::new(("message-row", chat.id.as_str(), message.id.as_str())),
                                 label,
                                 row_of(&starts, index),
                                 total,
-                                row.response.rect,
+                                response.as_ref().map(|r| r.rect).unwrap_or_else(|| ui.min_rect()),
                                 None,
                             );
                         }
@@ -7470,7 +7397,7 @@ fn bubble_arriving(
         }
     });
     ui.ctx().request_repaint();
-    row.inner
+    egui::Id::new(("message-row", chat.id.as_str(), message.id.as_str()))
 }
 
 /// When the open chat's transcript was first drawn: messages already there
