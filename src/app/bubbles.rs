@@ -247,7 +247,7 @@ impl App {
     }
 
     /// Opens `chat` as a bubble holding `staged`, for the demo's pictures.
-    #[cfg(feature = "demo")]
+    #[cfg(any(test, feature = "demo"))]
     pub fn demo_bubble(&mut self, chat: ChatId, staged: Vec<Pending>) {
         self.settings.chat_bubbles = true;
         self.open_bubble(chat.clone());
