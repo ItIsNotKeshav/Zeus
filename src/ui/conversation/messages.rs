@@ -419,10 +419,10 @@ pub(super) fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(St
             0.0
         };
         let avatar_gap = if show_avatars { 8.0 } else { 0.0 };
-        let row_height = 36.0;
+        let row_height = one_line_bubble_height(ui, &palette).max(SENDER_AVATAR);
         ui.allocate_ui_with_layout(
             vec2(
-                avatars_width + avatar_gap + TYPING_BUBBLE_PAD_X * 2.0 + 28.0,
+                avatars_width + avatar_gap + TYPING_BUBBLE_PAD_X * 2.0 + TYPING_DOTS.x,
                 row_height,
             ),
             Layout::left_to_right(Align::Center),
@@ -470,7 +470,6 @@ pub(super) fn typing_indicator(ui: &mut egui::Ui, view: &View<'_>, typers: &[(St
 }
 
 pub(super) const TYPING_BUBBLE_PAD_X: f32 = 14.0;
-pub(super) const TYPING_BUBBLE_PAD_Y: f32 = 11.0;
 
 pub(super) fn typing_bubble_id(chat: &str) -> egui::Id {
     in_window(egui::Id::new(("typing-bubble", chat)))

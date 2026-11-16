@@ -4611,15 +4611,22 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
         _ => widgets::bubble_corners(Some(widgets::Side::Left)),
     };
     let fill = ui.painter().add(egui::Shape::Noop);
-    let inner = Frame::new()
-        .inner_margin(Margin::symmetric(
-            TYPING_BUBBLE_PAD_X as i8,
-            TYPING_BUBBLE_PAD_Y as i8,
-        ))
-        .show(ui, |ui| typing_dots(ui, &palette));
+    // Exactly as tall as a one-line message, whatever the row around it: a
+    // frame in a centred row would stretch to the row's height.
+    let size = vec2(
+        TYPING_DOTS.x + TYPING_BUBBLE_PAD_X * 2.0,
+        one_line_bubble_height(ui, &palette),
+    );
+    let (bubble, _) = ui.allocate_exact_size(size, Sense::hover());
+    let mut dots = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_center_size(bubble.center(), TYPING_DOTS))
+            .layout(Layout::left_to_right(Align::Min)),
+    );
+    typing_dots(&mut dots, &palette);
     ui.painter().set(
         fill,
-        egui::epaint::RectShape::filled(inner.response.rect, corners, palette.bubble_in),
+        egui::epaint::RectShape::filled(bubble, corners, palette.bubble_in),
     );
     // Where and when it was drawn, so the message it announced can grow out
     // of it, and since when it has been up, for its pop and its breath.
@@ -4627,12 +4634,7 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
     let pass = ui.ctx().cumulative_pass_nr();
     let id = typing_bubble_id(&view.chat.id);
     let (seen, shown) = ui.ctx().data_mut(|data| {
-        let seen = TypingSeen::after(
-            data.get_temp::<TypingSeen>(id),
-            inner.response.rect,
-            time,
-            pass,
-        );
+        let seen = TypingSeen::after(data.get_temp::<TypingSeen>(id), bubble, time, pass);
         data.insert_temp(id, seen);
         (seen, data.get_temp::<f64>(chat_shown_id(&view.chat.id)))
     });
@@ -4649,10 +4651,7 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
     } else {
         (1.0, 1.0)
     };
-    let transform = scale_about(
-        inner.response.rect.left_bottom(),
-        pop * breath_scale(elapsed),
-    );
+    let transform = scale_about(bubble.left_bottom(), pop * breath_scale(elapsed));
     let layer = ui.layer_id();
     ui.ctx().graphics_mut(|graphics| {
         let list = graphics.entry(layer);
@@ -4680,14 +4679,14 @@ fn typing_bubble(ui: &mut egui::Ui, view: &View<'_>) {
     }
 }
 
+/// The room the typing dots take: three of radius 3, 5 apart, rising 3.
+const TYPING_DOTS: Vec2 = vec2(3.0 * 6.0 + 5.0 * 2.0, 3.0 * 2.0 + 3.0);
+
 fn typing_dots(ui: &mut egui::Ui, palette: &Palette) {
     let radius = 3.0;
     let gap = 5.0;
     let lift = 3.0;
-    let (rect, _) = ui.allocate_exact_size(
-        vec2(radius * 6.0 + gap * 2.0, radius * 2.0 + lift),
-        Sense::hover(),
-    );
+    let (rect, _) = ui.allocate_exact_size(TYPING_DOTS, Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
@@ -5559,12 +5558,37 @@ fn bubble_margin(palette: &Palette, message: &Message, over_picture: bool) -> Ma
         Margin::same(4)
     } else {
         Margin {
-            left: 10,
-            right: 10,
-            top: 6,
             bottom: if over_picture { 6 } else { 5 },
+            ..WHATSAPP_TEXT_MARGIN
         }
     }
+}
+
+/// Room around a WhatsApp-style bubble's text.
+const WHATSAPP_TEXT_MARGIN: Margin = Margin {
+    left: 10,
+    right: 10,
+    top: 6,
+    bottom: 5,
+};
+
+/// Room around a text bubble's contents in `palette`'s style.
+fn text_bubble_margin(palette: &Palette) -> Margin {
+    match palette.bubbles {
+        theme::BubbleStyle::Messages => MESSAGES_BUBBLE_MARGIN,
+        theme::BubbleStyle::Nothing => NOTHING_TEXT_MARGIN,
+        theme::BubbleStyle::WhatsApp => WHATSAPP_TEXT_MARGIN,
+    }
+}
+
+/// How tall a bubble holding one line of text is in `palette`'s style: the
+/// typing bubble takes this height, so it stands as tall as the message it
+/// turns into.
+fn one_line_bubble_height(ui: &egui::Ui, palette: &Palette) -> f32 {
+    let margin = text_bubble_margin(palette);
+    ui.fonts_mut(|fonts| fonts.row_height(&theme::regular(BODY_SIZE)))
+        + f32::from(margin.top)
+        + f32::from(margin.bottom)
 }
 
 /// Draws a message bubble and its menu.
@@ -6430,6 +6454,61 @@ fn mirrored_row(
             second(ui);
         }
     });
+}
+
+/// Size of the sign before "This message was deleted".
+const REVOKED_ICON: f32 = 14.0;
+
+/// "This message was deleted" after its sign, on one line, with the time
+/// beside the words when it is drawn in the bubble and fits, as it sits
+/// after a line of text: the bubble is no taller than a one-line message.
+/// Returns where the time goes, if on this line.
+fn revoked(ui: &mut egui::Ui, palette: &Palette, width: f32, reserve: Option<f32>) -> Option<Rect> {
+    const LABEL: &str = "This message was deleted";
+    let font = theme::regular(theme::TEXT_BODY);
+    let words = ui
+        .painter()
+        .layout_no_wrap(LABEL.to_owned(), font.clone(), palette.secondary);
+    let gap = ui.spacing().item_spacing.x;
+    let used = REVOKED_ICON + gap + words.size().x;
+    let inline = reserve.filter(|reserve| used + 8.0 + reserve <= width);
+    let height = ui
+        .fonts_mut(|fonts| fonts.row_height(&font))
+        .max(REVOKED_ICON);
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(used + inline.map_or(0.0, |reserve| 8.0 + reserve), height),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, LABEL));
+    if ui.is_rect_visible(rect) {
+        theme::paint_icon(
+            ui,
+            Icon::Ban,
+            Rect::from_min_size(
+                pos2(rect.left(), rect.center().y - REVOKED_ICON / 2.0),
+                Vec2::splat(REVOKED_ICON),
+            ),
+            REVOKED_ICON,
+            palette.dim,
+        );
+        ui.painter().galley(
+            pos2(
+                rect.left() + REVOKED_ICON + gap,
+                rect.center().y - words.size().y / 2.0,
+            ),
+            words,
+            palette.secondary,
+        );
+    }
+    inline.map(|reserve| {
+        Rect::from_min_size(
+            pos2(
+                rect.right() - reserve,
+                rect.center().y - FOOTER_HEIGHT / 2.0,
+            ),
+            vec2(reserve, FOOTER_HEIGHT),
+        )
+    })
 }
 
 /// Size of the forwarded label's arrow.
@@ -8391,24 +8470,7 @@ fn content(
             // the bubble is built. This arm only keeps the match exhaustive.
             None
         }
-        Content::Revoked => {
-            mirrored_row(
-                ui,
-                own,
-                |ui| {
-                    theme::icon(ui, Icon::Ban, 14.0, palette.dim);
-                },
-                |ui| {
-                    theme::text(
-                        ui,
-                        "This message was deleted",
-                        theme::regular(theme::TEXT_BODY),
-                        palette.secondary,
-                    );
-                },
-            );
-            None
-        }
+        Content::Revoked => revoked(ui, &palette, width, footer_reserve),
         Content::PhoneOnly {
             live_location: true,
             ..
@@ -13266,6 +13328,111 @@ mod tests {
         let at_edge = egui::Rangef::new(0.0, 36.0);
         let row = widen_to(at_edge, 60.0, bounds);
         assert_eq!((row.min, row.max), (0.0, 60.0), "never past the view");
+    }
+
+    fn one_frame(ctx: &egui::Context, draw: impl FnMut(&mut egui::Ui)) {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(600.0, 400.0))),
+                ..Default::default()
+            },
+            draw,
+        );
+        output.textures_delta.clear();
+    }
+
+    /// The typing bubble stands as tall as the one-line message it turns
+    /// into, in every style, even in a row taller than itself.
+    #[test]
+    fn the_typing_bubble_is_as_tall_as_a_one_line_message() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        with_still_view(|view| {
+            for style in [
+                theme::BubbleStyle::WhatsApp,
+                theme::BubbleStyle::Messages,
+                theme::BubbleStyle::Nothing,
+            ] {
+                let mut palette = Palette::dark();
+                palette.bubbles = style;
+                let view = View {
+                    palette,
+                    time_inside: false,
+                    ..*view
+                };
+                let message = crate::archive::tests::message("1@s.whatsapp.net", "m1", 0, false);
+                let mut message_height = 0.0;
+                one_frame(&ctx, |ui| {
+                    message_height = bubble_frame(
+                        ui,
+                        &view,
+                        &message,
+                        None,
+                        false,
+                        false,
+                        true,
+                        true,
+                        400.0,
+                        &mut Vec::new(),
+                    )
+                    .rect
+                    .height();
+                });
+                one_frame(&ctx, |ui| {
+                    ui.allocate_ui_with_layout(
+                        vec2(200.0, 60.0),
+                        Layout::left_to_right(Align::Center),
+                        |ui| typing_bubble(ui, &view),
+                    );
+                });
+                let typing = ctx
+                    .data(|data| data.get_temp::<TypingSeen>(typing_bubble_id(&view.chat.id)))
+                    .expect("the typing bubble was drawn")
+                    .rect;
+                assert!(
+                    (typing.height() - message_height).abs() < 0.5,
+                    "{style:?}: typing {} against a message's {message_height}",
+                    typing.height()
+                );
+            }
+        });
+    }
+
+    /// A deleted message keeps its time beside its words, on one line, so
+    /// its bubble is no taller than a one-line message's.
+    #[test]
+    fn a_deleted_message_is_one_line_tall() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        with_still_view(|view| {
+            // With the time beside the words, as "Always show time" has it.
+            let view = &View {
+                time_inside: true,
+                ..*view
+            };
+            let mut message = crate::archive::tests::message("1@s.whatsapp.net", "gone", 0, true);
+            message.content = Content::Revoked;
+            let mut height = 0.0;
+            let mut line = 0.0;
+            one_frame(&ctx, |ui| {
+                line = one_line_bubble_height(ui, &view.palette);
+                height = bubble_frame(
+                    ui,
+                    view,
+                    &message,
+                    None,
+                    false,
+                    false,
+                    true,
+                    true,
+                    400.0,
+                    &mut Vec::new(),
+                )
+                .rect
+                .height();
+            });
+            assert!(height <= line + 0.5, "{height} against one line's {line}");
+        });
     }
 
     #[test]
