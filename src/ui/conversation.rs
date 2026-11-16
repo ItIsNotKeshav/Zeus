@@ -9968,7 +9968,28 @@ fn picture(
                     None if sticker.is_some() => Vec2::splat(STICKER_SIDE),
                     None => frame_size(media, None, max_width, max_height),
                 };
-                let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+                // Still decoding, it opens in the viewer all the same: the
+                // file is here, and the viewer reads it at its own size.
+                let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+                if response
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+                {
+                    actions.push(match sticker {
+                        Some(_) => Action::PreviewSticker(path.clone()),
+                        None => match crate::image_preview::open_target(path, true) {
+                            crate::image_preview::OpenTarget::Preview => Action::PreviewImage {
+                                path: path.clone(),
+                                chat: view.chat.id.clone(),
+                                message: message.id.clone(),
+                                card: None,
+                            },
+                            crate::image_preview::OpenTarget::External => {
+                                Action::OpenFile(path.clone())
+                            }
+                        },
+                    });
+                }
                 if placeholder.is_some() {
                     // The cross-fade starts from the thumbnail once ready.
                     ui.ctx().animate_bool_with_time(sharpen_id, false, 0.0);
