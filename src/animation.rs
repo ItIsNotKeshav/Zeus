@@ -1795,14 +1795,16 @@ mod tests {
             output.textures_delta.clear();
             shown
         };
-        // Each sticker starts once the one before it knows its length.
+        // Each sticker starts once the one before it knows its length, and
+        // the ones past the allowance show their first frame once decoded.
         let deadline = Instant::now() + Duration::from_secs(20);
         while !paths.iter().take(fit).all(|path| {
             matches!(
                 cache(&ctx).0.lock().expect("cache").entries.get(path),
                 Some(Entry::Ready(playing)) if playing.complete
             )
-        }) {
+        }) || draw().contains(&None)
+        {
             assert!(Instant::now() < deadline, "the stickers never all played");
             draw();
             std::thread::sleep(Duration::from_millis(10));
