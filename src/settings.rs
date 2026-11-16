@@ -993,6 +993,10 @@ pub struct Settings {
     /// Experimental: up to [`crate::app::MAX_BUBBLES`] chats as bubbles
     /// floating over other windows, each opening into a small chat.
     pub chat_bubbles: bool,
+    /// Chats whose new messages bring up their bubble while Zeus is in the
+    /// background, collapsed to its picture: each turned on in its chat
+    /// info. Only with [`Self::chat_bubbles`] on.
+    pub auto_bubble_chats: Vec<String>,
     /// Download verified updates in the background; restarting remains explicit.
     pub download_updates_automatically: bool,
     /// Voice and audio playback speed multiplier.
@@ -1122,6 +1126,7 @@ impl Default for Settings {
             update_channel: crate::updates::Channel::Stable,
             split_view: false,
             chat_bubbles: false,
+            auto_bubble_chats: Vec::new(),
             download_updates_automatically: true,
             save_contacts_to_phone: true,
             voice_speed: 1.0,

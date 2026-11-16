@@ -1042,6 +1042,7 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
     }
     ui.add_space(16.0);
     actions(app, ui, shown);
+    auto_bubble_row(app, ui, shown);
     let describing = app.group_description_edit.take().filter(|_| group_editable);
     if let Some(mut draft) = describing {
         ui.add_space(SECTION_GAP);
@@ -1194,6 +1195,68 @@ fn leave_row(ui: &mut egui::Ui, palette: &Palette, label: &str) -> egui::Respons
 
 /// The actions the chat offers, as tiles of equal width under the name: an
 /// icon over a short label, as on the phone.
+/// With chat bubbles on: whether this chat's new messages bring up its
+/// bubble while Zeus is in the background. Off for every chat until turned
+/// on here, so only the chats chosen float up.
+fn auto_bubble_row(app: &mut App, ui: &mut egui::Ui, shown: &Shown) {
+    if !app.settings.chat_bubbles || !shown.has_chat || shown.channel || shown.left {
+        return;
+    }
+    let palette = app.palette;
+    let label = crate::i18n::gettext(app.locale, "Bubble new messages").into_owned();
+    let description = crate::i18n::gettext(
+        app.locale,
+        "While Zeus is in the background, a new message brings up this chat's bubble.",
+    )
+    .into_owned();
+    let id = shown.id.clone();
+    let mut on = app.settings.auto_bubble_chats.contains(&id);
+    ui.add_space(crate::theme::SPACE_S);
+    ui.horizontal(|ui| {
+        let switch_room = 52.0;
+        ui.vertical(|ui| {
+            ui.set_width((ui.available_width() - switch_room).max(80.0));
+            ui.spacing_mut().item_spacing.y = 2.0;
+            let width = ui.available_width();
+            let title = widgets::line(
+                ui,
+                &label,
+                theme::medium(theme::TEXT_BODY),
+                palette.text,
+                width,
+                2,
+            );
+            let (spot, _) = ui.allocate_exact_size(title.size(), Sense::hover());
+            title.paint(ui, spot.min, palette.text);
+            let line = widgets::line(
+                ui,
+                &description,
+                theme::regular(theme::TEXT_CAPTION),
+                palette.secondary,
+                width,
+                usize::MAX,
+            );
+            let (spot, _) = ui.allocate_exact_size(line.size(), Sense::hover());
+            line.paint(ui, spot.min, palette.secondary);
+        });
+        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+            let response = widgets::switch(ui, &palette, &mut on);
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &label)
+            });
+            if response.changed() {
+                let chats = &mut app.settings.auto_bubble_chats;
+                chats.retain(|chat| *chat != id);
+                if on {
+                    chats.push(id.clone());
+                }
+                app.actions.push(Action::SettingsChanged);
+            }
+        });
+    });
+}
+
 fn actions(app: &mut App, ui: &mut egui::Ui, shown: &Shown) {
     let palette = app.palette;
     let id = shown.id.as_str();

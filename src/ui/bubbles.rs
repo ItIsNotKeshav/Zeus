@@ -256,11 +256,33 @@ fn contents(app: &mut App, ui: &mut egui::Ui) -> Vec<(Rect, f32)> {
         .iter()
         .map(|bubble| bubble.chat.clone())
         .collect();
+    // A bubble that went (closed, or let go for a fourth) leaves nothing
+    // behind: one that comes back, as a chat's new message brings it, grows
+    // in again from nothing.
+    let listed_id = egui::Id::new("bubble-chats");
+    let listed = ctx
+        .data(|data| data.get_temp::<Vec<ChatId>>(listed_id))
+        .unwrap_or_default();
+    for gone in listed.iter().filter(|chat| !chats.contains(chat)) {
+        let id = egui::Id::new(("bubble", gone.as_str()));
+        ctx.data_mut(|data| data.remove::<bool>(id.with("seen")));
+        crate::motion::forget(&ctx, id.with("in"));
+        crate::motion::forget(&ctx, id.with("y"));
+    }
+    if listed != chats {
+        ctx.data_mut(|data| data.insert_temp(listed_id, chats.clone()));
+    }
+    let slide = crate::motion::Spring::settling_in(f64::from(theme::MOTION_PANEL));
     for (index, chat) in chats.iter().enumerate() {
-        let centre = pos2(
-            column_x + BUBBLE / 2.0,
-            area.top() + PAD + BUBBLE / 2.0 + index as f32 * (BUBBLE + SPACING),
+        // The column closes up, or makes room, on the theme's spring when a
+        // bubble comes or goes; a new one takes its place at once.
+        let y = crate::motion::spring_to(
+            &ctx,
+            egui::Id::new(("bubble", chat.as_str())).with("y"),
+            index as f32 * (BUBBLE + SPACING),
+            slide,
         );
+        let centre = pos2(column_x + BUBBLE / 2.0, area.top() + PAD + BUBBLE / 2.0 + y);
         if shown.as_deref() == Some(chat.as_str()) {
             pivot = Some(centre);
         }
@@ -638,6 +660,7 @@ fn card_header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect) {
     buttons.spacing_mut().item_spacing.x = 2.0;
     let locale = app.locale;
     let tr = |text: &'static str| crate::i18n::gettext(locale, text).into_owned();
+    // Only the cross: the bubble itself folds the card away when clicked.
     if theme::icon_button(
         &mut buttons,
         Icon::X,
@@ -649,30 +672,6 @@ fn card_header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect) {
     .clicked()
     {
         app.actions.push(Action::DismissBubble(chat.id.clone()));
-    }
-    if theme::icon_button(
-        &mut buttons,
-        Icon::Maximize,
-        17.0,
-        palette.secondary,
-        palette.text,
-        &tr("Open in Zeus"),
-    )
-    .clicked()
-    {
-        app.actions.push(Action::DockBubble(chat.id.clone()));
-    }
-    if theme::icon_button(
-        &mut buttons,
-        Icon::Minimize,
-        17.0,
-        palette.secondary,
-        palette.text,
-        &tr("Close bubble"),
-    )
-    .clicked()
-    {
-        app.actions.push(Action::CollapseBubbles);
     }
     // The rest of the header is the open card's handle, as a window's title
     // bar is: the bubble beside it is a small thing to find and hold. It

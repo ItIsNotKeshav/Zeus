@@ -2340,6 +2340,14 @@ impl App {
         if reading {
             return;
         }
+        // A chat chosen to bubble floats up as its picture, while Zeus is in
+        // the background, however often its bubble was closed before.
+        if !self.window_focused || self.window_hidden || self.window_unseen {
+            self.auto_bubble(chat_id);
+        }
+        let Some(chat) = self.chat(chat_id) else {
+            return;
+        };
         // A limited chat notifies once, then waits; opening it ends the wait.
         // A mention of us or a reply to us always notifies and leaves the wait alone.
         let for_us = chat.is_group() && self.addresses_us(message);
