@@ -45,7 +45,7 @@ pub enum UploadKind {
     Video,
     Audio,
     Document,
-    /// A sticker, which flies in from the picker and waits in place.
+    /// A sticker, which pops in where its message will be and waits there.
     Sticker,
 }
 

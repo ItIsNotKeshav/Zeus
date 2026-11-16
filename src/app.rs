@@ -8757,21 +8757,18 @@ impl App {
                 });
             }
             Action::SendSticker(path) => {
-                let launch = crate::ui::picker::take_launch(ctx);
                 if let Some(chat) = self.open_chat.clone() {
                     let quoting = self.reply_to.take();
                     let quoted = quoting.clone();
                     // The sticker shows at the end of the chat at once,
-                    // flown there from its tile, until its message arrives.
+                    // popping in as a sent bubble does, until its message
+                    // arrives.
                     let upload = self.begin_upload(
                         &chat,
                         crate::model::UploadKind::Sticker,
                         String::new(),
                         Some(crate::model::UploadPreview::File(path.clone())),
                     );
-                    if let Some(from) = launch {
-                        crate::ui::conversation::launch_sticker(ctx, upload, from);
-                    }
                     self.backend.send(Command::SendSticker {
                         chat,
                         path,
@@ -11188,8 +11185,6 @@ impl App {
         self.sync_push_to_talk();
         // Menus and dialogs that closed this frame leave as they came.
         crate::ui::closing::paint(ctx);
-        // A sticker just sent flies from the picker over the closing copy.
-        crate::ui::conversation::paint_sticker_flights(ctx);
         // The old colours, if a change is being revealed, go over everything.
         self.theme_transition.paint(ctx);
         self.theme_reveal.paint(ctx);
@@ -21571,14 +21566,12 @@ mod tests {
     }
 
     #[test]
-    fn a_sent_sticker_shows_at_once_and_flies_from_its_tile() {
+    fn a_sent_sticker_shows_at_once() {
         let mut app = app();
         let (backend, mut commands) = Backend::recording();
         app.backend = backend;
         app.open_chat = Some("fixture@s.whatsapp.net".into());
         let ctx = egui::Context::default();
-        let tile = egui::Rect::from_min_size(egui::pos2(40.0, 300.0), egui::Vec2::splat(80.0));
-        ctx.data_mut(|data| data.insert_temp(egui::Id::new("sticker-launch"), tile));
 
         app.apply(
             Action::SendSticker(std::path::PathBuf::from("sticker.webp")),
@@ -21593,8 +21586,6 @@ mod tests {
             commands.try_recv(),
             Ok(Command::SendSticker { upload: Some(id), .. }) if id == upload.id
         ));
-        // The tile is used once.
-        assert!(crate::ui::picker::take_launch(&ctx).is_none());
     }
 
     /// Checks that oversized attachment clicks are refused before a download command is queued.

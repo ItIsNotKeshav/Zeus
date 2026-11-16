@@ -11668,23 +11668,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_sticker_flight_leaves_its_tile_and_lands_in_place() {
-        let tile = Rect::from_min_size(pos2(40.0, 600.0), Vec2::splat(80.0));
-        let place = Rect::from_min_size(pos2(700.0, 400.0), Vec2::splat(STICKER_SIDE));
-        let near = |a: Rect, b: Rect| a.min.distance(b.min) < 0.01 && a.max.distance(b.max) < 0.01;
-        assert!(near(flight_rect(tile, place, 0.0), tile));
-        assert!(near(flight_rect(tile, place, 1.0), place));
-        // It arcs above the straight line between them on its way.
-        let middle = flight_rect(tile, place, 0.5);
-        let straight = tile.center().lerp(place.center(), theme::ease_out(0.5));
-        assert!(middle.center().y < straight.y);
-        assert_eq!(
-            flight_progress(1.0, 1.0 + f64::from(STICKER_FLIGHT) * 2.0),
-            1.0
-        );
-    }
-
-    #[test]
     fn quick_reactions_spring_in_one_after_another() {
         assert_eq!(quick_reaction_progress(0.0, 0), 0.0);
         // The third waits for its turn, the first has begun by then.

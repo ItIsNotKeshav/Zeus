@@ -1,4 +1,4 @@
-//! Zeus's uploads in flight, sticker flights and the pending strip.
+//! Zeus's uploads in flight and the pending strip.
 
 use super::*;
 
@@ -45,7 +45,7 @@ pub(super) fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate
         if upload.kind == crate::model::UploadKind::Sticker
             && let Some(crate::model::UploadPreview::File(path)) = &upload.preview
         {
-            upload_sticker(ui, palette, upload.id, path, eased);
+            upload_sticker(ui, palette, upload, path);
             continue;
         }
         match picture {
@@ -55,102 +55,22 @@ pub(super) fn upload_rows(ui: &mut egui::Ui, palette: &Palette, uploads: &[crate
     }
 }
 
-/// How high, at most, a sticker flying from the picker arcs over its
-/// straight path.
-pub(super) const STICKER_ARC: f32 = 64.0;
-/// How long a sticker takes to fly from the picker, as the drag-carry
-/// flights do.
-pub(super) const STICKER_FLIGHT: f32 = theme::MOTION_SCREEN;
 /// The side of the "sending" chip under a sticker on its way.
 pub(super) const STICKER_CHIP: f32 = 22.0;
 /// How much a sticker on its way is faded, until its message arrives.
 pub(super) const STICKER_WAITING_FADE: f32 = 0.25;
 
-/// A sticker flying from its picker tile to its place in the chat.
-#[derive(Clone)]
-pub(super) struct StickerFlight {
-    pub(super) upload: crate::model::UploadId,
-    /// The tile it left, in screen coordinates.
-    pub(super) from: Rect,
-    pub(super) start: f64,
-    /// Where it lands and what it shows, as its row last laid it out; it
-    /// flies nowhere until the row has.
-    pub(super) to: Option<(Rect, egui::TextureId)>,
+/// When a chat's sticker on its way first showed, and when it was last
+/// drawn, so its message, once it arrives, carries on the same pop rather
+/// than popping again.
+#[derive(Clone, Copy)]
+pub(super) struct StickerSeen {
+    pub(super) since: f64,
+    pub(super) drawn: f64,
 }
 
-pub(super) fn flights_id() -> egui::Id {
-    egui::Id::new("sticker-flights")
-}
-
-/// Sends the sticker of `upload` flying from `from`, its tile in the picker,
-/// to its place at the end of the chat. Without motion it is simply there.
-pub fn launch_sticker(ctx: &egui::Context, upload: crate::model::UploadId, from: Rect) {
-    if crate::motion::reduced(ctx) {
-        return;
-    }
-    let start = ctx.input(|input| input.time);
-    ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<Vec<StickerFlight>>(flights_id())
-            .push(StickerFlight {
-                upload,
-                from,
-                start,
-                to: None,
-            });
-    });
-    ctx.request_repaint();
-}
-
-/// How far a flight that began at `start` has got, from 0 to 1.
-pub(super) fn flight_progress(start: f64, now: f64) -> f32 {
-    ((now - start) / f64::from(STICKER_FLIGHT)).clamp(0.0, 1.0) as f32
-}
-
-/// Where a sticker flying from `from` to `to` is, `t` of the way: eased
-/// out, growing to its size, along a low arc.
-pub(super) fn flight_rect(from: Rect, to: Rect, t: f32) -> Rect {
-    let eased = theme::ease_out(t.clamp(0.0, 1.0));
-    let center = from.center().lerp(to.center(), eased);
-    let size = from.size() + (to.size() - from.size()) * eased;
-    let arc = (from.center().distance(to.center()) * 0.25).min(STICKER_ARC);
-    let lift = arc * (std::f32::consts::PI * eased).sin();
-    Rect::from_center_size(center - vec2(0.0, lift), size)
-}
-
-/// Draws the stickers in flight over everything, after the chat has laid
-/// out where they land, and forgets the ones that have.
-pub fn paint_sticker_flights(ctx: &egui::Context) {
-    let Some(mut flights) = ctx.data(|data| data.get_temp::<Vec<StickerFlight>>(flights_id()))
-    else {
-        return;
-    };
-    let now = ctx.input(|input| input.time);
-    flights.retain(|flight| flight_progress(flight.start, now) < 1.0);
-    for flight in &flights {
-        let Some((to, texture)) = flight.to else {
-            continue;
-        };
-        let t = flight_progress(flight.start, now);
-        let rect = flight_rect(flight.from, to, t);
-        // It settles to the faded look of a sticker still on its way.
-        let tint = Color32::WHITE.gamma_multiply(1.0 - STICKER_WAITING_FADE * theme::ease_out(t));
-        ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Tooltip,
-            flights_id().with(flight.upload),
-        ))
-        .image(
-            texture,
-            rect,
-            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            tint,
-        );
-    }
-    if flights.is_empty() {
-        ctx.data_mut(|data| data.remove::<Vec<StickerFlight>>(flights_id()));
-    } else {
-        ctx.data_mut(|data| data.insert_temp(flights_id(), flights));
-        ctx.request_repaint();
-    }
+pub(super) fn sticker_seen_id(chat: &str) -> egui::Id {
+    egui::Id::new(("sticker-upload-seen", chat))
 }
 
 /// The sticker's texture and natural size: an animation's first frame, or
@@ -173,14 +93,14 @@ pub(super) fn sticker_texture(
 }
 
 /// A sticker on its way: drawn where its message will be, at the right edge
-/// without a bubble, faded a little with a turning ring beside it. One sent
-/// from the picker flies there first, and rests once it lands.
+/// without a bubble, faded a little with a turning ring beside it. It pops
+/// out of its bottom right corner as a sent bubble does, once; its message
+/// carries that pop on when it takes the sticker's place.
 pub(super) fn upload_sticker(
     ui: &mut egui::Ui,
     palette: &Palette,
-    upload: crate::model::UploadId,
+    upload: &crate::model::Upload,
     path: &Path,
-    eased: f32,
 ) {
     let square = Vec2::splat(STICKER_SIDE);
     let texture = sticker_texture(ui, path, Rect::from_min_size(ui.cursor().min, square));
@@ -188,42 +108,41 @@ pub(super) fn upload_sticker(
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), size.y), Sense::hover());
     let rest = Rect::from_min_size(pos2(row.right() - size.x, row.top()), size);
     let now = ui.input(|input| input.time);
-    // The flight aims at the sticker's place, or at the bottom of the view
-    // while that is still below it.
-    let clip = ui.clip_rect();
-    let target = rest.translate(vec2(0.0, (clip.bottom() - rest.bottom()).min(0.0)));
-    let flying = ui.ctx().data_mut(|data| {
-        data.get_temp_mut_or_default::<Vec<StickerFlight>>(flights_id())
-            .iter_mut()
-            .find(|flight| flight.upload == upload && flight_progress(flight.start, now) < 1.0)
-            .map(|flight| {
-                flight.to = texture.map(|(texture, _)| (target, texture));
-            })
-            .is_some()
+    let id = ui.id().with(("upload-sticker", upload.id));
+    let since = ui.ctx().data_mut(|data| *data.get_temp_mut_or(id, now));
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(
+            sticker_seen_id(&upload.chat),
+            StickerSeen { since, drawn: now },
+        );
     });
-    if flying {
-        return;
-    }
-    // One that did not fly rises into place as other uploads do.
-    let rect = rest.translate(vec2(0.0, UPLOAD_RISE * (1.0 - eased)));
-    let painter = ui.painter_at(row.expand(UPLOAD_RISE));
+    let elapsed = now - since;
+    let (scale, opacity) = if crate::motion::reduced(ui.ctx()) || POP.settled(elapsed) {
+        (1.0, 1.0)
+    } else {
+        crate::motion::request_frame(ui.ctx());
+        (pop_scale(elapsed), pop_opacity(elapsed))
+    };
+    let pop = scale_about(rest.right_bottom(), scale);
+    let rect = pop.mul_rect(rest);
+    let painter = ui.painter_at(row.expand(4.0));
     match texture {
         Some((texture, _)) => {
             painter.image(
                 texture,
                 rect,
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE.gamma_multiply((1.0 - STICKER_WAITING_FADE) * eased),
+                Color32::WHITE.gamma_multiply((1.0 - STICKER_WAITING_FADE) * opacity),
             );
         }
         None => {
-            painter.rect_filled(rect, theme::RADIUS, palette.surface.gamma_multiply(eased));
+            painter.rect_filled(rect, theme::RADIUS, palette.surface.gamma_multiply(opacity));
             theme::paint_icon(
                 ui,
                 Icon::Sticker,
-                Rect::from_center_size(rect.center(), Vec2::splat(28.0)),
-                28.0,
-                palette.secondary.gamma_multiply(eased),
+                Rect::from_center_size(rect.center(), Vec2::splat(28.0 * scale)),
+                28.0 * scale,
+                palette.secondary.gamma_multiply(opacity),
             );
         }
     }
@@ -235,14 +154,14 @@ pub(super) fn upload_sticker(
     painter.circle_filled(
         chip.center(),
         STICKER_CHIP / 2.0,
-        Color32::from_black_alpha((120.0 * eased) as u8),
+        Color32::from_black_alpha((120.0 * opacity) as u8),
     );
     progress_ring(
         ui,
         chip.center(),
         STICKER_CHIP / 2.0 - 5.0,
         None,
-        Color32::WHITE.gamma_multiply(eased),
+        Color32::WHITE.gamma_multiply(opacity),
     );
 }
 

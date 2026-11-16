@@ -212,9 +212,20 @@ pub(super) fn bubble_arriving(
         .flatten()
         .filter(|seen| now - seen.drawn <= TYPING_HANDOFF)
         .map(|seen| seen.rect);
-    let (landed, typing) = ui
-        .ctx()
-        .data_mut(|data| *data.get_temp_mut_or_insert_with(id, || (now, typing)));
+    // A sticker we sent takes the place of the sticker shown on its way,
+    // which has already popped in: it carries that pop on from where it
+    // got to, rather than popping a second time.
+    let sticker = (message.from_me && matches!(message.content, Content::Sticker { .. }))
+        .then(|| {
+            ui.ctx()
+                .data(|data| data.get_temp::<StickerSeen>(sticker_seen_id(&view.chat.id)))
+        })
+        .flatten()
+        .filter(|seen| now - seen.drawn <= TYPING_HANDOFF)
+        .map(|seen| seen.since);
+    let (landed, typing) = ui.ctx().data_mut(|data| {
+        *data.get_temp_mut_or_insert_with(id, || (sticker.unwrap_or(now), typing))
+    });
     let elapsed = now - landed;
     if POP.settled(elapsed) || landed <= shown {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
