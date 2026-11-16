@@ -4577,10 +4577,12 @@ mod tests {
             .tempdir()
             .unwrap();
         // These tests measure the WhatsApp look with Glass at Solid: the
-        // time and ticks inside the bubble, a solid header and composer.
-        // The ones about the Zeus look or about glass ask for it by name.
+        // time and ticks inside the bubble (Always show time), a solid
+        // header and composer. The ones about the times under bubbles or
+        // about glass ask for them by name.
         let mut settings = Settings {
             chat_theme: crate::chat_themes::ChatTheme::WhatsApp,
+            always_show_time: true,
             ..Settings::default()
         };
         settings.set_glass(1.0);
@@ -19764,30 +19766,6 @@ mod bubble_detail_tests {
             footer.top() >= picture.bottom(),
             "with a caption the time stays below the picture ({footer:?}, {picture:?})"
         );
-    }
-
-    /// The Zeus look shows a message's time under its bubble when it is
-    /// clicked. A picture without a caption has it on its corner already, so
-    /// that line is left out for it, but not for text.
-    #[test]
-    fn a_picture_with_its_time_on_it_shows_no_second_time_below() {
-        let mut app = app();
-        let ctx = egui::Context::default();
-        app.attach(&ctx);
-        apply_flags(&mut app, Some("photos,nothing"));
-        let chat = SAMPLES[0].id;
-        let ids = ["photos-out", "photos-forwarded-out"];
-        for id in ids {
-            let bubble = crate::ui::conversation::bubble_id(chat, id);
-            ctx.data_mut(|data| data.insert_temp(bubble.with("metadata-visible"), true));
-        }
-        frames(&mut app, &ctx, egui::vec2(1180.0, 1400.0));
-        let below = |id: &str| {
-            let bubble = crate::ui::conversation::bubble_id(chat, id);
-            ctx.read_response(bubble.with("metadata-row")).is_some()
-        };
-        assert!(!below("photos-out"), "the picture's time is on the picture");
-        assert!(below("photos-forwarded-out"), "text shows its time below");
     }
 
     /// A voice message carries its time and ticks on the duration's line,

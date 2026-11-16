@@ -2822,7 +2822,13 @@ fn album_run(messages: &[Message], start: usize) -> Option<&[Message]> {
 /// near the viewport are always measured, and a change in the height of a row
 /// above the viewport moves the scroll offset with it, so this only shapes the
 /// scrollbar until the reader scrolls near the row.
-fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize) -> f32 {
+fn estimated_height(
+    message: &Message,
+    width: f32,
+    new_day: bool,
+    time_line: bool,
+    notices: usize,
+) -> f32 {
     // Bubbles take at most 72% of the transcript, and 560 points.
     let bubble = ((width * 0.72).min(560.0) - 20.0).max(40.0);
     let text_rows = |text: &str| {
@@ -2849,9 +2855,12 @@ fn estimated_height(message: &Message, width: f32, new_day: bool, notices: usize
         _ => 40.0,
     };
     // Bubble padding, the sender line, and the row spacing, plus the date
-    // chip above the first message of a day, and any pin notice this row
-    // carries.
-    40.0 + body + if new_day { 36.0 } else { 0.0 } + notices as f32 * PIN_NOTICE_HEIGHT
+    // chip above the first message of a day, the time line after a pause,
+    // and any pin notice this row carries.
+    40.0 + body
+        + if new_day { 36.0 } else { 0.0 }
+        + if time_line { TIME_LINE_HEIGHT } else { 0.0 }
+        + notices as f32 * PIN_NOTICE_HEIGHT
 }
 
 /// The pins the transcript places, oldest first. `chat_pins` hands them over
@@ -3094,8 +3103,9 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .map(|(_, message)| message.as_str()),
         player: &app.player,
         voice_speed: app.voice_speed_in(Some(&chat.id)),
-        time_inside: app.palette.bubbles != theme::BubbleStyle::Nothing
-            || app.settings.always_show_time,
+        // Times sit in each bubble only when asked for; otherwise under the
+        // newest message, in a line where a pause ends, and on hover.
+        time_inside: app.settings.always_show_time,
         video: &app.video,
         // Whole-message exports are already formatted. Do not let the
         // text-selection annotator reinterpret them as drawn body text.
@@ -3544,6 +3554,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         if new_day {
                             day_separator_top = before + 8.0;
                         }
+                        // Where a pause ends, a line in the middle says when
+                        // the messages under it began.
+                        let time_line = !view.time_inside
+                            && time_line_above(
+                                previous.map(|previous| previous.timestamp),
+                                message.timestamp,
+                            );
                         if top_row.is_none() && before >= viewport.top() - 0.5 {
                             top_row = Some((message.id.clone(), before - content_top));
                         }
@@ -3555,7 +3572,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         let here = notices_above(&notices[placed..], message.timestamp);
                         let known = rows.get(&message.id).copied();
                         let height = known.map_or_else(
-                            || estimated_height(message, layout_width, new_day, here),
+                            || estimated_height(message, layout_width, new_day, time_line, here),
                             |row| row.height,
                         );
                         // A pass redone after the offset followed rows that
@@ -3716,13 +3733,20 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         } else {
                             first_in_run
                         };
-                        if first_in_run && !new_day && previous.is_some() {
+                        if time_line {
+                            time_line_row(ui, &palette, message.timestamp, new_day);
+                        } else if first_in_run && !new_day && previous.is_some() {
                             ui.add_space(if palette.bubbles == theme::BubbleStyle::Nothing {
                                 12.0
                             } else {
                                 RUN_GAP
                             });
                         }
+                        let shows_time = says_time_below(
+                            message_index + members.len() >= conversation.messages.len(),
+                            previous.map(|previous| previous.timestamp),
+                            message.timestamp,
+                        );
                         let flash = jump
                             .as_ref()
                             .filter(|jump| row_contains(&jump.message))
@@ -3751,6 +3775,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                             first_in_run,
                                             last_in_run,
                                             last_outgoing: last_outgoing_row,
+                                            shows_time,
                                         },
                                         reduce_motion,
                                         &mut actions,
@@ -3772,6 +3797,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                     first_in_run,
                                     last_in_run,
                                     last_outgoing: last_outgoing_row,
+                                    shows_time,
                                 },
                                 reduce_motion,
                                 &mut actions,
@@ -4920,6 +4946,9 @@ struct RunPlace {
     first_in_run: bool,
     last_in_run: bool,
     last_outgoing: bool,
+    /// Whether the time goes under the bubble: the newest message, after a
+    /// pause.
+    shows_time: bool,
 }
 
 /// The system row a disappearing-message timer change leaves in the
@@ -5721,7 +5750,13 @@ fn bubble_frame(
             };
             if over_picture && let Some(picture) = slot {
                 photo = Some(picture);
-                footer_over_picture(ui, view, message, picture, starred, pinned, actions);
+                if view.time_inside {
+                    footer_over_picture(ui, view, message, picture, starred, pinned, actions);
+                } else {
+                    // Its marks (edited, starred, pinned) go on a line under
+                    // the picture; the time is not drawn on it.
+                    footer(ui, view, last, None, starred, pinned, actions);
+                }
             } else {
                 footer(ui, view, last, slot, starred, pinned, actions);
             }
@@ -7265,8 +7300,7 @@ pub(crate) fn list_menu(
         animate: false,
         player: &app.player,
         voice_speed: app.voice_speed_in(Some(&chat.id)),
-        time_inside: app.palette.bubbles != theme::BubbleStyle::Nothing
-            || app.settings.always_show_time,
+        time_inside: app.settings.always_show_time,
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
@@ -13020,8 +13054,7 @@ mod tests {
             animate: false,
             player: &app.player,
             voice_speed: app.settings.voice_speed,
-            time_inside: app.palette.bubbles != theme::BubbleStyle::Nothing
-                || app.settings.always_show_time,
+            time_inside: app.settings.always_show_time,
             video: &app.video,
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),
@@ -13330,6 +13363,22 @@ mod tests {
         assert_eq!((row.min, row.max), (0.0, 60.0), "never past the view");
     }
 
+    #[test]
+    fn only_the_newest_message_after_a_pause_says_its_time_below() {
+        // A line above the first message loaded, and after a long pause.
+        assert!(time_line_above(None, 1_000));
+        assert!(time_line_above(Some(0), TIME_LINE_GAP));
+        assert!(!time_line_above(Some(0), TIME_LINE_GAP - 1));
+        // Back to back, the newest says nothing.
+        assert!(!says_time_below(true, Some(1_000), 1_000 + TIME_RUN_GAP - 1));
+        // After a short pause the newest says its time, an older one never.
+        assert!(says_time_below(true, Some(1_000), 1_000 + TIME_RUN_GAP));
+        assert!(!says_time_below(false, Some(1_000), 1_000 + TIME_RUN_GAP));
+        // Under a time line, the line says it.
+        assert!(!says_time_below(true, Some(1_000), 1_000 + TIME_LINE_GAP));
+        assert!(!says_time_below(true, None, 1_000));
+    }
+
     fn one_frame(ctx: &egui::Context, draw: impl FnMut(&mut egui::Ui)) {
         let mut output = ctx.run_ui(
             egui::RawInput {
@@ -13433,20 +13482,6 @@ mod tests {
             });
             assert!(height <= line + 0.5, "{height} against one line's {line}");
         });
-    }
-
-    #[test]
-    fn the_time_under_a_short_bubble_is_shown_whole() {
-        let ctx = egui::Context::default();
-        crate::theme::install(&ctx);
-        let mut widths = Vec::new();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            widths.push(reference_timestamp_width(ui, "11:11 PM", true));
-            widths.push(reference_timestamp_width(ui, "11:11 PM", false));
-        });
-        output.textures_delta.clear();
-        assert!(widths[0] >= widths[1] + 18.0, "{widths:?}");
-        assert!(widths[1] > 20.0, "{widths:?}");
     }
 
     #[test]

@@ -140,8 +140,13 @@ name or description, in the interface language or in English.
   decides only whether the desktop shows through the Messages theme's
   window.
 - **Always show time**: the time and ticks inside every message, as
-  WhatsApp shows them. Off, the Zeus look shows them below a message you
-  click, and below your last message.
+  WhatsApp shows them. Off (the default), messages carry no time of their
+  own: hovering a message shows when it was sent, and **Message info** has
+  it too. The newest message says its time under it, unless it came within
+  two minutes of the one before. After a pause of 15 minutes or more, a
+  line in the middle of the chat says when the messages under it began.
+  **Delivered** and **Read** sit under your message, not in it; click one
+  for **Message info**.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles.
 - **Motion**: how much the interface moves. **Auto** (the default) follows

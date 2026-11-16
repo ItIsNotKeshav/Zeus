@@ -42,7 +42,8 @@ Editing uses the composer. Press Escape to cancel. If WhatsApp refuses an
 edit, the message keeps its earlier text.
 
 **Development builds** show when your message was sent, delivered and read when
-you click its time or ticks, as on WhatsApp.
+you click its time or ticks, as on WhatsApp, or the **Delivered** or **Read**
+under it. Hover any message to see when it was sent.
 
 Forwarding opens a recipient picker. Select up to five writable chats, as on
 WhatsApp; a message labelled as forwarded many times goes to one chat at a

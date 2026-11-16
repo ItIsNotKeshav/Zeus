@@ -48,6 +48,7 @@ pub(super) fn leaving_rows(
                         first_in_run: true,
                         last_in_run: true,
                         last_outgoing: false,
+                        shows_time: false,
                     },
                     true,
                     &mut dropped,

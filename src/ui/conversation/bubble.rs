@@ -362,7 +362,6 @@ pub(super) fn bubble_row(
     reduce_motion: bool,
     actions: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    let actions_before = actions.len();
     let RunPlace {
         show_sender,
         show_avatar,
@@ -370,6 +369,7 @@ pub(super) fn bubble_row(
         first_in_run,
         last_in_run,
         last_outgoing,
+        shows_time,
     } = place;
     let own = message.from_me;
     // Greys that read on the panel can vanish on the bubble; use its own.
@@ -546,67 +546,28 @@ pub(super) fn bubble_row(
             }
         },
     );
-    // A picture without a caption already carries its time over its corner:
-    // a second one under the bubble would say it twice.
-    let time_on_picture = album.is_none() && time_over_picture(message);
-    if !view.time_inside && !view.selecting && !time_on_picture {
+    if !view.time_inside && !view.selecting {
         let bubble_rect = ui
             .ctx()
             .data(|data| data.get_temp::<Rect>(id.with("rect")))
             .or_else(|| response.as_ref().map(|response| response.rect));
-        // A photo, video or link card opens itself: only the text and the
-        // bubble around it show the time.
-        let media = [id.with("picture"), id.with("preview"), id.with("quote")]
-            .map(|key| ui.ctx().data(|data| data.get_temp::<Rect>(key)));
-        let clicked_inside = bubble_rect.is_some_and(|rect| {
-            ui.input(|input| {
-                input.pointer.button_clicked(egui::PointerButton::Primary)
-                    && input.pointer.interact_pos().is_some_and(|position| {
-                        rect.contains(position)
-                            && !media.iter().flatten().any(|media| media.contains(position))
-                    })
-            })
-        });
-        let metadata_id = id.with("metadata-visible");
-        // The newest of ours shows its time, and any older one of ours
-        // that still says a state the newer ones have not reached.
-        let default_visible = message.from_me
-            && (last_outgoing
-                || view
-                    .status_rows
-                    .is_some_and(|rows| rows.contains(&message.id)));
-        let mut visible = ui
-            .ctx()
-            .data(|data| data.get_temp::<bool>(metadata_id))
-            .unwrap_or(default_visible);
-        let on_media = ui.input(|input| {
-            input.pointer.interact_pos().is_some_and(|position| {
-                media.iter().flatten().any(|media| media.contains(position))
-            })
-        });
-        // A click that opened something (a link, a quote's message, a file,
-        // a sender) did what it was for; the time stays as it was.
-        let opened = actions[actions_before..].iter().any(|action| {
-            matches!(
-                action,
-                Action::OpenUrl(_)
-                    | Action::ScrollTo(_)
-                    | Action::OpenMessage { .. }
-                    | Action::PreviewImage { .. }
-                    | Action::PreviewSticker(_)
-                    | Action::OpenFile(_)
-                    | Action::OpenInfo(_)
-                    | Action::PlayVideo { .. }
-            )
-        });
-        let bubble_clicked = !opened
-            && (clicked_inside
-                || (!on_media && response.as_ref().is_some_and(egui::Response::clicked)));
-        if bubble_clicked {
-            visible = !visible;
-            ui.ctx()
-                .data_mut(|data| data.insert_temp(metadata_id, visible));
+        let display_message = album.and_then(|members| members.last()).unwrap_or(message);
+        // Hovering a bubble says when it was sent.
+        if let Some(rect) = bubble_rect {
+            time_tooltip(ui, view, display_message, rect);
         }
+        // Under the bubble: the newest message's time after a pause, our
+        // state where the phone would say it ("Delivered", "Read"), and a
+        // message still sending or that failed.
+        let says_state = own
+            && view
+                .status_rows
+                .is_some_and(|rows| rows.contains(&display_message.id));
+        let glyph = own
+            && (display_message.status == Delivery::Failed
+                || (last_outgoing && keeps_glyph(display_message)));
+        let visible = shows_time || says_state || glyph;
+        let metadata_id = id.with("metadata-visible");
         let animation_time = if reduce_motion {
             0.0
         } else {
@@ -618,29 +579,98 @@ pub(super) fn bubble_row(
             visible,
             animation_time,
         );
+        // The time stays while the row folds away, so it does not jump.
+        let time_id = metadata_id.with("time");
+        let with_time = if visible {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(time_id, shows_time));
+            shows_time
+        } else {
+            ui.ctx()
+                .data(|data| data.get_temp::<bool>(time_id))
+                .unwrap_or(false)
+        };
         if progress > 0.0 {
-            let display_message = album.and_then(|members| members.last()).unwrap_or(message);
-            if reference_timestamp(
+            reference_timestamp(
                 ui,
                 view,
                 display_message,
                 id.with("metadata-row"),
                 progress,
                 !visible,
+                with_time,
                 bubble_rect,
-            )
-            .clicked()
-                && !bubble_clicked
-            {
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(metadata_id, false));
-            }
+                actions,
+            );
         }
     }
     response
 }
 
-/// The message time and delivery state sit just below a bubble when selected.
+/// How long a pause (seconds) has to be for a line in the middle of the
+/// transcript to say when the messages after it began.
+pub(super) const TIME_LINE_GAP: i64 = 15 * 60;
+/// Messages closer together than this (seconds) run on: the newest of them
+/// does not say its time under it.
+pub(super) const TIME_RUN_GAP: i64 = 2 * 60;
+/// The room a time line takes, for rows not laid out yet.
+pub(super) const TIME_LINE_HEIGHT: f32 = 30.0;
+
+/// Whether a time line goes above a message sent at `timestamp`, after the
+/// one before it at `previous` (none at the top of what is loaded).
+pub(super) fn time_line_above(previous: Option<i64>, timestamp: i64) -> bool {
+    previous.is_none_or(|previous| timestamp - previous >= TIME_LINE_GAP)
+}
+
+/// Whether a message says its time under its bubble: only the `newest`, and
+/// only after a pause from the one before it. In a run of quick messages
+/// it says nothing, and under a time line the line already says it.
+pub(super) fn says_time_below(newest: bool, previous: Option<i64>, timestamp: i64) -> bool {
+    newest
+        && !time_line_above(previous, timestamp)
+        && previous.is_some_and(|previous| timestamp - previous >= TIME_RUN_GAP)
+}
+
+/// The line in the middle of the transcript that says when the messages
+/// under it began, after a pause. Under a day's chip it keeps close to it.
+pub(super) fn time_line_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    timestamp: i64,
+    under_chip: bool,
+) {
+    ui.add_space(if under_chip { 0.0 } else { theme::SPACE_M });
+    ui.vertical_centered(|ui| {
+        widgets::rich_text(
+            ui,
+            &crate::util::clock(timestamp),
+            theme::medium(theme::TEXT_MICRO),
+            palette.secondary,
+        );
+    });
+    ui.add_space(theme::SPACE_XS);
+}
+
+/// The time a message was sent, in its bubble's tooltip.
+pub(super) fn time_tooltip(ui: &egui::Ui, view: &View<'_>, message: &Message, bubble: Rect) {
+    if egui::Popup::is_any_open(ui.ctx()) || ui.ctx().dragged_id().is_some() {
+        return;
+    }
+    let hover = ui.interact(
+        bubble,
+        bubble_id(&view.chat.id, &message.id).with("time-tip"),
+        Sense::hover(),
+    );
+    hover.on_hover_text(crate::util::moment_stamp(view.locale, message.timestamp));
+}
+
+/// The row just below a bubble: the message's time when `with_time`, and,
+/// under our own, its state ("Delivered", "Read") or the sign of one still
+/// sending or that failed. Ours sits at the bubble's right edge with the
+/// state outermost; a received one's time at its left edge. `progress`
+/// reveals it through a clip that grows with it, so the messages under it
+/// move in step. Our state opens "Message info" when clicked.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn reference_timestamp(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -648,11 +678,14 @@ pub(super) fn reference_timestamp(
     id: egui::Id,
     progress: f32,
     leaving: bool,
+    with_time: bool,
     bubble: Option<Rect>,
-) -> egui::Response {
+    actions: &mut Vec<Action>,
+) {
     let own = message.from_me;
     const SPACING: f32 = 4.0;
     const ROW_HEIGHT: f32 = 16.0;
+    const GAP: f32 = 4.0;
     let full_height = SPACING + ROW_HEIGHT;
     let reveal_height = full_height * progress.clamp(0.0, 1.0);
     let available = ui.available_rect_before_wrap();
@@ -663,17 +696,11 @@ pub(super) fn reference_timestamp(
     );
     ui.allocate_space(vec2(available.width(), reveal_height));
 
-    // Keep the metadata at its final position and reveal it through a clip
-    // that grows with the row. The transcript's ordinary layout then moves
-    // subsequent messages in step, instead of jumping by the whole row.
-    // Under the bubble, ending at its right edge on either side. A bubble
-    // narrower than the time and ticks (a two-letter reply) lets the row reach
-    // past its left edge instead of cutting the time short.
-    let time = crate::util::clock(message.timestamp);
+    let time = with_time.then(|| crate::util::clock(message.timestamp));
     let mut shown = shown_delivery(view, message);
     let mut status = message_status_text(view, message);
     // A word that has just given way to a newer message keeps saying itself
-    // while its row folds away, rather than turning into the clock.
+    // while its row folds away, rather than vanishing at once.
     let said = id.with("said");
     if let Some(text) = &status {
         ui.ctx()
@@ -690,12 +717,42 @@ pub(super) fn reference_timestamp(
         ui.ctx()
             .data_mut(|data| data.remove::<(String, Delivery)>(said));
     }
-    let needed = match &status {
-        Some(text) => status_span(ui, text, 10.0) + 2.0,
-        None => reference_timestamp_width(ui, &time, own),
+    let glyph = match message.status {
+        _ if !own || status.is_some() => None,
+        Delivery::Pending => Some(("•••", view.palette.secondary)),
+        Delivery::Failed => Some(("✗", view.palette.danger)),
+        _ => None,
     };
+    let time_font = theme::regular(theme::TEXT_MICRO);
+    let status_font = theme::regular(10.0);
+    let glyph_font = theme::semibold(theme::TEXT_CAPTION);
+    let width_of = |text: &str, font: &egui::FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    let parts = [
+        time.as_deref().map(|time| width_of(time, &time_font)),
+        status
+            .as_deref()
+            .map(|text| status_span(ui, text, status_font.size)),
+        glyph.map(|(glyph, _)| width_of(glyph, &glyph_font)),
+    ];
+    let shown_parts = parts.iter().flatten().count();
+    let needed = parts.iter().flatten().sum::<f32>()
+        + GAP * shown_parts.saturating_sub(1) as f32
+        + 2.0;
+    // Under the bubble, from its outer edge. A bubble narrower than the row
+    // (a two-letter reply) lets it reach past the bubble's inner edge instead
+    // of cutting it short.
     let x = bubble.map_or(available.x_range(), |bubble| bubble.x_range());
-    let x = widen_to(x, needed, available.x_range());
+    let x = if own {
+        widen_to(x, needed, available.x_range())
+    } else {
+        let right = (x.min + needed).max(x.max).min(available.right());
+        egui::Rangef::new((right - needed).min(x.min), right)
+    };
     let row_rect = Rect::from_x_y_ranges(x, slot_top + SPACING..=slot_top + SPACING + ROW_HEIGHT);
     let clip = Rect::from_min_max(slot.min, pos2(slot.right(), slot.top() + reveal_height))
         .intersect(ui.clip_rect());
@@ -703,83 +760,47 @@ pub(super) fn reference_timestamp(
         egui::UiBuilder::new()
             .id_salt(id)
             .max_rect(row_rect)
-            .layout(Layout::top_down(Align::Max)),
+            .layout(if own {
+                Layout::right_to_left(Align::Center)
+            } else {
+                Layout::left_to_right(Align::Center)
+            }),
     );
     row_ui.set_clip_rect(clip);
     row_ui.multiply_opacity(progress);
-    row_ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        if let Some(text) = &status {
-            // The word in bold, the time beside it in the regular weight,
-            // and only when the state came well after the message.
-            let font = theme::regular(10.0);
-            let colour = status_colour(view, shown, view.palette.secondary.gamma_multiply(0.82));
-            let width = status_span(ui, text, font.size);
-            let (rect, _) = ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
-            paint_status_word(
-                ui,
-                view,
-                message,
-                shown,
-                text,
-                (rect.right(), rect.center().y),
-                &font,
-                colour,
-            );
-        } else if own {
-            // Noted while it is still sending, so the word that follows
-            // eases in.
-            let _ = status_motion(ui, view, message, shown);
-            match message.status {
-                Delivery::Pending => {
-                    widgets::rich_text(
-                        ui,
-                        "•••",
-                        theme::semibold(theme::TEXT_CAPTION),
-                        view.palette.secondary,
-                    );
-                }
-                Delivery::Failed => {
-                    widgets::rich_text(
-                        ui,
-                        "✗",
-                        theme::semibold(theme::TEXT_CAPTION),
-                        view.palette.danger,
-                    );
-                }
-                _ => {}
-            }
-            widgets::rich_text(
-                ui,
-                &time,
-                theme::regular(theme::TEXT_MICRO),
-                view.palette.secondary.gamma_multiply(0.82),
-            );
-        } else {
-            widgets::rich_text(
-                ui,
-                &time,
-                theme::regular(theme::TEXT_MICRO),
-                view.palette.secondary.gamma_multiply(0.82),
-            );
+    let plain = view.palette.secondary.gamma_multiply(0.82);
+    row_ui.spacing_mut().item_spacing.x = GAP;
+    // A right-to-left row lays its first item outermost: the state, then
+    // the time inside it.
+    if let Some(text) = &status {
+        // The word in bold, with the time it was reached beside it in the
+        // regular weight when that came well after the message.
+        let colour = status_colour(view, shown, plain);
+        let width = status_span(&row_ui, text, status_font.size);
+        let (rect, _) = row_ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
+        paint_status_word(
+            &row_ui,
+            view,
+            message,
+            shown,
+            text,
+            (rect.right(), rect.center().y),
+            &status_font,
+            colour,
+        );
+    } else if own {
+        // Noted while it is still sending, so the word that follows eases in.
+        let _ = status_motion(&row_ui, view, message, shown);
+        if let Some((glyph, colour)) = glyph {
+            widgets::rich_text(&mut row_ui, glyph, glyph_font, colour);
         }
-    });
-    ui.interact(row_rect.intersect(clip), id, Sense::click())
-}
-
-/// The room the time and delivery mark under a bubble take, with their gap.
-pub(super) fn reference_timestamp_width(ui: &egui::Ui, time: &str, own: bool) -> f32 {
-    let time = ui
-        .painter()
-        .layout_no_wrap(
-            time.to_owned(),
-            theme::regular(theme::TEXT_MICRO),
-            Color32::WHITE,
-        )
-        .size()
-        .x;
-    // The mark is 14 points of ticks, or "•••" / "✗" while sending or failed.
-    time + if own { 14.0 + 4.0 } else { 0.0 } + 2.0
+    }
+    if let Some(time) = &time {
+        widgets::rich_text(&mut row_ui, time, time_font, plain);
+    }
+    if own {
+        status_opens_info(ui, view, message, row_rect.intersect(clip), actions);
+    }
 }
 
 /// `span` grown to the left to be `needed` wide, or shifted right when that
