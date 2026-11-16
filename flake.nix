@@ -230,11 +230,6 @@
         }
       );
 
-      homeManagerModules = {
-        default = self.homeManagerModules.zapfast;
-        zapfast = import ./nix/home-manager.nix self;
-      };
-
       formatter = forAllSystems (pkgs: pkgs.nixfmt-tree);
     };
 }

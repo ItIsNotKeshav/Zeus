@@ -3,8 +3,6 @@ title: Memory and startup measurements
 description: Four paired Linux runs comparing idle RAM, first-window timing, and observed chat display. Includes the method and downloadable results.
 permalink: /benchmarks/
 nav_order: 4
-seo:
-  title: "Memory and Startup: ZapFast vs WhatsApp Web"
 ---
 
 ## Results
