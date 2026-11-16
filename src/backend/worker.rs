@@ -37,6 +37,7 @@ use whatsapp_rust::wacore_binary::jid::JidExt;
 use whatsapp_rust::waproto::buffa::Message as _;
 use whatsapp_rust::{MediaRetryResult, MediaReuploadRequest};
 
+mod archived_sync;
 mod blocking;
 mod bot_replies;
 mod calls;
@@ -868,6 +869,7 @@ pub async fn run(
         channel_list_generation: 0,
         pending_older: HashMap::new(),
         older_warned: HashSet::new(),
+        deferred_history: VecDeque::new(),
         pending_avatars: HashMap::new(),
         channel_pictures: Default::default(),
         sticker_fetches: HashSet::new(),
@@ -1025,6 +1027,15 @@ pub async fn run(
                 worker.prune_waiting_receipts();
                 worker.reconcile_call().await;
                 worker.release_idle_archive();
+            }
+            // Archived chats from history sync, one per pass, only while
+            // nothing else waits: a command or a live message goes first.
+            _ = std::future::ready(()),
+                if !worker.deferred_history.is_empty()
+                    && inbox.is_empty()
+                    && wa_events.is_empty() =>
+            {
+                worker.file_deferred_history();
             }
         }
         worker.flush_chats();
@@ -1405,6 +1416,9 @@ struct Worker {
     /// Chats already told that the phone did not answer; cleared when the
     /// phone sends that chat's history or the link reconnects.
     older_warned: HashSet<ChatId>,
+    /// Archived chats from history sync, filed when the worker is idle so
+    /// the main chats are filed first (see `archived_sync`).
+    deferred_history: VecDeque<(ChatId, ParsedChat)>,
     /// Deferred profile-picture requests and retry counts.
     pending_avatars: HashMap<(String, bool), u32>,
     /// Followed channels' pictures, which no profile-picture lookup finds.
@@ -4565,6 +4579,8 @@ impl Worker {
         self.older_ids_match = false;
         self.forward_queue = None;
         self.pending_older.clear();
+        // Queued history belongs to the account that left.
+        self.deferred_history.clear();
         self.pending_avatars.clear();
         // A star request belongs to the account that just left. A task that
         // finishes after logout must not write the next account, whose
@@ -5919,7 +5935,16 @@ impl Worker {
         } else {
             let parsed = tokio::task::spawn_blocking(move || parse_history(&compressed)).await;
             match parsed {
-                Ok(Ok(parsed)) => {
+                Ok(Ok(mut parsed)) => {
+                    if !on_demand {
+                        let deferred = self.defer_archived_history(&mut parsed);
+                        if deferred > 0 {
+                            log::info!(
+                                "history: chats now={}, archived for later={deferred}",
+                                parsed.chats.len()
+                            );
+                        }
+                    }
                     if on_demand {
                         log::info!(
                             "poll recovery: on-demand history received; chats={}, messages={}, standalone_votes={}",
@@ -5998,7 +6023,21 @@ impl Worker {
         let mut media_changed_in: HashSet<ChatId> = HashSet::new();
         let mut filed = Vec::new();
         let (mut received, mut messages, mut votes) = (0, 0, 0);
+        let mut deferred = 0;
         while let Some(chat) = chats.recv().await {
+            // An archived chat waits until the main chats are filed (see
+            // `archived_sync`); the prelude already learned its ids.
+            let chat = if on_demand {
+                chat
+            } else {
+                match self.defer_archived_chat(chat) {
+                    Some(chat) => chat,
+                    None => {
+                        deferred += 1;
+                        continue;
+                    }
+                }
+            };
             if on_demand {
                 received += 1;
                 messages += chat.messages.len();
@@ -6018,6 +6057,12 @@ impl Worker {
         if on_demand {
             log::info!(
                 "poll recovery: on-demand history received; chats={received}, messages={messages}, standalone_votes={votes}"
+            );
+        }
+        if deferred > 0 {
+            log::info!(
+                "history: chats now={}, archived for later={deferred}",
+                filed.len()
             );
         }
         self.finish_history(&filed, media_changed_in);
@@ -6190,7 +6235,15 @@ impl Worker {
                 chat.ephemeral_setting_timestamp.unwrap_or_default(),
             );
         }
-        if ChatKind::from_id(&id) == ChatKind::Group {
+        // An archived group's members and settings are asked for when it is
+        // opened, not for every archived group the phone sends.
+        let archived_now = self
+            .archive
+            .chat(&id)
+            .ok()
+            .flatten()
+            .is_some_and(|row| row.archived);
+        if ChatKind::from_id(&id) == ChatKind::Group && !archived_now {
             self.request_group_info(&id, false);
         }
         let count = chat.messages.len();
@@ -9810,6 +9863,9 @@ impl Worker {
     }
 
     fn load_chat(&mut self, chat: ChatId, before: Option<super::PageKey>) {
+        if before.is_none() {
+            self.file_deferred_chat(&chat);
+        }
         self.send_page(&chat, before.clone());
         if before.is_none()
             && let Ok(ids) = self.archive.starred_ids(&chat)
@@ -19796,6 +19852,7 @@ mod receipt_tests {
             channel_list_generation: 0,
             pending_older: HashMap::new(),
             older_warned: HashSet::new(),
+            deferred_history: VecDeque::new(),
             pending_avatars: HashMap::new(),
             channel_pictures: Default::default(),
             sticker_fetches: HashSet::new(),
