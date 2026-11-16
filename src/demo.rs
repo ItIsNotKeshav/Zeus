@@ -4583,17 +4583,23 @@ mod tests {
                 ctx.enable_accesskit();
             }
             let mut delay = std::time::Duration::MAX;
+            let mut causes = Vec::new();
             // Avatars and media load on threads that ask for a frame when
-            // they finish; measure once three frames in a row had none
-            // pending.
+            // they finish, and a slow machine can finish one inside the frame
+            // that started it. Measure once three frames in a row had none
+            // pending and asked for their next frame for the same reasons.
             let mut settled = 0;
             for frame in 0..400 {
+                let now = ctx.repaint_causes();
                 if ctx.has_pending_images() {
                     settled = 0;
                     std::thread::sleep(std::time::Duration::from_millis(10));
+                } else if frame > 0 && now != causes {
+                    settled = 0;
                 } else {
                     settled += 1;
                 }
+                causes = now;
                 if frame >= 8 && settled > 3 {
                     break;
                 }
@@ -4613,7 +4619,7 @@ mod tests {
                 output.textures_delta.clear();
                 delay = output.viewport_output[&egui::ViewportId::ROOT].repaint_delay;
             }
-            (delay, ctx.repaint_causes())
+            (delay, causes)
         };
         let from_the_dots = |causes: &[egui::RepaintCause]| {
             causes
