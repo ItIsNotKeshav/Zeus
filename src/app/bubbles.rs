@@ -189,6 +189,28 @@ impl App {
         }
     }
 
+    /// Brings up `chat`'s bubble, closed, when its new messages are chosen to
+    /// (chat info's Bubble new messages) and bubbles are on. One already
+    /// showing stays as it is; one closed before comes back. A fourth lets go
+    /// of the bubble used longest ago, as one started by hand does.
+    pub(super) fn auto_bubble(&mut self, chat: &str) {
+        if !self.settings.chat_bubbles
+            || !self
+                .settings
+                .auto_bubble_chats
+                .iter()
+                .any(|known| known == chat)
+            || self.bubbles.get(chat).is_some()
+            || self.chat(chat).is_none_or(|known| known.locked)
+            || self.pop_out.as_ref().is_some_and(|pop| pop.chat == chat)
+        {
+            return;
+        }
+        self.ensure_loaded(chat);
+        let account = self.account().id.clone();
+        self.bubbles.add(account, chat.to_owned());
+    }
+
     /// Makes `chat` a bubble and opens it.
     fn open_bubble(&mut self, chat: ChatId) {
         if !self.settings.chat_bubbles || self.chat(&chat).is_none_or(|known| known.locked) {
