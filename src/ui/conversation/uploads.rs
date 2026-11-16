@@ -607,7 +607,7 @@ pub(super) fn forget_pending_posters(ctx: &egui::Context, app: &App) {
 }
 
 /// Pixel size of a staged picture file, read once from its header.
-pub(super) fn pending_picture_size(ctx: &egui::Context, path: &std::path::Path) -> Option<Vec2> {
+pub(crate) fn pending_picture_size(ctx: &egui::Context, path: &std::path::Path) -> Option<Vec2> {
     let id = egui::Id::new(("pending-size", path));
     let known = ctx.data_mut(|data| data.get_temp::<Option<(u32, u32)>>(id));
     let size = known.unwrap_or_else(|| {
@@ -639,10 +639,102 @@ pub(super) fn pending_media_size(native: Vec2, bounds: Vec2) -> Vec2 {
 /// is held at [`PENDING_TILE`] at its least, so a panorama or a wide
 /// screenshot in a narrow window is shown whole, on the tile, rather than
 /// stretched to the tile's shape.
-pub(super) fn contained(native: Vec2, media: Rect) -> Rect {
+pub(crate) fn contained(native: Vec2, media: Rect) -> Rect {
     let native = vec2(native.x.max(1.0), native.y.max(1.0));
     let scale = (media.width() / native.x).min(media.height() / native.y);
     Rect::from_center_size(media.center(), native * scale.max(0.0))
+}
+
+/// The widest a staged file's card is drawn: room for a name and its type
+/// and size beside the icon, as the file's message shows them.
+pub(crate) const FILE_CARD_WIDTH: f32 = 220.0;
+/// How tall a staged file's card is: its icon and two lines, with room.
+pub(crate) const FILE_CARD_HEIGHT: f32 = 64.0;
+
+/// What a staged file says under its name: its type and how large it is,
+/// such as "PDF · 1.2 MB", as a sent file's card says it. Read once.
+pub(crate) fn file_detail(ctx: &egui::Context, path: &std::path::Path) -> String {
+    let id = egui::Id::new(("pending-file-detail", path));
+    if let Some(known) = ctx.data(|data| data.get_temp::<String>(id)) {
+        return known;
+    }
+    let kind = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .filter(|extension| !extension.is_empty() && extension.len() <= 6)
+        .map(str::to_uppercase);
+    let size = std::fs::metadata(path)
+        .ok()
+        .filter(|metadata| metadata.is_file())
+        .map(|metadata| crate::util::bytes(metadata.len()));
+    let detail = kind.into_iter().chain(size).collect::<Vec<_>>().join(" · ");
+    ctx.data_mut(|data| data.insert_temp(id, detail.clone()));
+    detail
+}
+
+/// The icon a staged file's card shows, by what kind of file it is.
+pub(crate) fn file_icon(path: &std::path::Path) -> Icon {
+    match mime_guess2::from_path(path).first() {
+        Some(mime) if mime.type_() == "audio" => Icon::Music,
+        Some(mime) if mime.type_() == "video" => Icon::Video,
+        Some(mime) if mime.type_() == "image" => Icon::Image,
+        _ => Icon::FileText,
+    }
+}
+
+/// A staged file as a card: its icon in a tinted disc, then its name and
+/// under it its type and size, each cut short to the card rather than
+/// running past it. The card itself is drawn by the caller.
+pub(crate) fn paint_file_card(
+    ui: &egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    path: &std::path::Path,
+) {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let detail = file_detail(ui.ctx(), path);
+    let disc_size = 36.0_f32.min(rect.height() - 16.0).max(0.0);
+    let inset = ((rect.height() - disc_size) / 2.0).min(14.0);
+    let disc = pos2(rect.left() + inset + disc_size / 2.0, rect.center().y);
+    ui.painter()
+        .circle_filled(disc, disc_size / 2.0, palette.accent.gamma_multiply(0.22));
+    theme::paint_icon(
+        ui,
+        file_icon(path),
+        Rect::from_center_size(disc, Vec2::splat(18.0)),
+        18.0,
+        palette.accent,
+    );
+    let text_left = disc.x + disc_size / 2.0 + 10.0;
+    // Clear of the remove button in the card's top right corner.
+    let width = (rect.right() - 26.0 - text_left).max(0.0);
+    let name = widgets::line(
+        ui,
+        &name,
+        theme::medium(theme::TEXT_CAPTION),
+        palette.text,
+        width,
+        1,
+    );
+    let detail = widgets::line(
+        ui,
+        &detail,
+        theme::regular(theme::TEXT_MICRO),
+        palette.secondary,
+        width,
+        1,
+    );
+    let gap = 2.0;
+    let top = rect.center().y - (name.size().y + gap + detail.size().y) / 2.0;
+    name.paint(ui, pos2(text_left, top), palette.text);
+    detail.paint(
+        ui,
+        pos2(text_left, top + name.size().y + gap),
+        palette.secondary,
+    );
 }
 
 /// Side of the square a document or an undecoded attachment shows as.

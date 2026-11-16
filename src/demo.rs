@@ -3851,6 +3851,48 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 });
                 app.composer = "Look at this".into();
             }
+            // The first chat open in a bubble, as the chat bubbles show it,
+            // with nothing attached, one photo, or a photo, a pasted
+            // picture, a clip and a PDF.
+            "bubble-open" | "bubble-photo" | "bubble-mixed" | "bubble-file" => {
+                let (photo, _) = sample_files(app);
+                let dir = app.dirs.media_cache_dir();
+                let mut staged = Vec::new();
+                if matches!(part, "bubble-photo" | "bubble-mixed") {
+                    staged.push(crate::app::Pending::File(photo.clone()));
+                }
+                if part == "bubble-mixed" {
+                    let side = 96usize;
+                    let rgba: Vec<u8> = (0..side * side)
+                        .flat_map(|index| {
+                            let x = (index % side) as f32 / side as f32;
+                            let y = (index / side) as f32 / side as f32;
+                            [(250.0 * x) as u8, 140, (240.0 * (1.0 - y)) as u8, 255]
+                        })
+                        .collect();
+                    staged.push(crate::app::Pending::Picture {
+                        width: side,
+                        height: side,
+                        rgba: std::sync::Arc::new(rgba),
+                        texture: None,
+                    });
+                    staged.push(crate::app::Pending::File(stock::save(
+                        &dir,
+                        "demo-video.mp4",
+                        stock::VIDEO,
+                    )));
+                }
+                if matches!(part, "bubble-mixed" | "bubble-file") {
+                    let pdf = dir.join("Ferry timetable, summer and autumn.pdf");
+                    let _ = std::fs::write(&pdf, vec![b'%'; 482_000]);
+                    staged.push(crate::app::Pending::Document(pdf));
+                }
+                if part != "bubble-open" {
+                    app.composer.clear();
+                }
+                bubbles_sample(app);
+                app.demo_bubble(SAMPLES[0].id.into(), staged);
+            }
             "staged" => {
                 let (photo, _) = sample_files(app);
                 let side = 48usize;
