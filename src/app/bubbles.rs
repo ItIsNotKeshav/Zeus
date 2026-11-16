@@ -44,6 +44,10 @@ pub struct Bubbles {
     pub list: Vec<Bubble>,
     pub expanded: Option<ChatId>,
     uses: u64,
+    /// Ctrl/Cmd+V as the bubble window's keys say it, as the main window
+    /// reads its own: a clipboard holding only a picture sends no `Paste`
+    /// and swallows the V press, so only its release says a paste was asked.
+    paste_keys: super::PasteKeys,
 }
 
 impl Bubbles {
@@ -266,20 +270,15 @@ impl App {
                 .map(|file| file.path().to_path_buf())
                 .collect()
         });
-        let pasting = ctx.input(|input| {
-            input.events.iter().any(|event| {
-                matches!(event, egui::Event::Paste(_))
-                    || matches!(
-                        event,
-                        egui::Event::Key {
-                            key: egui::Key::V,
-                            pressed: true,
-                            modifiers,
-                            ..
-                        } if modifiers.command
-                    )
-            })
+        // Read once a frame: a frame laid out twice sees its keys twice.
+        let frame = ctx.cumulative_frame_nr();
+        let frame_id = egui::Id::new(("bubble-paste-frame", chat));
+        let first = ctx.data_mut(|data| {
+            let seen = data.get_temp::<u64>(frame_id) == Some(frame);
+            data.insert_temp(frame_id, frame);
+            !seen
         });
+        let pasting = first && ctx.input(|input| self.bubbles.paste_keys.read(input));
         let pasted = if pasting && !cfg!(test) {
             super::clipboard_contents(super::clipboard_files, super::clipboard_image).ok()
         } else {
