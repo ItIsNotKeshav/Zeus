@@ -18,8 +18,6 @@ const MAX_WAITING: usize = 512;
 struct WaitingRead {
     chat: String,
     id: String,
-    /// The phone played it, a voice message, as well as reading it.
-    played: bool,
     queued: Instant,
 }
 
@@ -63,15 +61,14 @@ pub(super) struct EarlyEvents {
 }
 
 impl EarlyEvents {
-    /// Keeps the phone's read, or play, of a message we do not have yet.
-    pub(super) fn wait_read(&mut self, chat: &str, id: &str, played: bool) {
+    /// Keeps the phone's read of a message we do not have yet.
+    pub(super) fn wait_read(&mut self, chat: &str, id: &str) {
         self.prune(Instant::now());
-        if let Some(read) = self
+        if self
             .reads
-            .iter_mut()
-            .find(|read| read.chat == chat && read.id == id)
+            .iter()
+            .any(|read| read.chat == chat && read.id == id)
         {
-            read.played |= played;
             return;
         }
         if self.reads.len() >= MAX_WAITING {
@@ -80,7 +77,6 @@ impl EarlyEvents {
         self.reads.push_back(WaitingRead {
             chat: chat.to_owned(),
             id: id.to_owned(),
-            played,
             queued: Instant::now(),
         });
     }
@@ -105,21 +101,11 @@ impl EarlyEvents {
         self.reactions.push_back(reaction);
     }
 
-    /// Whether the phone read this message before we had it, and if so
-    /// whether it played it too.
-    /// A privacy id's chat moved under its phone number can leave two
-    /// entries for one message; both are taken, and a play in either counts.
-    pub(super) fn take_read(&mut self, chat: &str, id: &str) -> Option<bool> {
-        let mut found = None;
-        self.reads.retain(|read| {
-            if read.chat == chat && read.id == id {
-                found = Some(found.unwrap_or(false) || read.played);
-                false
-            } else {
-                true
-            }
-        });
-        found
+    /// Whether the phone read this message before we had it.
+    pub(super) fn take_read(&mut self, chat: &str, id: &str) -> bool {
+        let before = self.reads.len();
+        self.reads.retain(|read| read.chat != chat || read.id != id);
+        self.reads.len() != before
     }
 
     /// The reactions waiting for this message, oldest first.
@@ -235,46 +221,20 @@ mod tests {
     fn waiting_is_bounded_by_count_and_age() {
         let mut early = EarlyEvents::default();
         for n in 0..=MAX_WAITING {
-            early.wait_read("chat", &n.to_string(), false);
+            early.wait_read("chat", &n.to_string());
         }
-        assert!(
-            early.take_read("chat", "0").is_none(),
-            "the oldest went first"
-        );
-        assert!(early.take_read("chat", &MAX_WAITING.to_string()).is_some());
+        assert!(!early.take_read("chat", "0"), "the oldest went first");
+        assert!(early.take_read("chat", &MAX_WAITING.to_string()));
         early.wait_reaction(plain("a", "👍", 1));
         early.prune(Instant::now() + MAX_AGE);
-        assert!(early.take_read("chat", "1").is_none());
+        assert!(!early.take_read("chat", "1"));
         assert!(early.take_reactions("chat", "m").is_empty());
-    }
-
-    #[test]
-    fn a_play_waits_with_the_read() {
-        let mut early = EarlyEvents::default();
-        early.wait_read("chat", "voice", false);
-        early.wait_read("chat", "voice", true);
-        early.wait_read("chat", "voice", false);
-        assert_eq!(early.take_read("chat", "voice"), Some(true));
-        assert_eq!(early.take_read("chat", "voice"), None);
-    }
-
-    #[test]
-    fn a_play_under_a_privacy_id_joins_the_read_under_the_number() {
-        let mut early = EarlyEvents::default();
-        early.wait_read("15550000001@s.whatsapp.net", "voice", false);
-        early.wait_read("1001@lid", "voice", true);
-        early.rekey("1001@lid", "15550000001@s.whatsapp.net");
-        assert_eq!(
-            early.take_read("15550000001@s.whatsapp.net", "voice"),
-            Some(true)
-        );
-        assert_eq!(early.take_read("15550000001@s.whatsapp.net", "voice"), None);
     }
 
     #[test]
     fn a_privacy_id_moves_to_its_phone_number() {
         let mut early = EarlyEvents::default();
-        early.wait_read("1@lid", "r", false);
+        early.wait_read("1@lid", "r");
         early.wait_reaction(WaitingReaction::new(
             "1@lid",
             "m",
@@ -287,7 +247,7 @@ mod tests {
             early.rekey("1@lid", "2@s.whatsapp.net"),
             ["m".to_owned(), "r".to_owned()]
         );
-        assert_eq!(early.take_read("2@s.whatsapp.net", "r"), Some(false));
+        assert!(early.take_read("2@s.whatsapp.net", "r"));
         let taken = early.take_reactions("2@s.whatsapp.net", "m");
         assert_eq!(taken[0].sender, "2@s.whatsapp.net");
     }
