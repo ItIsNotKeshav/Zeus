@@ -5588,6 +5588,15 @@ mod tests {
     /// took every point the row offered, stretching across the transcript.
     #[test]
     fn a_call_bubble_is_as_wide_as_its_words() {
+        // The system's clock decides how wide the time beside the words is:
+        // "11:52 AM" on a 12-hour clock is 20 points wider than "6:33 PM".
+        // A fixed clock keeps the comparison the same on every runner.
+        let _clock = crate::util::fixed_clock::set(crate::util::fixed_clock::Clock {
+            // 14:00 UTC on Wednesday 11 March 2026.
+            now: 1_773_237_600,
+            zone: jiff::tz::TimeZone::UTC,
+            twelve_hour: false,
+        });
         let mut app = app();
         let chat = SAMPLES[0].id;
         app.open_chat = Some(chat.to_owned());
