@@ -364,6 +364,10 @@ impl App {
                     | Action::BubbleAttach(_)
                     | Action::BubbleUnstage { .. }
                     | Action::MarkRead(_)
+                    // A photo, clip or sticker clicked in the card opens in
+                    // the window's viewer, large (see `ui::bubbles::show`).
+                    | Action::PreviewImage { .. }
+                    | Action::PreviewSticker(_)
             )
     }
 }

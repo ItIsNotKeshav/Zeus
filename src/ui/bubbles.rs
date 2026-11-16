@@ -176,6 +176,26 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         index += 1;
         keep
     });
+    // A picture clicked in the card is too small to see there: it opens in
+    // the main window's viewer, large, with the album to step through. The
+    // card folds back into its bubble so it does not float over the viewer,
+    // and the main window comes forward, unminimised.
+    let previewing = app.actions[before.min(app.actions.len())..]
+        .iter()
+        .any(|action| {
+            matches!(
+                action,
+                Action::PreviewImage { .. } | Action::PreviewSticker(_)
+            )
+        });
+    if previewing {
+        app.actions.push(Action::CollapseBubbles);
+        ctx.send_viewport_cmd_to(
+            egui::ViewportId::ROOT,
+            egui::ViewportCommand::Minimized(false),
+        );
+        ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+    }
 }
 
 /// Draws the window's bubbles and card, and returns what it painted: the
