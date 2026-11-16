@@ -2371,6 +2371,10 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         quoting: app.reply_to.clone(),
                     });
                 } else {
+                    // Each attachment flies from its tile to its row.
+                    if !calm {
+                        record_attachment_flights(app, ui.ctx(), &chat.id);
+                    }
                     app.actions.push(Action::SendPending {
                         account: app.account().id.clone(),
                         mentions: app.composer_mentions(),
@@ -3024,6 +3028,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .filter(|upload| upload.chat == chat.id)
         .cloned()
         .collect();
+    note_live_flights(ui.ctx(), &chat.id, &uploads);
     let mut avatars = HashMap::new();
     if shows_sender_pictures(chat) {
         let mut senders: HashSet<String> = conversation
@@ -4196,7 +4201,13 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     for notice in &notices[placed..] {
                         pin_notice(ui, &palette, view.locale, view.names_or, notice);
                     }
-                    upload_rows(ui, &palette, &uploads);
+                    // A chat bubble's card is narrower than the chat, and
+                    // sends nothing from the composer's strip.
+                    if pane != Pane::Bubble {
+                        note_own_bubble_width(ui, &palette, &chat.id);
+                    }
+                    let fly = view.animate && !reduce_motion && pane != Pane::Bubble;
+                    upload_rows(ui, &palette, &uploads, fly);
                     if !typing.is_empty() {
                         typing_indicator(ui, &view, &typing);
                     }
@@ -8839,7 +8850,7 @@ fn album_content(
     width: f32,
     actions: &mut Vec<Action>,
 ) -> Vec<(Rect, String)> {
-    let gap = 3.0;
+    let gap = ALBUM_GAP;
     let columns = 2;
     let tile = ((width - gap * (columns - 1) as f32) / columns as f32).max(80.0);
     // The grid's outer corners follow the picture's own radius; corners where
@@ -14219,32 +14230,175 @@ mod reaction_tests {
     }
 
     #[test]
-    fn a_staged_picture_keeps_its_ratio_inside_the_bounds() {
-        let bounds = vec2(440.0, 300.0);
-        let wide = pending_media_size(vec2(1600.0, 900.0), bounds);
-        assert!((wide.x / wide.y - 16.0 / 9.0).abs() < 0.01);
-        assert!(wide.x <= bounds.x && wide.y <= bounds.y);
-        let tall = pending_media_size(vec2(600.0, 1200.0), bounds);
-        assert!((tall.y - bounds.y).abs() < 0.01 && (tall.x * 2.0 - tall.y).abs() < 0.01);
-        // A tiny picture grows at most twice.
-        assert_eq!(
-            pending_media_size(vec2(100.0, 80.0), bounds),
-            vec2(200.0, 160.0)
-        );
-    }
-
-    #[test]
     fn a_wide_staged_picture_is_shown_whole_not_squeezed() {
         // A wide screenshot in a narrow window: the tile is held at its
         // least height, and the picture inside keeps its own ratio.
         let native = vec2(1200.0, 180.0);
-        let tile = pending_media_size(native, vec2(300.0, 160.0));
-        assert!(tile.y >= PENDING_TILE && tile.x <= 300.0);
+        let tile = staged_media_size(native, vec2(320.0, 440.0), None, vec2(300.0, 160.0))
+            .max(Vec2::splat(PENDING_TILE));
         let media = Rect::from_min_size(egui::pos2(10.0, 10.0), tile);
         let shown = contained(native, media);
         assert!((shown.width() / shown.height() - native.x / native.y).abs() < 0.01);
         assert!(media.contains_rect(shown));
         assert!((shown.center() - media.center()).length() < 0.01);
+    }
+
+    /// A picture staged in the composer is drawn at the size its message
+    /// will have once sent, in every style, with a caption or without, so
+    /// it flies to its row without growing or shrinking.
+    #[test]
+    fn a_staged_picture_is_drawn_at_the_size_its_message_will_be() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let place = RunPlace {
+            show_sender: false,
+            show_avatar: false,
+            tailed: true,
+            first_in_run: true,
+            last_in_run: true,
+            last_outgoing: true,
+            shows_time: false,
+        };
+        let mut cases = Vec::new();
+        for style in [
+            theme::BubbleStyle::WhatsApp,
+            theme::BubbleStyle::Messages,
+            theme::BubbleStyle::Nothing,
+        ] {
+            for captioned in [false, true] {
+                for size in [(1600, 900), (600, 1600), (200, 150), (40, 40)] {
+                    for screen in [1000.0, 400.0] {
+                        cases.push((style, captioned, size, screen));
+                    }
+                }
+            }
+        }
+        with_still_view(|view| {
+            for (style, captioned, (width, height), screen) in cases {
+                let mut palette = view.palette;
+                palette.bubbles = style;
+                let view = View { palette, ..*view };
+                let mut message = crate::archive::tests::message(&view.chat.id, "sent", 0, true);
+                message.content = Content::Image {
+                    caption: captioned.then(|| "Caption fixture".to_owned()),
+                    media: media(Some(width), Some(height)),
+                    motion: None,
+                };
+                let native = vec2(width as f32, height as f32);
+                let mut staged = Vec2::ZERO;
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(screen, 1000.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let bubble = own_bubble_width(&palette, ui.available_width());
+                        let bounds = own_picture_bounds(&palette, bubble, captioned, false);
+                        staged = staged_media_size(native, bounds, None, Vec2::splat(10_000.0));
+                        bubble_row(ui, &view, &message, None, place, true, &mut Vec::new());
+                    },
+                );
+                output.textures_delta.clear();
+                let id = bubble_id(&view.chat.id, "sent").with("picture");
+                let sent = ctx
+                    .data(|data| data.get_temp::<Rect>(id))
+                    .expect("the picture is drawn");
+                assert!(
+                    (sent.size() - staged).length() < 0.5,
+                    "{style:?}, captioned {captioned}, {width}x{height} in {screen}: {staged:?}"
+                );
+            }
+        });
+        // A small picture is not grown.
+        let small = staged_media_size(
+            vec2(200.0, 150.0),
+            vec2(320.0, 440.0),
+            None,
+            Vec2::splat(1000.0),
+        );
+        assert_eq!(small, vec2(200.0, 150.0));
+    }
+
+    /// A text's flight from the composer goes to the text, not to a
+    /// picture that arrives before it.
+    #[test]
+    fn a_text_flight_is_not_taken_by_a_picture() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let place = RunPlace {
+            show_sender: false,
+            show_avatar: false,
+            tailed: true,
+            first_in_run: true,
+            last_in_run: true,
+            last_outgoing: true,
+            shows_time: false,
+        };
+        with_still_view(|view| {
+            let view = View {
+                animate: true,
+                ..*view
+            };
+            let flight = SendFlight {
+                chat: view.chat.id.clone(),
+                from: Rect::from_min_size(egui::pos2(20.0, 560.0), vec2(120.0, 20.0)),
+                field: Color32::GRAY,
+                ink: Color32::WHITE,
+                sent: 0.0,
+                wall: crate::util::now(),
+                message: None,
+            };
+            ctx.data_mut(|data| data.insert_temp(send_flight_id(), vec![flight]));
+            let draw = |message: &Message| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(600.0, 600.0),
+                        )),
+                        time: Some(0.1),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        bubble_arriving(ui, &view, message, None, place, false, &mut Vec::new());
+                    },
+                );
+                output.textures_delta.clear();
+            };
+            let now = crate::util::now();
+            let mut picture = crate::archive::tests::message(&view.chat.id, "picture", now, true);
+            picture.content = Content::Image {
+                caption: None,
+                media: media(Some(800), Some(600)),
+                motion: None,
+            };
+            draw(&picture);
+            assert_eq!(flying_to(&ctx), None, "the picture leaves the flight alone");
+            draw(&crate::archive::tests::message(&view.chat.id, "text", now, true));
+            assert_eq!(flying_to(&ctx).as_deref(), Some("text"));
+        });
+    }
+
+    /// An attachment leaves from its tile in the strip, at the tile's size,
+    /// rises and slides across without passing its column, and lands in its
+    /// place at its own size.
+    #[test]
+    fn an_attachment_flies_from_its_tile_to_its_place() {
+        let to = Rect::from_min_size(egui::pos2(300.0, 100.0), vec2(200.0, 100.0));
+        let from = Rect::from_min_size(egui::pos2(20.0, 500.0), vec2(100.0, 50.0));
+        let at = |elapsed: f64| flight_transform(from, to, elapsed).mul_rect(to);
+        let near = |a: Rect, b: Rect| (a.min - b.min).length() + (a.max - b.max).length() < 1.0;
+        assert!(near(at(0.0), from), "{:?}", at(0.0));
+        let between = at(0.1).center();
+        assert!(between.x > from.center().x && between.x < to.center().x);
+        let settled = SEND_RISE.settle_time().max(SEND_ACROSS.settle_time()) + 0.1;
+        assert!(near(at(settled), to), "{:?}", at(settled));
+        // A tile the size of its place only moves.
+        let level = flight_transform(to.translate(vec2(-200.0, 300.0)), to, 0.0);
+        assert!((level.scaling - 1.0).abs() < 1e-4);
     }
 
     #[test]
@@ -14286,9 +14440,10 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
     let mut ghosts = Vec::new();
     let mut added = 0;
     let mut moving = false;
-    // One attachment gets most of the panel, so a photo can be seen before it
-    // goes out. Several share the width in pairs. Neither is a fixed size: the
-    // picture's own ratio decides the shape inside these bounds.
+    // A picture or clip is shown at the size it will have once sent, so it
+    // flies to its row without growing; several share the width in pairs,
+    // and pictures that go as an album show as its square tiles. The
+    // picture's own ratio decides the shape.
     let spacing = 8.0;
     let available = ui.available_width();
     let count = app.pending.len();
@@ -14297,15 +14452,30 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
     // for it: a picture as wide as the panel would otherwise push the strip
     // past the composer's edge in a narrow window.
     let frame = 8.0;
-    let bounds = if count == 1 {
-        vec2(
-            (available - frame).clamp(PENDING_TILE, 440.0),
-            (screen_height * 0.38).clamp(160.0, 320.0),
-        )
-    } else {
+    let bubble = ui
+        .ctx()
+        .data(|data| data.get_temp::<f32>(own_bubble_width_id(chat)))
+        .unwrap_or_else(|| own_bubble_width(&palette, available));
+    let captioned = !app.composer.trim().is_empty();
+    let mut files = Vec::new();
+    let mut documents = false;
+    for staged in &app.pending {
+        match &staged.item {
+            crate::app::Pending::File(path) => files.push(path.as_path()),
+            crate::app::Pending::Document(_) => documents = true,
+            crate::app::Pending::Picture { .. } => {}
+        }
+    }
+    let album = !documents && crate::model::forms_album(files);
+    let album_side = album_tile_side(&palette, bubble, captioned);
+    let shared = (count > 1).then(|| {
         let side = ((available - spacing) / 2.0 - frame).clamp(120.0, 220.0);
-        vec2(side, side)
-    };
+        Vec2::splat(side)
+    });
+    let room = vec2(
+        (available - frame).max(PENDING_TILE),
+        (screen_height * 0.45).max(PENDING_TILE),
+    );
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(spacing, spacing);
         for (index, item) in app.pending.iter_mut().enumerate() {
@@ -14343,9 +14513,17 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                 }
                 _ => (None, None),
             };
+            // An album's member is one of its tiles.
+            let tiled = album && matches!(item.item, crate::app::Pending::File(_));
             let target = match native {
+                Some(_) if tiled => Vec2::splat(album_side + frame),
                 Some(native) if !document => {
-                    pending_media_size(native, bounds) + Vec2::splat(frame)
+                    let video = match &item.item {
+                        crate::app::Pending::File(path) => crate::image_preview::is_video(path),
+                        _ => false,
+                    };
+                    let bounds = own_picture_bounds(&palette, bubble, captioned, video);
+                    staged_media_size(native, bounds, shared, room) + Vec2::splat(frame)
                 }
                 // A file is a card with its name, type and size, as wide as
                 // the strip allows and never past it.
@@ -14373,6 +14551,8 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
             let mut face_end = start;
             let mut textures: Vec<egui::TextureHandle> = poster.iter().cloned().collect();
             let (rect, response) = ui.allocate_exact_size(size, sense);
+            // Where its picture or card is drawn, for it to fly from.
+            let mut face = rect;
             if ui.is_rect_visible(rect) {
                 // Flat on the chat like a bubble, with a bubble's corners;
                 // a large picture takes the control radius so the corners
@@ -14389,6 +14569,16 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                 };
                 ui.painter().rect_filled(rect, radius, palette.surface);
                 let media = rect.shrink(4.0);
+                // An album's tile is filled, cropping the longer side; else
+                // a picture is shown whole, in its own shape, so a tile held
+                // at its least height for a wide screenshot shows it
+                // smaller, not squeezed.
+                let whole = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                let (shown, uv) = match native {
+                    Some(native) if tiled => (media, cover_uv(native, media.size())),
+                    Some(native) => (contained(native, media), whole),
+                    None => (media, whole),
+                };
                 match &mut item.item {
                     crate::app::Pending::Picture {
                         width,
@@ -14433,22 +14623,20 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                                 egui::TextureOptions::LINEAR,
                             )
                         });
-                        // Whole and in its own shape: a tile held at its
-                        // least height for a wide screenshot shows it
-                        // smaller, not squeezed.
-                        let shown = native.map_or(media, |native| contained(native, media));
                         egui::Image::from_texture((handle.id(), shown.size()))
                             .corner_radius(inner_radius)
                             .paint_at(ui, shown);
                         textures.push(handle.clone());
+                        face = shown;
                     }
                     crate::app::Pending::File(path) | crate::app::Pending::Document(path) => {
                         if !document && crate::app::Pending::is_picture_file(path) {
-                            let shown = native.map_or(media, |native| contained(native, media));
                             widgets::fitted_image(ui, path, shown.size())
                                 .fit_to_exact_size(shown.size())
+                                .uv(uv)
                                 .corner_radius(inner_radius)
                                 .paint_at(ui, shown);
+                            face = shown;
                         } else if !document && crate::image_preview::is_video(path) {
                             ui.painter().rect_filled(
                                 media,
@@ -14456,11 +14644,12 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                                 palette.shadow.gamma_multiply(1.4),
                             );
                             if let Some(handle) = &poster {
-                                let shown = contained(handle.size_vec2(), media);
                                 egui::Image::from_texture((handle.id(), shown.size()))
+                                    .uv(uv)
                                     .corner_radius(inner_radius)
                                     .paint_at(ui, shown);
                             }
+                            face = media;
                             // A clip says it is one, as it does in the chat.
                             let disc = Rect::from_center_size(media.center(), Vec2::splat(42.0));
                             ui.painter().circle_filled(
@@ -14583,6 +14772,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
             ghosts.push(TileGhost {
                 id: item.id,
                 place: transform.mul_rect(rect).translate(-origin.to_vec2()),
+                face: transform.mul_rect(face).translate(-origin.to_vec2()),
                 shapes,
                 _textures: textures,
             });
@@ -14644,6 +14834,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                 ghosts: std::sync::Arc::new(ghosts),
                 leaving,
                 height,
+                origin,
                 time: now,
                 pass,
             },

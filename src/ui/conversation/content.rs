@@ -4,6 +4,8 @@ use super::*;
 
 /// How round the corners are where two tiles of an album meet.
 pub(super) const ALBUM_SEAM_RADIUS: f32 = 4.0;
+/// The space between two tiles of an album.
+pub(super) const ALBUM_GAP: f32 = 3.0;
 /// The size of the button that downloads a whole album.
 pub(super) const ALBUM_BUTTON: f32 = 56.0;
 

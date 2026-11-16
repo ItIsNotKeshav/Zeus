@@ -228,14 +228,17 @@ just as a held one does. Other text fields, such as search, paste only text,
 and nothing is staged while a menu, the picker, a recording, or a full-size
 video is open.
 They stay above the composer until you send them, with the typed text as a
-caption. To reply with an attachment, start a reply and then attach the file.
+caption. A picture or video there is shown at the size it will have in the
+chat, and pictures that will go together as an album show as its tiles. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
-A sent attachment appears at the end of the chat straight away, as your own
-message: a picture as itself, dimmed under a progress ring, and any other
-file as its card, with its icon ringed by the progress and how much has gone
-beside it. The ring turns while the file is read and encrypted, then fills as
+A sent attachment moves from above the composer to the end of the chat
+straight away, as your own message: a picture or video as itself, dimmed
+under a progress ring, an album as its grid, and any other file as its card,
+with its icon ringed by the progress and how much has gone beside it. The
+caption shows under the attachment it goes with. With reduced motion on, or
+while the window is in the background, it appears in place instead. The ring turns while the file is read and encrypted, then fills as
 the upload goes, and the attachment's message takes its place once WhatsApp
 has the file.
 

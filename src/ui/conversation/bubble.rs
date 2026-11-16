@@ -112,6 +112,7 @@ pub(super) fn bubble_arriving(
                     .position(|f| f.message.as_ref().is_some_and(|(id, _)| *id == message.id))
             };
             if claimed(flights).is_none()
+                && matches!(message.content, Content::Text { .. })
                 && let Some(free) = flights.iter_mut().find(|f| {
                     f.chat == view.chat.id
                         && f.message.is_none()
@@ -193,6 +194,26 @@ pub(super) fn bubble_arriving(
             ui.ctx().request_repaint();
             return response;
         }
+        // A picture or file whose upload flew from the composer and ended
+        // mid-way: its message carries the flight on from where it got to.
+        if let Some((from, started)) = carried_flight(ui.ctx(), &view.chat.id, message, now) {
+            let response = bubble_row(ui, view, message, album, place, reduce_motion, actions);
+            let id = bubble_id(&view.chat.id, &message.id);
+            let to = ui.ctx().data(|data| {
+                data.get_temp::<Rect>(id.with("picture"))
+                    .or_else(|| data.get_temp::<Rect>(album_tile_id(&view.chat.id, &message.id)))
+                    .or_else(|| data.get_temp::<Rect>(id.with("rect")))
+            });
+            // It has taken the upload's place, so it never pops in after.
+            let landing = egui::Id::new(("landing", &view.chat.id, &message.id));
+            ui.ctx().data_mut(|data| {
+                data.insert_temp(landing, (f64::NEG_INFINITY, None::<Rect>));
+            });
+            if let Some(to) = to {
+                fly_from_composer(ui, start, &view.chat.id, from, to, now - started);
+            }
+            return response;
+        }
     }
     // Received, or a send that left no flight. The first time it is drawn
     // starts its spring, unless it was already there when the chat itself
@@ -223,8 +244,21 @@ pub(super) fn bubble_arriving(
         .flatten()
         .filter(|seen| now - seen.drawn <= TYPING_HANDOFF)
         .map(|seen| seen.since);
+    // An attachment takes the place of its upload, drawn a moment ago, where
+    // it already was: it does not pop in.
+    let seen = ui
+        .ctx()
+        .data(|data| data.get_temp::<f64>(upload_seen_id(&view.chat.id)));
+    let uploaded = message.from_me
+        && sent_attachment(message)
+        && seen.is_some_and(|drawn| now - drawn <= TYPING_HANDOFF);
+    let arrived = if uploaded {
+        f64::NEG_INFINITY
+    } else {
+        sticker.unwrap_or(now)
+    };
     let (landed, typing) = ui.ctx().data_mut(|data| {
-        *data.get_temp_mut_or_insert_with(id, || (sticker.unwrap_or(now), typing))
+        *data.get_temp_mut_or_insert_with(id, || (arrived, typing))
     });
     let elapsed = now - landed;
     if POP.settled(elapsed) || landed <= shown {
@@ -379,22 +413,15 @@ pub(super) fn bubble_row(
     };
     let with_avatar = !own && shows_sender_pictures(view.chat);
     let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
-    let share = if carousel {
-        0.95
-    } else if view.palette.bubbles == theme::BubbleStyle::Messages {
-        MESSAGES_WIDTH_SHARE
-    } else if view.palette.bubbles == theme::BubbleStyle::Nothing {
-        0.70
+    let mut max_width = if carousel {
+        (ui.available_width() * 0.95).min(920.0)
     } else {
-        WHATSAPP_WIDTH_SHARE
+        own_bubble_width(&view.palette, ui.available_width())
     };
-    let max_width = ((ui.available_width() * share).min(if carousel { 920.0 } else { 560.0 })
-        - if with_avatar {
-            SENDER_AVATAR + 8.0
-        } else {
-            0.0
-        })
-    .max(0.0);
+    if with_avatar {
+        max_width -= SENDER_AVATAR + 8.0;
+    }
+    let max_width = max_width.max(0.0);
     // Register the empty strip beside the bubble from its previous rect, before
     // the row, so the avatar, the bubble, and the reactions win clicks, and the
     // text wins drags. A drag that starts here, off the text, sweeps messages

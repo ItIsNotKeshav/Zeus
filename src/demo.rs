@@ -2093,6 +2093,9 @@ fn uploads_sample(app: &mut App) {
             preview,
             sent: (total as f64 * fraction) as u64,
             total: if fraction > 0.0 { total } else { 0 },
+            caption: None,
+            batch: None,
+            staged: None,
         });
     }
 }

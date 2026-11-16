@@ -6558,22 +6558,36 @@ impl App {
         let quoting = self.reply_to.take();
         let quoted = quoting.clone();
         let caption = caption.trim().to_owned();
+        // Its upload shows the caption as it was typed, names and all.
+        let typed = Some(caption.clone()).filter(|text| !text.is_empty());
         let (caption, mentions) = self.encode_composer_mentions(&chat, caption);
         let caption = Some(caption).filter(|text| !text.is_empty());
         self.emoji_start = None;
         self.mention_start = None;
+        let staged: Vec<AttachmentId> = self.pending.iter().map(|staged| staged.id).collect();
         let items = std::mem::take(&mut self.pending)
             .into_iter()
             .map(|staged| staged.item)
             .collect();
-        self.send_staged(&chat, items, caption, mentions, quoting, view_once);
+        let uploads = self.send_staged(&chat, items, caption, mentions, quoting, view_once);
+        // Each upload names the attachment it was, for its row to fly from
+        // that attachment's tile.
+        for (upload, staged) in uploads.into_iter().zip(staged) {
+            if let Some(entry) = self.uploads.iter_mut().find(|entry| entry.id == upload) {
+                entry.staged = Some(staged);
+                if entry.caption.is_some() {
+                    entry.caption.clone_from(&typed);
+                }
+            }
+        }
         // Everything staged has gone, so nothing is remembered about it.
         self.forget_unstaged_pictures();
         self.follow_outgoing(quoted.as_ref());
     }
 
     /// Sends staged attachments to `chat` in the order they were staged, the
-    /// caption, mentions and quote going with the first.
+    /// caption, mentions and quote going with the first. Answers with each
+    /// item's upload, in the same order.
     pub(crate) fn send_staged(
         &mut self,
         chat: &ChatId,
@@ -6582,11 +6596,12 @@ impl App {
         mut mentions: Vec<String>,
         mut quoting: Option<crate::model::ReplyTarget>,
         view_once: bool,
-    ) {
+    ) -> Vec<crate::model::UploadId> {
         let chat = chat.clone();
+        let mut uploads: Vec<crate::model::UploadId> = vec![0; items.len()];
         // Files go in runs of one kind, in the order they were staged.
-        let mut runs: Vec<(bool, Vec<PathBuf>)> = Vec::new();
-        for item in items {
+        let mut runs: Vec<(bool, Vec<(usize, PathBuf)>)> = Vec::new();
+        for (index, item) in items.into_iter().enumerate() {
             let (documents, path) = match item {
                 Pending::Picture {
                     width,
@@ -6605,13 +6620,18 @@ impl App {
                             texture,
                         }),
                     );
+                    uploads[index] = upload;
+                    let caption = caption.take();
+                    if let Some(entry) = self.uploads.last_mut() {
+                        entry.caption.clone_from(&caption);
+                    }
                     self.backend.send(Command::SendImage {
                         chat: chat.clone(),
                         width: width as u32,
                         height: height as u32,
                         rgba: std::sync::Arc::try_unwrap(rgba).unwrap_or_else(|arc| (*arc).clone()),
                         view_once,
-                        caption: caption.take(),
+                        caption,
                         mentions: std::mem::take(&mut mentions),
                         quoting: quoting.take(),
                         upload: Some(upload),
@@ -6622,35 +6642,52 @@ impl App {
                 Pending::Document(path) => (true, path),
             };
             match runs.last_mut() {
-                Some((kind, paths)) if *kind == documents => paths.push(path),
-                _ => runs.push((documents, vec![path])),
+                Some((kind, paths)) if *kind == documents => paths.push((index, path)),
+                _ => runs.push((documents, vec![(index, path)])),
             }
         }
-        for (documents, paths) in runs {
-            let uploads = paths
-                .iter()
-                .map(|path| {
-                    let kind = crate::model::UploadKind::of(path, documents);
-                    let name = path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_default();
-                    let preview = (kind == crate::model::UploadKind::Image)
-                        .then(|| crate::model::UploadPreview::File(path.clone()));
-                    self.begin_upload(&chat, kind, name, preview)
-                })
-                .collect();
+        for (documents, run) in runs {
+            let (indices, paths): (Vec<usize>, Vec<PathBuf>) = run.into_iter().unzip();
+            // Pictures and clips that go together make one album, and their
+            // uploads are drawn as its grid.
+            let album = !documents && crate::model::forms_album(paths.iter().map(PathBuf::as_path));
+            let caption = caption.take();
+            let mut ids: Vec<crate::model::UploadId> = Vec::with_capacity(paths.len());
+            for (index, path) in indices.into_iter().zip(&paths) {
+                let kind = crate::model::UploadKind::of(path, documents);
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                // A clip shows its poster while it goes, as it did staged.
+                let preview = matches!(
+                    kind,
+                    crate::model::UploadKind::Image | crate::model::UploadKind::Video
+                )
+                .then(|| crate::model::UploadPreview::File(path.clone()));
+                let upload = self.begin_upload(&chat, kind, name, preview);
+                let batch = ids.first().copied().unwrap_or(upload);
+                if let Some(entry) = self.uploads.last_mut() {
+                    entry.batch = album.then_some(batch);
+                    if ids.is_empty() {
+                        entry.caption.clone_from(&caption);
+                    }
+                }
+                uploads[index] = upload;
+                ids.push(upload);
+            }
             self.backend.send(Command::SendFiles {
                 chat: chat.clone(),
                 paths,
                 documents,
                 view_once,
-                caption: caption.take(),
+                caption,
                 mentions: std::mem::take(&mut mentions),
                 quoting: quoting.take(),
-                uploads,
+                uploads: ids,
             });
         }
+        uploads
     }
 
     #[allow(dead_code)]
@@ -6699,6 +6736,9 @@ impl App {
             preview,
             sent: 0,
             total: 0,
+            caption: None,
+            batch: None,
+            staged: None,
         });
         id
     }
@@ -20733,6 +20773,45 @@ mod tests {
             [Staged { item: Pending::Document(path), .. }]
                 if path == std::path::Path::new("/fixture/b.png")
         ));
+    }
+
+    /// Each upload names the attachment it was staged as, for its row to fly
+    /// from that tile; the first carries the caption as typed, and pictures
+    /// and clips sent together are drawn as one album.
+    #[test]
+    fn uploads_carry_the_caption_the_album_and_their_staged_attachment() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        let first = app.stage(Pending::File("/fixture/a.jpg".into()));
+        let second = app.stage(Pending::File("/fixture/b.mp4".into()));
+        app.apply(
+            Action::SendPending {
+                account: app.account().id.clone(),
+                mentions: Vec::new(),
+                chat: chat.into(),
+                caption: "Caption fixture".into(),
+            },
+            &ctx,
+        );
+        let album = app.uploads.first().map(|upload| upload.id);
+        assert!(album.is_some());
+        let uploads: Vec<_> = app
+            .uploads
+            .iter()
+            .map(|upload| (upload.staged, upload.caption.clone(), upload.batch))
+            .collect();
+        assert_eq!(
+            uploads,
+            vec![
+                (Some(first), Some("Caption fixture".to_owned()), album),
+                (Some(second), None, album),
+            ]
+        );
     }
 
     #[test]

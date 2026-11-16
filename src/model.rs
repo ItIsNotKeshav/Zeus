@@ -29,6 +29,13 @@ pub struct Upload {
     /// upload begins, while the file is read, converted and encrypted.
     pub sent: u64,
     pub total: u64,
+    /// The caption that goes with it, as it was typed: only the upload that
+    /// carries it has one.
+    pub caption: Option<String>,
+    /// The first upload of the album it goes in, when it goes in one.
+    pub batch: Option<UploadId>,
+    /// The attachment staged in the composer it was sent from, if it was.
+    pub staged: Option<crate::app::AttachmentId>,
 }
 
 impl Upload {
@@ -36,6 +43,20 @@ impl Upload {
     pub fn fraction(&self) -> Option<f32> {
         (self.total > 0).then(|| (self.sent as f64 / self.total as f64).clamp(0.0, 1.0) as f32)
     }
+}
+
+/// Whether files sent together travel as one album, as the backend sends
+/// them: two or more, every one a picture or a clip.
+pub fn forms_album<'a>(paths: impl IntoIterator<Item = &'a Path>) -> bool {
+    let mut count = 0;
+    for path in paths {
+        let mime = mime_guess2::from_path(path).first_or_octet_stream();
+        if !matches!(mime.type_().as_str(), "image" | "video") {
+            return false;
+        }
+        count += 1;
+    }
+    count >= 2
 }
 
 /// What an upload is sent as.
@@ -78,7 +99,7 @@ impl UploadKind {
 /// The picture an upload shows while it goes.
 #[derive(Clone)]
 pub enum UploadPreview {
-    /// A picture file on disk.
+    /// A picture or clip file on disk.
     File(PathBuf),
     /// A pasted picture, as straight-alpha RGBA.
     Pixels {
