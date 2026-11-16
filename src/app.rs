@@ -6936,7 +6936,13 @@ impl App {
     pub fn window_logic(&mut self, ctx: &egui::Context) {
         self.sync_window_state(ctx);
         // A minimized window shows no pictures or stickers, so it keeps none.
-        if ctx.input(|input| input.viewport().minimized) == Some(true) {
+        // Unless the bubbles or the pop-out are up: eframe still runs the
+        // whole frame to draw them, and releasing here, before they draw,
+        // threw away every picture the decoder had just finished for them,
+        // so their photos stayed on the blurred thumbnail for ever.
+        let other_windows =
+            (self.settings.chat_bubbles && !self.bubbles.is_empty()) || self.pop_out.is_some();
+        if ctx.input(|input| input.viewport().minimized) == Some(true) && !other_windows {
             crate::image_cache::release(ctx);
             crate::animation::release(ctx);
         }
