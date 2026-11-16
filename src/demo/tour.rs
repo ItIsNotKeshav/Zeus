@@ -139,10 +139,9 @@ pub fn prepare(app: &mut App) {
 /// local stickers and GIFs in place of downloads.
 fn common_setup(app: &mut App) {
     assert!(app.backend.is_offline(), "a tour requires an offline app");
-    // Catppuccin's dark side, so the tour later shows the switch to Zeus's
-    // own look in Settings.
-    app.settings.set_theme(ThemeChoice::NothingDark);
-    app.settings.chat_theme = crate::chat_themes::ChatTheme::Catppuccin;
+    // A solid look: a frosted header is painted where the tour cannot read
+    // its labels, so the header's name could not be clicked.
+    app.settings.set_theme(ThemeChoice::Dark);
     app.settings.keep_running_in_background = false;
     app.page = Page::Chats;
     app.dialog = None;
