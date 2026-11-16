@@ -14122,7 +14122,12 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                 Some(native) if !document => {
                     pending_media_size(native, bounds) + Vec2::splat(frame)
                 }
-                _ => Vec2::splat(PENDING_TILE),
+                // A file is a card with its name, type and size, as wide as
+                // the strip allows and never past it.
+                _ => vec2(
+                    FILE_CARD_WIDTH.min((available - frame).max(PENDING_TILE)),
+                    FILE_CARD_HEIGHT,
+                ),
             };
             let size = vec2(
                 ctx.animate_value_with_time(
@@ -14240,31 +14245,7 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                             );
                             theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE);
                         } else {
-                            let icon = Rect::from_center_size(
-                                rect.center() - vec2(0.0, 10.0),
-                                Vec2::splat(24.0),
-                            );
-                            theme::paint_icon(ui, Icon::FileText, icon, 22.0, palette.secondary);
-                            let name = path
-                                .file_name()
-                                .map(|name| name.to_string_lossy().into_owned())
-                                .unwrap_or_default();
-                            let line = widgets::line(
-                                ui,
-                                &name,
-                                theme::regular(theme::TEXT_MICRO),
-                                palette.text,
-                                size.x - 8.0,
-                                1,
-                            );
-                            line.paint(
-                                ui,
-                                egui::pos2(
-                                    rect.center().x - line.size().x / 2.0,
-                                    rect.bottom() - 18.0,
-                                ),
-                                palette.text,
-                            );
+                            paint_file_card(ui, &palette, media, path);
                         }
                     }
                 }

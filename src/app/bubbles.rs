@@ -175,6 +175,16 @@ impl App {
         }
     }
 
+    /// Opens `chat` as a bubble holding `staged`, for the demo's pictures.
+    #[cfg(feature = "demo")]
+    pub fn demo_bubble(&mut self, chat: ChatId, staged: Vec<Pending>) {
+        self.settings.chat_bubbles = true;
+        self.open_bubble(chat.clone());
+        if let Some(bubble) = self.bubbles.get_mut(&chat) {
+            bubble.staged = staged;
+        }
+    }
+
     /// Makes `chat` a bubble and opens it.
     fn open_bubble(&mut self, chat: ChatId) {
         if !self.settings.chat_bubbles || self.chat(&chat).is_none_or(|known| known.locked) {

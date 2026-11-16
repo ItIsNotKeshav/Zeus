@@ -73,8 +73,10 @@ pub(in crate::ui) fn pop_out_transcript(app: &mut App, ui: &mut egui::Ui, chat: 
 }
 
 /// An open bubble's transcript.
-pub(in crate::ui) fn bubble_transcript(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
-    messages_in(app, ui, chat, 0.0, 0.0, Pane::Bubble);
+/// `over` is how far the bubble's reply area reaches up over the bottom of
+/// the transcript, so the last message rests clear of it.
+pub(in crate::ui) fn bubble_transcript(app: &mut App, ui: &mut egui::Ui, chat: &Chat, over: f32) {
+    messages_in(app, ui, chat, 0.0, over.max(0.0), Pane::Bubble);
 }
 
 /// The pop-out window's reply field: one line, sent with Enter to its own

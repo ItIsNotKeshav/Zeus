@@ -33,10 +33,6 @@ const CARD_GAP: f32 = 10.0;
 /// The card's corners, as the chat panel's.
 const CARD_RADIUS: f32 = 24.0;
 const HEADER: f32 = 56.0;
-/// Between the reply field's rounded ends and its text.
-const FIELD_PADDING: f32 = 16.0;
-/// An attachment's thumbnail above the reply field.
-const THUMB: f32 = 48.0;
 /// How long a bubble's glow breathes after a message arrives, before it
 /// settles to a steady light: three breaths. The window is not redrawn for
 /// it after that.
@@ -552,8 +548,6 @@ fn card_view(
             egui::StrokeKind::Inside,
         );
         let header = Rect::from_min_size(card.min, vec2(card.width(), HEADER));
-        let reply = composer_height(app, chat);
-        let footer = Rect::from_min_max(pos2(card.left(), card.bottom() - reply), card.max);
         let round = CARD_RADIUS as u8;
         painter.rect_filled(
             header,
@@ -565,26 +559,26 @@ fn card_view(
             },
             palette.panel.to_opaque(),
         );
-        painter.rect_filled(
-            footer,
-            egui::CornerRadius {
-                nw: 0,
-                ne: 0,
-                sw: round,
-                se: round,
-            },
-            palette.panel.to_opaque(),
-        );
         card_header(app, ui, chat, header);
+        // The messages run on to the card's foot, under the reply area's
+        // glass, and keep room at their end for it. They stop short of the
+        // very bottom, where the card's corners curve in, so nothing pokes
+        // past them.
+        let room = composer_room(app, ui.ctx(), chat);
         let middle = Rect::from_min_max(
             pos2(card.left(), header.bottom()),
-            pos2(card.right(), footer.top()),
+            pos2(card.right(), card.bottom() - CARD_RADIUS / 3.0),
         );
         ui.scope_builder(egui::UiBuilder::new().max_rect(middle), |ui| {
             ui.set_clip_rect(middle.intersect(ui.clip_rect()));
-            conversation::bubble_transcript(app, ui, chat);
+            conversation::bubble_transcript(
+                app,
+                ui,
+                chat,
+                room - (card.bottom() - middle.bottom()),
+            );
         });
-        composer(app, ui, chat, footer, reveal >= 1.0);
+        composer(app, ui, chat, card, reveal >= 1.0);
         painter.rect_stroke(
             card,
             CARD_RADIUS,
@@ -687,28 +681,373 @@ fn card_header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect) {
     );
 }
 
-/// How tall the reply area is: the field, and the thumbnails above it when
-/// something is attached.
-fn composer_height(app: &App, chat: &Chat) -> f32 {
+/// Between the card's edges and the reply field, as the chat's composer
+/// keeps from its card.
+const MARGIN: f32 = conversation::COMPOSER_MARGIN as f32;
+/// The reply field: one line with its controls, rounded at the ends.
+const FIELD: f32 = 44.0;
+/// Space the send button keeps inside the field's rounded end.
+const SEND_CLEARANCE: f32 = 4.0;
+/// Inside the attachment tray, round its tiles. With the tray's radius it
+/// keeps the tiles' corners parallel to its own.
+const TRAY_PAD: f32 = 8.0;
+/// Between the tray and the field.
+const TRAY_GAP: f32 = 8.0;
+/// A picture's tile when several things are attached.
+const TILE: f32 = 72.0;
+/// Between two tiles.
+const TILE_GAP: f32 = 8.0;
+/// The tallest a lone picture or clip is previewed.
+const PREVIEW_HEIGHT: f32 = 168.0;
+/// How far below its place the tray starts as it rises out of the field.
+const TRAY_RISE: f32 = 14.0;
+
+/// What one attachment's tile shows.
+#[derive(Clone)]
+enum Face {
+    /// A pasted picture, or a clip's first frame.
+    Texture(egui::TextureHandle),
+    /// A picture file, read through the image cache.
+    Photo(std::path::PathBuf),
+    /// A clip whose first frame has not been read yet.
+    Clip,
+    /// Anything else: a card with its name, type and size.
+    File(std::path::PathBuf),
+}
+
+/// One attachment as the tray draws it.
+#[derive(Clone)]
+struct Tile {
+    /// Which attachment it is, the same from frame to frame while it stays.
+    key: egui::Id,
+    face: Face,
+    /// The picture's own size, for what has a picture.
+    native: Option<Vec2>,
+    /// Whether it is a clip, marked with a play button.
+    play: bool,
+}
+
+impl Tile {
+    fn is_file(&self) -> bool {
+        matches!(self.face, Face::File(_))
+    }
+}
+
+/// The tray as it was drawn last frame, kept so a tile taken away can fade
+/// where it was and the tray can close with what it showed.
+#[derive(Clone, Default)]
+struct Tray {
+    /// Every tile drawn, with its place relative to the row's top left.
+    tiles: Vec<(Tile, Rect)>,
+    /// Tiles taken away, with when they went.
+    leaving: Vec<(Tile, Rect, f64)>,
+    /// How tall the row of tiles was.
+    row: f32,
+}
+
+fn tray_id(chat: &str) -> egui::Id {
+    egui::Id::new(("bubble-tray", chat))
+}
+
+/// A pasted picture made small enough for a tile: never larger than the
+/// GPU takes, nor than the card can show.
+fn tile_image(width: usize, height: usize, rgba: &[u8]) -> egui::ColorImage {
+    const MOST: usize = 1024;
+    if width.max(height) <= MOST {
+        return egui::ColorImage::from_rgba_unmultiplied([width, height], rgba);
+    }
+    let scale = MOST as f32 / width.max(height) as f32;
+    let (small_width, small_height) = (
+        ((width as f32 * scale) as u32).max(1),
+        ((height as f32 * scale) as u32).max(1),
+    );
+    // Borrowed: a copy of a 4K bitmap is 33 MB.
+    match image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(width as u32, height as u32, rgba)
+    {
+        Some(full) => {
+            let small = image::imageops::resize(
+                &full,
+                small_width,
+                small_height,
+                image::imageops::FilterType::Triangle,
+            );
+            egui::ColorImage::from_rgba_unmultiplied(
+                [small_width as usize, small_height as usize],
+                &small,
+            )
+        }
+        None => egui::ColorImage::example(),
+    }
+}
+
+/// What `chat`'s bubble has attached, as tiles, in order.
+fn staged_tiles(app: &mut App, ctx: &egui::Context, chat: &str) -> Vec<Tile> {
+    let Some(bubble) = app.bubbles.get_mut(chat) else {
+        return Vec::new();
+    };
+    let mut seen: Vec<egui::Id> = Vec::new();
+    bubble
+        .staged
+        .iter_mut()
+        .map(|item| {
+            let (base, face, native, play) = match item {
+                Pending::Picture {
+                    width,
+                    height,
+                    rgba,
+                    texture,
+                } => {
+                    let base = egui::Id::new(("picture", std::sync::Arc::as_ptr(rgba) as usize));
+                    let handle = texture
+                        .get_or_insert_with(|| {
+                            ctx.load_texture(
+                                format!("bubble-staged-{base:?}"),
+                                tile_image(*width, *height, rgba.as_slice()),
+                                egui::TextureOptions::LINEAR,
+                            )
+                        })
+                        .clone();
+                    let native = vec2(*width as f32, *height as f32);
+                    (base, Face::Texture(handle), Some(native), false)
+                }
+                // A file sent as a document shows as the file it is, even a
+                // picture.
+                Pending::Document(path) => (
+                    egui::Id::new(("document", path.as_path())),
+                    Face::File(path.clone()),
+                    None,
+                    false,
+                ),
+                Pending::File(path) => {
+                    let base = egui::Id::new(("file", path.as_path()));
+                    if Pending::is_picture_file(path) {
+                        let native = conversation::pending_picture_size(ctx, path);
+                        (base, Face::Photo(path.clone()), native, false)
+                    } else if crate::image_preview::is_video(path) {
+                        match conversation::pending_poster(ctx, path) {
+                            Some(poster) => {
+                                let native = poster.size_vec2();
+                                (base, Face::Texture(poster), Some(native), true)
+                            }
+                            // Until its frame arrives the clip holds a
+                            // landscape slot.
+                            None => (base, Face::Clip, Some(vec2(16.0, 9.0)), true),
+                        }
+                    } else {
+                        (base, Face::File(path.clone()), None, false)
+                    }
+                }
+            };
+            // The same file attached twice is two tiles.
+            let nth = seen.iter().filter(|known| **known == base).count();
+            seen.push(base);
+            Tile {
+                key: base.with(nth),
+                face,
+                native,
+                play,
+            }
+        })
+        .collect()
+}
+
+/// Where each tile lies in a row `room` wide, from the row's top left, and
+/// how tall the row is. One picture or clip alone is previewed large, in its
+/// own shape; one file alone is a card across the row; several share it.
+fn lay_out_tiles(tiles: &[Tile], room: f32) -> (Vec<Rect>, f32) {
+    let sizes: Vec<Vec2> = match tiles {
+        [lone] if !lone.is_file() => {
+            let native = lone
+                .native
+                .unwrap_or(Vec2::splat(1.0))
+                .max(Vec2::splat(1.0));
+            let scale = (room / native.x).min(PREVIEW_HEIGHT / native.y);
+            // Never thinner than a tile: a panorama shows whole on it.
+            let fitted = native * scale;
+            let size = vec2(
+                fitted.x.clamp(TILE.min(room), room),
+                fitted.y.clamp(TILE, PREVIEW_HEIGHT),
+            );
+            vec![size.round()]
+        }
+        [_] => vec![vec2(room, conversation::FILE_CARD_HEIGHT)],
+        _ => tiles
+            .iter()
+            .map(|tile| {
+                if tile.is_file() {
+                    vec2(conversation::FILE_CARD_WIDTH.min(room), TILE)
+                } else {
+                    Vec2::splat(TILE)
+                }
+            })
+            .collect(),
+    };
+    let row = sizes.iter().map(|size| size.y).fold(0.0, f32::max);
+    let mut left = 0.0;
+    let places = sizes
+        .into_iter()
+        .map(|size| {
+            let place = Rect::from_min_size(pos2(left, (row - size.y) / 2.0), size);
+            left += size.x + TILE_GAP;
+            place
+        })
+        .collect();
+    (places, row)
+}
+
+/// The part of a picture `size` large that covers a tile shaped like
+/// `frame`, from its middle.
+fn cover_uv(size: Vec2, frame: Vec2) -> Rect {
+    if size.x <= 0.0 || size.y <= 0.0 || frame.x <= 0.0 || frame.y <= 0.0 {
+        return Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    }
+    let (picture, wanted) = (size.x / size.y, frame.x / frame.y);
+    let (across, down) = if picture > wanted {
+        (wanted / picture, 1.0)
+    } else {
+        (1.0, picture / wanted)
+    };
+    Rect::from_center_size(pos2(0.5, 0.5), vec2(across, down))
+}
+
+/// Paints one tile's face in `rect`. A lone picture shows whole, in its
+/// own shape; a tile in a row is covered by its picture from the middle.
+fn paint_tile(
+    ui: &egui::Ui,
+    palette: &crate::theme::Palette,
+    tile: &Tile,
+    rect: Rect,
+    whole: bool,
+) {
+    let radius = f32::from(theme::RADIUS_CONTROL);
+    let painter = ui.painter();
+    let base = if palette.vibrant() {
+        palette.text.gamma_multiply(0.08)
+    } else {
+        palette.surface
+    };
+    painter.rect_filled(rect, radius, base);
+    let picture = |native: Vec2| {
+        if whole {
+            (
+                conversation::contained(native, rect),
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            )
+        } else {
+            (rect, cover_uv(native, rect.size()))
+        }
+    };
+    match &tile.face {
+        Face::Texture(texture) => {
+            let (shown, uv) = picture(texture.size_vec2());
+            egui::Image::new((texture.id(), shown.size()))
+                .uv(uv)
+                .corner_radius(radius)
+                .maintain_aspect_ratio(false)
+                .paint_at(ui, shown);
+        }
+        Face::Photo(path) => {
+            let native = tile.native.unwrap_or(rect.size());
+            let (shown, uv) = picture(native);
+            let uri = crate::image_cache::fit_uri(ui.ctx(), path, shown.size().max(rect.size()));
+            egui::Image::new(uri)
+                .uv(uv)
+                .corner_radius(radius)
+                .maintain_aspect_ratio(false)
+                .paint_at(ui, shown);
+        }
+        Face::Clip => {
+            painter.rect_filled(rect, radius, palette.shadow.gamma_multiply(1.4));
+        }
+        Face::File(path) => {
+            conversation::paint_file_card(ui, palette, rect, path);
+        }
+    }
+    if tile.play {
+        let disc = (rect.size().min_elem() * 0.32).clamp(22.0, 40.0);
+        painter.circle_filled(
+            rect.center(),
+            disc / 2.0,
+            egui::Color32::from_black_alpha(140),
+        );
+        theme::paint_icon(
+            ui,
+            Icon::Play,
+            Rect::from_center_size(rect.center(), Vec2::splat(disc * 0.5)),
+            disc * 0.5,
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+/// How the reply field and the glass over the messages look: the chat's
+/// composer's, so the bubble's card matches the window.
+fn field_look(palette: &crate::theme::Palette) -> (egui::Color32, Stroke) {
+    if palette.vibrant() {
+        (
+            palette.menu_glass(),
+            Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
+        )
+    } else {
+        (palette.bubble_in, Stroke::NONE)
+    }
+}
+
+/// How far the reply area reaches up from the card's bottom: the field, the
+/// tray of attachments over it as far as it has opened, and the margins.
+/// The messages scroll on under it, so they keep this much room at the end.
+fn composer_room(app: &App, ctx: &egui::Context, chat: &Chat) -> f32 {
     if !chat.can_send() {
         return 44.0;
     }
-    let staged = app
-        .bubbles
-        .get(&chat.id)
-        .is_some_and(|bubble| !bubble.staged.is_empty());
-    64.0 + if staged { THUMB + 12.0 } else { 0.0 }
+    let open = tray_open(app, ctx, chat.id.as_str());
+    let row = ctx
+        .data(|data| data.get_temp::<Tray>(tray_id(&chat.id)))
+        .map_or(0.0, |tray| tray.row);
+    MARGIN + FIELD + open * (row + 2.0 * TRAY_PAD + TRAY_GAP) + 6.0
 }
 
-/// The reply area: what is attached, then the attach button, the field and
-/// the send button. A paste of a picture or of files, or files dropped on
-/// the window, are attached; Enter sends.
-fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect, settled: bool) {
+/// How far the tray has opened out of the field, 0 to 1.
+fn tray_open(app: &App, ctx: &egui::Context, chat: &str) -> f32 {
+    let staged = app
+        .bubbles
+        .get(chat)
+        .is_some_and(|bubble| !bubble.staged.is_empty());
+    theme::animate(
+        ctx,
+        tray_id(chat).with("open"),
+        staged,
+        if staged {
+            theme::MOTION_PANEL
+        } else {
+            theme::MOTION_PANEL * theme::CLOSE
+        },
+    )
+}
+
+/// The reply area, floating over the bottom of the card's messages on
+/// glass, as the chat's composer does: the tray of what is attached, then
+/// the field with the attach button, the text and the send button. A paste
+/// of a picture or of files, or files dropped on the window, are attached;
+/// Enter sends.
+fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: bool) {
     let palette = app.palette;
     let locale = app.locale;
     if !chat.can_send() {
+        let footer = Rect::from_min_max(pos2(card.left(), card.bottom() - 44.0), card.max);
+        let round = CARD_RADIUS as u8;
+        ui.painter().rect_filled(
+            footer,
+            egui::CornerRadius {
+                nw: 0,
+                ne: 0,
+                sw: round,
+                se: round,
+            },
+            palette.panel.to_opaque(),
+        );
         ui.painter().text(
-            rect.center(),
+            footer.center(),
             egui::Align2::CENTER_CENTER,
             crate::i18n::gettext(locale, "You can't send messages here"),
             theme::regular(13.0),
@@ -716,66 +1055,78 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect, settled: 
         );
         return;
     }
-    app.take_bubble_input(&ui.ctx().clone(), &chat.id);
-    let inner = rect.shrink2(vec2(12.0, 12.0));
-    let mut top = inner.top();
-    let staged_count = app
-        .bubbles
-        .get(&chat.id)
-        .map_or(0, |bubble| bubble.staged.len());
-    if staged_count > 0 {
-        let strip = Rect::from_min_size(pos2(inner.left(), top), vec2(inner.width(), THUMB));
-        thumbnails(app, ui, chat, strip);
-        top += THUMB + 12.0;
+    let ctx = ui.ctx().clone();
+    app.take_bubble_input(&ctx, &chat.id);
+    let field = Rect::from_min_max(
+        pos2(card.left() + MARGIN, card.bottom() - MARGIN - FIELD),
+        pos2(card.right() - MARGIN, card.bottom() - MARGIN),
+    );
+    let staged_count = tray(app, ui, chat, field);
+    let (fill, edge) = field_look(&palette);
+    if palette.vibrant() {
+        ui.painter()
+            .add(crate::ui::glass::rounded(field, FIELD / 2.0));
     }
-    let row = Rect::from_min_max(pos2(inner.left(), top), pos2(inner.right(), top + 40.0));
-    let attach = Rect::from_min_size(row.min, Vec2::splat(40.0));
-    let send = Rect::from_min_size(pos2(row.right() - 40.0, row.top()), Vec2::splat(40.0));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(attach));
-    if theme::icon_button(
-        &mut child,
-        Icon::Paperclip,
-        19.0,
+    ui.painter()
+        .rect(field, FIELD / 2.0, fill, edge, egui::StrokeKind::Inside);
+    // The plus sits in the field's rounded left end, as the chat's does.
+    let mut tools = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(Rect::from_min_max(
+                pos2(field.left() + 6.0, field.top()),
+                pos2(field.left() + FIELD + 6.0, field.bottom()),
+            ))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let attach = theme::icon_button(
+        &mut tools,
+        Icon::Plus,
+        20.0,
         palette.secondary,
         palette.text,
         &crate::i18n::gettext(locale, "Attach"),
-    )
-    .clicked()
-    {
+    );
+    if attach.clicked() {
         app.actions.push(Action::BubbleAttach(chat.id.clone()));
     }
-    let field = Rect::from_min_max(
-        pos2(attach.right() + 6.0, row.top()),
-        pos2(send.left() - 6.0, row.bottom()),
+    let send = Rect::from_center_size(
+        pos2(field.right() - FIELD / 2.0, field.center().y),
+        Vec2::splat(FIELD - 2.0 * SEND_CLEARANCE),
     );
-    ui.painter().rect(
-        field,
-        20.0,
-        palette.surface,
-        Stroke::new(1.0, palette.outline),
-        egui::StrokeKind::Inside,
-    );
-    let hint = crate::i18n::gettext(locale, "Type a message").into_owned();
+    // The hint says what the text becomes, as the chat's does.
+    let hint = if staged_count > 0 {
+        crate::i18n::gettext(locale, "Add a caption")
+    } else {
+        crate::i18n::gettext(locale, "Type a message")
+    }
+    .into_owned();
     let mut enter = false;
     let mut ready = staged_count > 0;
     if let Some(bubble) = app.bubbles.get_mut(&chat.id) {
-        // One line of text, centred on the field with room either side, as
-        // the main composer's field has it.
+        // One line of text, centred on the field between its controls, and
+        // never drawn past them: a long line scrolls inside the field.
         let font = theme::regular(14.5);
         let line = ui.ctx().fonts_mut(|fonts| fonts.row_height(&font));
         let text = Rect::from_min_max(
-            pos2(field.left() + FIELD_PADDING, field.center().y - line / 2.0),
-            pos2(field.right() - FIELD_PADDING, field.center().y + line / 2.0),
+            pos2(attach.rect.right() + 6.0, field.center().y - line / 2.0),
+            pos2(send.left() - 8.0, field.center().y + line / 2.0),
         );
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text));
-        child.set_clip_rect(field.intersect(child.clip_rect()));
+        child.set_clip_rect(
+            Rect::from_x_y_ranges(text.x_range(), field.y_range()).intersect(child.clip_rect()),
+        );
         let response = child.add(
             egui::TextEdit::singleline(&mut bubble.text)
                 .id(egui::Id::new(("bubble-text", chat.id.as_str())))
-                .hint_text(hint)
+                .hint_text(
+                    egui::RichText::new(hint)
+                        .color(palette.dim)
+                        .font(font.clone()),
+                )
                 .frame(egui::Frame::NONE)
                 .margin(egui::Margin::ZERO)
                 .font(font)
+                .text_color(palette.text)
                 .vertical_align(egui::Align::Center)
                 .desired_width(text.width()),
         );
@@ -789,150 +1140,172 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect, settled: 
         }
         ready |= !bubble.text.trim().is_empty();
     }
+    // The send button, as the chat's: lit once there is something to send.
+    let (idle, idle_hover, idle_icon) = if palette.vibrant() {
+        (
+            palette.text.gamma_multiply(0.12),
+            palette.text.gamma_multiply(0.2),
+            palette.dim,
+        )
+    } else {
+        (palette.surface, palette.surface_hover, palette.dim)
+    };
     let lit = theme::animate(
         ui.ctx(),
         egui::Id::new(("bubble-send", chat.id.as_str())),
         ready,
         theme::MOTION_QUICK,
     );
-    let pressed = ui.interact(
-        send,
-        egui::Id::new(("bubble-send-button", chat.id.as_str())),
-        Sense::click(),
-    );
-    let fill = palette
-        .surface
-        .lerp_to_gamma(palette.accent, lit)
-        .lerp_to_gamma(
-            palette.accent_hover,
-            if pressed.hovered() { lit } else { 0.0 },
-        );
-    ui.painter().circle_filled(send.center(), 20.0, fill);
-    theme::paint_icon(
-        ui,
+    let mut button = ui.new_child(egui::UiBuilder::new().max_rect(send));
+    let pressed = theme::circle_button_morph(
+        &mut button,
+        ("bubble-send", chat.id.as_str()),
         Icon::Send,
-        Rect::from_center_size(send.center(), Vec2::splat(18.0)),
-        18.0,
-        palette.secondary.lerp_to_gamma(palette.on_accent, lit),
+        send.width(),
+        idle.lerp_to_gamma(palette.accent, lit),
+        idle_hover.lerp_to_gamma(palette.accent_hover, lit),
+        idle_icon.lerp_to_gamma(palette.on_accent, lit),
+        &crate::i18n::gettext(locale, "Send"),
     );
-    let pressed = pressed
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(crate::i18n::gettext(locale, "Send").as_ref());
     if (enter || pressed.clicked()) && ready {
         app.actions.push(Action::BubbleSend(chat.id.clone()));
     }
 }
 
-/// The part of a picture `size` large that fills a square from its middle.
-fn square_uv(size: Vec2) -> Rect {
-    if size.x <= 0.0 || size.y <= 0.0 {
-        return Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    }
-    let (across, down) = if size.x > size.y {
-        (size.y / size.x, 1.0)
-    } else {
-        (1.0, size.x / size.y)
-    };
-    Rect::from_center_size(pos2(0.5, 0.5), vec2(across, down))
-}
-
-/// What is attached, as thumbnails with a remove button each.
-fn thumbnails(app: &mut App, ui: &mut egui::Ui, chat: &Chat, strip: Rect) {
+/// The tray of what is attached, over `field`: it rises out of the field as
+/// the first thing is attached and sinks back once they are sent or taken
+/// away. While it is open a tile added pops in, one taken away fades and
+/// shrinks where it was, and the rest slide into their new places. Returns
+/// how many things are attached.
+fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
     let palette = app.palette;
     let ctx = ui.ctx().clone();
-    let Some(bubble) = app.bubbles.get_mut(&chat.id) else {
-        return;
+    let id = tray_id(&chat.id);
+    let now = ctx.input(|input| input.time);
+    let tiles = staged_tiles(app, &ctx, &chat.id);
+    let open = tray_open(app, &ctx, &chat.id);
+    let mut kept = ctx
+        .data(|data| data.get_temp::<Tray>(id))
+        .unwrap_or_default();
+    if open <= 0.0 && tiles.is_empty() {
+        if !kept.tiles.is_empty() || !kept.leaving.is_empty() {
+            // Lets go of the pictures once nothing shows them.
+            ctx.data_mut(|data| data.remove::<Tray>(id));
+        }
+        return 0;
+    }
+    let spring = crate::motion::Spring::settling_in(f64::from(theme::MOTION_PANEL));
+    let room = (field.width() - 2.0 * TRAY_PAD).max(TILE);
+    let (places, row) = lay_out_tiles(&tiles, room);
+    // The row's height follows the tiles; while the tray closes it keeps
+    // the height it had.
+    let row = if tiles.is_empty() {
+        kept.row
+    } else {
+        crate::motion::spring_to(&ctx, id.with("row"), row, spring)
     };
+    // Tiles gone since the last frame fade where they were.
+    for (tile, place) in &kept.tiles {
+        if !tiles.iter().any(|staged| staged.key == tile.key) {
+            kept.leaving.push((tile.clone(), *place, now));
+            for part in ["x", "w", "h", "in"] {
+                crate::motion::forget(&ctx, tile.key.with(part));
+            }
+        }
+    }
+    let leave = f64::from(theme::MOTION_PANEL);
+    kept.leaving.retain(|(_, _, since)| now - since < leave);
+    let eased = theme::ease_out(open);
+    let height = row + 2.0 * TRAY_PAD;
+    let tray = Rect::from_min_max(
+        pos2(field.left(), field.top() - TRAY_GAP - height),
+        pos2(field.right(), field.top() - TRAY_GAP),
+    )
+    .translate(vec2(0.0, (1.0 - eased) * TRAY_RISE));
+    let radius = f32::from(theme::RADIUS_CARD);
+    let (fill, edge) = field_look(&palette);
+    // The glass first, then everything on it, all fading in together.
+    if palette.vibrant() {
+        ui.painter().add(crate::ui::glass::veil(tray, radius, open));
+    }
+    let mut scope = ui.new_child(egui::UiBuilder::new().max_rect(tray));
+    scope.multiply_opacity(open);
+    scope
+        .painter()
+        .rect(tray, radius, fill, edge, egui::StrokeKind::Inside);
+    let inner = tray.shrink(TRAY_PAD);
+    let content_width = places.last().map_or(0.0, |place| place.right());
     let mut remove = None;
-    for (index, item) in bubble.staged.iter_mut().enumerate() {
-        let left = strip.left() + index as f32 * (THUMB + 8.0);
-        if left + THUMB > strip.right() {
-            break;
-        }
-        let rect = Rect::from_min_size(pos2(left, strip.top()), Vec2::splat(THUMB));
-        let radius = 10.0;
-        ui.painter().rect_filled(rect, radius, palette.surface);
-        match item {
-            Pending::Picture {
-                width,
-                height,
-                rgba,
-                texture,
-            } => {
-                let texture = texture.get_or_insert_with(|| {
-                    ctx.load_texture(
-                        format!("bubble-staged-{}-{index}", chat.id),
-                        egui::ColorImage::from_rgba_unmultiplied([*width, *height], rgba),
-                        egui::TextureOptions::LINEAR,
-                    )
-                });
-                egui::Image::new(&*texture)
-                    .corner_radius(radius)
-                    .maintain_aspect_ratio(false)
-                    .paint_at(ui, rect);
+    let mut drawn = Vec::new();
+    let mut moving = !kept.leaving.is_empty();
+    scope.set_clip_rect(tray.intersect(scope.clip_rect()));
+    let mut row_ui = scope.new_child(egui::UiBuilder::new().max_rect(inner));
+    egui::ScrollArea::horizontal()
+        .id_salt(id.with("scroll"))
+        .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .show(&mut row_ui, |ui| {
+            let (row_rect, _) =
+                ui.allocate_exact_size(vec2(content_width.max(inner.width()), row), Sense::hover());
+            let origin = row_rect.min.to_vec2();
+            // Those leaving first, under the rest, shrinking and fading.
+            for (tile, place, since) in &kept.leaving {
+                let gone = theme::ease_out(((now - since) / leave) as f32);
+                let scale = 1.0 - (1.0 - theme::CLOSE_SCALE) * gone;
+                let rect = Rect::from_center_size(place.center() + origin, place.size() * scale);
+                let mut ghost = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                ghost.multiply_opacity(1.0 - gone);
+                paint_tile(&ghost, &palette, tile, rect, kept.tiles.len() <= 1);
             }
-            Pending::File(path) | Pending::Document(path) => {
-                let video =
-                    crate::model::UploadKind::of(path, false) == crate::model::UploadKind::Video;
-                if crate::model::UploadKind::of(path, false) == crate::model::UploadKind::Image {
-                    let uri = crate::image_cache::fit_uri(&ctx, path, Vec2::splat(THUMB));
-                    egui::Image::new(uri)
-                        .corner_radius(radius)
-                        .paint_at(ui, rect);
-                } else if let Some(poster) = video
-                    .then(|| conversation::pending_poster(&ctx, path))
-                    .flatten()
-                {
-                    let size = poster.size_vec2();
-                    // The clip's first frame, cropped to the tile's square
-                    // from its middle, under a play mark.
-                    egui::Image::new((poster.id(), size))
-                        .uv(square_uv(size))
-                        .corner_radius(radius)
-                        .maintain_aspect_ratio(false)
-                        .paint_at(ui, rect);
-                    ui.painter().circle_filled(
-                        rect.center(),
-                        11.0,
-                        egui::Color32::from_black_alpha(140),
-                    );
-                    theme::paint_icon(
-                        ui,
-                        Icon::Play,
-                        Rect::from_center_size(rect.center(), Vec2::splat(11.0)),
-                        11.0,
-                        egui::Color32::WHITE,
-                    );
-                } else {
-                    theme::paint_icon(
-                        ui,
-                        Icon::Paperclip,
-                        Rect::from_center_size(rect.center(), Vec2::splat(20.0)),
-                        20.0,
-                        palette.secondary,
-                    );
+            let whole = tiles.len() == 1;
+            for (index, (tile, target)) in tiles.iter().zip(&places).enumerate() {
+                // Each slides and grows to its place on the theme's spring,
+                // and one new to the tray pops in from a little under its
+                // size.
+                let x = crate::motion::spring_to(&ctx, tile.key.with("x"), target.left(), spring);
+                let w = crate::motion::spring_to(&ctx, tile.key.with("w"), target.width(), spring);
+                let h = crate::motion::spring_to(&ctx, tile.key.with("h"), target.height(), spring);
+                let shown = theme::appear(&ctx, tile.key.with("in"), theme::MOTION_QUICK);
+                moving |= shown < 1.0
+                    || (x - target.left()).abs() > 0.5
+                    || (w - target.width()).abs() > 0.5;
+                let place = Rect::from_min_size(pos2(x, (row - h) / 2.0), vec2(w, h));
+                let scale = egui::lerp(0.92..=1.0, shown);
+                let rect = Rect::from_center_size(place.center() + origin, place.size() * scale);
+                let mut face = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                face.multiply_opacity(shown);
+                paint_tile(&face, &palette, tile, rect, whole);
+                // Its remove button, in the corner, clear of a rounded edge.
+                let close =
+                    Rect::from_center_size(rect.right_top() + vec2(-13.0, 13.0), Vec2::splat(20.0));
+                let response = ui
+                    .interact(close, id.with(("unstage", tile.key)), Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(crate::i18n::gettext(app.locale, "Remove").as_ref());
+                let hovered = theme::animate(
+                    &ctx,
+                    response.id.with("hover"),
+                    response.hovered(),
+                    theme::MOTION_QUICK,
+                );
+                face.painter().circle(
+                    close.center(),
+                    10.0,
+                    palette
+                        .overlay
+                        .to_opaque()
+                        .lerp_to_gamma(palette.surface_hover.to_opaque(), hovered),
+                    Stroke::new(1.0, palette.outline),
+                );
+                theme::paint_icon(&face, Icon::X, close.shrink(5.0), 10.0, palette.text);
+                if response.clicked() {
+                    remove = Some(index);
                 }
+                drawn.push((tile.clone(), place));
             }
-        }
-        let close = Rect::from_center_size(rect.right_top() + vec2(-4.0, 4.0), Vec2::splat(18.0));
-        let response = ui.interact(
-            close,
-            egui::Id::new(("bubble-unstage", chat.id.as_str(), index)),
-            Sense::click(),
-        );
-        ui.painter().circle(
-            close.center(),
-            9.0,
-            palette.overlay.to_opaque(),
-            Stroke::new(1.0, palette.outline),
-        );
-        theme::paint_icon(ui, Icon::X, close.shrink(4.5), 9.0, palette.text);
-        if response
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            remove = Some(index);
-        }
+        });
+    if moving {
+        crate::motion::request_frame(&ctx);
     }
     if let Some(index) = remove {
         app.actions.push(Action::BubbleUnstage {
@@ -940,6 +1313,18 @@ fn thumbnails(app: &mut App, ui: &mut egui::Ui, chat: &Chat, strip: Rect) {
             index,
         });
     }
+    let count = tiles.len();
+    ctx.data_mut(|data| {
+        data.insert_temp(
+            id,
+            Tray {
+                tiles: drawn,
+                leaving: kept.leaving,
+                row,
+            },
+        )
+    });
+    count
 }
 
 #[cfg(test)]
@@ -1165,9 +1550,10 @@ mod tests {
         assert_eq!(column_offset(&placement), 0.0);
     }
 
-    /// A clip's poster fills its square tile from the middle, undistorted.
+    /// A picture covers its tile from the middle, undistorted.
     #[test]
-    fn a_poster_is_cropped_to_a_square_from_its_middle() {
+    fn a_picture_is_cropped_to_its_tile_from_its_middle() {
+        let square_uv = |size| cover_uv(size, Vec2::splat(TILE));
         let wide = square_uv(vec2(1600.0, 900.0));
         assert_eq!(wide.center(), pos2(0.5, 0.5));
         assert!((wide.width() - 900.0 / 1600.0).abs() < 1e-6 && wide.height() == 1.0);
