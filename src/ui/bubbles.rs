@@ -161,6 +161,8 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             return;
         }
         let region = contents(app, ui);
+        // The picker and menus leave this window the way they came, too.
+        super::closing::paint(ui.ctx());
         if see_through {
             // Windows 11 frames even a borderless window with a hairline and
             // rounds its corners, and composes the parts it paints nothing
@@ -169,13 +171,15 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             crate::backdrop::shape_window(title.as_ref(), &region, ui.ctx().pixels_per_point());
         }
     });
-    // Only what names its own chat or message leaves the window.
+    // Only what names its own chat or message leaves the window, and what
+    // the picker over it asked for.
     let mut index = 0;
     app.actions.retain(|action| {
         let keep = index < before || App::bubble_allows(action);
         index += 1;
         keep
     });
+    app.actions.append(&mut app.bubbles.picker_actions);
     // A picture clicked in the card is too small to see there: it opens in
     // the main window's viewer, large, with the album to step through. The
     // card folds back into its bubble so it does not float over the viewer,
@@ -305,10 +309,22 @@ fn contents(app: &mut App, ui: &mut egui::Ui) -> Vec<(Rect, f32)> {
         };
         let card = Rect::from_min_size(pos2(left, area.top() + PAD), CARD);
         region.push(card_view(app, ui, &known, card, pivot, reveal));
+        picker(
+            app,
+            &ctx,
+            &chat,
+            card,
+            expanded.as_deref() == Some(chat.as_str()),
+        );
         // Read while it is open in front of the reader.
         if reveal >= 1.0 && known.unread > 0 && ctx.input(|input| input.focused) {
             app.actions.push(Action::MarkRead(chat));
         }
+    }
+    if app.bubbles.picker.is_some() && (app.picker.is_none() || app.bubbles.picker != expanded) {
+        // Closed, or its bubble folded away: it goes with it.
+        app.picker = None;
+        app.bubbles.picker = None;
     }
     // Messages carried out of the card, and the card carrying them.
     super::carry::begin(&ctx);
@@ -705,6 +721,8 @@ fn card_header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, rect: Rect) {
 const MARGIN: f32 = conversation::COMPOSER_MARGIN as f32;
 /// The reply field: one line with its controls, rounded at the ends.
 const FIELD: f32 = 44.0;
+/// How many lines the field grows to before its text scrolls.
+const FIELD_LINES: f32 = 5.0;
 /// Space the send button keeps inside the field's rounded end.
 const SEND_CLEARANCE: f32 = 4.0;
 /// Inside the attachment tray, round its tiles. With the tray's radius it
@@ -1023,7 +1041,18 @@ fn composer_room(app: &App, ctx: &egui::Context, chat: &Chat) -> f32 {
     let row = ctx
         .data(|data| data.get_temp::<Tray>(tray_id(&chat.id)))
         .map_or(0.0, |tray| tray.row);
-    MARGIN + FIELD + open * (row + 2.0 * TRAY_PAD + TRAY_GAP) + 6.0
+    MARGIN + field_height(ctx, &chat.id) + open * (row + 2.0 * TRAY_PAD + TRAY_GAP) + 6.0
+}
+
+/// How tall the bubble's field is now: one line's [`FIELD`], growing with
+/// the lines typed up to [`FIELD_LINES`] (see [`composer`]).
+fn field_height(ctx: &egui::Context, chat: &str) -> f32 {
+    ctx.data(|data| data.get_temp::<f32>(field_height_id(chat)))
+        .unwrap_or(FIELD)
+}
+
+fn field_height_id(chat: &str) -> egui::Id {
+    egui::Id::new(("bubble-field-height", chat))
 }
 
 /// How far the tray has opened out of the field, 0 to 1.
@@ -1076,8 +1105,40 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
     }
     let ctx = ui.ctx().clone();
     app.take_bubble_input(&ctx, &chat.id);
+    let text_id = egui::Id::new(("bubble-text", chat.id.as_str()));
+    // The field grows a line at a time with what is typed, eased, up to
+    // FIELD_LINES; past that its text scrolls. It is measured at the width
+    // the text had last frame, which only changes with the card.
+    let font = theme::regular(14.5);
+    let format = egui::TextFormat::simple(font.clone(), palette.text);
+    let line = ctx.fonts_mut(|fonts| fonts.row_height(&font));
+    let inset = (FIELD - line) / 2.0;
+    let wrap = ctx
+        .data(|data| data.get_temp::<f32>(text_id.with("width")))
+        .unwrap_or(CARD.x - 2.0 * MARGIN - 2.0 * FIELD - 16.0);
+    let typed = app
+        .bubbles
+        .get(&chat.id)
+        .map(|bubble| bubble.text.clone())
+        .unwrap_or_default();
+    let lines_height = if typed.contains('\n') || typed.len() > 20 {
+        crate::bidi::layout_editor(ui, &typed, &format, wrap, true)
+            .0
+            .size()
+            .y
+    } else {
+        line
+    };
+    let target = (lines_height.min(line * FIELD_LINES) + 2.0 * inset).max(FIELD);
+    let height = crate::motion::spring_to(
+        &ctx,
+        field_height_id(&chat.id).with("spring"),
+        target,
+        crate::motion::Spring::settling_in(f64::from(theme::MOTION_QUICK)),
+    );
+    ctx.data_mut(|data| data.insert_temp(field_height_id(&chat.id), height));
     let field = Rect::from_min_max(
-        pos2(card.left() + MARGIN, card.bottom() - MARGIN - FIELD),
+        pos2(card.left() + MARGIN, card.bottom() - MARGIN - height),
         pos2(card.right() - MARGIN, card.bottom() - MARGIN),
     );
     let staged_count = tray(app, ui, chat, field);
@@ -1088,15 +1149,17 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
     }
     ui.painter()
         .rect(field, FIELD / 2.0, fill, edge, egui::StrokeKind::Inside);
-    // The plus sits in the field's rounded left end, as the chat's does.
+    // The plus sits in the field's rounded left end, as the chat's does, and
+    // the picker's button close beside it, as a pair.
     let mut tools = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(Rect::from_min_max(
-                pos2(field.left() + 6.0, field.top()),
-                pos2(field.left() + FIELD + 6.0, field.bottom()),
+                pos2(field.left() + 6.0, field.bottom() - FIELD),
+                pos2(field.left() + 2.0 * FIELD, field.bottom()),
             ))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
+    tools.spacing_mut().item_spacing.x = 0.0;
     let attach = theme::icon_button(
         &mut tools,
         Icon::Plus,
@@ -1108,8 +1171,31 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
     if attach.clicked() {
         app.actions.push(Action::BubbleAttach(chat.id.clone()));
     }
+    let picking = app.bubbles.picker.as_deref() == Some(chat.id.as_str()) && app.picker.is_some();
+    let (mode_icon, mode_label) = match app.settings.picker_mode {
+        crate::model::PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
+        crate::model::PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
+        crate::model::PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
+    };
+    let smile = theme::icon_button(
+        &mut tools,
+        mode_icon,
+        20.0,
+        if picking {
+            palette.accent
+        } else {
+            palette.secondary
+        },
+        palette.text,
+        &crate::i18n::gettext(locale, mode_label),
+    );
+    // Where the picker grows from, and the button that toggles it.
+    ctx.data_mut(|data| data.insert_temp(picker_anchor_id(), smile.rect));
+    if smile.clicked() {
+        app.actions.push(Action::BubblePicker(chat.id.clone()));
+    }
     let send = Rect::from_center_size(
-        pos2(field.right() - FIELD / 2.0, field.center().y),
+        pos2(field.right() - FIELD / 2.0, field.bottom() - FIELD / 2.0),
         Vec2::splat(FIELD - 2.0 * SEND_CLEARANCE),
     );
     // The hint says what the text becomes, as the chat's does.
@@ -1119,24 +1205,81 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
         crate::i18n::gettext(locale, "Type a message")
     }
     .into_owned();
-    let mut enter = false;
+    // A `:` word being typed offers emoji, as the chat's composer does. Its
+    // keys are taken before the field sees them: Enter picks rather than
+    // sends, and the arrows move through the list.
+    let suggesting = emoji_query(app, &ctx, &chat.id, text_id)
+        .map(|(start, end, query)| {
+            let candidates = conversation::emoji_candidates(app, &query);
+            (start, end, candidates)
+        })
+        .filter(|(_, _, candidates)| !candidates.is_empty());
+    let selected_id = text_id.with("emoji-selected");
+    let mut selected = ctx
+        .data(|data| data.get_temp::<usize>(selected_id))
+        .unwrap_or(0);
+    let mut picked = None;
+    if let Some((_, _, candidates)) = &suggesting {
+        if conversation::take_plain_key(ui, egui::Key::ArrowDown) {
+            selected = (selected + 1) % candidates.len();
+        }
+        if conversation::take_plain_key(ui, egui::Key::ArrowUp) {
+            selected = (selected + candidates.len() - 1) % candidates.len();
+        }
+        selected = selected.min(candidates.len() - 1);
+        if conversation::take_plain_key(ui, egui::Key::Enter)
+            || conversation::take_plain_key(ui, egui::Key::Tab)
+        {
+            picked = Some(selected);
+        }
+    } else {
+        selected = 0;
+    }
+    // Enter sends and Shift+Enter starts a line, or, with Settings' Enter
+    // to send off, Enter starts a line and Ctrl/Cmd+Enter sends, as in the
+    // chat's composer.
+    let enter_sends = app.settings.enter_sends;
+    let focused = ctx.memory(|memory| memory.has_focus(text_id));
+    let enter = focused
+        && ui.input_mut(|input| {
+            if enter_sends {
+                input.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
+            } else {
+                input.consume_key(egui::Modifiers::COMMAND, egui::Key::Enter)
+            }
+        });
     let mut ready = staged_count > 0;
     if let Some(bubble) = app.bubbles.get_mut(&chat.id) {
-        // One line of text, centred on the field between its controls, and
-        // never drawn past them: a long line scrolls inside the field.
-        let font = theme::regular(14.5);
-        let line = ui.ctx().fonts_mut(|fonts| fonts.row_height(&font));
+        // The text between the field's controls, never drawn past them; its
+        // last line sits where a single one would.
         let text = Rect::from_min_max(
-            pos2(attach.rect.right() + 6.0, field.center().y - line / 2.0),
-            pos2(send.left() - 8.0, field.center().y + line / 2.0),
+            pos2(smile.rect.right() + 4.0, field.top() + inset),
+            pos2(send.left() - 8.0, field.bottom() - inset),
         );
+        ctx.data_mut(|data| data.insert_temp(text_id.with("width"), text.width()));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(text));
         child.set_clip_rect(
-            Rect::from_x_y_ranges(text.x_range(), field.y_range()).intersect(child.clip_rect()),
+            Rect::from_x_y_ranges(text.x_range(), field.y_range().shrink(2.0))
+                .intersect(child.clip_rect()),
         );
-        let response = child.add(
-            egui::TextEdit::singleline(&mut bubble.text)
-                .id(egui::Id::new(("bubble-text", chat.id.as_str())))
+        let scroll = egui::ScrollArea::vertical()
+            .id_salt(text_id.with("scroll"))
+            .max_height(text.height())
+            .auto_shrink([false, true])
+            .stick_to_bottom(true)
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+        let inner = scroll.show(&mut child, |ui| {
+            // Emoji keep their place in the text as see-through glyphs, and
+            // their colour pictures are painted over them, as in the chat's.
+            let mut clusters: Vec<(usize, usize, String)> = Vec::new();
+            let mut layouter = |ui: &egui::Ui, buffer: &dyn egui::TextBuffer, wrap: f32| {
+                let (galley, found) =
+                    crate::bidi::layout_editor(ui, buffer.as_str(), &format, wrap, true);
+                clusters = found;
+                galley
+            };
+            let output = egui::TextEdit::multiline(&mut bubble.text)
+                .id(text_id)
                 .hint_text(
                     egui::RichText::new(hint)
                         .color(palette.dim)
@@ -1146,19 +1289,79 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
                 .margin(egui::Margin::ZERO)
                 .font(font)
                 .text_color(palette.text)
-                .vertical_align(egui::Align::Center)
-                .desired_width(text.width()),
-        );
+                .desired_rows(1)
+                .desired_width(text.width())
+                .return_key(Some(egui::KeyboardShortcut::new(
+                    if enter_sends {
+                        egui::Modifiers::SHIFT
+                    } else {
+                        egui::Modifiers::NONE
+                    },
+                    egui::Key::Enter,
+                )))
+                .layouter(&mut layouter)
+                .show(ui);
+            for (start, length, cluster) in &clusters {
+                let Some(bounds) = crate::bidi::char_bounds(&output.galley, *start, start + length)
+                else {
+                    continue;
+                };
+                // An emoji split across rows is left to its glyphs.
+                if bounds.height() > line * 1.5 {
+                    continue;
+                }
+                crate::emoji::paint_cluster(
+                    ui,
+                    cluster,
+                    bounds.translate(output.galley_pos.to_vec2()),
+                );
+            }
+            output.response.response
+        });
+        let response = inner.inner;
         // Once the card has settled: a field on its way in takes nothing.
         if settled && std::mem::take(&mut bubble.focus) {
             response.request_focus();
         }
-        enter = response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-        if enter {
-            response.request_focus();
-        }
         ready |= !bubble.text.trim().is_empty();
     }
+    if let Some((start, end, candidates)) = &suggesting {
+        let above = ctx
+            .data(|data| data.get_temp::<f32>(tray_id(&chat.id).with("top")))
+            .unwrap_or(field.top());
+        if let Some(index) = emoji_list(
+            ui,
+            &palette,
+            candidates,
+            selected,
+            field,
+            above.min(field.top()),
+        ) {
+            picked = Some(index);
+        }
+        if let Some(index) = picked
+            && let Some(candidate) = candidates.get(index)
+            && let Some(bubble) = app.bubbles.get_mut(&chat.id)
+        {
+            // The `:word` becomes the emoji and a space, the caret after it.
+            let replacement = format!("{} ", candidate.emoji);
+            bubble.text.replace_range(*start..*end, &replacement);
+            let caret = bubble.text[..*start + replacement.len()].chars().count();
+            let mut state = egui::TextEdit::load_state(&ctx, text_id).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(caret),
+                )));
+            state.store(&ctx, text_id);
+            bubble.focus = true;
+            selected = 0;
+        }
+    }
+    if suggesting.is_none() {
+        theme::forget_motion(&ctx, emoji_list_id());
+    }
+    ctx.data_mut(|data| data.insert_temp(selected_id, selected));
     // The send button, as the chat's: lit once there is something to send.
     let (idle, idle_hover, idle_icon) = if palette.vibrant() {
         (
@@ -1191,6 +1394,170 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
     }
 }
 
+/// The composer's picker, over `chat`'s card while its button opened it:
+/// kept to the card, growing from that button. What it picks goes to the
+/// bubble: an emoji into its field, a sticker or GIF to its chat.
+fn picker(app: &mut App, ctx: &egui::Context, chat: &str, card: Rect, open: bool) {
+    if !open || app.bubbles.picker.as_deref() != Some(chat) || app.picker.is_none() {
+        return;
+    }
+    let Some(anchor) = ctx.data(|data| data.get_temp::<Rect>(picker_anchor_id())) else {
+        return;
+    };
+    let main_anchor = app.picker_anchor.replace(anchor);
+    let mark = app.actions.len();
+    ctx.data_mut(|data| data.insert_temp(super::picker::bounds_id(), card));
+    super::picker::show(app, ctx);
+    ctx.data_mut(|data| data.remove::<Rect>(super::picker::bounds_id()));
+    app.picker_anchor = main_anchor;
+    let asked: Vec<Action> = app.actions.drain(mark..).collect();
+    for action in asked {
+        let action = match action {
+            Action::InsertEmoji(text) => Action::BubbleInsert {
+                chat: chat.to_owned(),
+                text,
+            },
+            Action::SendSticker(path) => Action::BubbleSticker {
+                chat: chat.to_owned(),
+                path,
+            },
+            Action::SendGif(gif) => Action::BubbleGif {
+                chat: chat.to_owned(),
+                gif,
+            },
+            other => other,
+        };
+        app.bubbles.picker_actions.push(action);
+    }
+}
+
+/// Where the bubble's picker button is, for the picker to grow from.
+fn picker_anchor_id() -> egui::Id {
+    egui::Id::new("bubble-picker-anchor")
+}
+
+fn emoji_list_id() -> egui::Id {
+    egui::Id::new("bubble-emoji-list")
+}
+
+/// The `:word` being typed at the bubble field's caret: where its `:` and
+/// the caret are in the text, in bytes, and the word. A `:` starts one only
+/// at the start of the text or after a space, so a time or a smiley like
+/// ":)" is left alone.
+fn emoji_query(
+    app: &App,
+    ctx: &egui::Context,
+    chat: &str,
+    field: egui::Id,
+) -> Option<(usize, usize, String)> {
+    let text = &app.bubbles.get(chat)?.text;
+    if !ctx.memory(|memory| memory.has_focus(field)) {
+        return None;
+    }
+    let caret = egui::TextEdit::load_state(ctx, field)
+        .and_then(|state| state.cursor.char_range())
+        .map_or_else(|| text.chars().count(), |range| range.primary.index.0);
+    let end = text
+        .char_indices()
+        .nth(caret)
+        .map_or(text.len(), |(at, _)| at);
+    let before = &text[..end];
+    let colon = before.rfind(':')?;
+    let starts_word = before[..colon]
+        .chars()
+        .next_back()
+        .is_none_or(char::is_whitespace);
+    let query = &before[colon + 1..];
+    let word = !query.is_empty()
+        && query
+            .chars()
+            .all(|character| character.is_alphanumeric() || matches!(character, '_' | '-' | '+'));
+    (starts_word && word).then(|| (colon, end, query.to_owned()))
+}
+
+/// The emoji a `:word` matches, on glass over the field and anything over
+/// it (`above`), growing up out of it. Returns the row clicked.
+fn emoji_list(
+    ui: &mut egui::Ui,
+    palette: &crate::theme::Palette,
+    candidates: &[conversation::EmojiSuggestion],
+    selected: usize,
+    field: Rect,
+    above: f32,
+) -> Option<usize> {
+    const ROW: f32 = 36.0;
+    let ctx = ui.ctx().clone();
+    let shown = theme::appear(&ctx, emoji_list_id(), theme::MOTION_QUICK);
+    let height = candidates.len() as f32 * ROW + 12.0;
+    let list = Rect::from_min_max(
+        pos2(field.left(), above - TRAY_GAP - height),
+        pos2(field.right(), above - TRAY_GAP),
+    )
+    .translate(vec2(0.0, (1.0 - theme::ease_out(shown)) * TRAY_RISE));
+    let radius = f32::from(theme::RADIUS_MENU);
+    if palette.vibrant() {
+        ui.painter()
+            .add(crate::ui::glass::veil(list, radius, shown));
+    }
+    let mut scope = ui.new_child(egui::UiBuilder::new().max_rect(list));
+    scope.multiply_opacity(shown);
+    scope.painter().rect(
+        list,
+        radius,
+        palette.menu_glass(),
+        Stroke::new(1.0, palette.outline),
+        egui::StrokeKind::Inside,
+    );
+    let mut clicked = None;
+    for (index, candidate) in candidates.iter().enumerate() {
+        let row = Rect::from_min_size(
+            pos2(list.left() + 6.0, list.top() + 6.0 + index as f32 * ROW),
+            vec2(list.width() - 12.0, ROW),
+        );
+        let response = scope.interact(
+            row,
+            egui::Id::new(("bubble-emoji-row", index)),
+            Sense::click(),
+        );
+        if index == selected || response.hovered() {
+            scope.painter().rect_filled(
+                row,
+                f32::from(theme::RADIUS_CONTROL),
+                if index == selected {
+                    palette.accent.gamma_multiply(0.18)
+                } else {
+                    palette.surface_hover
+                },
+            );
+        }
+        let glyph = Rect::from_min_size(
+            pos2(row.left() + 8.0, row.center().y - 11.0),
+            Vec2::splat(22.0),
+        );
+        crate::emoji::paint_cluster(&scope, candidate.emoji, glyph);
+        let code = super::widgets::line(
+            &scope,
+            &candidate.shortcode,
+            theme::medium(theme::TEXT_CONTROL),
+            palette.text,
+            row.width() - 48.0,
+            1,
+        );
+        code.paint(
+            &scope,
+            pos2(row.left() + 40.0, row.center().y - code.size().y / 2.0),
+            palette.text,
+        );
+        if response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked()
+        {
+            clicked = Some(index);
+        }
+    }
+    clicked
+}
+
 /// The tray of what is attached, over `field`: it rises out of the field as
 /// the first thing is attached and sinks back once they are sent or taken
 /// away. While it is open a tile added pops in, one taken away fades and
@@ -1211,6 +1578,7 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
             // Lets go of the pictures once nothing shows them.
             ctx.data_mut(|data| data.remove::<Tray>(id));
         }
+        ctx.data_mut(|data| data.remove::<f32>(id.with("top")));
         return 0;
     }
     let spring = crate::motion::Spring::settling_in(f64::from(theme::MOTION_PANEL));
@@ -1241,6 +1609,9 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
         pos2(field.right(), field.top() - TRAY_GAP),
     )
     .translate(vec2(0.0, (1.0 - eased) * TRAY_RISE));
+    // Anything offered over the field (the emoji a `:word` matches) sits
+    // above the tray.
+    ctx.data_mut(|data| data.insert_temp(id.with("top"), tray.top()));
     let radius = f32::from(theme::RADIUS_CARD);
     let (fill, edge) = field_look(&palette);
     // The glass first, then everything on it, all fading in together.

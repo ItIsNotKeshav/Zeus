@@ -38,6 +38,13 @@ fn kept_id() -> Id {
     Id::new("zeus-closing")
 }
 
+/// Where the surfaces drawn in this window are kept. Each window (the main
+/// one, the bubbles') keeps and replays its own, in its own passes, so a
+/// menu closing in one never shows its ghost in another.
+fn kept_map(ctx: &Context) -> Id {
+    kept_id().with(ctx.viewport_id())
+}
+
 /// Fades every shape `layer` holds so far to `opacity`, and scales all but
 /// a backdrop by `scale` about `pivot`: one frame of a surface opening.
 pub fn settle(ctx: &Context, layer: LayerId, pivot: Pos2, opacity: f32, scale: f32) {
@@ -102,8 +109,9 @@ pub fn keep(ctx: &Context, layer: LayerId, pivot: Pos2, seconds: f32, opacity: f
         return;
     };
     let pass = ctx.cumulative_pass_nr();
+    let map = kept_map(ctx);
     ctx.data_mut(|data| {
-        let all = data.get_temp_mut_or_default::<HashMap<LayerId, Kept>>(kept_id());
+        let all = data.get_temp_mut_or_default::<HashMap<LayerId, Kept>>(map);
         all.insert(
             layer,
             Kept {
@@ -125,8 +133,9 @@ pub fn keep(ctx: &Context, layer: LayerId, pivot: Pos2, seconds: f32, opacity: f
 pub fn surface(ctx: &Context, layer: LayerId, pivot: Pos2, seconds: f32) -> f32 {
     let pass = ctx.cumulative_pass_nr();
     let id = kept_id().with(layer.id).with("appear");
+    let map = kept_map(ctx);
     let was_open = ctx.data(|data| {
-        data.get_temp::<HashMap<LayerId, Kept>>(kept_id())
+        data.get_temp::<HashMap<LayerId, Kept>>(map)
             .and_then(|all| {
                 all.get(&layer)
                     .map(|kept| kept.closed.is_none() && kept.pass + 1 >= pass)
@@ -147,8 +156,9 @@ pub fn surface(ctx: &Context, layer: LayerId, pivot: Pos2, seconds: f32) -> f32 
 /// Forgets what `layer` kept, for a surface closed by something that
 /// replaces it at once, so it does not linger.
 pub fn forget(ctx: &Context, layer: LayerId) {
+    let map = kept_map(ctx);
     ctx.data_mut(|data| {
-        data.get_temp_mut_or_default::<HashMap<LayerId, Kept>>(kept_id())
+        data.get_temp_mut_or_default::<HashMap<LayerId, Kept>>(map)
             .remove(&layer);
     });
 }
@@ -159,8 +169,9 @@ pub fn paint(ctx: &Context) {
     let pass = ctx.cumulative_pass_nr();
     let now = ctx.input(|input| input.time);
     let mut playing = Vec::new();
+    let map = kept_map(ctx);
     ctx.data_mut(|data| {
-        let all = data.get_temp_mut_or_default::<HashMap<LayerId, Kept>>(kept_id());
+        let all = data.get_temp_mut_or_default::<HashMap<LayerId, Kept>>(map);
         all.retain(|_, kept| {
             if kept.pass >= pass {
                 return true;

@@ -35,6 +35,12 @@ enum Row {
     },
 }
 
+/// Where the composer's picker may go, when not the whole window: a
+/// bubble's card sets it while it hosts the picker.
+pub fn bounds_id() -> egui::Id {
+    egui::Id::new("picker-bounds")
+}
+
 pub fn show(app: &mut App, ctx: &egui::Context) {
     if app.picker == Some(PickerTab::Emoji) && app.reaction_target.is_none() {
         if app.picker_recent.is_none() {
@@ -54,11 +60,21 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
     let Some(anchor) = app.picker_anchor else {
         return;
     };
-    let screen = ctx.content_rect();
-    let x = anchor
-        .left()
-        .clamp(screen.left() + 8.0, (screen.right() - WIDTH - 8.0).max(8.0));
-    let y = (anchor.top() - HEIGHT - 10.0).max(screen.top() + 8.0);
+    // A bubble's card hosts it in a smaller window: there it keeps to the
+    // card, as narrow and short as the card needs.
+    let screen = ctx
+        .data(|data| data.get_temp::<Rect>(bounds_id()))
+        .unwrap_or_else(|| ctx.content_rect());
+    let margin = 2.0 * f32::from(FRAME_MARGIN);
+    let width = WIDTH.min(screen.width() - 16.0 - margin).max(200.0);
+    let height = HEIGHT
+        .min(anchor.top() - screen.top() - 18.0 - margin)
+        .max(220.0);
+    let x = anchor.left().clamp(
+        screen.left() + 8.0,
+        (screen.right() - width - margin - 8.0).max(screen.left() + 8.0),
+    );
+    let y = (anchor.top() - height - margin - 10.0).max(screen.top() + 8.0);
     let id = egui::Id::new("picker");
     let frost = widgets::Frost::reserve(
         ctx,
@@ -76,12 +92,12 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                 .inner_margin(Margin::same(10))
                 .shadow(palette.float_shadow())
                 .show(ui, |ui| {
-                    ui.set_width(WIDTH);
-                    ui.set_height(HEIGHT);
+                    ui.set_width(width);
+                    ui.set_height(height);
                     ui.spacing_mut().item_spacing.y = 6.0;
-                    let body_height = HEIGHT - 44.0;
+                    let body_height = height - 44.0;
                     ui.allocate_ui_with_layout(
-                        vec2(WIDTH, body_height),
+                        vec2(width, body_height),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| match tab {
                             PickerTab::Emoji => emoji_tab(app, ui, &palette),

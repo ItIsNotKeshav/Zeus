@@ -1252,10 +1252,10 @@ fn active_emoji(text: &str, start: Option<usize>, cursor: usize) -> Option<(usiz
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct EmojiSuggestion {
-    emoji: &'static str,
-    shortcode: String,
-    name: &'static str,
+pub(crate) struct EmojiSuggestion {
+    pub(crate) emoji: &'static str,
+    pub(crate) shortcode: String,
+    pub(crate) name: &'static str,
 }
 
 fn emoji_match_score(emoji: &emojis::Emoji, query: &str) -> Option<u8> {
@@ -1295,7 +1295,7 @@ fn emoji_suggestion(emoji: &'static emojis::Emoji) -> EmojiSuggestion {
 
 /// Completions for `:query`. `emojis::iter` yields each emoji once, and a
 /// skin-tone-capable one such as 👍 reports `Some(SkinTone::Default)`.
-fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
+pub(crate) fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
     const LIMIT: usize = 6;
     let query = query.to_lowercase();
     let mut seen = HashSet::new();
@@ -1328,7 +1328,7 @@ fn emoji_candidates(app: &App, query: &str) -> Vec<EmojiSuggestion> {
         .collect()
 }
 
-fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
+pub(crate) fn take_plain_key(ui: &mut egui::Ui, key: Key) -> bool {
     ui.input_mut(|input| {
         let mut taken = false;
         input.events.retain(|event| {
