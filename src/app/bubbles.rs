@@ -43,6 +43,11 @@ pub struct Bubble {
 pub struct Bubbles {
     pub list: Vec<Bubble>,
     pub expanded: Option<ChatId>,
+    /// The bubble the picker (`App::picker`) is open over, while it is.
+    pub picker: Option<ChatId>,
+    /// What the picker over a bubble asked for this frame, kept out of the
+    /// window's filter: its tabs, searches and packs act as in the main one.
+    pub picker_actions: Vec<Action>,
     uses: u64,
     /// Ctrl/Cmd+V as the bubble window's keys say it, as the main window
     /// reads its own: a clipboard holding only a picture sends no `Paste`
@@ -168,6 +173,68 @@ impl App {
                     });
                 }
             }
+            Action::BubblePicker(chat) => {
+                if self.bubbles.picker.as_deref() == Some(chat.as_str()) && self.picker.is_some() {
+                    self.picker = None;
+                    self.bubbles.picker = None;
+                } else {
+                    // Opened afresh over this bubble, on the tab used last.
+                    self.picker = None;
+                    self.reaction_target = None;
+                    self.bubbles.picker = Some(chat);
+                    self.apply(Action::TogglePicker(self.settings.picker_mode), ctx);
+                }
+            }
+            Action::BubbleInsert { chat, text } => {
+                let id = egui::Id::new(("bubble-text", chat.as_str()));
+                if let Some(bubble) = self.bubbles.get_mut(&chat) {
+                    let count = bubble.text.chars().count();
+                    let at = egui::TextEdit::load_state(ctx, id)
+                        .and_then(|state| state.cursor.char_range())
+                        .map_or(count, |range| range.primary.index.0.min(count));
+                    let byte = bubble
+                        .text
+                        .char_indices()
+                        .nth(at)
+                        .map_or(bubble.text.len(), |(byte, _)| byte);
+                    bubble.text.insert_str(byte, &text);
+                    let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+                    let cursor = egui::text::CCursor::new(at + text.chars().count());
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::one(cursor)));
+                    state.store(ctx, id);
+                    bubble.focus = true;
+                }
+                self.remember_emoji(&text);
+            }
+            Action::BubbleSticker { chat, path } => {
+                if self.chat(&chat).is_some_and(|known| known.can_send()) {
+                    let upload = self.begin_upload(
+                        &chat,
+                        crate::model::UploadKind::Sticker,
+                        String::new(),
+                        Some(crate::model::UploadPreview::File(path.clone())),
+                    );
+                    self.backend.send(Command::SendSticker {
+                        chat: chat.clone(),
+                        path,
+                        quoting: None,
+                        upload: Some(upload),
+                    });
+                    self.close_bubble_picker(&chat);
+                }
+            }
+            Action::BubbleGif { chat, gif } => {
+                if self.chat(&chat).is_some_and(|known| known.can_send()) {
+                    self.backend.send(Command::SendGif {
+                        chat: chat.clone(),
+                        gif,
+                        quoting: None,
+                    });
+                    self.close_bubble_picker(&chat);
+                }
+            }
             Action::BubbleUnstage { chat, index } => {
                 if let Some(bubble) = self.bubbles.get_mut(&chat)
                     && index < bubble.staged.len()
@@ -209,6 +276,17 @@ impl App {
         self.ensure_loaded(chat);
         let account = self.account().id.clone();
         self.bubbles.add(account, chat.to_owned());
+    }
+
+    /// Closes the picker over `chat`'s bubble after something was sent from
+    /// it, and follows the bubble's transcript to what went.
+    fn close_bubble_picker(&mut self, chat: &str) {
+        self.picker = None;
+        self.bubbles.picker = None;
+        if let Some(bubble) = self.bubbles.get_mut(chat) {
+            bubble.view.scroll_to_bottom = true;
+            bubble.focus = true;
+        }
     }
 
     /// Makes `chat` a bubble and opens it.
@@ -385,6 +463,10 @@ impl App {
                     | Action::BubbleSend(_)
                     | Action::BubbleAttach(_)
                     | Action::BubbleUnstage { .. }
+                    | Action::BubblePicker(_)
+                    | Action::BubbleInsert { .. }
+                    | Action::BubbleSticker { .. }
+                    | Action::BubbleGif { .. }
                     | Action::MarkRead(_)
                     // A photo, clip or sticker clicked in the card opens in
                     // the window's viewer, large (see `ui::bubbles::show`).

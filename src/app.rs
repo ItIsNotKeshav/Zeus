@@ -7300,7 +7300,11 @@ impl App {
             | Action::DockBubble(_)
             | Action::BubbleSend(_)
             | Action::BubbleAttach(_)
-            | Action::BubbleUnstage { .. }) => self.apply_bubble(action, ctx),
+            | Action::BubbleUnstage { .. }
+            | Action::BubblePicker(_)
+            | Action::BubbleInsert { .. }
+            | Action::BubbleSticker { .. }
+            | Action::BubbleGif { .. }) => self.apply_bubble(action, ctx),
             Action::DockPopOut => self.dock_pop_out(),
             Action::PopOutSend { chat, text } => self.send_from_pop_out(chat, text),
             Action::PreloadChat(id) => {

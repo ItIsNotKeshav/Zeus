@@ -3213,6 +3213,24 @@ pub enum Action {
         chat: ChatId,
         index: usize,
     },
+    /// Opens the emoji, GIF and sticker picker over a chat's bubble, or
+    /// closes it there.
+    BubblePicker(ChatId),
+    /// Types `text` (an emoji) into a chat's bubble at its cursor.
+    BubbleInsert {
+        chat: ChatId,
+        text: String,
+    },
+    /// Sends a sticker picked in a chat's bubble to that chat.
+    BubbleSticker {
+        chat: ChatId,
+        path: PathBuf,
+    },
+    /// Sends a GIF picked in a chat's bubble to that chat.
+    BubbleGif {
+        chat: ChatId,
+        gif: Gif,
+    },
     /// Starts selecting messages in the open chat, beginning with this one.
     SelectMessage(String),
     /// Adds a message to the selection or removes it.

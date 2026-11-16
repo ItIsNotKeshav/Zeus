@@ -131,7 +131,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     focus::finish(ctx, main_navigation);
     update::show(app, ctx);
     // Over the picture editor, the picker is drawn after it, so on top.
-    if app.picture_edit.is_none() {
+    // A picker opened from a bubble is drawn in the bubbles' window.
+    if app.picture_edit.is_none() && app.bubbles.picker.is_none() {
         picker::show(app, ctx);
     }
     dialogs::show(app, ctx);
