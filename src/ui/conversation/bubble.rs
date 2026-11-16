@@ -615,6 +615,7 @@ pub(super) fn bubble_row(
                 display_message,
                 id.with("metadata-row"),
                 progress,
+                !visible,
                 bubble_rect,
             )
             .clicked()
@@ -635,6 +636,7 @@ pub(super) fn reference_timestamp(
     message: &Message,
     id: egui::Id,
     progress: f32,
+    leaving: bool,
     bubble: Option<Rect>,
 ) -> egui::Response {
     let own = message.from_me;
@@ -657,8 +659,26 @@ pub(super) fn reference_timestamp(
     // narrower than the time and ticks (a two-letter reply) lets the row reach
     // past its left edge instead of cutting the time short.
     let time = crate::util::clock(message.timestamp);
-    let shown = shown_delivery(view, message);
-    let status = message_status_text(view, message);
+    let mut shown = shown_delivery(view, message);
+    let mut status = message_status_text(view, message);
+    // A word that has just given way to a newer message keeps saying itself
+    // while its row folds away, rather than turning into the clock.
+    let said = id.with("said");
+    if let Some(text) = &status {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(said, (text.clone(), shown)));
+    } else if leaving {
+        if let Some((text, then)) = ui
+            .ctx()
+            .data(|data| data.get_temp::<(String, Delivery)>(said))
+        {
+            status = Some(text);
+            shown = then;
+        }
+    } else {
+        ui.ctx()
+            .data_mut(|data| data.remove::<(String, Delivery)>(said));
+    }
     let needed = match &status {
         Some(text) => status_span(ui, text, 10.0) + 2.0,
         None => reference_timestamp_width(ui, &time, own),
@@ -872,20 +892,34 @@ pub(super) fn status_rank(status: Delivery) -> Option<u8> {
 /// message that reached it, as the phone does. An older message shows its
 /// word only when no newer one of ours has got as far, such as "Delivered"
 /// above a newest message that is only sent.
+///
+/// While our newest message has only just left (sending, or sent less than
+/// [`STATUS_HANDOFF`] seconds ago) no message says its state: the word under
+/// the one before folds away as the new one goes out, rather than lingering
+/// until the new one catches up. If the new one stays only sent, the older
+/// word comes back.
 pub(super) fn status_rows(
     messages: &[Message],
     chat_kind: crate::model::ChatKind,
     account_receipts_off: bool,
+    now: i64,
 ) -> HashSet<String> {
     let mut rows = HashSet::new();
     let mut furthest = 0;
-    for message in messages.iter().rev().filter(|message| {
+    let ours = messages.iter().rev().filter(|message| {
         message.from_me
             && !matches!(
                 message.content,
                 Content::Revoked | Content::DisappearingTimer { .. }
             )
+    });
+    if ours.clone().next().is_some_and(|newest| {
+        matches!(newest.status, Delivery::Pending | Delivery::Sent)
+            && now - newest.timestamp <= STATUS_HANDOFF
     }) {
+        return rows;
+    }
+    for message in ours {
         let shown = display_delivery(message.status, true, chat_kind, account_receipts_off);
         if let Some(rank) = status_rank(shown)
             && rank > furthest
@@ -896,6 +930,10 @@ pub(super) fn status_rows(
     }
     rows
 }
+
+/// How long (seconds) a message we just sent keeps the older state words
+/// away while it waits to be delivered.
+pub(super) const STATUS_HANDOFF: i64 = 10;
 
 /// Whether our message keeps a glyph beside its clock: while it is sending,
 /// and when it failed. Every other state is a word, or nothing.

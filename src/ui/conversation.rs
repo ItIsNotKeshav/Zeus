@@ -3034,7 +3034,12 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let mention_names = |id: &str| app.mention_name(id);
     let keyboard_navigation = std::cell::Cell::new(false);
     let row_tops = std::cell::RefCell::new(Vec::new());
-    let status_rows = status_rows(&conversation.messages, chat.kind, app.account_receipts_off);
+    let status_rows = status_rows(
+        &conversation.messages,
+        chat.kind,
+        app.account_receipts_off,
+        crate::util::now(),
+    );
     let view = View {
         palette,
         locale: app.locale,
@@ -13518,7 +13523,9 @@ mod reaction_tests {
             message
         };
         let ids = |messages: &[Message]| {
-            let mut rows: Vec<String> = status_rows(messages, Direct, false).into_iter().collect();
+            let mut rows: Vec<String> = status_rows(messages, Direct, false, 1_000)
+                .into_iter()
+                .collect();
             rows.sort();
             rows
         };
@@ -13548,9 +13555,21 @@ mod reaction_tests {
         assert_eq!(ids(&covered), ["b"]);
         // Read receipts off in a DM: read shows as delivered.
         let hidden = [ours("a", Delivery::Read), ours("b", Delivery::Delivered)];
-        let mut rows: Vec<String> = status_rows(&hidden, Direct, true).into_iter().collect();
+        let mut rows: Vec<String> = status_rows(&hidden, Direct, true, 1_000)
+            .into_iter()
+            .collect();
         rows.sort();
         assert_eq!(rows, ["b"]);
+        // Just sent: the older word gives way at once, and comes back if the
+        // new message is still only sent after the hand-off.
+        let fresh = [ours("a", Delivery::Read), ours("b", Delivery::Sent)];
+        assert!(status_rows(&fresh, Direct, false, STATUS_HANDOFF).is_empty());
+        let sending = [ours("a", Delivery::Read), ours("b", Delivery::Pending)];
+        assert!(status_rows(&sending, Direct, false, 1).is_empty());
+        assert_eq!(
+            status_rows(&fresh, Direct, false, STATUS_HANDOFF + 1),
+            HashSet::from(["a".to_owned()])
+        );
     }
 
     use crate::model::{Delivery, Reaction};
