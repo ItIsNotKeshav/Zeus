@@ -586,40 +586,81 @@ pub(super) fn bubble_row(
         }
         // Under the bubble: the newest message's time after a pause, our
         // state where the phone would say it ("Delivered", "Read"), and a
-        // message still sending or that failed.
+        // message still sending or that failed. A reply clears the word and
+        // the time; both shrink away.
         let says_state = own
             && view
                 .status_rows
                 .is_some_and(|rows| rows.contains(&display_message.id));
+        // Advances the leave spring once for this frame. The paint below
+        // reads the same value.
+        let presence = if own {
+            status_line(ui.ctx(), view, display_message)
+                .map(|(_, _, presence)| presence)
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let departing = !says_state && presence > 0.0;
+        // The clock under the bubble leaves on the same spring as a status
+        // word. Reduced motion snaps it shut.
+        let time_presence = sync_under_time(
+            ui.ctx(),
+            &view.chat.id,
+            &display_message.id,
+            shows_time,
+        );
+        let time_departing = !shows_time && time_presence > 0.0;
         let glyph = own
             && (display_message.status == Delivery::Failed
                 || (last_outgoing && keeps_glyph(display_message)));
-        let visible = shows_time || says_state || glyph;
+        // A word or a clock on its own closes with the leave spring. The row
+        // would otherwise fold on after it had already gone.
+        let under_leave = (departing || time_departing) && !shows_time && !says_state && !glyph;
+        let visible = shows_time || says_state || glyph || departing || time_departing;
         let metadata_id = id.with("metadata-visible");
         // Eased out over the time a sent bubble takes to settle, so the row
-        // opens with the bubble rather than ahead of it.
-        let animation_time = if reduce_motion {
+        // opens with the bubble rather than ahead of it. A leave snaps this
+        // bool shut and the spring above owns the close.
+        let animation_time = if reduce_motion || under_leave {
             0.0
         } else {
             SEND_RISE.settle_time() as f32
         };
-        let progress = ui.ctx().animate_bool_with_time_and_easing(
+        let reveal = ui.ctx().animate_bool_with_time_and_easing(
             metadata_id.with("reveal"),
-            visible,
+            visible && !under_leave,
             animation_time,
             theme::ease_out,
         );
-        // The time stays while the row folds away, so it does not jump.
+        let progress = if under_leave {
+            let mut leave = 0.0;
+            if departing {
+                leave = presence;
+            }
+            if time_departing {
+                leave = leave.max(time_presence);
+            }
+            leave
+        } else {
+            reveal
+        };
+        // The time stays while the row folds away, so it does not jump. A
+        // clock that is shrinking stays too, until that spring ends.
         let time_id = metadata_id.with("time");
+        let draw_time = shows_time || time_departing;
         let with_time = if visible {
             ui.ctx()
-                .data_mut(|data| data.insert_temp(time_id, shows_time));
-            shows_time
+                .data_mut(|data| data.insert_temp(time_id, draw_time));
+            draw_time
         } else {
             ui.ctx()
                 .data(|data| data.get_temp::<bool>(time_id))
                 .unwrap_or(false)
         };
+        // A fold still paints the clock at full size. The spring's value is
+        // for the shrink.
+        let clock_presence = if time_departing { time_presence } else { 1.0 };
         if progress > 0.0 {
             reference_timestamp(
                 ui,
@@ -629,6 +670,7 @@ pub(super) fn bubble_row(
                 progress,
                 !visible,
                 with_time,
+                clock_presence,
                 bubble_rect,
                 actions,
             );
@@ -659,6 +701,30 @@ pub(super) fn says_time_below(newest: bool, previous: Option<i64>, timestamp: i6
     newest
         && !time_line_above(previous, timestamp)
         && previous.is_some_and(|previous| timestamp - previous >= TIME_RUN_GAP)
+}
+
+/// Whether this row says its time under the bubble. The newest message does,
+/// after a pause from the one before it ([`says_time_below`]). A call entry
+/// and a disappearing-timer notice are not that message, so the line stays
+/// on the one before them. A reply is, including one that was deleted, and
+/// the line leaves the message it follows.
+pub(super) fn message_says_time(
+    messages: &[Message],
+    index: usize,
+    row_len: usize,
+    previous: Option<i64>,
+) -> bool {
+    let end = index + row_len;
+    let newest = messages
+        .iter()
+        .rposition(|message| {
+            !matches!(
+                message.content,
+                Content::Call { .. } | Content::DisappearingTimer { .. }
+            )
+        })
+        .is_some_and(|at| (index..end).contains(&at));
+    says_time_below(newest, previous, messages[index].timestamp)
 }
 
 /// The line in the middle of the transcript that says when the messages
@@ -707,10 +773,12 @@ pub(super) fn time_tooltip(ui: &egui::Ui, view: &View<'_>, message: &Message, bu
 
 /// The row just below a bubble: the message's time when `with_time`, and,
 /// under our own, its state ("Delivered", "Read") or the sign of one still
-/// sending or that failed. Ours sits at the bubble's right edge with the
-/// state outermost; a received one's time at its left edge. `progress`
-/// reveals it through a clip that grows with it, so the messages under it
-/// move in step. Our state opens "Message info" when clicked.
+/// sending or that failed. Ours sits at the bubble's right edge, the time
+/// on that edge and the state to its left. Either one alone keeps the edge.
+/// A received one's time stays at its left edge. `progress` reveals the row
+/// through a clip that grows with it, so the messages under it move in step.
+/// `time_presence` under 1 shrinks the clock up and away, as a status word
+/// does when it leaves. Our state opens "Message info" when clicked.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn reference_timestamp(
     ui: &mut egui::Ui,
@@ -720,14 +788,26 @@ pub(super) fn reference_timestamp(
     progress: f32,
     leaving: bool,
     with_time: bool,
+    time_presence: f32,
     bubble: Option<Rect>,
     actions: &mut Vec<Action>,
 ) {
     let own = message.from_me;
-    const SPACING: f32 = 4.0;
-    const ROW_HEIGHT: f32 = 16.0;
+    // The line used to start four points under the bubble, then sit in the
+    // middle of a 16 point row. Two points, on the text's own line, is about
+    // half that gap and stays clear of the bubble.
+    const SPACING: f32 = 2.0;
     const GAP: f32 = 4.0;
-    let full_height = SPACING + ROW_HEIGHT;
+    let time_font = theme::regular(theme::TEXT_MICRO);
+    let status_font = theme::regular(10.0);
+    let glyph_font = theme::semibold(theme::TEXT_CAPTION);
+    let line_height = ui.fonts_mut(|fonts| {
+        let time = fonts.row_height(&time_font);
+        let word = fonts.row_height(&theme::bold(status_font.size));
+        let glyph = fonts.row_height(&glyph_font);
+        time.max(word).max(glyph)
+    });
+    let full_height = SPACING + line_height;
     let reveal_height = full_height * progress.clamp(0.0, 1.0);
     let available = ui.available_rect_before_wrap();
     let slot_top = ui.cursor().top();
@@ -738,10 +818,16 @@ pub(super) fn reference_timestamp(
     ui.allocate_space(vec2(available.width(), reveal_height));
 
     let time = with_time.then(|| crate::util::clock(message.timestamp));
-    let mut shown = shown_delivery(view, message);
-    let mut status = message_status_text(view, message);
-    // A word that has just given way to a newer message keeps saying itself
-    // while its row folds away, rather than vanishing at once.
+    let line = status_line(ui.ctx(), view, message);
+    let mut presence = line.as_ref().map(|(_, _, presence)| *presence).unwrap_or(1.0);
+    let mut shown = line
+        .as_ref()
+        .map(|(_, delivery, _)| *delivery)
+        .unwrap_or_else(|| shown_delivery(view, message));
+    let mut status = line.map(|(text, _, _)| text);
+    // A word kept for a row that is folding (the time under it going away)
+    // stays until that fold ends. A status word leaving on its own is already
+    // in `status`, and shrinks instead of using this.
     let said = id.with("said");
     if let Some(text) = &status {
         ui.ctx()
@@ -753,6 +839,7 @@ pub(super) fn reference_timestamp(
         {
             status = Some(text);
             shown = then;
+            presence = 1.0;
         }
     } else {
         ui.ctx()
@@ -764,9 +851,6 @@ pub(super) fn reference_timestamp(
         Delivery::Failed => Some(("✗", view.palette.danger)),
         _ => None,
     };
-    let time_font = theme::regular(theme::TEXT_MICRO);
-    let status_font = theme::regular(10.0);
-    let glyph_font = theme::semibold(theme::TEXT_CAPTION);
     let width_of = |text: &str, font: &egui::FontId| {
         ui.painter()
             .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
@@ -794,8 +878,23 @@ pub(super) fn reference_timestamp(
         let right = (x.min + needed).max(x.max).min(available.right());
         egui::Rangef::new((right - needed).min(x.min), right)
     };
-    let row_rect = Rect::from_x_y_ranges(x, slot_top + SPACING..=slot_top + SPACING + ROW_HEIGHT);
-    let clip = Rect::from_min_max(slot.min, pos2(slot.right(), slot.top() + reveal_height))
+    let row_rect = Rect::from_x_y_ranges(x, slot_top + SPACING..=slot_top + SPACING + line_height);
+    // A leaving word or clock rises into the bubble, so the shrinking slot
+    // must not clip it. The allocated height still closes, and the messages
+    // under it follow.
+    let rising = (presence > 0.0 && presence < 1.0 - 1.0e-3 && status.is_some())
+        || (time_presence > 0.0 && time_presence < 1.0 - 1.0e-3 && time.is_some());
+    let clip_top = if rising {
+        slot_top - STATUS_LEAVE_RISE
+    } else {
+        slot.top()
+    };
+    let clip_bottom = if rising {
+        slot_top + full_height
+    } else {
+        slot.top() + reveal_height
+    };
+    let clip = Rect::from_min_max(pos2(slot.left(), clip_top), pos2(slot.right(), clip_bottom))
         .intersect(ui.clip_rect());
     let mut row_ui = ui.new_child(
         egui::UiBuilder::new()
@@ -808,18 +907,38 @@ pub(super) fn reference_timestamp(
             }),
     );
     row_ui.set_clip_rect(clip);
-    row_ui.multiply_opacity(progress);
+    if !rising {
+        row_ui.multiply_opacity(progress);
+    }
     let plain = view.palette.secondary.gamma_multiply(0.82);
     row_ui.spacing_mut().item_spacing.x = GAP;
-    // A right-to-left row lays its first item outermost: the state, then
-    // the time inside it.
+    // A right-to-left row lays its first item on the bubble's right edge.
+    // The time takes that edge. The status word sits to its left. Either
+    // one alone keeps the edge. A received row is left to right, so its
+    // time stays on the left.
+    if let Some(time) = &time {
+        if time_presence < 1.0 - 1.0e-3 {
+            let width = width_of(time, &time_font);
+            let (rect, _) = row_ui.allocate_exact_size(vec2(width, line_height), Sense::hover());
+            paint_leaving_line(
+                &row_ui,
+                time,
+                (rect.right(), rect.center().y),
+                time_font,
+                plain,
+                time_presence,
+            );
+        } else {
+            widgets::rich_text(&mut row_ui, time, time_font, plain);
+        }
+    }
     if let Some(text) = &status {
         // The word in bold, with the time it was reached beside it in the
         // regular weight when that came well after the message.
         let colour = status_colour(view, shown, plain);
         let width = status_span(&row_ui, text, status_font.size);
-        let (rect, _) = row_ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
-        paint_status_word(
+        let (rect, _) = row_ui.allocate_exact_size(vec2(width, line_height), Sense::hover());
+        paint_status_label(
             &row_ui,
             view,
             message,
@@ -828,6 +947,7 @@ pub(super) fn reference_timestamp(
             (rect.right(), rect.center().y),
             &status_font,
             colour,
+            presence,
         );
     } else if own {
         // Noted while it is still sending, so the word that follows eases in.
@@ -835,9 +955,6 @@ pub(super) fn reference_timestamp(
         if let Some((glyph, colour)) = glyph {
             widgets::rich_text(&mut row_ui, glyph, glyph_font, colour);
         }
-    }
-    if let Some(time) = &time {
-        widgets::rich_text(&mut row_ui, time, time_font, plain);
     }
     if own {
         status_opens_info(ui, view, message, row_rect.intersect(clip), actions);
@@ -961,38 +1078,75 @@ pub(super) fn status_rank(status: Delivery) -> Option<u8> {
     }
 }
 
+/// Our own message that can carry a delivery word. A deleted message and a
+/// disappearing-timer notice are not those.
+fn outgoing_bubble(message: &Message) -> bool {
+    message.from_me
+        && !matches!(
+            message.content,
+            Content::Revoked | Content::DisappearingTimer { .. }
+        )
+}
+
+/// Someone else's message, other than a call entry or a disappearing-timer
+/// notice. A message they deleted still counts: it is their reply.
+fn incoming_reply(message: &Message) -> bool {
+    !message.from_me
+        && !matches!(
+            message.content,
+            Content::DisappearingTimer { .. } | Content::Call { .. }
+        )
+}
+
 /// Which of our messages say their state: said once, under the newest
 /// message that reached it, as the phone does. An older message shows its
 /// word only when no newer one of ours has got as far, such as "Delivered"
 /// above a newest message that is only sent.
 ///
-/// While our newest message has only just left (sending, or sent less than
-/// [`STATUS_HANDOFF`] seconds ago) no message says its state: the word under
-/// the one before folds away as the new one goes out, rather than lingering
-/// until the new one catches up. If the new one stays only sent, the older
-/// word comes back.
+/// `typing` is the chat's composing presence, the same one that draws the
+/// typing bubble. While it is set, no message says its state. The word
+/// already up shrinks away, and comes back with its usual appear once
+/// typing stops and nothing else is holding it.
+///
+/// The first word waits [`STATUS_FIRST_WAIT`] seconds after the message was
+/// sent, when no word was showing as that message went out (the first send,
+/// or a send after a reply). A later message we send while a word is already
+/// up takes the word at once.
+///
+/// While that later message is still only sending or sent, and it left less
+/// than [`STATUS_HANDOFF`] seconds ago, no message says its state: the word
+/// under the one before gives way as the new one goes out. If the new one
+/// stays only sent, the older word comes back after the hand-off. Delivered
+/// and read skip the hand-off.
+///
+/// A reply does the same as typing. An incoming message after our newest
+/// outgoing one clears every word, and so does one they deleted. A call
+/// entry and a disappearing-timer notice are not replies.
 pub(super) fn status_rows(
     messages: &[Message],
     chat_kind: crate::model::ChatKind,
     account_receipts_off: bool,
     now: i64,
+    typing: bool,
 ) -> HashSet<String> {
+    let Some(newest_at) = messages.iter().rposition(outgoing_bubble) else {
+        return HashSet::new();
+    };
+    if typing || messages[newest_at + 1..].iter().any(incoming_reply) {
+        return HashSet::new();
+    }
+    let prior = word_showing_before(messages, newest_at, chat_kind, account_receipts_off);
+    let newest = &messages[newest_at];
+    let age = now.saturating_sub(newest.timestamp);
+    if !prior && age < STATUS_FIRST_WAIT {
+        return HashSet::new();
+    }
+    if matches!(newest.status, Delivery::Pending | Delivery::Sent) && age <= STATUS_HANDOFF {
+        return HashSet::new();
+    }
     let mut rows = HashSet::new();
     let mut furthest = 0;
-    let ours = messages.iter().rev().filter(|message| {
-        message.from_me
-            && !matches!(
-                message.content,
-                Content::Revoked | Content::DisappearingTimer { .. }
-            )
-    });
-    if ours.clone().next().is_some_and(|newest| {
-        matches!(newest.status, Delivery::Pending | Delivery::Sent)
-            && now - newest.timestamp <= STATUS_HANDOFF
-    }) {
-        return rows;
-    }
-    for message in ours {
+    for message in messages.iter().rev().filter(|message| outgoing_bubble(message)) {
         let shown = display_delivery(message.status, true, chat_kind, account_receipts_off);
         if let Some(rank) = status_rank(shown)
             && rank > furthest
@@ -1004,9 +1158,108 @@ pub(super) fn status_rows(
     rows
 }
 
+/// Unix second to draw the chat again so a word held by the first-send wait
+/// or the just-sent hand-off can appear. `None` when a word is already due,
+/// when typing is hiding it (the typing bubble repaints on its own), or when
+/// nothing on the clock would reveal one. The view asks for one repaint then,
+/// not a spinning timer.
+pub(super) fn status_wake(
+    messages: &[Message],
+    chat_kind: crate::model::ChatKind,
+    account_receipts_off: bool,
+    now: i64,
+    typing: bool,
+) -> Option<i64> {
+    if typing
+        || !status_rows(messages, chat_kind, account_receipts_off, now, false).is_empty()
+    {
+        return None;
+    }
+    let Some(newest_at) = messages.iter().rposition(outgoing_bubble) else {
+        return None;
+    };
+    if messages[newest_at + 1..].iter().any(incoming_reply) {
+        return None;
+    }
+    let sent = messages[newest_at].timestamp;
+    let mut wake = None;
+    let dues = [
+        sent.saturating_add(STATUS_FIRST_WAIT),
+        sent.saturating_add(STATUS_HANDOFF).saturating_add(1),
+    ];
+    for due in dues {
+        if due <= now {
+            continue;
+        }
+        let due_rows = status_rows(messages, chat_kind, account_receipts_off, due, false);
+        if due_rows.is_empty() {
+            continue;
+        }
+        wake = Some(match wake {
+            Some(have) => have.min(due),
+            None => due,
+        });
+    }
+    wake
+}
+
+/// Whether a status word was showing at the moment `messages[newest_at]` was
+/// sent. Walks our earlier messages in order, so a long chat does not recurse.
+fn word_showing_before(
+    messages: &[Message],
+    newest_at: usize,
+    chat_kind: crate::model::ChatKind,
+    account_receipts_off: bool,
+) -> bool {
+    let time = messages[newest_at].timestamp;
+    let outgoing: Vec<usize> = messages[..newest_at]
+        .iter()
+        .enumerate()
+        .filter(|(_, message)| outgoing_bubble(message))
+        .map(|(index, _)| index)
+        .collect();
+    if outgoing.is_empty() {
+        return false;
+    }
+    let mut showing_before = false;
+    let mut has_rank = false;
+    for (n, &index) in outgoing.iter().enumerate() {
+        let message = &messages[index];
+        let shown = display_delivery(message.status, true, chat_kind, account_receipts_off);
+        if status_rank(shown).is_some() {
+            has_rank = true;
+        }
+        let next = outgoing.get(n + 1).copied();
+        let end = next.unwrap_or(newest_at);
+        if messages[index + 1..end].iter().any(incoming_reply) {
+            showing_before = false;
+            if next.is_none() {
+                return false;
+            }
+            continue;
+        }
+        let end_time = next.map(|next| messages[next].timestamp).unwrap_or(time);
+        let age = end_time.saturating_sub(message.timestamp);
+        let just_sent = matches!(message.status, Delivery::Pending | Delivery::Sent)
+            && age <= STATUS_HANDOFF;
+        let first_wait = !showing_before && age < STATUS_FIRST_WAIT;
+        let showing_after = !just_sent && !first_wait && has_rank;
+        if next.is_none() {
+            return showing_after;
+        }
+        showing_before = showing_after;
+    }
+    false
+}
+
 /// How long (seconds) a message we just sent keeps the older state words
-/// away while it waits to be delivered.
+/// away while it is still only sending or sent. Delivered and read show at
+/// once. See [`STATUS_FIRST_WAIT`] for the separate wait when no word was up.
 pub(super) const STATUS_HANDOFF: i64 = 10;
+
+/// How long (seconds) after a send before the first status word may show,
+/// when no word was showing as that message went out.
+pub(super) const STATUS_FIRST_WAIT: i64 = 5;
 
 /// Whether our message keeps a glyph beside its clock: while it is sending,
 /// and when it failed. Every other state is a word, or nothing.
@@ -1054,11 +1307,167 @@ pub(super) fn status_colour(view: &View<'_>, shown: Delivery, plain: Color32) ->
     }
 }
 
+/// How far a leaving status word rises, in points.
+const STATUS_LEAVE_RISE: f32 = 8.0;
+/// The size a leaving status word shrinks to.
+const STATUS_LEAVE_SCALE: f32 = 0.6;
+
+#[derive(Clone)]
+struct HeldStatus {
+    text: String,
+    delivery: Delivery,
+}
+
+fn status_leave_id(chat: &str, message: &str) -> egui::Id {
+    egui::Id::new(("status-leave", chat, message))
+}
+
+/// 1 while this message says its state, easing to 0 once it gives the word
+/// up. The first frame a word is shown is already 1, so a new label appears
+/// as it does today. Reduced motion snaps. One call per frame moves the
+/// spring; a later call the same frame returns that value.
+fn sync_status_word(
+    ctx: &egui::Context,
+    chat: &str,
+    message: &str,
+    live: Option<&str>,
+    delivery: Delivery,
+) -> f32 {
+    let id = status_leave_id(chat, message);
+    let frame = ctx.cumulative_frame_nr();
+    if let Some((seen, value)) = ctx.data(|data| data.get_temp::<(u64, f32)>(id.with("frame"))) {
+        if seen == frame {
+            return value;
+        }
+    }
+    if let Some(text) = live {
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                id.with("word"),
+                HeldStatus {
+                    text: text.to_owned(),
+                    delivery,
+                },
+            );
+            data.insert_temp(id.with("armed"), true);
+        });
+    }
+    let armed = ctx
+        .data(|data| data.get_temp::<bool>(id.with("armed")))
+        .unwrap_or(false);
+    let value = if live.is_some() || armed {
+        let shown = live.is_some();
+        let value = theme::animate(ctx, id, shown, theme::MOTION_QUICK);
+        if !shown && value <= 0.0 {
+            ctx.data_mut(|data| {
+                data.remove::<bool>(id.with("armed"));
+                data.remove::<HeldStatus>(id.with("word"));
+            });
+            theme::forget_motion(ctx, id);
+        }
+        value
+    } else {
+        0.0
+    };
+    ctx.data_mut(|data| data.insert_temp(id.with("frame"), (frame, value)));
+    value
+}
+
+fn held_status(ctx: &egui::Context, chat: &str, message: &str) -> Option<(String, Delivery)> {
+    ctx.data(|data| data.get_temp::<HeldStatus>(status_leave_id(chat, message).with("word")))
+        .map(|held| (held.text, held.delivery))
+}
+
+/// 1 while the clock under this bubble is shown, easing to 0 once it gives
+/// way. The first frame it is shown is already 1. Reduced motion snaps. One
+/// call per frame moves the spring; a later call the same frame returns that
+/// value.
+fn sync_under_time(ctx: &egui::Context, chat: &str, message: &str, live: bool) -> f32 {
+    let id = egui::Id::new(("under-time", chat, message));
+    let frame = ctx.cumulative_frame_nr();
+    if let Some((seen, value)) = ctx.data(|data| data.get_temp::<(u64, f32)>(id.with("frame"))) {
+        if seen == frame {
+            return value;
+        }
+    }
+    if live {
+        ctx.data_mut(|data| data.insert_temp(id.with("armed"), true));
+    }
+    let armed = ctx
+        .data(|data| data.get_temp::<bool>(id.with("armed")))
+        .unwrap_or(false);
+    let value = if live || armed {
+        let value = theme::animate(ctx, id, live, theme::MOTION_QUICK);
+        if !live && value <= 0.0 {
+            ctx.data_mut(|data| data.remove::<bool>(id.with("armed")));
+            theme::forget_motion(ctx, id);
+        }
+        value
+    } else {
+        0.0
+    };
+    ctx.data_mut(|data| data.insert_temp(id.with("frame"), (frame, value)));
+    value
+}
+
+/// The status word to draw, and how present it is. `None` once a word that
+/// gave way has finished leaving. A word that is still said is fully present
+/// on the frame it first appears.
+pub(super) fn status_line(
+    ctx: &egui::Context,
+    view: &View<'_>,
+    message: &Message,
+) -> Option<(String, Delivery, f32)> {
+    if !message.from_me {
+        return None;
+    }
+    let shown = shown_delivery(view, message);
+    let live = message_status_text(view, message);
+    let presence = sync_status_word(
+        ctx,
+        &view.chat.id,
+        &message.id,
+        live.as_deref(),
+        shown,
+    );
+    if let Some(text) = live {
+        return Some((text, shown, presence));
+    }
+    if presence <= 0.0 {
+        return None;
+    }
+    held_status(ctx, &view.chat.id, &message.id)
+        .map(|(text, delivery)| (text, delivery, presence))
+}
+
 /// Draws our message's status `text` with its right edge at `right`, centred
 /// on `y`. When the state has just moved on the new word eases in, sliding up
-/// into place, as the old one eases out and away.
+/// into place, as the old one eases out and away. A word that is giving way
+/// (`presence` under 1) shrinks, rises, and fades instead. At 1 the draw is
+/// the steady one.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn paint_status_word(
+pub(super) fn paint_status_label(
+    ui: &egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    shown: Delivery,
+    text: &str,
+    anchor: (f32, f32),
+    font: &egui::FontId,
+    colour: Color32,
+    presence: f32,
+) {
+    if presence >= 1.0 - 1.0e-3 {
+        paint_status_word(ui, view, message, shown, text, anchor, font, colour);
+        return;
+    }
+    paint_leaving_status(ui, text, anchor, font, colour, presence);
+}
+
+/// The steady status word. A change of state slides the new word up into
+/// place as the old one slides away.
+#[allow(clippy::too_many_arguments)]
+fn paint_status_word(
     ui: &egui::Ui,
     view: &View<'_>,
     message: &Message,
@@ -1104,6 +1513,109 @@ pub(super) fn paint_status_word(
             y - STATUS_SLIDE * t,
         );
     }
+    ui.ctx().request_repaint();
+}
+
+/// Rise, scale, and fade for a line on its way out. `presence` is 1 when it
+/// is fully there and 0 when it is gone.
+fn leaving_motion(presence: f32) -> (f32, f32, f32) {
+    let t = presence.clamp(0.0, 1.0);
+    let rise = STATUS_LEAVE_RISE * (1.0 - t);
+    let scale = STATUS_LEAVE_SCALE + (1.0 - STATUS_LEAVE_SCALE) * t;
+    (rise, scale, t)
+}
+
+/// Scales shapes painted since `first` about `pivot`.
+fn scale_shapes(
+    ui: &egui::Ui,
+    layer: egui::LayerId,
+    first: egui::layers::ShapeIdx,
+    pivot: egui::Pos2,
+    scale: f32,
+) {
+    let transform = egui::emath::TSTransform::from_translation(pivot.to_vec2())
+        * egui::emath::TSTransform::from_scaling(scale)
+        * egui::emath::TSTransform::from_translation(-pivot.to_vec2());
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        let end = list.next_idx();
+        for index in first.0..end.0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                clipped.shape.transform(transform);
+            });
+        }
+    });
+}
+
+/// A status word on its way out: smaller, higher, and fading. `presence` is
+/// 1 when it is fully there and 0 when it is gone.
+fn paint_leaving_status(
+    ui: &egui::Ui,
+    text: &str,
+    (right, y): (f32, f32),
+    font: &egui::FontId,
+    colour: Color32,
+    presence: f32,
+) {
+    let (rise, scale, t) = leaving_motion(presence);
+    let colour = colour.gamma_multiply(t);
+    let y = y - rise;
+    let width = status_span(ui, text, font.size);
+    let pivot = pos2(right - width / 2.0, y);
+    let layer = ui.layer_id();
+    let first = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    let (word, stamp) = split_status(text);
+    let word_galley = ui
+        .painter()
+        .layout_no_wrap(word.to_owned(), theme::bold(font.size), colour);
+    let stamp_galley = stamp.map(|stamp| {
+        ui.painter()
+            .layout_no_wrap(stamp.to_owned(), theme::regular(font.size), colour)
+    });
+    let word_size = word_galley.size();
+    let extra = stamp_galley
+        .as_ref()
+        .map_or(0.0, |galley| STATUS_TIME_GAP + galley.size().x);
+    let mut x = right - word_size.x - extra;
+    ui.painter()
+        .galley(pos2(x, y - word_size.y / 2.0), word_galley, colour);
+    if let Some(galley) = stamp_galley {
+        x += word_size.x + STATUS_TIME_GAP;
+        ui.painter()
+            .galley(pos2(x, y - galley.size().y / 2.0), galley, colour);
+    }
+    scale_shapes(ui, layer, first, pivot, scale);
+    ui.ctx().request_repaint();
+}
+
+/// The clock under a bubble on its way out: the same shrink as a status word.
+fn paint_leaving_line(
+    ui: &egui::Ui,
+    text: &str,
+    (right, y): (f32, f32),
+    font: egui::FontId,
+    colour: Color32,
+    presence: f32,
+) {
+    let (rise, scale, t) = leaving_motion(presence);
+    let colour = colour.gamma_multiply(t);
+    let y = y - rise;
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, colour);
+    let size = galley.size();
+    let pivot = pos2(right - size.x / 2.0, y);
+    let layer = ui.layer_id();
+    let first = ui.ctx().graphics(|graphics| {
+        graphics
+            .get(layer)
+            .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+    });
+    ui.painter()
+        .galley(pos2(right - size.x, y - size.y / 2.0), galley, colour);
+    scale_shapes(ui, layer, first, pivot, scale);
     ui.ctx().request_repaint();
 }
 

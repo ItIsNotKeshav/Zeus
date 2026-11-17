@@ -3053,12 +3053,31 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     let mention_names = |id: &str| app.mention_name(id);
     let keyboard_navigation = std::cell::Cell::new(false);
     let row_tops = std::cell::RefCell::new(Vec::new());
+    let now = crate::util::now();
+    // The same presence that draws the typing bubble. While anyone is
+    // composing, the status word stays hidden.
+    let composing = !typing.is_empty();
     let status_rows = status_rows(
         &conversation.messages,
         chat.kind,
         app.account_receipts_off,
-        crate::util::now(),
+        now,
+        composing,
     );
+    // One repaint when a held word is due. Not a frame timer.
+    if let Some(due) = status_wake(
+        &conversation.messages,
+        chat.kind,
+        app.account_receipts_off,
+        now,
+        composing,
+    ) {
+        let wait = due.saturating_sub(now);
+        if wait > 0 {
+            ui.ctx()
+                .request_repaint_after(Duration::from_secs(wait as u64));
+        }
+    }
     let view = View {
         palette,
         locale: app.locale,
@@ -3764,10 +3783,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                                 RUN_GAP
                             });
                         }
-                        let shows_time = says_time_below(
-                            message_index + members.len() >= conversation.messages.len(),
+                        let shows_time = message_says_time(
+                            &conversation.messages,
+                            message_index,
+                            members.len(),
                             previous.map(|previous| previous.timestamp),
-                            message.timestamp,
                         );
                         let flash = jump
                             .as_ref()
@@ -4925,6 +4945,8 @@ fn reaction_affordance(
             15.0,
             if response.hovered() {
                 view.palette.text
+            } else if view.palette.whatsapp && view.palette.dark {
+                Color32::from_rgb(0xe3, 0xe4, 0xe4)
             } else {
                 view.palette.secondary
             }
@@ -4961,8 +4983,6 @@ fn reaction_affordance(
             15.0,
             if reply.hovered() {
                 view.palette.text
-            } else if view.palette.whatsapp && view.palette.dark {
-                Color32::from_rgb(0xe3, 0xe4, 0xe4)
             } else {
                 view.palette.secondary
             }
@@ -5772,7 +5792,7 @@ fn bubble_frame(
             // An album's footer is its last member's, marks included.
             let starred = view.starred.is_some_and(|ids| ids.contains(&last.id));
             let pinned = view.pins.is_some_and(|ids| ids.contains(&last.id));
-            let status = message_status_text(view, last);
+            let line = status_line(ui.ctx(), view, last);
             let reserve = message_footer_width(
                 ui,
                 last,
@@ -5780,7 +5800,7 @@ fn bubble_frame(
                 pinned,
                 &palette,
                 view.time_inside,
-                status.as_deref(),
+                line.as_ref().map(|(text, _, _)| text.as_str()),
             );
             let settled = album
                 .map(|_| CARD_WIDTH.min(cap))
@@ -6161,7 +6181,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
     let last = laid.galley.rows.last().map_or(0.0, |row| row.row.size.x);
     let starred = view.starred.is_some_and(|ids| ids.contains(&message.id));
     let pinned = view.pins.is_some_and(|ids| ids.contains(&message.id));
-    let status = message_status_text(view, message);
+    let line = status_line(ui.ctx(), view, message);
     let reserve = message_footer_width(
         ui,
         message,
@@ -6169,7 +6189,7 @@ fn natural_text_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f3
         pinned,
         &palette,
         view.time_inside,
-        status.as_deref(),
+        line.as_ref().map(|(text, _, _)| text.as_str()),
     );
     Some(if last + 8.0 + reserve <= cap {
         widest.max(last + 8.0 + reserve)
@@ -6825,8 +6845,16 @@ fn footer_over_picture(
     actions: &mut Vec<Action>,
 ) {
     let font = theme::regular(theme::TEXT_MICRO);
-    let shown = shown_delivery(view, message);
-    let status = message_status_text(view, message);
+    let line = status_line(ui.ctx(), view, message);
+    let presence = line
+        .as_ref()
+        .map(|(_, _, presence)| *presence)
+        .unwrap_or(1.0);
+    let shown = line
+        .as_ref()
+        .map(|(_, delivery, _)| *delivery)
+        .unwrap_or_else(|| shown_delivery(view, message));
+    let status = line.map(|(text, _, _)| text);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
         font.clone(),
@@ -6888,7 +6916,7 @@ fn footer_over_picture(
     x -= time_width;
     if let Some(text) = &status {
         // Our own word, easing in as the state moves on.
-        paint_status_word(
+        paint_status_label(
             ui,
             view,
             message,
@@ -6897,6 +6925,7 @@ fn footer_over_picture(
             (row.right(), row.center().y),
             &font,
             Color32::WHITE,
+            presence,
         );
     } else {
         ui.painter().galley(
@@ -7021,8 +7050,16 @@ fn footer(
         return;
     }
     let font = theme::regular(theme::TEXT_MICRO);
-    let shown = shown_delivery(view, message);
-    let status = message_status_text(view, message);
+    let line = status_line(ui.ctx(), view, message);
+    let presence = line
+        .as_ref()
+        .map(|(_, _, presence)| *presence)
+        .unwrap_or(1.0);
+    let shown = line
+        .as_ref()
+        .map(|(_, delivery, _)| *delivery)
+        .unwrap_or_else(|| shown_delivery(view, message));
+    let status = line.map(|(text, _, _)| text);
     let time_colour = status_colour(view, shown, palette.secondary);
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
@@ -7078,7 +7115,7 @@ fn footer(
     x -= time_width;
     if let Some(text) = &status {
         // Our own word, easing in as the state moves on.
-        paint_status_word(
+        paint_status_label(
             ui,
             view,
             message,
@@ -7087,6 +7124,7 @@ fn footer(
             (rect.right(), rect.center().y),
             &font,
             time_colour,
+            presence,
         );
     } else {
         ui.painter().galley(
@@ -13815,7 +13853,7 @@ mod reaction_tests {
             message
         };
         let ids = |messages: &[Message]| {
-            let mut rows: Vec<String> = status_rows(messages, Direct, false, 1_000)
+            let mut rows: Vec<String> = status_rows(messages, Direct, false, 1_000, false)
                 .into_iter()
                 .collect();
             rows.sort();
@@ -13847,7 +13885,7 @@ mod reaction_tests {
         assert_eq!(ids(&covered), ["b"]);
         // Read receipts off in a DM: read shows as delivered.
         let hidden = [ours("a", Delivery::Read), ours("b", Delivery::Delivered)];
-        let mut rows: Vec<String> = status_rows(&hidden, Direct, true, 1_000)
+        let mut rows: Vec<String> = status_rows(&hidden, Direct, true, 1_000, false)
             .into_iter()
             .collect();
         rows.sort();
@@ -13855,12 +13893,186 @@ mod reaction_tests {
         // Just sent: the older word gives way at once, and comes back if the
         // new message is still only sent after the hand-off.
         let fresh = [ours("a", Delivery::Read), ours("b", Delivery::Sent)];
-        assert!(status_rows(&fresh, Direct, false, STATUS_HANDOFF).is_empty());
+        assert!(status_rows(&fresh, Direct, false, STATUS_HANDOFF, false).is_empty());
         let sending = [ours("a", Delivery::Read), ours("b", Delivery::Pending)];
-        assert!(status_rows(&sending, Direct, false, 1).is_empty());
+        assert!(status_rows(&sending, Direct, false, 1, false).is_empty());
         assert_eq!(
-            status_rows(&fresh, Direct, false, STATUS_HANDOFF + 1),
+            status_rows(&fresh, Direct, false, STATUS_HANDOFF + 1, false),
             HashSet::from(["a".to_owned()])
+        );
+    }
+
+    #[test]
+    fn a_reply_hides_the_status_word() {
+        use crate::model::ChatKind::Direct;
+        let ours = |id: &str, status| {
+            let mut message = crate::archive::tests::message("1@s.whatsapp.net", id, 0, true);
+            message.status = status;
+            message
+        };
+        let theirs = |id: &str| crate::archive::tests::message("1@s.whatsapp.net", id, 1, false);
+        let ids = |messages: &[Message]| {
+            let mut rows: Vec<String> = status_rows(messages, Direct, false, 1_000, false)
+                .into_iter()
+                .collect();
+            rows.sort();
+            rows
+        };
+        // Their message after ours: nothing says its state.
+        let replied = [ours("a", Delivery::Delivered), theirs("b")];
+        assert!(ids(&replied).is_empty());
+        // A reply before our newest message leaves that message's word.
+        let before = [theirs("a"), ours("b", Delivery::Read)];
+        assert_eq!(ids(&before), ["b"]);
+        // Our later message covers the reply that landed between.
+        let resumed = [
+            ours("a", Delivery::Delivered),
+            theirs("b"),
+            ours("c", Delivery::Read),
+        ];
+        assert_eq!(ids(&resumed), ["c"]);
+        // A call entry and a timer notice are not replies. A deleted
+        // message is: it clears the word the way a reply does.
+        let mut call = theirs("c");
+        call.content = Content::Call {
+            video: false,
+            status: crate::model::CallStatus::Missed,
+            duration: 0,
+            group: false,
+        };
+        assert_eq!(ids(&[ours("a", Delivery::Delivered), call]), ["a"]);
+        let mut gone = theirs("d");
+        gone.content = Content::Revoked;
+        assert!(ids(&[ours("a", Delivery::Delivered), gone]).is_empty());
+        let mut timer = theirs("e");
+        timer.content = Content::DisappearingTimer { seconds: 86_400 };
+        assert_eq!(ids(&[ours("a", Delivery::Read), timer]), ["a"]);
+        // After a pause our message says its time. A reply takes that line
+        // away, and so does a reply that was deleted. A call or a timer
+        // notice leaves it.
+        let gap = 1_000;
+        let sent = gap + TIME_RUN_GAP;
+        let mut earlier = theirs("z");
+        earlier.timestamp = gap;
+        let mut mine = ours("t", Delivery::Read);
+        mine.timestamp = sent;
+        let under_ours = |later: Option<Message>| {
+            let mut messages = vec![earlier.clone(), mine.clone()];
+            if let Some(later) = later {
+                messages.push(later);
+            }
+            message_says_time(&messages, 1, 1, Some(gap))
+        };
+        assert!(under_ours(None));
+        let mut reply = theirs("reply");
+        reply.timestamp = sent + 30;
+        assert!(!under_ours(Some(reply)));
+        let mut deleted = theirs("deleted");
+        deleted.content = Content::Revoked;
+        deleted.timestamp = sent + 30;
+        assert!(!under_ours(Some(deleted)));
+        let mut later_call = theirs("call");
+        later_call.timestamp = sent + 30;
+        later_call.content = Content::Call {
+            video: false,
+            status: crate::model::CallStatus::Missed,
+            duration: 0,
+            group: false,
+        };
+        assert!(under_ours(Some(later_call)));
+        let mut later_timer = theirs("timer");
+        later_timer.timestamp = sent + 30;
+        later_timer.content = Content::DisappearingTimer { seconds: 86_400 };
+        assert!(under_ours(Some(later_timer)));
+    }
+
+    #[test]
+    fn typing_hides_the_status_word() {
+        use crate::model::ChatKind::Direct;
+        let mut message = crate::archive::tests::message("1@s.whatsapp.net", "a", 1_000, true);
+        message.status = Delivery::Delivered;
+        let messages = [message];
+        // Settled, and a word is up. Typing takes it. The leave itself is
+        // the row dropping out of this set.
+        assert_eq!(
+            status_rows(&messages, Direct, false, 1_005, false),
+            HashSet::from(["a".to_owned()])
+        );
+        assert!(status_rows(&messages, Direct, false, 1_005, true).is_empty());
+        assert!(status_rows(&messages, Direct, false, 2_000, true).is_empty());
+    }
+
+    #[test]
+    fn the_first_status_word_waits_five_seconds() {
+        use crate::model::ChatKind::Direct;
+        let mut message = crate::archive::tests::message("1@s.whatsapp.net", "a", 1_000, true);
+        message.status = Delivery::Delivered;
+        let messages = [message];
+        let rows = |now| status_rows(&messages, Direct, false, now, false);
+        assert!(rows(1_000).is_empty());
+        assert!(rows(1_004).is_empty());
+        assert_eq!(rows(1_005), HashSet::from(["a".to_owned()]));
+        assert_eq!(
+            status_wake(&messages, Direct, false, 1_000, false),
+            Some(1_005)
+        );
+        assert_eq!(
+            status_wake(&messages, Direct, false, 1_004, false),
+            Some(1_005)
+        );
+        assert_eq!(status_wake(&messages, Direct, false, 1_005, false), None);
+        // Still only sent: there is no word to reveal, so no wake.
+        let mut sent = crate::archive::tests::message("1@s.whatsapp.net", "s", 1_000, true);
+        sent.status = Delivery::Sent;
+        assert!(status_rows(&[sent.clone()], Direct, false, 1_000, false).is_empty());
+        assert_eq!(status_wake(&[sent], Direct, false, 1_000, false), None);
+    }
+
+    #[test]
+    fn a_second_send_takes_the_word_at_once() {
+        use crate::model::ChatKind::Direct;
+        let delivered = |id: &str, at: i64| {
+            let mut message = crate::archive::tests::message("1@s.whatsapp.net", id, at, true);
+            message.status = Delivery::Delivered;
+            message
+        };
+        let sent = |id: &str, at: i64| {
+            let mut message = crate::archive::tests::message("1@s.whatsapp.net", id, at, true);
+            message.status = Delivery::Sent;
+            message
+        };
+        let rows = |messages: &[Message], now| {
+            let mut ids: Vec<String> = status_rows(messages, Direct, false, now, false)
+                .into_iter()
+                .collect();
+            ids.sort();
+            ids
+        };
+        // The first word is up. The next one, already delivered, takes it
+        // on the frame it is sent. No five-second wait.
+        let first = [delivered("a", 1_000)];
+        assert_eq!(rows(&first, 1_005), ["a"]);
+        let both = [delivered("a", 1_000), delivered("b", 1_100)];
+        assert_eq!(rows(&both, 1_100), ["b"]);
+        assert_eq!(status_wake(&both, Direct, false, 1_100, false), None);
+        // Sent while that word is up: the old one gives way at once, and
+        // comes back only after the hand-off if this one stays sent.
+        let fresh = [delivered("a", 1_000), sent("b", 1_100)];
+        assert!(rows(&fresh, 1_100).is_empty());
+        assert!(rows(&fresh, 1_100 + STATUS_HANDOFF).is_empty());
+        assert_eq!(rows(&fresh, 1_100 + STATUS_HANDOFF + 1), ["a"]);
+        assert_eq!(
+            status_wake(&fresh, Direct, false, 1_100, false),
+            Some(1_100 + STATUS_HANDOFF + 1)
+        );
+        // A second send before the first word has appeared waits from its
+        // own timestamp. The first does not pop in underneath it.
+        let early = [delivered("a", 1_000), delivered("b", 1_002)];
+        assert!(rows(&early, 1_005).is_empty());
+        assert_eq!(rows(&early, 1_007), ["b"]);
+        assert_eq!(
+            status_wake(&early, Direct, false, 1_002, false),
+            Some(1_007)
         );
     }
 
