@@ -324,6 +324,9 @@ const DOT_GAP: f32 = 15.0;
 const HUE_AT_RIGHT: f32 = 350.0;
 /// How close to the middle, or to a named accent, a pick lands on it.
 const SNAP: f32 = 0.1;
+/// How near the knob's middle a tap takes the chosen accent off: the knob
+/// and its white ring.
+const KNOB_REACH: f32 = 16.0;
 
 /// Where `pointer` falls on a wheel drawn in `rect`: the middle is the
 /// theme's own accent, the angle the hue, the distance how strong.
@@ -418,17 +421,41 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
     let (rect, response) = ui.allocate_exact_size(vec2(width, height), sense);
     theme::reveal_focus(&response);
 
+    // Where the knob stood before this frame's pick moved it, and whether
+    // a press began on it: a tap there, not dragged away, takes the chosen
+    // accent off again for the theme's own.
+    let shown = enabled && !own_accent(app);
+    let before = wheel_point(rect, current_place(app));
+    let on_knob = |pointer: Pos2| shown && pointer.distance(before) <= KNOB_REACH;
+    let grabbed_id = response.id.with("knob");
+    if response.is_pointer_button_down_on()
+        && ui.input(|input| input.pointer.primary_pressed())
+    {
+        let grabbed = response.interact_pointer_pos().is_some_and(on_knob);
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(grabbed_id, grabbed));
+    }
+    let grabbed = ui
+        .ctx()
+        .data(|data| data.get_temp::<bool>(grabbed_id))
+        .unwrap_or(false);
+    let cleared = enabled && response.clicked() && grabbed;
+    if cleared {
+        ui.ctx().data_mut(|data| data.remove::<bool>(grabbed_id));
+        app.actions.push(Action::SetAccent(Accent::Theme));
+    }
+
     let pressed = response.dragged() || response.is_pointer_button_down_on() || response.clicked();
     let picked = response
         .interact_pointer_pos()
-        .filter(|_| enabled && pressed)
+        .filter(|_| enabled && pressed && !cleared)
         .map(|pointer| wheel_at(rect, pointer));
     if let Some(place) = picked
         && app.settings.custom_accent != Some(place)
     {
         app.actions.push(Action::SetCustomAccent(Some(place)));
     }
-    if enabled && (response.drag_stopped() || response.clicked()) {
+    if enabled && !cleared && (response.drag_stopped() || response.clicked()) {
         let place = picked.unwrap_or_else(|| current_place(app));
         app.actions.push(settle(place, rect));
     }
@@ -487,7 +514,12 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
         painter.circle_filled(knob, size, palette.accent);
     }
     if enabled && (response.hovered() || response.dragged()) {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+        let over_knob = !response.dragged() && response.hover_pos().is_some_and(on_knob);
+        ui.ctx().set_cursor_icon(if over_knob {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::Crosshair
+        });
     }
 }
 
