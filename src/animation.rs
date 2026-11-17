@@ -428,13 +428,36 @@ fn sweep_idle(animations: &mut Animations, now: Instant) -> bool {
 /// drawing any (the sticker picker closed, the chat left). Call it after the
 /// views have drawn, so whatever is on screen was just refreshed by `frame`.
 /// It shares `frame`'s two-strike rule and rate limit, makes no cache of its
-/// own and never asks for a repaint.
+/// own. While animations stay resident it asks for one frame when the next
+/// sweep is due, so an idle open window still lets them go; the request ends
+/// once none are left, and playing ones repaint on their own.
 pub fn sweep(ctx: &egui::Context) {
     let Some(cache) = ctx.data(|data| data.get_temp::<Cache>(cache_id())) else {
         return;
     };
     let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
-    sweep_idle(&mut animations, Instant::now());
+    let now = Instant::now();
+    sweep_idle(&mut animations, now);
+    if let Some(wait) = next_sweep(&animations, now) {
+        ctx.request_repaint_after(wait);
+    }
+}
+
+/// How long until a sweep is next due, while a decoded animation that this
+/// frame did not draw is still resident; at least a second, so a frame that
+/// comes early cannot spin. What is on screen is drawn by every frame and
+/// never freed, so it alone asks for none: an idle window does not wake.
+fn next_sweep(animations: &Animations, now: Instant) -> Option<Duration> {
+    if !animations.entries.values().any(|entry| {
+        matches!(entry, Entry::Ready(playing)
+            if now.saturating_duration_since(playing.last_drawn) >= Duration::from_secs(1))
+    }) {
+        return None;
+    }
+    let due = animations.last_sweep.map_or(Duration::ZERO, |last| {
+        IDLE.saturating_sub(now.saturating_duration_since(last))
+    });
+    Some(due.max(Duration::from_secs(1)))
 }
 
 /// Whether a decoder thread could be started.
@@ -1377,6 +1400,44 @@ mod tests {
             Some(Instant::now() - IDLE - Duration::from_secs(1));
         sweep(&ctx);
         assert_eq!(resident_frames(&ctx), 0, "the second sweep frees it");
+    }
+
+    #[test]
+    fn next_sweep_is_asked_only_while_undrawn_animations_are_resident() {
+        let now = Instant::now();
+        let mut animations = Animations::default();
+        assert_eq!(next_sweep(&animations, now), None, "nothing to free");
+        animations.entries.insert(
+            PathBuf::from("a.gif"),
+            Entry::Ready(Playing {
+                frames: Vec::new(),
+                total: Duration::from_secs(1),
+                started: now,
+                last_drawn: now,
+                animating: false,
+                played_in: 0,
+                complete: true,
+                upgrading: false,
+            }),
+        );
+        animations.last_sweep = Some(now);
+        assert_eq!(
+            next_sweep(&animations, now),
+            None,
+            "what this frame drew stays, so it wakes nothing"
+        );
+        if let Some(Entry::Ready(playing)) =
+            animations.entries.get_mut(std::path::Path::new("a.gif"))
+        {
+            playing.last_drawn = now - Duration::from_secs(5);
+        }
+        assert_eq!(next_sweep(&animations, now), Some(IDLE));
+        animations.last_sweep = Some(now - IDLE - Duration::from_secs(5));
+        assert_eq!(
+            next_sweep(&animations, now),
+            Some(Duration::from_secs(1)),
+            "an overdue sweep never asks for less than a second"
+        );
     }
 
     #[test]

@@ -103,9 +103,10 @@ pub fn active() -> bool {
     ACTIVE.load(Ordering::Relaxed)
 }
 
-/// Whether to make the window transparent when it is created. macOS always
-/// does, since every theme there paints over it; elsewhere when the Messages
-/// theme is on and the platform can show the desktop through it, and on Linux
+/// Whether to make the window transparent when it is created: when the
+/// Messages theme is on and the platform can show the desktop through it
+/// (macOS too: an opaque window spares AppKit a full-window backing buffer,
+/// about 30 MB at 2x), and on Linux
 /// when the theme's window colour itself has alpha (`see_through`): such a
 /// theme has chosen to show the desktop, which a compositor may blur, and on
 /// an opaque surface its translucent pixels are never composited and left
@@ -113,9 +114,7 @@ pub fn active() -> bool {
 /// cannot be added to a window later, so a theme chosen while a window is
 /// open turns translucent from the next one.
 pub fn transparent_window(messages: bool, see_through: bool) -> bool {
-    cfg!(target_os = "macos")
-        || (messages && platform::may_show_through())
-        || (see_through && cfg!(target_os = "linux"))
+    (messages && platform::may_show_through()) || (see_through && cfg!(target_os = "linux"))
 }
 
 /// Whether the window on screen was made transparent, so a frame may clear
@@ -569,11 +568,11 @@ mod tests {
     /// Other themes keep an opaque window wherever they always had one, and
     /// Messages asks for a transparent one only where it can show through.
     #[test]
-    fn only_messages_makes_a_window_transparent_off_macos() {
-        assert_eq!(transparent_window(false, false), cfg!(target_os = "macos"));
+    fn only_messages_makes_a_window_transparent() {
+        assert!(!transparent_window(false, false));
         assert_eq!(
             transparent_window(true, false),
-            cfg!(target_os = "macos") || platform::may_show_through()
+            platform::may_show_through()
         );
     }
 
@@ -594,10 +593,7 @@ mod tests {
     /// (#593), and an opaque window never clears to alpha.
     #[test]
     fn a_see_through_theme_gets_a_transparent_window_on_linux() {
-        assert_eq!(
-            transparent_window(false, true),
-            cfg!(any(target_os = "macos", target_os = "linux"))
-        );
+        assert_eq!(transparent_window(false, true), cfg!(target_os = "linux"));
         let glass = egui::Color32::from_rgba_premultiplied(0, 0, 0, 0);
         set_window_transparent(false);
         assert_eq!(clear_color(glass).a(), 255);

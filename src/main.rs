@@ -874,6 +874,13 @@ impl eframe::App for Shell {
     }
 
     fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // wgpu frees the staging buffers and textures of the last submission
+        // only when the device is next polled; without this an idle window
+        // keeps what its last frame let go (about 12 MB measured).
+        #[cfg(target_os = "macos")]
+        if let Some(render) = frame.wgpu_render_state() {
+            let _ = render.device.poll(eframe::wgpu::PollType::Poll);
+        }
         let mut stalls = std::mem::take(&mut self.stalls);
         stalls.logic(|| self.window_logic(ctx, frame));
         self.stalls = stalls;

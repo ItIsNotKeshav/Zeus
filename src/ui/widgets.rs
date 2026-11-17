@@ -376,9 +376,13 @@ pub fn paint_avatar(
     let size = rect.width();
     let mut painted = false;
     if let Some(picture) = picture {
-        let image = fitted_image(ui, picture, Vec2::splat(size))
-            .fit_to_exact_size(Vec2::splat(size))
-            .corner_radius(size / 2.0);
+        let image = egui::Image::new(crate::image_cache::fit_avatar_uri(
+            ui.ctx(),
+            picture,
+            Vec2::splat(size),
+        ))
+        .fit_to_exact_size(Vec2::splat(size))
+        .corner_radius(size / 2.0);
         if let Ok(egui::load::TexturePoll::Ready { .. }) =
             image.load_for_size(ui.ctx(), Vec2::splat(size))
         {

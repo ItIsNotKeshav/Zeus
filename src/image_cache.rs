@@ -218,6 +218,11 @@ pub fn sweep(ctx: &egui::Context) {
         }
         stale
     };
+    if !stale.is_empty() {
+        // One more frame a moment later, whose device poll hands the freed
+        // textures back to the system instead of holding them while idle.
+        ctx.request_repaint_after(Duration::from_millis(300));
+    }
     for uri in stale {
         ctx.forget_image(&uri);
     }
@@ -276,7 +281,7 @@ enum Fit {
 const SIDES: [u32; 8] = [128, 192, 256, 384, 512, 768, 1024, 1536];
 
 /// The longest a fitted picture's longer edge is, so a panorama stays small.
-const LONGEST: u32 = 4096;
+const LONGEST: u32 = 2048;
 
 /// A URI for the picture at `path`, decoded no larger than it is drawn at
 /// `size` points on this display, and registered as drawn this frame: large
@@ -310,6 +315,23 @@ pub fn fit_uri_within(ctx: &egui::Context, path: &Path, bounds: egui::Vec2) -> S
     fitted(ctx, path, false, |file| {
         format!("{FIT}{width}x{height}/{file}")
     })
+}
+
+/// Like [`fit_uri`], for a profile picture: small steps from 64 px, so a
+/// 20 to 48 point avatar takes 16 to 64 KB of texture rather than the 128 px
+/// floor photos keep. The info panel's large portrait steps up to 256.
+pub fn fit_avatar_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
+    let side = avatar_step(size.x.max(size.y) * ctx.pixels_per_point());
+    fitted(ctx, path, false, |file| format!("{FIT}{side}/{file}"))
+}
+
+/// The side an avatar of `pixels` is decoded at: 64, 96, then [`step`]'s.
+fn avatar_step(pixels: f32) -> u32 {
+    let wanted = pixels.ceil() as u32;
+    [64, 96]
+        .into_iter()
+        .find(|side| *side >= wanted)
+        .unwrap_or_else(|| step(pixels))
 }
 
 /// The side in [`SIDES`] at or above `pixels`, or the largest.
@@ -765,6 +787,16 @@ mod tests {
         fn byte_size(&self) -> usize {
             0
         }
+    }
+
+    #[test]
+    fn avatars_step_from_64_pixels_and_photos_keep_their_floor() {
+        assert_eq!(avatar_step(40.0), 64);
+        assert_eq!(avatar_step(64.0), 64);
+        assert_eq!(avatar_step(96.0), 96);
+        assert_eq!(avatar_step(97.0), 128);
+        assert_eq!(avatar_step(240.0), 256);
+        assert_eq!(step(40.0), 128, "photo tiles keep the 128 floor");
     }
 
     #[test]

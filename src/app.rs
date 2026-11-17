@@ -187,7 +187,7 @@ const FOLLOW_REPLY: usize = 25;
 /// rebuilds it once.
 const ATLAS_SETTLE: Duration = Duration::from_secs(2);
 /// How long the window stays unfocused before the font atlas is rebuilt.
-const ATLAS_IDLE: Duration = Duration::from_secs(5 * 60);
+const ATLAS_IDLE: Duration = Duration::from_secs(60);
 
 /// What `App::follow_font_atlas` has seen of the scale and of the window's
 /// focus, to know when the font atlas has gathered glyphs nobody draws now.

@@ -79,6 +79,11 @@ pub(crate) fn thumbnail_uri(chat: &str, id: &str) -> String {
     )
 }
 
+/// Marks that the panel has shown large portraits since it last closed.
+fn portrait_id() -> egui::Id {
+    egui::Id::new("info-portrait-shown")
+}
+
 /// Frees the pictures the panel no longer lists. Called on every frame,
 /// the lock and login screens included, so a closed panel's pictures do
 /// not wait for the chats to be drawn again.
@@ -128,8 +133,15 @@ pub(super) fn show_in(app: &mut App, ui: &mut egui::Ui, region: Rect) -> Option<
         for uri in std::mem::take(&mut app.info_textures) {
             crate::image_cache::forget(&ctx, &uri);
         }
+        // So do the large portraits, once, as the panel closes.
+        if ctx.data_mut(|data| data.remove_temp::<bool>(portrait_id()).is_some()) {
+            for path in app.avatars_full.values().flatten() {
+                crate::image_cache::forget(&ctx, &crate::util::image_uri(path));
+            }
+        }
         return None;
     }
+    ctx.data_mut(|data| data.insert_temp(portrait_id(), true));
     if narrow {
         // A page replaces the card, so the card does not linger under it.
         super::closing::forget(&ctx, card_layer());
