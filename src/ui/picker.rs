@@ -41,7 +41,36 @@ pub fn bounds_id() -> egui::Id {
     egui::Id::new("picker-bounds")
 }
 
+/// The sticker tiles the picker drew, as file and drawn size, so closing it
+/// can let their textures and frames go.
+#[derive(Clone, Default)]
+struct PickerLoaded(std::collections::HashSet<(PathBuf, [u32; 2])>);
+
+fn loaded_id() -> egui::Id {
+    egui::Id::new("picker-loaded-stickers")
+}
+
+/// Forgets every texture and animation frame the sticker tab loaded. The
+/// driver keeps the high-water mark of GPU memory, so a shelf of 512 px
+/// stickers must not outlive the panel.
+fn release_stickers(ctx: &egui::Context) {
+    let Some(loaded) = ctx.data_mut(|data| data.remove_temp::<PickerLoaded>(loaded_id())) else {
+        return;
+    };
+    let mut paths = Vec::with_capacity(loaded.0.len());
+    for (path, [width, height]) in loaded.0 {
+        let size = vec2(width as f32, height as f32);
+        let uri = crate::image_cache::fit_still_uri(ctx, &path, size);
+        crate::image_cache::forget_exact(ctx, &uri);
+        paths.push(path);
+    }
+    crate::animation::forget(ctx, &paths);
+}
+
 pub fn show(app: &mut App, ctx: &egui::Context) {
+    if app.picker != Some(PickerTab::Stickers) || app.reaction_target.is_some() {
+        release_stickers(ctx);
+    }
     if app.picker == Some(PickerTab::Emoji) && app.reaction_target.is_none() {
         if app.picker_recent.is_none() {
             app.picker_recent = Some(app.settings.recent_emoji.clone());
@@ -1679,6 +1708,16 @@ fn sticker_grid(
     labels.extend(grid.local.iter().map(|pack| pack.name.as_str()));
     let menu_width = widgets::menu_width(ui, &labels, true);
     for row in stickers.chunks(columns) {
+        // A row more than one row away from the scroll's clip is only given
+        // its space: no tile, texture or decode until it is about to show.
+        let near = ui
+            .clip_rect()
+            .expand2(vec2(0.0, cell + gap))
+            .intersects(Rect::from_min_size(ui.cursor().min, vec2(1.0, cell)));
+        if !near && Some(&row[0]) != stickers.first() {
+            ui.allocate_space(vec2(ui.available_width(), cell));
+            continue;
+        }
         ui.horizontal(|ui| {
             for path in row {
                 let (rect, response) = ui.allocate_exact_size(Vec2::splat(cell), Sense::click());
@@ -1687,6 +1726,14 @@ fn sticker_grid(
                         .data_mut(|data| data.insert_temp(first_tile_id(), rect));
                 }
                 paint_tile(ui, palette, path, rect, response.hovered(), animate);
+                if ui.is_rect_visible(rect) {
+                    let shown = rect.shrink(4.0).size();
+                    ui.ctx().data_mut(|data| {
+                        data.get_temp_mut_or_default::<PickerLoaded>(loaded_id())
+                            .0
+                            .insert((path.clone(), [shown.x as u32, shown.y as u32]));
+                    });
+                }
                 egui::Popup::context_menu(&response)
                     .width(menu_width)
                     .frame(widgets::menu_frame(palette))

@@ -16,6 +16,10 @@ use egui::{ColorImage, TextureHandle, TextureOptions};
 
 /// Maximum frame width uploaded to the GPU.
 const MAX_WIDTH: u32 = 320;
+/// Widths a sticker or GIF is decoded at, in pixels: the first at or above the
+/// size it is drawn at on this display, never past `MAX_WIDTH`. A 512 px
+/// sticker drawn 60 points wide holds 64 KB per frame instead of 1 MB.
+const DECODE_WIDTHS: [u32; 5] = [96, 128, 192, 256, MAX_WIDTH];
 /// Maximum frames kept per animation.
 const MAX_FRAMES: usize = 150;
 /// Time an unseen animation remains decoded.
@@ -106,6 +110,9 @@ struct Animations {
     /// How many frames each resident animation has, once every frame was
     /// decoded, kept when it drops back to its poster.
     lengths: HashMap<PathBuf, usize>,
+    /// The width (pixels) the newest decode of each path was asked for. A
+    /// path drawn larger than this decodes again; a smaller draw reuses it.
+    sides: HashMap<PathBuf, u32>,
 }
 
 #[derive(Clone, Default)]
@@ -164,6 +171,58 @@ pub fn release(ctx: &egui::Context) {
         .entries
         .retain(|_, entry| !matches!(entry, Entry::Ready(_)));
     animations.idle.clear();
+    animations.sides.clear();
+}
+
+/// Drops the decoded frames of `paths` at once, as the sticker picker does
+/// when it closes: nothing is kept for a tile no longer drawn. A path still
+/// drawn this pass is decoded again by its next `frame` call.
+pub fn forget(ctx: &egui::Context, paths: &[PathBuf]) {
+    let Some(cache) = ctx.data(|data| data.get_temp::<Cache>(cache_id())) else {
+        return;
+    };
+    let mut animations = cache.0.lock().unwrap_or_else(|p| p.into_inner());
+    for path in paths {
+        if matches!(animations.entries.get(path), Some(Entry::Ready(_))) {
+            animations.entries.remove(path);
+            animations.lengths.remove(path);
+            animations.sides.remove(path);
+            animations.idle.remove(path);
+        }
+    }
+}
+
+/// The width in [`DECODE_WIDTHS`] a file drawn `points` wide is decoded at.
+/// Only stickers and GIFs (WebP, GIF, Lottie) scale this way; video keeps
+/// `MAX_WIDTH`.
+fn decode_side(path: &Path, points: f32, pixels_per_point: f32) -> u32 {
+    let sized = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            ["webp", "gif", "was"]
+                .iter()
+                .any(|known| extension.eq_ignore_ascii_case(known))
+        });
+    if sized {
+        side_for(points * pixels_per_point)
+    } else {
+        MAX_WIDTH
+    }
+}
+
+/// The first of [`DECODE_WIDTHS`] at or above `pixels`, or the largest.
+fn side_for(pixels: f32) -> u32 {
+    let wanted = if pixels.is_finite() {
+        pixels.ceil().max(0.0) as u32
+    } else {
+        MAX_WIDTH
+    };
+    DECODE_WIDTHS
+        .iter()
+        .copied()
+        .find(|side| *side >= wanted)
+        .unwrap_or(MAX_WIDTH)
 }
 
 /// Current display state for an animated file.
@@ -269,6 +328,15 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
     if sweep_idle(&mut animations, now) || uploaded {
         enforce_budget(&mut animations, path, now, ctx.cumulative_frame_nr());
     }
+    // Drawn larger than it was decoded for: decode again at the new size (the
+    // placeholder shows meanwhile). One drawn smaller reuses what it has.
+    let side = decode_side(path, rect.width(), ctx.pixels_per_point());
+    let known = animations.sides.get(path).copied().unwrap_or(MAX_WIDTH);
+    if known < side
+        && matches!(animations.entries.get(path), Some(Entry::Ready(playing)) if !playing.upgrading)
+    {
+        animations.entries.remove(path);
+    }
     match animations.entries.get_mut(path) {
         Some(Entry::Ready(playing)) => {
             let pass = ctx.cumulative_frame_nr();
@@ -282,7 +350,7 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
             if !playing.complete {
                 // Keep showing the poster while the other frames decode.
                 if !playing.upgrading {
-                    match start_decode(ctx, &inbox, path, true) {
+                    match start_decode(ctx, &inbox, path, true, known) {
                         Start::Started => playing.upgrading = true,
                         Start::Busy => {
                             ctx.request_repaint_after(Duration::from_millis(150));
@@ -318,8 +386,9 @@ pub fn frame(ui: &egui::Ui, path: &Path, rect: egui::Rect, animate: bool) -> Fra
         }
         Some(Entry::Decoding) => Frame::Pending,
         Some(Entry::Failed) => Frame::Unavailable,
-        None => match start_decode(ctx, &inbox, path, animate) {
+        None => match start_decode(ctx, &inbox, path, animate, side) {
             Start::Started => {
+                animations.sides.insert(path.to_path_buf(), side);
                 animations
                     .entries
                     .insert(path.to_path_buf(), Entry::Decoding);
@@ -418,9 +487,13 @@ fn sweep_idle(animations: &mut Animations, now: Instant) -> bool {
     });
     animations.idle = idle;
     let Animations {
-        entries, lengths, ..
+        entries,
+        lengths,
+        sides,
+        ..
     } = animations;
     lengths.retain(|path, _| entries.contains_key(path));
+    sides.retain(|path, _| entries.contains_key(path));
     true
 }
 
@@ -470,7 +543,7 @@ enum Start {
 
 /// Decodes `path` on a thread, every frame when `all` and otherwise only the
 /// poster, and delivers the result to `inbox`.
-fn start_decode(ctx: &egui::Context, inbox: &Inbox, path: &Path, all: bool) -> Start {
+fn start_decode(ctx: &egui::Context, inbox: &Inbox, path: &Path, all: bool, side: u32) -> Start {
     let Some(slot) = DecodeSlot::take(Instant::now()) else {
         return Start::Busy;
     };
@@ -483,9 +556,10 @@ fn start_decode(ctx: &egui::Context, inbox: &Inbox, path: &Path, all: bool) -> S
         .spawn(move || {
             let _slot = slot;
             // Convert decoder panics to failed results.
-            let decoded =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode(&file, limit)))
-                    .unwrap_or(None);
+            let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                decode_at(&file, limit, side)
+            }))
+            .unwrap_or(None);
             inbox
                 .0
                 .lock()
@@ -534,23 +608,30 @@ fn ffmpeg_present() -> bool {
 
 /// Decodes up to `limit` frames.
 fn decode(path: &Path, limit: usize) -> Option<Decoded> {
+    decode_at(path, limit, MAX_WIDTH)
+}
+
+/// Decodes up to `limit` frames, a sticker or GIF no wider than `side` pixels.
+fn decode_at(path: &Path, limit: usize, side: u32) -> Option<Decoded> {
     let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
         .map(|extension| extension.to_ascii_lowercase())
         .unwrap_or_default();
     match extension.as_str() {
-        "webp" | "gif" => decode_image(path, &extension, limit),
-        "was" => crate::lottie::decode(path, limit).map(|frames| Decoded { frames }),
+        "webp" | "gif" => decode_image(path, &extension, limit, side),
+        "was" => {
+            crate::lottie::decode_at(path, limit, side as f32).map(|frames| Decoded { frames })
+        }
         _ => decode_video(path, limit),
     }
 }
 
 /// Decodes animated GIF with the `image` crate.
-fn decode_image(path: &Path, extension: &str, limit: usize) -> Option<Decoded> {
+fn decode_image(path: &Path, extension: &str, limit: usize, side: u32) -> Option<Decoded> {
     use image::AnimationDecoder;
     if extension != "gif" {
-        return decode_webp(path, limit);
+        return decode_webp(path, limit, side);
     }
     let file = std::fs::File::open(path).ok()?;
     let reader = std::io::BufReader::new(file);
@@ -563,14 +644,14 @@ fn decode_image(path: &Path, extension: &str, limit: usize) -> Option<Decoded> {
         let (numerator, denominator) = frame.delay().numer_denom_ms();
         let delay = Duration::from_millis(u64::from(numerator / denominator.max(1)).max(20));
         let image = frame.into_buffer();
-        decoded.push((to_color_image(&image), delay));
+        decoded.push((to_color_image_at(&image, side), delay));
     }
     Some(Decoded { frames: decoded })
 }
 
 /// Decodes animated WebP with libwebp. It returns complete canvas frames,
 /// unlike the `image` decoder, which did not apply frame disposal correctly.
-fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
+fn decode_webp(path: &Path, limit: usize, side: u32) -> Option<Decoded> {
     let bytes = std::fs::read(path).ok()?;
     let decoder = webp_animation::Decoder::new(&bytes).ok()?;
     let (width, height) = decoder.dimensions();
@@ -581,7 +662,10 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
         let image = image::RgbaImage::from_raw(width, height, frame.data().to_vec())?;
         let delay = (i64::from(frame.timestamp()) - previous).max(20) as u64;
         previous = i64::from(frame.timestamp());
-        decoded.push((to_color_image(&image), Duration::from_millis(delay)));
+        decoded.push((
+            to_color_image_at(&image, side),
+            Duration::from_millis(delay),
+        ));
     }
     // Single-frame stills use the static-image path. A single frame in a file
     // that says it moves, as many of WhatsApp's stickers do, is drawn as an
@@ -594,14 +678,16 @@ fn decode_webp(path: &Path, limit: usize) -> Option<Decoded> {
 }
 
 fn to_color_image(image: &image::RgbaImage) -> ColorImage {
-    let image = if image.width() > MAX_WIDTH {
-        let height = (image.height() * MAX_WIDTH / image.width()).max(1);
-        image::imageops::resize(
-            image,
-            MAX_WIDTH,
-            height,
-            image::imageops::FilterType::Triangle,
-        )
+    to_color_image_at(image, MAX_WIDTH)
+}
+
+/// `image` as a texture source no wider than `side` pixels, scaled here on the
+/// decoder's thread.
+fn to_color_image_at(image: &image::RgbaImage, side: u32) -> ColorImage {
+    let image = if image.width() > side {
+        let height =
+            (u64::from(image.height()) * u64::from(side) / u64::from(image.width())).max(1) as u32;
+        image::imageops::resize(image, side, height, image::imageops::FilterType::Triangle)
     } else {
         image.clone()
     };
@@ -1099,6 +1185,31 @@ mod tests {
             .expect("saves");
         assert!(decode(&path, MAX_FRAMES).is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn animated_sticker_widths_step_up_and_stop_at_the_cap() {
+        assert_eq!(side_for(0.0), 96);
+        assert_eq!(side_for(60.0), 96);
+        assert_eq!(side_for(97.0), 128);
+        assert_eq!(side_for(140.0), 192);
+        assert_eq!(side_for(256.0), 256);
+        assert_eq!(side_for(257.0), MAX_WIDTH);
+        assert_eq!(side_for(1024.0), MAX_WIDTH);
+        assert_eq!(side_for(f32::NAN), MAX_WIDTH);
+        // Video is never scaled by the tile it is drawn in.
+        assert_eq!(decode_side(Path::new("a.mp4"), 20.0, 2.0), MAX_WIDTH);
+        assert_eq!(decode_side(Path::new("a.webp"), 60.0, 2.0), 128);
+    }
+
+    #[test]
+    fn a_decode_is_scaled_to_the_asked_width() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = animated_webp(dir.path(), "wide.webp", 3);
+        let full = decode_at(&path, MAX_FRAMES, MAX_WIDTH).expect("decodes");
+        let small = decode_at(&path, MAX_FRAMES, 4).expect("decodes");
+        assert!(small.frames[0].0.size[0] <= 4);
+        assert!(small.frames[0].0.size[0] <= full.frames[0].0.size[0]);
     }
 
     #[test]

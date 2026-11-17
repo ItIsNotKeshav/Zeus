@@ -304,7 +304,7 @@ pub fn fit_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
 /// held the window for a third of a second to two seconds when the picker
 /// opened on it.
 pub fn fit_still_uri(ctx: &egui::Context, path: &Path, size: egui::Vec2) -> String {
-    let side = step(size.x.max(size.y) * ctx.pixels_per_point());
+    let side = sticker_step(size.x.max(size.y) * ctx.pixels_per_point());
     fitted(ctx, path, true, |file| format!("{FIT}{side}/{file}{STILL}"))
 }
 
@@ -361,6 +361,16 @@ fn avatar_step(pixels: f32) -> u32 {
         .into_iter()
         .find(|side| *side >= wanted)
         .unwrap_or_else(|| step(pixels))
+}
+
+/// The side a still sticker of `pixels` is decoded at: 96, then [`step`]'s, so
+/// a 40 point tile holds 36 KB of texture instead of a 128 px floor's 64 KB.
+fn sticker_step(pixels: f32) -> u32 {
+    if pixels.ceil() as u32 <= 96 {
+        96
+    } else {
+        step(pixels)
+    }
 }
 
 /// The side in [`SIDES`] at or above `pixels`, or the largest.
@@ -978,6 +988,16 @@ mod tests {
             fit_uri_within(&ctx, gif, egui::vec2(300.0, 440.0)),
             crate::util::image_uri(gif)
         );
+    }
+
+    #[test]
+    fn still_stickers_step_from_96_never_past_what_is_drawn() {
+        assert_eq!(sticker_step(40.0), 96);
+        assert_eq!(sticker_step(96.0), 96);
+        assert_eq!(sticker_step(97.0), 128);
+        assert_eq!(sticker_step(120.0), 128);
+        assert_eq!(sticker_step(300.0), 384);
+        assert_eq!(sticker_step(512.0), 512);
     }
 
     #[test]

@@ -435,7 +435,13 @@ reading files blindly:
   its C++ from source with the C++ compiler of the host; `nasm` is
   optional and only adds the SIMD paths (the AUR recipes leave it out,
   the build works without it). Frames become textures on the interface
-  thread and are dropped when unseen. A paused animation decodes only its
+  thread, scaled there to the width they are drawn at on this display (96, 128,
+  192, 256 or 320 px, never more; a larger draw decodes again, a smaller one
+  reuses what is held), and are dropped when unseen. Still stickers fit from 96 px
+  (`image_cache::fit_still_uri`). The sticker picker draws only rows near the
+  scroll's view and forgets every texture and frame it loaded when it closes
+  (`picker::release_stickers`), because macOS keeps the GPU's high-water mark.
+  A paused animation decodes only its
   first frame, the poster, and the rest once it plays: full decodes of a
   picker's paused stickers overran the frame budget and evicted each other.
   Stickers in a chat go through `animation::autoplay`: they loop on their
