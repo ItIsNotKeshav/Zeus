@@ -8,7 +8,7 @@ use egui::{
 
 use super::controls;
 use crate::app::App;
-use crate::chat_themes::{Accent, ChatTheme};
+use crate::chat_themes::Accent;
 use crate::i18n::Locale;
 use crate::model::{Action, Dialog, Page};
 use crate::privacy::{PrivacyChoice, PrivacyKind};
@@ -407,7 +407,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
         .show_separator_line(false)
         .frame(Frame::new().fill(palette.column()).inner_margin(Margin {
             left: 4,
-            right: 8,
+            right: 4,
             top: super::chats::HEADER_DROP as i8,
             bottom: 0,
         }));
@@ -416,13 +416,15 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
             // The traffic lights sit over this header with no rail before
             // it, so its top drags the window as the chat list's does.
             let mut drag = ui.max_rect();
-            drag.max.y = drag.min.y + 8.0 + super::conversation::HEADER_ROW;
+            drag.min.y -= super::chats::HEADER_DROP;
+            drag.max.y =
+                drag.min.y + super::chats::HEADER_DROP + 8.0 + super::conversation::HEADER_ROW;
             super::titlebar_drag(ui, drag);
         }
         Frame::new()
             .inner_margin(Margin {
-                left: 14,
-                right: 14,
+                left: widgets::ROW_CARD_X as i8,
+                right: widgets::ROW_CARD_X as i8,
                 top: 8,
                 bottom: 8,
             })
@@ -431,13 +433,9 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                     vec2(ui.available_width(), super::conversation::HEADER_ROW),
                     Layout::left_to_right(Align::Center),
                     |ui| {
-                        // The title starts right of the traffic lights.
-                        if theme::macos_chrome(ui.ctx()) {
-                            let from_edge = ui.cursor().left() - ui.ctx().content_rect().left();
-                            let clearance =
-                                (theme::traffic_light_inset(ui.ctx()) - from_edge).max(0.0);
-                            ui.add_space(clearance);
-                        }
+                        // The traffic lights have a row above; the title
+                        // starts on the chat list's title line.
+                        ui.add_space(super::chats::ROW_LEAD - widgets::ROW_CARD_X);
                         theme::text(
                             ui,
                             crate::i18n::gettext(app.locale, "Settings"),
@@ -450,21 +448,11 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 search(app, ui);
             });
         ui.add_space(crate::theme::SPACE_XS);
-        let searching = !app.settings_search.trim().is_empty();
         let titles: Vec<Text> = sections(app)
             .into_iter()
             .map(|section| section.title)
             .collect();
         let current = app.settings_section.min(titles.len().saturating_sub(1));
-        // WhatsApp's light look lifts the picked category to pure white.
-        let selected_fill = if !palette.dark
-            && app.settings.custom_theme.is_none()
-            && app.settings.chat_theme == ChatTheme::WhatsApp
-        {
-            Color32::WHITE
-        } else {
-            palette.surface
-        };
         egui::ScrollArea::vertical()
             .id_salt("settings-categories")
             .auto_shrink([false, false])
@@ -473,12 +461,12 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let inner = ui.available_rect_before_wrap();
                 let inner = Rect::from_x_y_ranges(
-                    inner.left() + 8.0..=inner.right() - 4.0,
+                    inner.left() + widgets::ROW_CARD_X..=inner.right() - widgets::ROW_CARD_X,
                     inner.y_range(),
                 );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
                     for (index, title) in titles.iter().enumerate() {
-                        let selected = !searching && index == current;
+                        let selected = index == current;
                         let (rect, response) = ui.allocate_exact_size(
                             vec2(ui.available_width(), CATEGORY_ROW),
                             Sense::click(),
@@ -486,7 +474,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::reveal_focus(&response);
                         theme::focus_outline(ui, response.id, rect, 12.0);
                         if selected {
-                            ui.painter().rect_filled(rect, 12.0, selected_fill);
+                            widgets::highlight_card(ui, &palette, rect, palette.surface_active);
                         } else {
                             let hover =
                                 super::chats::row_hover_amount(ui, response.id, response.hovered());
@@ -507,14 +495,14 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                             ui,
                             category_icon(&title.source),
                             Rect::from_center_size(
-                                pos2(rect.left() + 26.0, rect.center().y),
+                                pos2(rect.left() + 22.0, rect.center().y),
                                 Vec2::splat(20.0),
                             ),
                             20.0,
                             color,
                         );
                         ui.painter().text(
-                            pos2(rect.left() + 50.0, rect.center().y),
+                            pos2(rect.left() + 46.0, rect.center().y),
                             egui::Align2::LEFT_CENTER,
                             title.shown.as_ref(),
                             theme::medium(theme::TEXT_SECTION),

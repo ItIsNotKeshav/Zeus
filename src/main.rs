@@ -942,7 +942,7 @@ impl Shell {
         // The chat header is 60 points and zooms; the linking screen keeps
         // AppKit's own 28-point strip.
         let title_bar = if app.is_linked() && !app.app_lock.is_locked() {
-            zeus::theme::TOP_BAR_HEIGHT
+            zeus::ui::chats::LIGHTS_BAR / ctx.zoom_factor()
         } else {
             28.0 / ctx.zoom_factor()
         };

@@ -182,7 +182,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
         .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
             left: 8,
             right: 4,
-            top: super::chats::HEADER_DROP as i8 - 4,
+            top: super::chats::BASE_DROP as i8 - 4,
             bottom: 4,
         }));
     let response = panel.show(ui, |ui| {

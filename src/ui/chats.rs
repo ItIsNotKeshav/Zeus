@@ -34,7 +34,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .default_size(app.settings.sidebar_width)
         .size_range(260.0..=520.0)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.column()).inner_margin(LIST_MARGIN));
+        .frame(
+            Frame::new()
+                .fill(palette.column())
+                .inner_margin(LIST_MARGIN),
+        );
     let response = panel.show(ui, |ui| column(app, ui));
     // The tab bar floats at the foot of the whole column, as it does beside
     // Settings' categories, so it stays put going from one to the other.
@@ -61,7 +65,11 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
     search_keyboard(app, ui);
     let palette = app.palette;
     let response = egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.column()).inner_margin(LIST_MARGIN))
+        .frame(
+            Frame::new()
+                .fill(palette.column())
+                .inner_margin(LIST_MARGIN),
+        )
         .show(ui, |ui| column(app, ui));
     super::tabbar::show(app, ui, response.response.rect);
 }
@@ -75,7 +83,25 @@ pub(crate) const CARD_RADIUS: u8 =
 /// How far the list sets its header below the top of its column. The chat
 /// header in the card beside it moves down as far, so the chat's name,
 /// picture and buttons sit on the same line as the list's title.
-pub(crate) const HEADER_DROP: f32 = 12.0;
+pub(crate) const HEADER_DROP: f32 = BASE_DROP + LIGHTS_DROP;
+/// The header's drop where nothing sits above it.
+pub(crate) const BASE_DROP: f32 = 12.0;
+/// On macOS the traffic lights get a row of their own above the headers:
+/// the bar they are centred in is `LIGHTS_BAR` tall, so they stand as far
+/// from the window's top as from its left (16 points, AppKit's own inset).
+#[cfg(target_os = "macos")]
+pub const LIGHTS_BAR: f32 = 30.0;
+#[cfg(not(target_os = "macos"))]
+pub const LIGHTS_BAR: f32 = crate::theme::TOP_BAR_HEIGHT;
+/// How far the headers sit lower for the lights' row: the bar over the
+/// 12-point drop that already clears the top.
+#[cfg(target_os = "macos")]
+const LIGHTS_DROP: f32 = 16.0;
+#[cfg(not(target_os = "macos"))]
+const LIGHTS_DROP: f32 = 0.0;
+/// Where a list row's avatar starts, from the row's edge: a little right of
+/// the search field's left edge (the card's inset), so they read as aligned.
+pub(crate) const ROW_LEAD: f32 = 16.0;
 
 /// How far below the list's header its frost and veil carry on, easing off.
 const FROST_TAIL: f32 = 36.0;
@@ -446,13 +472,10 @@ fn header_row(app: &mut App, ui: &mut egui::Ui, macos: bool) {
 /// traffic lights, which lie over the header now that the list runs to the
 /// window's left edge.
 fn title_lead(ui: &egui::Ui) -> f32 {
-    let lead = widgets::ROW_SIDE - widgets::ROW_CARD_X;
-    let ctx = ui.ctx();
-    if !theme::macos_chrome(ctx) {
-        return lead;
-    }
-    let row_left = ui.cursor().min.x - ctx.content_rect().left();
-    lead.max(theme::traffic_light_inset(ctx) - row_left)
+    // The lights have a row of their own above the header, so even on macOS
+    // the title starts on the avatars' line.
+    let _ = ui;
+    ROW_LEAD - widgets::ROW_CARD_X
 }
 
 /// Stable id of the title's menu button on the Chats tab, for tests and the
@@ -1008,7 +1031,8 @@ pub(crate) fn header_row_id() -> egui::Id {
 /// starts right of them.
 fn macos_header(app: &mut App, ui: &mut egui::Ui) -> Rect {
     let mut drag = ui.max_rect();
-    drag.max.y = drag.min.y + 60.0;
+    drag.min.y -= HEADER_DROP;
+    drag.max.y = drag.min.y + HEADER_DROP + 60.0;
     super::titlebar_drag(ui, drag);
     Frame::new()
         .inner_margin(Margin::symmetric(widgets::ROW_CARD_X as i8, 8))
@@ -1890,14 +1914,14 @@ fn locked_entry(app: &mut App, ui: &mut egui::Ui) {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let icon_rect = Rect::from_center_size(
-            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 24.0, rect.center().y),
             Vec2::splat(22.0),
         );
         Icon::LockOpen
             .image(palette.accent, 22.0)
             .paint_at(ui, icon_rect);
         ui.painter().text(
-            pos2(rect.left() + widgets::ROW_SIDE + 62.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 62.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             "Locked chats",
             theme::medium(theme::TEXT_BODY),
@@ -2259,7 +2283,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let avatar_rect = Rect::from_center_size(
-            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 24.0, rect.center().y),
             Vec2::splat(48.0),
         );
         let picture = app.avatar(&hit.chat);
@@ -2271,7 +2295,7 @@ fn hit_row(app: &mut App, ui: &mut egui::Ui, hit: &Message) {
             &hit.chat,
             picture.as_deref(),
         );
-        let left = rect.left() + widgets::ROW_SIDE + 62.0;
+        let left = rect.left() + ROW_LEAD + 62.0;
         let right = rect.right() - widgets::ROW_SIDE;
         let stamp_galley = ui.painter().layout_no_wrap(
             crate::util::chat_stamp(app.locale, hit.timestamp),
@@ -2387,13 +2411,13 @@ pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) 
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let circle = Rect::from_center_size(
-            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 24.0, rect.center().y),
             Vec2::splat(48.0),
         );
         ui.painter()
             .circle_filled(circle.center(), circle.width() / 2.0, palette.accent_fill);
         theme::paint_icon(ui, icon, circle, 22.0, palette.on_accent);
-        let left = rect.left() + widgets::ROW_SIDE + 62.0;
+        let left = rect.left() + ROW_LEAD + 62.0;
         let line = widgets::line(
             ui,
             label,
@@ -2455,12 +2479,12 @@ fn person_row(
             widgets::row_highlight(ui, &palette, rect, palette.surface_hover);
         }
         let avatar_rect = Rect::from_center_size(
-            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 24.0, rect.center().y),
             Vec2::splat(48.0),
         );
         let picture = app.avatar(id);
         widgets::paint_avatar(ui, &palette, avatar_rect, name, id, picture.as_deref());
-        let left = rect.left() + widgets::ROW_SIDE + 62.0;
+        let left = rect.left() + ROW_LEAD + 62.0;
         let name_line = widgets::line(
             ui,
             name,
@@ -2565,7 +2589,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             });
         }
         let avatar_rect = Rect::from_center_size(
-            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 24.0, rect.center().y),
             Vec2::splat(48.0),
         );
         let picture = app.avatar(&chat.id);
@@ -2581,7 +2605,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             widgets::paint_disappearing_badge(ui, &palette, avatar_rect);
         }
 
-        let left = rect.left() + widgets::ROW_SIDE + 62.0;
+        let left = rect.left() + ROW_LEAD + 62.0;
         let right = rect.right() - widgets::ROW_SIDE;
         let stamp = if chat.last_activity > 0 {
             crate::util::chat_stamp(app.locale, chat.last_activity)
@@ -2777,7 +2801,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             rect,
             chat,
             &title,
-            pos2(rect.left() + widgets::ROW_SIDE + 24.0, rect.center().y),
+            pos2(rect.left() + ROW_LEAD + 24.0, rect.center().y),
         );
     }
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -3757,22 +3781,15 @@ mod tests {
                 .expect("the title is the menu's button")
                 .rect;
             let text = title.left() + TITLE_INSET;
-            let avatars = row.left() + widgets::ROW_SIDE;
+            let avatars = row.left() + ROW_LEAD;
             assert!(
                 text >= avatars - 0.5,
                 "macOS={macos}: {text} before {avatars}"
             );
-            if crate::theme::traffic_light_inset(&ctx) > 0.0 {
-                assert!(
-                    text >= crate::theme::traffic_light_inset(&ctx) - 0.5,
-                    "the title clears the traffic lights: {text}"
-                );
-            } else {
-                assert!(
-                    (text - avatars).abs() < 0.5,
-                    "macOS={macos}: the title starts at {text}, the avatars at {avatars}"
-                );
-            }
+            assert!(
+                (text - avatars).abs() < 0.5,
+                "macOS={macos}: the title starts at {text}, the avatars at {avatars}"
+            );
         }
     }
 
