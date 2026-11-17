@@ -77,6 +77,15 @@ impl Reveal {
         matches!(self.state, State::Armed { .. } | State::Capturing { .. })
     }
 
+    /// Whether a reveal is under way: its picture is on its way or being
+    /// revealed away.
+    pub fn active(&self) -> bool {
+        matches!(
+            self.state,
+            State::Capturing { .. } | State::Revealing { .. }
+        )
+    }
+
     /// Asks for a picture of the window as this frame draws it, with the old
     /// colours. While a picture is already on its way it does nothing.
     pub fn begin(&mut self, ctx: &Context) {

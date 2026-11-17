@@ -940,8 +940,22 @@ impl Shell {
             tour.note_frame_cost(frame.info().cpu_usage);
             tour.drive(app, ctx);
         }
+        #[cfg(target_os = "macos")]
+        app.observe_gpu(match frame.gpu_state() {
+            eframe::GpuState::Active => zeus::gpu_idle::State::Active,
+            eframe::GpuState::LowRes => zeus::gpu_idle::State::LowRes,
+            eframe::GpuState::Released => zeus::gpu_idle::State::Released,
+        });
         app.background_frame(ctx);
         app.window_logic(ctx);
+        // An idle window lets its graphics device go, and gets it back for
+        // what changes on screen (`zeus::gpu_idle`).
+        #[cfg(target_os = "macos")]
+        match app.gpu_change(ctx) {
+            Some(zeus::gpu_idle::Change::Release) => frame.release_gpu(),
+            Some(zeus::gpu_idle::Change::Request) => frame.request_gpu(),
+            None => {}
+        }
         #[cfg(target_os = "windows")]
         if let (Some(window), Some(count)) = (frame.winit_window(), app.taskbar_badge_count()) {
             self.taskbar.show(window, count);

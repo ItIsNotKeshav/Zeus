@@ -29,6 +29,8 @@ pub mod diagnostics;
 pub mod drag_out;
 pub mod emoji;
 pub mod geo;
+#[cfg(target_os = "macos")]
+pub mod gpu_idle;
 pub mod group_admin;
 pub mod haptics;
 pub mod i18n;

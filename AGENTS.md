@@ -24,7 +24,10 @@ protocol. These notes are for coding agents and new contributors.
   request, send the fix upstream and ask for it to be carried. Use the fork
   until a release includes the fix. The maintainer has explicitly approved
   pinned commits from `github.com/oxidezap/whatsapp-rust` once our carried
-  fixes have merged upstream. Never point a dependency at any other fork
+  fixes have merged upstream. This fork (Zeus) carries its own egui fork,
+  `github.com/pratyakshm/egui` (branch `zeus-idle-gpu`, cut from crmne/egui
+  apps-0.36.2), for the macOS idle GPU release; every egui crate pins the
+  same commit of it. Never point a dependency at any other fork
   or source: `.github/scripts/check-dependency-sources.py` fails CI on one.
 - Screenshots, captures, comparison pages and recordings made for a review
   go in the pull request, never the repository:
@@ -598,6 +601,12 @@ reading files blindly:
   glass are solid, while Settings' Blur still decides the window's material.
   Frost on macOS needs egui-wgpu to split the pass at a callback that reads
   the backdrop, a change for the crmne/egui fork.
+  A window unfocused for `ATLAS_IDLE` with nothing playing, recording,
+  calling, previewing or sending lets its wgpu device go (`src/gpu_idle.rs`,
+  eframe's `Frame::release_gpu`), leaving its last frame at half resolution;
+  visible events of the account on screen ask for it back at most once per
+  2 s (a ringing call or the app lock at once), and the font atlas is not
+  rebuilt while it is away.
 - `src/voice.rs` is the codec for voice messages: OGG/Opus in and out
   (the `ogg` crate for the container, `opus` with libopus bundled and
   built by cmake for the codec, so cmake is a build dependency), plus

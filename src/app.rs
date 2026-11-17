@@ -537,6 +537,10 @@ pub struct App {
     pub reveal_theme_changes: bool,
     zoom_applied: bool,
     atlas_watch: AtlasWatch,
+    /// Whether the window's graphics device may go while nobody looks, and
+    /// what brings it back; see [`crate::gpu_idle`].
+    #[cfg(target_os = "macos")]
+    gpu_idle: crate::gpu_idle::GpuIdle,
     /// The wallpaper image named in the settings, decoded off this thread.
     pub wallpaper_image: crate::wallpaper::CustomImage,
 
@@ -1542,6 +1546,8 @@ impl App {
             reveal_theme_changes: !cfg!(test),
             zoom_applied: false,
             atlas_watch: AtlasWatch::default(),
+            #[cfg(target_os = "macos")]
+            gpu_idle: crate::gpu_idle::GpuIdle::default(),
             wallpaper_image: crate::wallpaper::CustomImage::default(),
             scroll_chats_to_top: false,
             stale_images: Vec::new(),
@@ -2496,6 +2502,9 @@ impl App {
     pub fn attach(&mut self, ctx: &egui::Context) {
         // A window is here, so a hidden start's wait for a panel is over.
         self.tray_wait = None;
+        // Each window starts with a graphics device of its own.
+        #[cfg(target_os = "macos")]
+        self.gpu_idle.new_window();
         // Register transcript copy formatting once per egui context.
         ctx.add_plugin(crate::transcript::CopyAnnotator {
             rows: std::sync::Arc::clone(&self.copy_rows),
@@ -3520,6 +3529,16 @@ impl App {
                 if matches!(event, Event::AccountRemoved) {
                     removed.push(index);
                     continue;
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    let wake = crate::gpu_idle::wake_for(
+                        &event,
+                        live,
+                        self.open_chat.as_deref(),
+                        self.syncing,
+                    );
+                    self.gpu_idle.note(wake, Instant::now());
                 }
                 self.events_hidden = !live;
                 self.apply_backend_event(event, live);
@@ -10471,6 +10490,12 @@ impl App {
             self.atlas_watch = AtlasWatch::default();
             return;
         }
+        // Without a device nothing is drawn, so the atlas gathers nothing,
+        // and a rebuild would only upload it again when the device is back.
+        #[cfg(target_os = "macos")]
+        if self.gpu_idle.state() != crate::gpu_idle::State::Active {
+            return;
+        }
         let now = Instant::now();
         let scale = (
             ctx.zoom_factor(),
@@ -10514,6 +10539,93 @@ impl App {
         }
     }
 
+    /// Whether the window's passes paint: always, except on macOS while its
+    /// graphics device is away (see [`crate::gpu_idle`]).
+    #[cfg(target_os = "macos")]
+    fn gpu_paints(&self) -> bool {
+        self.gpu_idle.state() == crate::gpu_idle::State::Active
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn gpu_paints(&self) -> bool {
+        true
+    }
+
+    /// Takes eframe's graphics device state at the start of a window pass,
+    /// before [`Self::background_frame`]. Call it from the shell's `logic`.
+    #[cfg(target_os = "macos")]
+    pub fn observe_gpu(&mut self, state: crate::gpu_idle::State) {
+        self.gpu_idle.observe(state, Instant::now());
+    }
+
+    /// Whether something on screen moves, plays, or is under way, so the
+    /// window must keep drawing at full resolution: a call (placed, ringing
+    /// or up), a recording or the microphone check, a voice message, video
+    /// or motion photo playing, the image preview or a picture or sticker
+    /// editor, uploads or button replies being sent, a theme change being
+    /// revealed, the app lock checking a password, or chat bubbles and the
+    /// pop-out, which draw with the same device.
+    #[cfg(target_os = "macos")]
+    fn gpu_busy(&self) -> bool {
+        self.call.is_some()
+            || self.recording.is_some()
+            || self.mic_check.is_some()
+            || self.player.is_playing()
+            || self.video.is_active()
+            || self.motion_playing.is_some()
+            || self.image_preview.is_some()
+            || self.sticker_view.is_some()
+            || self.picture_edit.is_some()
+            || self.sticker_draft.is_some()
+            || self.accounts.iter().any(|account| {
+                !account.uploads.is_empty() || !account.interactive_sending.is_empty()
+            })
+            || self.theme_reveal.active()
+            || self.theme_transition.active()
+            || self.app_lock.checking()
+            || (self.settings.chat_bubbles && !self.bubbles.is_empty())
+            || self.pop_out.is_some()
+    }
+
+    /// What the shell asks eframe for after this pass's logic: the device
+    /// goes once the window has been unfocused for `ATLAS_IDLE` (the font
+    /// atlas's rebuild runs in the same pass) with nothing busy; it comes
+    /// back for what `handle_events` noted, or a change of the app lock.
+    /// The pictures and animations a minimized window lets go are let go in
+    /// the first pass without the device, not before: the last frame keeps
+    /// them, and eframe does not keep a copy of what is freed while it is
+    /// away. Waits end in a repaint request, never a timer.
+    #[cfg(target_os = "macos")]
+    pub fn gpu_change(&mut self, ctx: &egui::Context) -> Option<crate::gpu_idle::Change> {
+        use crate::gpu_idle::{Change, State};
+        let now = Instant::now();
+        let locked = self.app_lock.is_locked();
+        if self.gpu_idle.state() == State::Active {
+            let busy = self.gpu_busy();
+            let left = self
+                .gpu_idle
+                .release_after(now, self.atlas_watch.away, ATLAS_IDLE, busy)?;
+            if !left.is_zero() {
+                ctx.request_repaint_after(left);
+                return None;
+            }
+            self.gpu_idle.released(locked);
+            return Some(Change::Release);
+        }
+        if self.gpu_idle.take_gone() {
+            crate::image_cache::release(ctx);
+            crate::animation::release(ctx);
+        }
+        self.gpu_idle.note_lock(locked, now);
+        // `background_frame` set `window_unseen` this pass: a minimized or
+        // covered window gets its device back from eframe once it is shown.
+        let (change, wait) = self.gpu_idle.wake(now, !self.window_unseen);
+        if let Some(wait) = wait {
+            ctx.request_repaint_after(wait);
+        }
+        change
+    }
+
     /// One line a minute when `ZAPFAST_MEMORY_LOG` is `1`.
     ///
     /// `interface` is the call from [`Self::frame_ui`], after the image sweep,
@@ -10532,14 +10644,20 @@ impl App {
         } else {
             let follows = !self.window_hidden
                 && !self.hide_intent
-                && ctx.input(|input| input.viewport().minimized) != Some(true);
+                && ctx.input(|input| input.viewport().minimized) != Some(true)
+                && self.gpu_paints();
             crate::memory::background_due(follows)
         };
         if !write {
             return;
         }
+        #[cfg(target_os = "macos")]
+        let gpu = Some(self.gpu_idle.describe(Instant::now()));
+        #[cfg(not(target_os = "macos"))]
+        let gpu = None;
         crate::memory::sample(
             ctx,
+            gpu,
             self.accounts
                 .iter()
                 .map(|account| crate::memory::AccountCounts {

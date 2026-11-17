@@ -5,7 +5,9 @@
 //! nothing: the probe never asks the window to repaint. The line is counts
 //! and sizes only (account folder ids, never phone numbers, message text, or
 //! keys). RSS includes every other field, so the numbers are a breakdown,
-//! not parts to add together.
+//! not parts to add together. On macOS the line ends with the window's
+//! graphics device state (`crate::gpu_idle`) and how many seconds ago it
+//! last went and came back.
 
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -34,6 +36,8 @@ struct Sample {
     image_cache: usize,
     animation_frames: usize,
     accounts: Vec<AccountUsage>,
+    /// The graphics device's part of the line, where it can go.
+    gpu: Option<String>,
 }
 
 struct AccountUsage {
@@ -53,7 +57,12 @@ pub(crate) fn enabled() -> bool {
 ///
 /// `accounts` is walked only when a line is actually written, so pass the
 /// iterator in only after [`background_due`] or [`interface_due`] says so.
-pub(crate) fn sample<'a>(ctx: &egui::Context, accounts: impl Iterator<Item = AccountCounts<'a>>) {
+/// `gpu` is appended as it is, for the graphics device's state.
+pub(crate) fn sample<'a>(
+    ctx: &egui::Context,
+    gpu: Option<String>,
+    accounts: impl Iterator<Item = AccountCounts<'a>>,
+) {
     let accounts = accounts
         .map(|account| AccountUsage {
             id: account.id.to_owned(),
@@ -69,6 +78,7 @@ pub(crate) fn sample<'a>(ctx: &egui::Context, accounts: impl Iterator<Item = Acc
         image_cache: crate::image_cache::len(ctx),
         animation_frames: crate::animation::resident_frames(ctx),
         accounts,
+        gpu,
     };
     log::info!(target: "zeus::memory", "{}", format_sample(&sample));
 }
@@ -235,7 +245,8 @@ fn rss_bytes_impl() -> Option<u64> {
 }
 
 /// One log line. `rss_mib` is whole mebibytes, truncated; `accounts` is
-/// `id:conversations/messages` for each account, or `-` when there are none.
+/// `id:conversations/messages` for each account, or `-` when there are none,
+/// then the graphics device's part when there is one.
 fn format_sample(sample: &Sample) -> String {
     let rss = match sample.rss_mib {
         Some(mib) => mib.to_string(),
@@ -256,7 +267,7 @@ fn format_sample(sample: &Sample) -> String {
             .collect::<Vec<_>>()
             .join(",")
     };
-    format!(
+    let mut line = format!(
         "rss_mib={rss} textures={} font_atlas={}x{} loader_bytes={} image_cache={} animation_frames={} accounts={accounts}",
         sample.textures,
         sample.font_atlas[0],
@@ -264,7 +275,12 @@ fn format_sample(sample: &Sample) -> String {
         sample.loader_bytes,
         sample.image_cache,
         sample.animation_frames,
-    )
+    );
+    if let Some(gpu) = &sample.gpu {
+        line.push(' ');
+        line.push_str(gpu);
+    }
+    line
 }
 
 #[cfg(test)]
@@ -292,6 +308,7 @@ mod tests {
                     messages: 200,
                 },
             ],
+            gpu: None,
         });
         assert_eq!(
             line,
@@ -305,12 +322,31 @@ mod tests {
             image_cache: 0,
             animation_frames: 0,
             accounts: Vec::new(),
+            gpu: None,
         });
         assert_eq!(
             missing,
             "rss_mib=unavailable textures=0 font_atlas=0x0 loader_bytes=0 image_cache=0 animation_frames=0 accounts=-"
         );
         assert!(!line.contains('\n') && !missing.contains('\n'));
+    }
+
+    #[test]
+    fn ends_with_the_graphics_device_where_it_can_go() {
+        let line = format_sample(&Sample {
+            rss_mib: Some(180),
+            textures: 4,
+            font_atlas: [1024, 512],
+            loader_bytes: 0,
+            image_cache: 0,
+            animation_frames: 0,
+            accounts: Vec::new(),
+            gpu: Some("gpu=released gpu_released_s=12 gpu_restored_s=-".to_owned()),
+        });
+        assert_eq!(
+            line,
+            "rss_mib=180 textures=4 font_atlas=1024x512 loader_bytes=0 image_cache=0 animation_frames=0 accounts=- gpu=released gpu_released_s=12 gpu_restored_s=-"
+        );
     }
 
     #[test]
