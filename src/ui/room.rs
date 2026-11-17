@@ -1,10 +1,10 @@
-//! The window making room for what opens beside the chat: the info card's
-//! column, or the second pane of a split. Each asks under its own id for the
-//! width it needs; the window grows by it while it is open and gives back
-//! only what it gained when it closes. A maximized or full-screen window
-//! cannot grow, and a window manager may refuse (tiling, snapping, the edge
-//! of the screen): the layout then gives way instead, and nothing is shrunk
-//! that did not grow.
+//! The window making room for the second pane of a split. The pane asks under
+//! its own id for the width it needs; the window grows by it while the pane
+//! is open and gives back only what it gained when the pane closes. The info
+//! card does not ask: it lies over the conversation. A maximized or
+//! full-screen window cannot grow, and a window manager may refuse (tiling,
+//! snapping, the edge of the screen): the layout then gives way instead, and
+//! nothing is shrunk that did not grow.
 
 use egui::vec2;
 

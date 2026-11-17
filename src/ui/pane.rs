@@ -24,10 +24,6 @@ const MAX_WIDTH: f32 = 520.0;
 /// The narrowest conversation a docked pane leaves beside it. Below this the
 /// pane lies over the conversation instead of squeezing it.
 const CONVERSATION_MIN: f32 = 360.0;
-/// The narrowest conversation the info card leaves beside it: enough for
-/// the chat header's name and buttons to stand apart. Narrower than this,
-/// the card is a page over the chat instead.
-pub(super) const INFO_CONVERSATION_MIN: f32 = 400.0;
 const ROW_HEIGHT: f32 = 60.0;
 /// Characters of context kept before a match deep in a long line.
 const LEAD: usize = 18;
@@ -75,8 +71,7 @@ pub(super) enum Docking {
 }
 
 /// Docks a right-hand pane beside the conversation when the window has room
-/// for both, drawing `contents` in it. The info panel shares this with the
-/// search pane, so the two dock and float the same way.
+/// for both, drawing `contents` in it.
 pub(super) fn dock(
     app: &mut App,
     ui: &mut egui::Ui,

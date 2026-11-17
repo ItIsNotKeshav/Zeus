@@ -185,36 +185,21 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     // conversation header's Back returns to the list. The list column holds
     // its own way around (the tab bar at its foot, the title's menu), so the
     // rail stands only where the list is hidden, beside the conversation.
-    // The info card takes a column of its own, and when the list leaves too
-    // little room for it and the conversation, the list folds into the
-    // rail's avatars while the card is open. The Calls tab's history needs the
-    // full list pane: only the chats collapse into the rail's avatars.
+    // The info card lies over the conversation and takes no column. A split
+    // grows the window for its second pane, and folds the list when the
+    // window cannot grow enough. The Calls tab's history needs the full list
+    // pane: only the chats collapse into the rail's avatars.
     let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
     let list_width = if full_list {
         app.settings.sidebar_width
     } else {
         rail::PANE_WIDTH
     };
-    // The window grows for the info card when it can; when it cannot
-    // (maximized, full screen, tiled), the list steps aside before the chat
-    // gets too narrow for its header.
-    info::prepare(app, ui.ctx());
-    let info_crowded = app.info_visible()
-        && ui.available_width() + info::room_ahead(ui.ctx()) - list_width
-            < info::CARD_COLUMN + pane::INFO_CONVERSATION_MIN;
-    // A split grows the window the same way for its second pane, and folds
-    // the list when the window cannot grow enough.
-    let info_column = if app.info_visible() {
-        info::CARD_COLUMN
-    } else {
-        0.0
-    };
-    let card = ui.available_width() - list_width - chats::CARD_GAP - info_column;
+    let card = ui.available_width() - list_width - chats::CARD_GAP;
     split::prepare(app, ui.ctx(), card);
-    let split_crowded = app.page == Page::Chats
+    let crowded = app.page == Page::Chats
         && split::wanted(app, ui.ctx())
         && card + split::room_ahead(ui.ctx()) < split::NEED;
-    let crowded = info_crowded || split_crowded;
     if !narrow(ui.ctx()) && crowded {
         // The list folds into the rail's avatars, as when it is collapsed:
         // the chats stay a click (or a drop) away.
@@ -234,7 +219,10 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         }
     }
     let search_overlay = pane::show(app, ui);
-    let info_overlay = info::show(app, ui);
+    // Captured after the list and a docked search pane, before the
+    // conversation takes the rest. The card is drawn once that conversation
+    // exists, so it paints over it.
+    let info_region = ui.available_rect_before_wrap();
     // Beside the side columns the chat or page floats on the sidebar's colour
     // as one rounded card; a narrow window gives it the whole window.
     let card = !narrow(ui.ctx());
@@ -287,7 +275,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     if let Some(region) = search_overlay {
         pane::show_overlay(app, ui.ctx(), region);
     }
-    if let Some(region) = info_overlay {
+    if let Some(region) = info::show_in(app, ui, info_region) {
         info::show_overlay(app, ui.ctx(), region);
     }
 }

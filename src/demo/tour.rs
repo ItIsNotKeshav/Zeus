@@ -1439,10 +1439,10 @@ mod tests {
         assert_eq!(shown(&app), Some(ada), "the chat list's Info opens both");
     }
 
-    /// The info card stands beside the chat when the window has room for it
-    /// and a readable chat, and is a page over the chat otherwise.
+    /// The info card lies over the chat and does not resize the window. A
+    /// narrow window still shows it as a page.
     #[test]
-    fn the_info_panel_takes_a_column_and_is_a_page_in_a_narrow_window() {
+    fn the_info_panel_overlays_the_chat_without_growing_the_window() {
         let mut app = super::super::tests::app();
         prepare(&mut app);
         let ctx = egui::Context::default();
@@ -1456,27 +1456,42 @@ mod tests {
         let docked = |ctx: &egui::Context| {
             ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id()))
         };
-        // The window is asked to grow for the card, and never does here: a
-        // second of frames lets the card stop waiting for it.
-        let settle = |app: &mut App, tour: &mut Tour, size| {
-            for _ in 0..60 {
-                frame_sized(app, tour, &ctx, size, Vec::new());
+        let mut grew = false;
+        let settle = |app: &mut App, tour: &mut Tour, size, grew: &mut bool| {
+            for _ in 0..8 {
+                let input = egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, size)),
+                    ..Default::default()
+                };
+                let mut output = ctx.run_ui(input, |ui| {
+                    app.background_frame(&ctx);
+                    app.frame_ui(ui);
+                    tour.observe(app, &ctx);
+                });
+                output.textures_delta.clear();
+                if output.viewport_output.values().any(|viewport| {
+                    viewport
+                        .commands
+                        .iter()
+                        .any(|command| matches!(command, egui::ViewportCommand::InnerSize(_)))
+                }) {
+                    *grew = true;
+                }
             }
         };
-        settle(&mut app, &mut tour, vec2(1180.0, 780.0));
-        assert_eq!(docked(&ctx), Some(true), "a card beside the chat");
-        // Too tight for the list, the conversation and the card, even with
-        // the list folded into the rail: the card is a page over the chat
-        // rather than squeezing the chat's header.
-        settle(&mut app, &mut tour, vec2(760.0, 600.0));
-        assert_eq!(docked(&ctx), Some(false), "a page when there is no room");
-        // The narrow window mode shows it as a page over the chat.
-        settle(&mut app, &mut tour, vec2(560.0, 600.0));
+        settle(&mut app, &mut tour, vec2(1180.0, 780.0), &mut grew);
+        assert_eq!(docked(&ctx), Some(true), "a card over the chat");
+        // Wider than the narrow-window mode, even when a column would not
+        // have left a readable chat: the card still overlays.
+        settle(&mut app, &mut tour, vec2(760.0, 600.0), &mut grew);
+        assert_eq!(docked(&ctx), Some(true), "still a card, over the chat");
+        settle(&mut app, &mut tour, vec2(560.0, 600.0), &mut grew);
         assert_eq!(docked(&ctx), Some(false), "a page in a narrow window");
         assert!(app.info.is_some());
         app.actions.push(crate::model::Action::CloseInfo);
-        frame_sized(&mut app, &mut tour, &ctx, vec2(560.0, 600.0), Vec::new());
+        settle(&mut app, &mut tour, vec2(560.0, 600.0), &mut grew);
         assert_eq!(docked(&ctx), None, "gone with the panel");
+        assert!(!grew, "the info card does not resize the window");
     }
 
     /// The overview's media row opens the media view, whose tabs list the

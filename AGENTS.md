@@ -139,10 +139,10 @@ reading files blindly:
   Split view and Chat bubbles (`Settings::split_view`, `chat_bubbles`).
   Split view (`app/split.rs`, `ui/split.rs`) puts a second chat beside the
   open one and pops a chat out into an always-on-top window. The window grows
-  for the second pane the way it does for the info card (`ui/room.rs`: each
-  claim gives back only what it gained), and when it cannot (maximized,
-  tiled, the screen's edge) the list folds into the rail before the split
-  gives way. Chat bubbles (`app/bubbles.rs`, `ui/bubbles.rs`) keep up to
+  for the second pane (`ui/room.rs`: each claim gives back only what it
+  gained), and when it cannot (maximized, tiled, the screen's edge) the list
+  folds into the rail before the split gives way. The info card does not
+  claim that room: it lies over the conversation. Chat bubbles (`app/bubbles.rs`, `ui/bubbles.rs`) keep up to
   `MAX_BUBBLES` chats of the account on screen in a borderless, see-through,
   always-on-top window; one opens into a card with its own transcript place,
   text and attachments (picked, dropped or pasted), sent through

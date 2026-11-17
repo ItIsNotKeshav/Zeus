@@ -7788,7 +7788,7 @@ mod tests {
             assert_eq!(
                 ctx.data(|data| data.get_temp::<bool>(crate::ui::info::docked_id())),
                 Some(true),
-                "{page}: the panel is drawn beside the chat"
+                "{page}: the panel is drawn over the chat"
             );
         }
         // The group has media of its own to show.

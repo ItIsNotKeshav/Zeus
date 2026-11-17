@@ -1,6 +1,6 @@
 //! The navigation rail, as WhatsApp's desktop clients have it, standing
 //! beside the conversation while the chat list is hidden (or folded away
-//! for the info card or a split): Chats and Calls at the top, the button that
+//! for a split): Chats and Calls at the top, the button that
 //! brings the list back, the chats' avatars, so every chat is still one
 //! click away, then Starred, Archived and Locked (while there are such
 //! chats), Settings and our own avatar (the account switcher) at the

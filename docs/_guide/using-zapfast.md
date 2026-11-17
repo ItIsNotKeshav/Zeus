@@ -721,11 +721,10 @@ The search icon in a chat's header (`Ctrl+F`) opens a pane listing that
 chat's matches, newest first. Its calendar narrows them to one day.
 
 Click the chat header, or choose **Info** in its menu, to open the info card,
-which stands beside the chat as a rounded card of its own. The window grows
-to make room for it, so the chat keeps its width; when the window cannot grow
-(maximized, full screen, or tiled), the chat list folds into a rail of
-pictures first, and a window still too tight shows the card as a page over
-the chat. It shows the picture, the number or the members (ten, with **Show
+which lies over the right of the chat as a rounded card of its own. The chat
+underneath keeps its width, and the window does not grow. A narrow window
+shows it as a page over the chat. The card shows the picture, the number or
+the members (ten, with **Show
 all** and a search for a large group), and the chat's actions. When WhatsApp
 lets you edit a group's info, rename it with the pencil beside its name and
 click its photo to change it. Clicking a `chat.whatsapp.com` invite link shows
@@ -854,7 +853,7 @@ list, and under the list alone in a narrow window. The chat list's title is a
 menu: **Chats**, **Starred**, **Archived** (with its unread count) and **Locked
 chats** (while you have any). It names what the list shows, so there is no Back
 button. Next to it are **New chat** and the button (`Ctrl+B`) that hides the
-list. With the list hidden (or crowded out by an open info card), a thin rail
+list. With the list hidden (or crowded out by a second pane), a thin rail
 takes its place on the left: **Chats** and **Calls** at the top, the chats'
 avatars between, and **Starred**, **Archived**, **Locked**, **Settings** and
 your picture at the bottom. Unread chats show their badge, hovering names a

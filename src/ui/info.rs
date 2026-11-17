@@ -1,11 +1,11 @@
-//! The info panel beside the open chat: a contact's, group's or channel's
+//! The info panel over the open chat: a contact's, group's or channel's
 //! picture, name and actions, its members, and the pictures, videos,
-//! documents and links shared in it. It is the chat card's twin: a rounded
-//! card in its own column at the right, with the same gutter, corners,
-//! outline and header line as the chat, easing in and out with the theme's
-//! motion. The window grows by the column while it is open, so the chat keeps
-//! its width; a maximized window narrows the chat instead. In the narrow
-//! window mode it is a page of its own over the chat, with Back.
+//! documents and links shared in it. It is a rounded card anchored to the
+//! right of the conversation, with the same gutter, corners, outline and
+//! header line as the chat. It slides in from that edge and fades with the
+//! theme's motion, over the chat, and does not resize the window or narrow
+//! the conversation. In the narrow window mode it is a page of its own over
+//! the chat, with Back.
 
 use egui::{
     Align, Align2, Color32, CornerRadius, Frame, Layout, Margin, Rect, Sense, Stroke, Vec2,
@@ -33,9 +33,8 @@ const ROW_HEIGHT: f32 = 72.0;
 const MEMBER_HEIGHT: f32 = 56.0;
 /// An action tile under the name.
 const TILE_HEIGHT: f32 = 62.0;
-/// The card's width, and the column it takes with the gutter at its right.
+/// The card's width.
 const CARD_WIDTH: f32 = 400.0;
-pub(super) const CARD_COLUMN: f32 = CARD_WIDTH + super::chats::CARD_GAP;
 /// The members shown without a search field above them.
 const SEARCH_FROM: usize = 8;
 /// The members listed before "Show all".
@@ -90,27 +89,33 @@ pub fn release_thumbnails(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-/// Draws the panel as a card in its own column at the right of the chat
-/// when the window is wide, and returns the rect of the chat it covers as a
-/// page of its own, for [`show_overlay`], when the window is narrow. Called
-/// before the conversation is laid out, so the column comes off its width.
+/// Draws the panel as a card over the right of the chat when the window is
+/// wide, and returns the rect of the chat it covers as a page of its own,
+/// for [`show_overlay`], when the window is narrow. The card is an overlay:
+/// it does not take a column, so the conversation under it keeps its width.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
+    let region = ui.available_rect_before_wrap();
+    show_in(app, ui, region)
+}
+
+/// [`show`] at a `region` captured before the conversation is laid out, so
+/// the card can be drawn after that conversation and still sit on its right.
+pub(super) fn show_in(app: &mut App, ui: &mut egui::Ui, region: Rect) -> Option<Rect> {
     let ctx = ui.ctx().clone();
     let visible = app.info_visible();
-    // A narrow window, or one that has not grown and leaves no room for the
-    // card beside a readable chat, shows the panel as a page over the chat:
-    // the chat header's name and buttons never crowd each other.
-    let region = ui.available_rect_before_wrap();
-    let narrow = super::narrow(&ctx)
-        || region.width() + room_ahead(&ctx) - CARD_COLUMN < pane::INFO_CONVERSATION_MIN;
-    // The column opens with the card and closes after it, as quickly as a
-    // surface leaves, so a chat that gives way glides rather than jumps.
-    let seconds = if visible {
+    // A narrow window shows the panel as a page over the chat. A wider one
+    // keeps the card over the conversation, whether or not a column would
+    // have fitted beside it.
+    let narrow = super::narrow(&ctx);
+    // Rests at 0 while the card is away, so opening springs in from the
+    // right instead of appearing already there. `spring_to` starts at its
+    // target the first frame an id is seen.
+    let seconds = if visible && !narrow {
         theme::MOTION_PANEL
     } else {
         theme::MOTION_PANEL * theme::CLOSE
     };
-    let open = theme::animate(&ctx, column_id(), visible && !narrow, seconds);
+    let open = theme::animate(&ctx, slide_id(), visible && !narrow, seconds);
     if !visible {
         ctx.data_mut(|data| {
             data.remove::<bool>(docked_id());
@@ -123,35 +128,21 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
         for uri in std::mem::take(&mut app.info_textures) {
             crate::image_cache::forget(&ctx, &uri);
         }
-        if open > 0.0 && !narrow {
-            // The card is leaving over its column: the column stays until
-            // it has gone.
-            column(app, ui, open, |_, _| {});
-        } else {
-            // Then the window goes back to the width it had before.
-            widen_window(&ctx, false);
-        }
         return None;
     }
     if narrow {
+        // A page replaces the card, so the card does not linger under it.
+        super::closing::forget(&ctx, card_layer());
         return Some(region);
     }
-    // Widened from a page over the chat: the page does not linger.
+    // A card replaces the page, so the page does not linger.
     super::closing::forget(
         &ctx,
         egui::LayerId::new(egui::Order::Foreground, egui::Id::new(OVERLAY)),
     );
-    column(app, ui, open, side_card);
+    side_card(app, ui, region, open);
     ctx.data_mut(|data| data.insert_temp(docked_id(), true));
     None
-}
-
-/// Asks the window to grow for the card as it opens, before the side
-/// columns are laid out, so they can count on the room it is about to gain.
-pub(super) fn prepare(app: &App, ctx: &egui::Context) {
-    if app.info_visible() && !super::narrow(ctx) {
-        widen_window(ctx, true);
-    }
 }
 
 /// The panel as a page over the whole conversation in a narrow window.
@@ -165,25 +156,21 @@ pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
 
 const OVERLAY: &str = "chat-info-overlay";
 
-/// Whether the panel was a card beside the chat (`true`) or a page over it
+/// Whether the panel was a card over the chat (`true`) or a page over it
 /// (`false`) this frame, for interaction tests.
 pub fn docked_id() -> egui::Id {
     egui::Id::new("chat-info-docked")
 }
 
-/// How far open the card's column is.
-fn column_id() -> egui::Id {
-    egui::Id::new("chat-info-column")
+/// How far the card has slid in from the right, 0 off to the side and 1 at rest.
+fn slide_id() -> egui::Id {
+    egui::Id::new("chat-info-slide")
 }
 
-/// The width the window grew by for the card, while it has.
-fn widened_id() -> egui::Id {
-    egui::Id::new("chat-info-widened")
-}
-
-/// The layer the card draws on, so it can leave the way it came.
+/// The layer the card draws on, above the conversation it covers, so it can
+/// leave the way it came.
 fn card_layer() -> egui::LayerId {
-    egui::LayerId::new(egui::Order::Middle, egui::Id::new("chat-info-card"))
+    egui::LayerId::new(egui::Order::Foreground, egui::Id::new("chat-info-card"))
 }
 
 /// The chat whose whole member list is open.
@@ -196,70 +183,41 @@ fn member_filter_id() -> egui::Id {
     egui::Id::new("chat-info-member-filter")
 }
 
-/// Grows the window by the card's column while the card is open, and shrinks
-/// it back after, so the chat keeps its width (see [`super::room`]).
-fn widen_window(ctx: &egui::Context, open: bool) {
-    super::room::widen(ctx, widened_id(), CARD_COLUMN, open);
-}
-
-/// The width the window is still about to gain for the card, so the layout
-/// does not give way for the frames before it has grown.
-pub(super) fn room_ahead(ctx: &egui::Context) -> f32 {
-    super::room::room_ahead(ctx, widened_id())
-}
-
-fn grown(ctx: &egui::Context) -> bool {
-    super::room::grown(ctx, widened_id())
-}
-
-/// The card's column at the right, on the gutter's colour, `open` of the
-/// way open. A window that grew for it gives it its whole width at once;
-/// otherwise it eases open, and the chat narrows with it.
-fn column(
-    app: &mut App,
-    ui: &mut egui::Ui,
-    open: f32,
-    contents: impl FnOnce(&mut App, &mut egui::Ui),
-) {
-    let width = if grown(ui.ctx()) {
-        CARD_COLUMN
-    } else {
-        (CARD_COLUMN * open).round()
-    };
-    let id = egui::Id::new("chat-info-side");
-    // egui would remember the width of each frame of the ease.
-    ui.ctx()
-        .data_mut(|data| data.remove::<egui::PanelState>(id));
-    egui::Panel::right(id)
-        .resizable(false)
-        .exact_size(width)
-        .show_separator_line(false)
-        .frame(Frame::new().fill(app.palette.column()))
-        .show(ui, |ui| contents(app, ui));
-}
-
-/// The card itself: the chat card's corners, outline and gutter, at the
-/// column's right, so the chat card meets it as it slides open. It fades and
-/// grows in from its right edge, and leaves the same way.
-fn side_card(app: &mut App, ui: &mut egui::Ui) {
+/// The card over the right of `region`, `open` of the way in from that edge
+/// (0 off to the right, 1 at rest). The chat card's corners, outline and
+/// gutter. [`super::closing::surface`] fades it in from the right edge and
+/// plays that motion again on the way out. Clicks on the card stay on it.
+fn side_card(app: &mut App, ui: &mut egui::Ui, region: Rect, open: f32) {
     let ctx = ui.ctx().clone();
     let palette = app.palette;
     let gap = super::chats::CARD_GAP;
-    let column = ui.max_rect();
-    let card = Rect::from_min_max(
-        pos2(column.right() - gap - CARD_WIDTH, column.top() + gap),
-        pos2(column.right() - gap, column.bottom() - gap),
+    let right = (region.right() - gap).max(region.left());
+    let left = (right - CARD_WIDTH).max(region.left());
+    let home = Rect::from_min_max(
+        pos2(left, region.top() + gap),
+        pos2(right, region.bottom() - gap),
     );
-    let radius = super::chat_card_corners(super::card_at_window_right(ui.ctx(), card));
+    let card = home.translate(vec2((1.0 - open) * home.width(), 0.0));
+    let radius = super::chat_card_corners(super::card_at_window_right(&ctx, home));
     let layer = card_layer();
-    // An area of its own, so it is ordered and hit like any other surface.
+    // An area of its own, so it is ordered and hit like any other surface,
+    // above the conversation it covers.
     egui::Area::new(layer.id)
         .order(layer.order)
         .fixed_pos(card.min)
         .constrain(false)
         .show(&ctx, |ui| {
             ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
-                ui.set_clip_rect(card.intersect(column).intersect(ui.clip_rect()));
+                // The slide travels off the conversation's right edge. Clip
+                // to that travel so the card never paints over the list.
+                let travel = Rect::from_min_max(
+                    region.min,
+                    pos2(region.right().max(card.right()), region.bottom()),
+                );
+                ui.set_clip_rect(card.intersect(travel).intersect(ui.clip_rect()));
+                // Behind the card's own controls, so a click on the card does
+                // not fall through to the conversation.
+                let _ = ui.interact(card, layer.id.with("hit"), Sense::click());
                 ui.painter().rect(
                     card,
                     radius,
@@ -283,7 +241,7 @@ fn side_card(app: &mut App, ui: &mut egui::Ui) {
     super::closing::surface(
         &ctx,
         layer,
-        pos2(card.right(), card.center().y),
+        pos2(home.right(), home.center().y),
         theme::MOTION_PANEL,
     );
 }
