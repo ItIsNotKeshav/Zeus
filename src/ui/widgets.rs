@@ -1744,6 +1744,23 @@ pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
     highlight_card(ui, palette, rect.shrink2(vec2(ROW_CARD_X, 2.0)), color);
 }
 
+/// The faint hairline under a list row, from its text to its right edge,
+/// in the gap between highlight cards. `fade` is 1 at rest and 0 under a
+/// highlight, so a lit row stands without a line.
+pub fn row_divider(ui: &Ui, palette: &Palette, rect: Rect, left: f32, fade: f32) {
+    if fade <= 0.0 {
+        return;
+    }
+    let y = rect.bottom();
+    ui.painter().line_segment(
+        [pos2(left, y), pos2(rect.right() - ROW_SIDE, y)],
+        Stroke::new(
+            theme::OUTLINE_STROKE,
+            palette.text.gamma_multiply(0.07 * fade),
+        ),
+    );
+}
+
 /// The card `row_highlight` paints, over `card` itself: the rail's lit and
 /// hovered plates look as the selected and hovered chat rows do.
 pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {

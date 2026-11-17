@@ -2597,6 +2597,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
 
         let left = rect.left() + ROW_LEAD + 62.0;
         let right = rect.right() - widgets::ROW_SIDE;
+        let divider = if selected { 0.0 } else { 1.0 - hover };
+        widgets::row_divider(ui, &palette, rect, left, divider);
         let stamp = if chat.last_activity > 0 {
             crate::util::chat_stamp(app.locale, chat.last_activity)
         } else {

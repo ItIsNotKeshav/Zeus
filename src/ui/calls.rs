@@ -429,6 +429,12 @@ fn history_row(app: &mut App, ui: &mut egui::Ui, row: &[Message], actions: &mut 
     }
     let left = rect.left() + super::chats::ROW_LEAD + 62.0;
     let right = button_rect.left() - 6.0;
+    let divider = if selected || response.hovered() {
+        0.0
+    } else {
+        1.0
+    };
+    widgets::row_divider(ui, &palette, rect, left, divider);
     let stamp_galley =
         ui.painter()
             .layout_no_wrap(stamp, theme::regular(theme::TEXT_CAPTION), palette.dim);
@@ -623,6 +629,7 @@ fn person(app: &mut App, ui: &mut egui::Ui, id: &str, actions: &mut Vec<Action>)
         );
         widgets::paint_avatar(ui, &palette, avatar_rect, &name, id, picture.as_deref());
         let left = rect.left() + super::chats::ROW_LEAD + 62.0;
+        widgets::row_divider(ui, &palette, rect, left, 1.0 - hover);
         let width = (buttons.left() - 8.0 - left).max(0.0);
         let name_line = widgets::line(
             ui,
