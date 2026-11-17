@@ -254,7 +254,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 .with_min_y(outer.top() + chats::CARD_GAP)
                 .with_max_x(outer.right() - chats::CARD_GAP)
                 .with_max_y(outer.bottom() - chats::CARD_GAP);
-            let gutter = app.palette.rail();
+            let gutter = app.palette.column();
             // The gutter goes around the card, never under it: under a
             // translucent card it would show through.
             let painter = ui.painter();

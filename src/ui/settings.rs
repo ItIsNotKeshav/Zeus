@@ -405,7 +405,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
         .resizable(false)
         .exact_size(app.settings.sidebar_width)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
+        .frame(Frame::new().fill(palette.column()).inner_margin(Margin {
             left: 4,
             right: 8,
             top: super::chats::HEADER_DROP as i8,
@@ -1672,7 +1672,7 @@ fn segmented<T: Copy + PartialEq>(
     if let Some(position) = slide {
         let rect = Rect::from_min_size(outer.min + vec2(3.0 + segment.x * position, 3.0), segment);
         ui.painter()
-            .rect_filled(rect, rect.height() / 2.0, palette.accent);
+            .rect_filled(rect, rect.height() / 2.0, palette.accent_fill);
     }
     let mut clicked = None;
     for (index, (value, label)) in options.iter().enumerate() {
@@ -2194,7 +2194,7 @@ fn wallpaper_color_button(
                 rect.right_bottom() - vec2(14.0, 14.0),
                 Vec2::splat(22.0 * t),
             );
-            painter.circle_filled(badge.center(), badge.width() / 2.0, palette.accent);
+            painter.circle_filled(badge.center(), badge.width() / 2.0, palette.accent_fill);
             if t > 0.6 {
                 theme::paint_icon(ui, Icon::Check, badge, 14.0, palette.on_accent);
             }

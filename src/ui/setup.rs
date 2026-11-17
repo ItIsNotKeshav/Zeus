@@ -566,7 +566,7 @@ pub(super) fn sized_primary_button(
         ui.painter().rect_filled(
             shape,
             shape.height() / 2.0,
-            palette.accent.lerp_to_gamma(palette.accent_hover, hover),
+            palette.accent_fill.lerp_to_gamma(palette.accent_hover, hover),
         );
         let text = pos2(
             rect.center().x - content / 2.0,
@@ -2108,7 +2108,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         Align2::CENTER_CENTER,
         "Y",
         theme::semibold(11.0),
-        Color32::WHITE,
+        palette.avatar_glyph(188.0),
     );
 
     // The chat list, whose colour runs on behind the conversation card.
@@ -2180,7 +2180,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
             Align2::CENTER_CENTER,
             name.chars().next().unwrap_or_default(),
             theme::semibold(12.0),
-            Color32::WHITE,
+            palette.avatar_glyph(hue),
         );
         let left = avatar.x + 15.0 + 10.0;
         let time = painter.layout_no_wrap(time.to_owned(), theme::regular(10.5), palette.dim);
@@ -2219,7 +2219,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         );
         if unread > 0 {
             let at = pos2(row.right() - 12.0 - 8.0, row.center().y + 8.0);
-            painter.circle_filled(at, 8.5, palette.accent);
+            painter.circle_filled(at, 8.5, palette.accent_fill);
             painter.text(
                 at,
                 Align2::CENTER_CENTER,
@@ -2267,7 +2267,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         Align2::CENTER_CENTER,
         "A",
         theme::semibold(12.0),
-        Color32::WHITE,
+        palette.avatar_glyph(212.0),
     );
     painter.text(
         pos2(avatar.x + 24.0, header.center().y - 8.0),
@@ -2421,7 +2421,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         palette.dim,
     );
     let send = pos2(chat.right() - 12.0 - 17.0, field.center().y);
-    painter.circle_filled(send, 17.0, palette.accent);
+    painter.circle_filled(send, 17.0, palette.accent_fill);
     theme::paint_icon(
         ui,
         Icon::Send,

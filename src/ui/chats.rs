@@ -34,7 +34,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .default_size(app.settings.sidebar_width)
         .size_range(260.0..=520.0)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.rail()).inner_margin(LIST_MARGIN));
+        .frame(Frame::new().fill(palette.column()).inner_margin(LIST_MARGIN));
     let response = panel.show(ui, |ui| column(app, ui));
     // The tab bar floats at the foot of the whole column, as it does beside
     // Settings' categories, so it stays put going from one to the other.
@@ -61,7 +61,7 @@ pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
     search_keyboard(app, ui);
     let palette = app.palette;
     let response = egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.rail()).inner_margin(LIST_MARGIN))
+        .frame(Frame::new().fill(palette.column()).inner_margin(LIST_MARGIN))
         .show(ui, |ui| column(app, ui));
     super::tabbar::show(app, ui, response.response.rect);
 }
@@ -133,7 +133,7 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
         ui.painter().set(
             veil,
             conversation::header_veil(
-                app.palette.vibrant_header(app.palette.rail()),
+                app.palette.vibrant_header(app.palette.column()),
                 frosted,
                 ease,
                 0.0,
@@ -934,7 +934,7 @@ fn update_button(app: &mut App, ui: &mut egui::Ui) {
             response.hovered() || response.has_focus(),
             theme::MOTION_QUICK,
         );
-        let fill = palette.accent.lerp_to_gamma(palette.accent_hover, lit);
+        let fill = palette.accent_fill.lerp_to_gamma(palette.accent_hover, lit);
         let scale = if response.is_pointer_button_down_on() {
             0.92
         } else {
@@ -1119,7 +1119,7 @@ fn filter_chips(app: &mut App, ui: &mut egui::Ui) {
         // A translucent sidebar would show the fade as a band; the chips
         // are only cut there.
         if !palette.shows_desktop() {
-            widgets::fade_right(ui, chip_band(&output), CHIP_FADE, palette.rail());
+            widgets::fade_right(ui, chip_band(&output), CHIP_FADE, palette.column());
         }
     }
     labels::chip_row(app, ui, &palette);
@@ -2391,7 +2391,7 @@ pub(super) fn action_row(app: &App, ui: &mut egui::Ui, icon: Icon, label: &str) 
             Vec2::splat(48.0),
         );
         ui.painter()
-            .circle_filled(circle.center(), circle.width() / 2.0, palette.accent);
+            .circle_filled(circle.center(), circle.width() / 2.0, palette.accent_fill);
         theme::paint_icon(ui, icon, circle, 22.0, palette.on_accent);
         let left = rect.left() + widgets::ROW_SIDE + 62.0;
         let line = widgets::line(

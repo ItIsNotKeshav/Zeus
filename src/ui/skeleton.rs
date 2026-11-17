@@ -141,7 +141,7 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
         (app.settings.sidebar_width + rect.left()).min(rect.right())
     };
     let list = Rect::from_min_max(rect.min, pos2(list_right, rect.bottom()));
-    painter.rect_filled(list, 0, look.fill(palette.rail()));
+    painter.rect_filled(list, 0, look.fill(palette.column()));
     let left = list.left() + LIST_INSET;
     let right = list.right() - LIST_INSET;
     let top = rect.top() + chats::HEADER_DROP;

@@ -629,7 +629,7 @@ fn badge(
     let size = size * eased.sqrt() * (1.0 + pop(ui.ctx(), armed));
     let painter = ui.painter();
     let (fill, ink) = if ready {
-        (palette.accent, palette.on_accent)
+        (palette.accent_fill, palette.on_accent)
     } else {
         (palette.surface_active, palette.accent)
     };

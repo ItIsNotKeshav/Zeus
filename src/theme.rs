@@ -57,7 +57,7 @@ pub fn theme_status(status: fastframe_theme::Status) -> &'static str {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
 pub struct Palette {
     pub dark: bool,
     pub window: Color32,
@@ -70,6 +70,10 @@ pub struct Palette {
     pub secondary: Color32,
     pub dim: Color32,
     pub accent: Color32,
+    /// Filled controls: buttons, switches, badges, the selected segment.
+    /// WhatsApp light uses its own green here. Every other palette keeps
+    /// `accent`. Older palette JSON omits it and then takes `accent`.
+    pub accent_fill: Color32,
     pub accent_hover: Color32,
     pub on_accent: Color32,
     pub danger: Color32,
@@ -90,6 +94,12 @@ pub struct Palette {
     /// WhatsApp's: only the built-in Messages palettes choose another.
     #[serde(skip)]
     pub bubbles: BubbleStyle,
+    /// The built-in WhatsApp look: [`Palette::dark`] and [`Palette::light`],
+    /// including after [`Palette::with_accent`]. A palette file, a cached
+    /// copy, Zeus, Messages, and anything that starts from those two as a
+    /// base leave it false. Stored palettes cannot set it.
+    #[serde(skip)]
+    pub whatsapp: bool,
 }
 
 /// The shape of message bubbles.
@@ -106,34 +116,112 @@ pub enum BubbleStyle {
     Nothing,
 }
 
+/// A palette as stored. `accent_fill` arrived after the first palette files,
+/// so a copy without it takes `accent`. `bubbles` and `whatsapp` stay out of
+/// the file, as on [`Palette`].
+#[derive(serde::Deserialize)]
+struct StoredPalette {
+    dark: bool,
+    window: Color32,
+    panel: Color32,
+    surface: Color32,
+    surface_hover: Color32,
+    surface_active: Color32,
+    outline: Color32,
+    text: Color32,
+    secondary: Color32,
+    dim: Color32,
+    accent: Color32,
+    #[serde(default)]
+    accent_fill: Option<Color32>,
+    accent_hover: Color32,
+    on_accent: Color32,
+    danger: Color32,
+    warning: Color32,
+    overlay: Color32,
+    shadow: Color32,
+    chat: Color32,
+    bubble_in: Color32,
+    bubble_out: Color32,
+    link: Color32,
+    read: Color32,
+    #[serde(skip)]
+    bubbles: BubbleStyle,
+    #[serde(skip)]
+    whatsapp: bool,
+}
+
+impl<'de> serde::Deserialize<'de> for Palette {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        StoredPalette::deserialize(deserializer).map(Self::from)
+    }
+}
+
+impl From<StoredPalette> for Palette {
+    fn from(stored: StoredPalette) -> Self {
+        Self {
+            dark: stored.dark,
+            window: stored.window,
+            panel: stored.panel,
+            surface: stored.surface,
+            surface_hover: stored.surface_hover,
+            surface_active: stored.surface_active,
+            outline: stored.outline,
+            text: stored.text,
+            secondary: stored.secondary,
+            dim: stored.dim,
+            accent: stored.accent,
+            accent_fill: stored.accent_fill.unwrap_or(stored.accent),
+            accent_hover: stored.accent_hover,
+            on_accent: stored.on_accent,
+            danger: stored.danger,
+            warning: stored.warning,
+            overlay: stored.overlay,
+            shadow: stored.shadow,
+            chat: stored.chat,
+            bubble_in: stored.bubble_in,
+            bubble_out: stored.bubble_out,
+            link: stored.link,
+            read: stored.read,
+            bubbles: stored.bubbles,
+            whatsapp: stored.whatsapp,
+        }
+    }
+}
+
 impl Palette {
+    /// WhatsApp's dark theme as the macOS app draws it: a black chat, a grey
+    /// list, grey incoming bubbles and deep green outgoing ones.
     pub fn dark() -> Self {
         Self {
             dark: true,
-            window: Color32::from_rgb(0x0b, 0x14, 0x1a),
-            panel: Color32::from_rgb(0x11, 0x1b, 0x21),
-            surface: Color32::from_rgb(0x20, 0x2c, 0x33),
-            surface_hover: Color32::from_rgb(0x2a, 0x39, 0x42),
-            surface_active: Color32::from_rgb(0x35, 0x44, 0x4d),
-            outline: Color32::from_rgb(0x22, 0x2d, 0x34),
-            text: Color32::from_rgb(0xe9, 0xed, 0xef),
-            // Secondary and dim text reach WCAG AA (4.5:1) on the window,
-            // panel, surface, and menu colours.
-            secondary: Color32::from_rgb(0x97, 0xa5, 0xae),
-            dim: Color32::from_rgb(0x8a, 0x98, 0x9f),
-            accent: Color32::from_rgb(0x00, 0xa8, 0x84),
-            accent_hover: Color32::from_rgb(0x06, 0xcf, 0x9c),
-            on_accent: Color32::from_rgb(0x0b, 0x14, 0x1a),
+            window: Color32::from_rgb(0x0a, 0x0a, 0x0a),
+            panel: Color32::from_rgb(0x1e, 0x1e, 0x1e),
+            surface: Color32::from_rgb(0x24, 0x26, 0x26),
+            surface_hover: Color32::from_rgb(0x2a, 0x2a, 0x2a),
+            surface_active: Color32::from_rgb(0x35, 0x35, 0x35),
+            outline: Color32::from_rgb(0x34, 0x34, 0x34),
+            text: Color32::from_rgb(0xfa, 0xfa, 0xfa),
+            // List preview, times and pin icons. They reach WCAG AA (4.5:1)
+            // on the window, panel, surface and menu colours.
+            secondary: Color32::from_rgb(0x95, 0x93, 0x93),
+            dim: Color32::from_rgb(0x95, 0x93, 0x93),
+            // The compose button. Near-black on it, as the plus is drawn.
+            accent: Color32::from_rgb(0x51, 0xa7, 0x68),
+            accent_fill: Color32::from_rgb(0x51, 0xa7, 0x68),
+            accent_hover: Color32::from_rgb(0x70, 0xb7, 0x83),
+            on_accent: Color32::from_rgb(0x0a, 0x0a, 0x0a),
             danger: Color32::from_rgb(0xf1, 0x5c, 0x6d),
             warning: Color32::from_rgb(0xff, 0xd2, 0x79),
-            overlay: Color32::from_rgb(0x23, 0x31, 0x38),
+            overlay: Color32::from_rgb(0x24, 0x26, 0x26),
             shadow: Color32::from_black_alpha(140),
-            chat: Color32::from_rgb(0x0b, 0x14, 0x1a),
-            bubble_in: Color32::from_rgb(0x20, 0x2c, 0x33),
-            bubble_out: Color32::from_rgb(0x00, 0x5c, 0x4b),
-            link: Color32::from_rgb(0x53, 0xbd, 0xeb),
-            read: Color32::from_rgb(0x53, 0xbd, 0xeb),
+            chat: Color32::from_rgb(0x0a, 0x0a, 0x0a),
+            bubble_in: Color32::from_rgb(0x24, 0x26, 0x26),
+            bubble_out: Color32::from_rgb(0x26, 0x4c, 0x39),
+            link: Color32::from_rgb(0x70, 0xbb, 0xe6),
+            read: Color32::from_rgb(0x68, 0xa4, 0xf6),
             bubbles: BubbleStyle::WhatsApp,
+            whatsapp: true,
         }
     }
 
@@ -144,30 +232,32 @@ impl Palette {
     pub fn messages() -> Self {
         Self {
             dark: true,
-            window: Color32::from_rgb(0x1e, 0x1e, 0x1e),
-            panel: Color32::from_rgb(0x26, 0x26, 0x27),
-            surface: Color32::from_rgb(0x32, 0x32, 0x34),
-            surface_hover: Color32::from_rgb(0x3a, 0x3a, 0x3c),
-            surface_active: Color32::from_rgb(0x46, 0x46, 0x49),
-            outline: Color32::from_rgb(0x38, 0x38, 0x3a),
+            window: Color32::from_rgb(0x21, 0x21, 0x22),
+            panel: Color32::from_rgb(0x2a, 0x2a, 0x2c),
+            surface: Color32::from_rgb(0x36, 0x36, 0x38),
+            surface_hover: Color32::from_rgb(0x3f, 0x3f, 0x41),
+            surface_active: Color32::from_rgb(0x4a, 0x4a, 0x4d),
+            outline: Color32::from_rgb(0x3b, 0x3b, 0x3d),
             text: Color32::from_rgb(0xf5, 0xf5, 0xf7),
-            secondary: Color32::from_rgb(0xae, 0xae, 0xb2),
-            dim: Color32::from_rgb(0xa4, 0xa4, 0xa9),
+            secondary: Color32::from_rgb(0xb4, 0xb4, 0xb8),
+            dim: Color32::from_rgb(0xa8, 0xa8, 0xad),
             // `NSColor.systemBlue` in Dark Aqua, lightening on hover to
             // Messages' own lighter blue, white on it as on the Mac.
             accent: Color32::from_rgb(0x00, 0x91, 0xff),
+            accent_fill: Color32::from_rgb(0x00, 0x91, 0xff),
             accent_hover: Color32::from_rgb(0x40, 0x9c, 0xff),
             on_accent: Color32::WHITE,
             danger: Color32::from_rgb(0xff, 0x45, 0x3a),
             warning: Color32::from_rgb(0xff, 0xd6, 0x0a),
-            overlay: Color32::from_rgb(0x2c, 0x2c, 0x2e),
+            overlay: Color32::from_rgb(0x2f, 0x2f, 0x31),
             shadow: Color32::from_black_alpha(150),
-            chat: Color32::from_rgb(0x1e, 0x1e, 0x1e),
+            chat: Color32::from_rgb(0x21, 0x21, 0x22),
             bubble_in: MESSAGES_GRAY_DARK,
             bubble_out: MESSAGES_BLUE_DARK[0],
             link: Color32::from_rgb(0x64, 0xd2, 0xff),
             read: Color32::from_rgb(0x64, 0xd2, 0xff),
             bubbles: BubbleStyle::Messages,
+            whatsapp: false,
         }
     }
 
@@ -177,17 +267,18 @@ impl Palette {
         Self {
             dark: false,
             window: Color32::WHITE,
-            panel: Color32::from_rgb(0xf2, 0xf2, 0xf4),
-            surface: Color32::from_rgb(0xe8, 0xe8, 0xea),
-            surface_hover: Color32::from_rgb(0xde, 0xde, 0xe0),
-            surface_active: Color32::from_rgb(0xd1, 0xd1, 0xd6),
-            outline: Color32::from_rgb(0xd8, 0xd8, 0xdc),
+            panel: Color32::from_rgb(0xf5, 0xf5, 0xf7),
+            surface: Color32::from_rgb(0xec, 0xec, 0xee),
+            surface_hover: Color32::from_rgb(0xe3, 0xe3, 0xe5),
+            surface_active: Color32::from_rgb(0xd6, 0xd6, 0xdb),
+            outline: Color32::from_rgb(0xdd, 0xdd, 0xe1),
             text: Color32::from_rgb(0x1d, 0x1d, 0x1f),
             secondary: Color32::from_rgb(0x5e, 0x5e, 0x63),
             dim: Color32::from_rgb(0x64, 0x64, 0x69),
             // `NSColor.systemBlue` in Aqua, deepening on hover to the
             // Mac's own deeper blue, `NSColor.linkColor`.
             accent: Color32::from_rgb(0x00, 0x88, 0xff),
+            accent_fill: Color32::from_rgb(0x00, 0x88, 0xff),
             accent_hover: Color32::from_rgb(0x00, 0x68, 0xda),
             on_accent: Color32::WHITE,
             danger: Color32::from_rgb(0xd7, 0x00, 0x15),
@@ -200,31 +291,35 @@ impl Palette {
             link: Color32::from_rgb(0x00, 0x66, 0xcc),
             read: Color32::from_rgb(0x00, 0x66, 0xcc),
             bubbles: BubbleStyle::Messages,
+            whatsapp: false,
         }
     }
 
     /// Nothing OS inspired near-black monochrome palette with restrained glass.
     pub fn nothing_dark() -> Self {
         let mut p = Self::dark();
-        p.window = Color32::from_rgb(0x08, 0x08, 0x08);
-        p.panel = Color32::from_rgb(0x13, 0x13, 0x13);
-        p.surface = Color32::from_rgb(0x22, 0x22, 0x22);
-        p.surface_hover = Color32::from_rgb(0x30, 0x30, 0x30);
-        p.surface_active = Color32::from_rgb(0x3b, 0x3b, 0x3b);
-        p.outline = Color32::from_rgb(0x35, 0x35, 0x35);
-        p.text = Color32::from_rgb(0xf5, 0xf5, 0xf5);
-        p.secondary = Color32::from_rgb(0xb8, 0xb8, 0xb8);
-        p.dim = Color32::from_rgb(0x9b, 0x9b, 0x9b);
+        p.window = Color32::from_rgb(0x0c, 0x0c, 0x0c);
+        p.panel = Color32::from_rgb(0x17, 0x17, 0x17);
+        p.surface = Color32::from_rgb(0x26, 0x26, 0x26);
+        p.surface_hover = Color32::from_rgb(0x33, 0x33, 0x33);
+        p.surface_active = Color32::from_rgb(0x3f, 0x3f, 0x3f);
+        p.outline = Color32::from_rgb(0x38, 0x38, 0x38);
+        p.text = Color32::from_rgb(0xfa, 0xfa, 0xfa);
+        p.secondary = Color32::from_rgb(0xc2, 0xc2, 0xc2);
+        p.dim = Color32::from_rgb(0xa6, 0xa6, 0xa6);
         p.accent = Color32::from_rgb(0xf4, 0xf4, 0xf4);
+        p.accent_fill = p.accent;
         p.accent_hover = Color32::WHITE;
         p.on_accent = Color32::from_rgb(0x12, 0x12, 0x12);
-        p.overlay = Color32::from_rgb(0x1a, 0x1a, 0x1a);
-        p.chat = Color32::from_rgb(0x0d, 0x0d, 0x0d);
-        p.bubble_in = Color32::from_rgb(0x25, 0x25, 0x25);
-        p.bubble_out = Color32::from_rgb(0x4a, 0x4a, 0x4a);
+        p.overlay = Color32::from_rgb(0x1e, 0x1e, 0x1e);
+        p.chat = Color32::from_rgb(0x11, 0x11, 0x11);
+        p.bubble_in = Color32::from_rgb(0x2a, 0x2a, 0x2a);
+        p.bubble_out = Color32::from_rgb(0x54, 0x54, 0x54);
         p.link = Color32::from_rgb(0xd6, 0xd6, 0xd6);
         p.read = Color32::from_rgb(0xd6, 0xd6, 0xd6);
         p.bubbles = BubbleStyle::Nothing;
+        // Copied from dark(). Drop the WhatsApp look.
+        p.whatsapp = false;
         p
     }
 
@@ -247,6 +342,7 @@ impl Palette {
             readable_on(self.panel, raw, Color32::BLACK, 3.0)
         };
         self.accent = accent;
+        self.accent_fill = accent;
         self.accent_hover = if self.dark {
             accent.lerp_to_gamma(Color32::WHITE, 0.2)
         } else {
@@ -281,58 +377,66 @@ impl Palette {
     /// Nothing OS inspired paper-white palette with translucent panels.
     pub fn nothing_light() -> Self {
         let mut p = Self::light();
-        p.window = Color32::from_rgb(0xf7, 0xf7, 0xf7);
+        p.window = Color32::from_rgb(0xfa, 0xfa, 0xfa);
         p.panel = Color32::from_rgb(0xff, 0xff, 0xff);
-        p.surface = Color32::from_rgb(0xef, 0xef, 0xef);
-        p.surface_hover = Color32::from_rgb(0xe4, 0xe4, 0xe4);
-        p.surface_active = Color32::from_rgb(0xd8, 0xd8, 0xd8);
-        p.outline = Color32::from_rgb(0xd9, 0xd9, 0xd9);
+        p.surface = Color32::from_rgb(0xf3, 0xf3, 0xf3);
+        p.surface_hover = Color32::from_rgb(0xe9, 0xe9, 0xe9);
+        p.surface_active = Color32::from_rgb(0xde, 0xde, 0xde);
+        p.outline = Color32::from_rgb(0xe4, 0xe4, 0xe4);
         p.text = Color32::from_rgb(0x14, 0x14, 0x14);
         p.secondary = Color32::from_rgb(0x5e, 0x5e, 0x5e);
         p.dim = Color32::from_rgb(0x6b, 0x6b, 0x6b);
         p.accent = Color32::from_rgb(0x1a, 0x1a, 0x1a);
+        p.accent_fill = p.accent;
         p.accent_hover = Color32::from_rgb(0x36, 0x36, 0x36);
         p.on_accent = Color32::WHITE;
         p.overlay = Color32::WHITE;
-        p.chat = Color32::from_rgb(0xf7, 0xf7, 0xf7);
+        p.chat = Color32::from_rgb(0xfa, 0xfa, 0xfa);
         p.bubble_in = Color32::WHITE;
-        p.bubble_out = Color32::from_rgb(0xe2, 0xe2, 0xe2);
+        p.bubble_out = Color32::from_rgb(0xe9, 0xe9, 0xe9);
         p.link = Color32::from_rgb(0x35, 0x35, 0x35);
         p.read = Color32::from_rgb(0x35, 0x35, 0x35);
         p.bubbles = BubbleStyle::Nothing;
+        // Copied from light(). Drop the WhatsApp look.
+        p.whatsapp = false;
         p
     }
 
+    /// WhatsApp's light theme as the macOS app draws it: a white list, a warm
+    /// chat, white incoming bubbles and green outgoing ones.
     pub fn light() -> Self {
         Self {
             dark: false,
-            window: Color32::from_rgb(0xf0, 0xf2, 0xf5),
-            panel: Color32::from_rgb(0xff, 0xff, 0xff),
-            surface: Color32::from_rgb(0xf0, 0xf2, 0xf5),
-            surface_hover: Color32::from_rgb(0xe6, 0xe9, 0xec),
-            surface_active: Color32::from_rgb(0xd9, 0xdd, 0xe1),
-            outline: Color32::from_rgb(0xe9, 0xed, 0xef),
-            text: Color32::from_rgb(0x11, 0x1b, 0x21),
-            // Secondary and dim text reach WCAG AA (4.5:1) on the window,
-            // panel, surface, chat, and menu colours. The accent is the green
-            // WhatsApp uses in its light theme, readable as text on white and
-            // under white button labels.
-            secondary: Color32::from_rgb(0x51, 0x5f, 0x67),
-            dim: Color32::from_rgb(0x63, 0x6b, 0x72),
-            accent: Color32::from_rgb(0x00, 0x80, 0x69),
-            accent_hover: Color32::from_rgb(0x00, 0x6e, 0x5a),
+            window: Color32::WHITE,
+            panel: Color32::WHITE,
+            surface: Color32::WHITE,
+            surface_hover: Color32::from_rgb(0xf0, 0xf0, 0xf0),
+            surface_active: Color32::from_rgb(0xe5, 0xe5, 0xe5),
+            outline: Color32::from_rgb(0xe6, 0xe6, 0xe6),
+            text: Color32::from_rgb(0x0a, 0x0a, 0x0a),
+            // List preview, times and pin icons. They reach WCAG AA (4.5:1)
+            // on the window, panel, surface, chat and menu colours.
+            secondary: Color32::from_rgb(0x6a, 0x6c, 0x6c),
+            dim: Color32::from_rgb(0x6a, 0x6c, 0x6c),
+            // Green text and icons on white. #51a768 is about 3:1 there, so
+            // this is the nearest darker green that reaches 4.5:1. Filled
+            // controls use `accent_fill`, WhatsApp's own green, with white
+            // on it as the macOS app draws (about 2.97:1).
+            accent: Color32::from_rgb(0x4a, 0x81, 0x64),
+            accent_fill: Color32::from_rgb(0x51, 0xa7, 0x68),
+            accent_hover: Color32::from_rgb(0x41, 0x72, 0x58),
             on_accent: Color32::WHITE,
             danger: Color32::from_rgb(0xea, 0x00, 0x38),
             warning: Color32::from_rgb(0xa0, 0x6b, 0x00),
-            overlay: Color32::from_rgb(0xff, 0xff, 0xff),
+            overlay: Color32::WHITE,
             shadow: Color32::from_black_alpha(LIGHT_SHADOW_ALPHA),
-            chat: Color32::from_rgb(0xef, 0xea, 0xe2),
-            bubble_in: Color32::from_rgb(0xff, 0xff, 0xff),
-            bubble_out: Color32::from_rgb(0xd9, 0xfd, 0xd3),
-            link: Color32::from_rgb(0x02, 0x7e, 0xb5),
-            // The lighter blue vanished on the green outgoing bubble.
-            read: Color32::from_rgb(0x02, 0x7e, 0xb5),
+            chat: Color32::from_rgb(0xf4, 0xf1, 0xec),
+            bubble_in: Color32::WHITE,
+            bubble_out: Color32::from_rgb(0xe0, 0xfc, 0xd7),
+            link: Color32::from_rgb(0x02, 0x63, 0xcb),
+            read: Color32::from_rgb(0x35, 0x79, 0xf4),
             bubbles: BubbleStyle::WhatsApp,
+            whatsapp: true,
         }
     }
 
@@ -392,16 +496,37 @@ impl Palette {
     /// The navigation rail's background: the chat list's, one shade darker,
     /// so the two read as separate columns without a line between them. A
     /// translucent sidebar darkens the same way, with a little more of it
-    /// opaque.
+    /// opaque. WhatsApp's light rail is the cool grey strip along the left
+    /// edge of the macOS app, which that shade of white does not land on.
     pub fn rail(&self) -> Color32 {
+        if self.whatsapp && !self.dark {
+            return Color32::from_rgb(0xe3, 0xe5, 0xe6);
+        }
         self.shaded_rail(self.sidebar())
+    }
+
+    /// The chat list, the settings column and the gutter around the
+    /// conversation card. WhatsApp's list is the panel, flat, as the macOS
+    /// app draws it. Every other look keeps the rail colour those columns
+    /// were filled with.
+    pub fn column(&self) -> Color32 {
+        if self.whatsapp {
+            self.sidebar()
+        } else {
+            self.rail()
+        }
     }
 
     /// The window's title bar where the system draws it (Windows): the rail
     /// as it is at Solid Glass, opaque whatever Glass says, so the bar is the
     /// same solid colour with the desktop showing through the window or not.
     pub fn titlebar(&self) -> Color32 {
-        let [r, g, b, _] = self.shaded_rail(self.panel).to_array();
+        let shaded = if self.whatsapp {
+            self.rail()
+        } else {
+            self.shaded_rail(self.panel)
+        };
+        let [r, g, b, _] = shaded.to_array();
         Color32::from_rgb(r, g, b)
     }
 
@@ -538,6 +663,7 @@ impl Palette {
                 // keep both visible under white text.
                 window: fill.lerp_to_gamma(Color32::BLACK, 0.55),
                 accent: Color32::WHITE,
+                accent_fill: Color32::WHITE,
                 accent_hover: Color32::WHITE,
                 on_accent: fill,
                 ..*self
@@ -554,6 +680,11 @@ impl Palette {
             // Icons need 3:1 (WCAG 1.4.11).
             read: readable_on(fill, self.read, self.text, 3.0),
             accent,
+            accent_fill: if own_messages {
+                accent
+            } else {
+                self.accent_fill
+            },
             accent_hover: if own_messages {
                 accent
             } else {
@@ -698,12 +829,39 @@ impl Palette {
         }
     }
 
-    /// Avatar background derived from the chat hue.
+    /// Avatar background derived from the chat hue. WhatsApp uses a pale
+    /// tint of that hue. Every other look keeps the saturated fill.
     pub fn avatar(&self, hue: f32) -> Color32 {
-        let (saturation, lightness) = if self.dark {
+        let (saturation, lightness) = if self.whatsapp {
+            // Sampled from the macOS app's placeholders. Light fills sit
+            // near #f9e3da, #e0fcd7 and #d6e7fc. Dark fills sit near
+            // #32231f, #1a342a and #112540.
+            if self.dark {
+                (0.25, 0.16)
+            } else {
+                (0.78, 0.91)
+            }
+        } else if self.dark {
             (0.38, 0.42)
         } else {
             (0.45, 0.62)
+        };
+        hsl(hue, saturation, lightness)
+    }
+
+    /// The person, group or initials on an avatar with no photo. WhatsApp
+    /// draws a deeper shade of the same hue in light and a brighter one in
+    /// dark. Every other look draws white.
+    pub fn avatar_glyph(&self, hue: f32) -> Color32 {
+        if !self.whatsapp {
+            return Color32::WHITE;
+        }
+        // Light icons near #b65a38 and #2961c4. Dark icons near #ee9c7c
+        // and #68a4f6.
+        let (saturation, lightness) = if self.dark {
+            (0.78, 0.69)
+        } else {
+            (0.40, 0.40)
         };
         hsl(hue, saturation, lightness)
     }
@@ -711,10 +869,14 @@ impl Palette {
 
 impl fastframe_theme::Palette for Palette {
     fn base(base: fastframe_theme::Base) -> Self {
-        match base {
+        let mut palette = match base {
             fastframe_theme::Base::Dark => Self::dark(),
             fastframe_theme::Base::Light => Self::light(),
-        }
+        };
+        // A file starts here and then replaces colours. The look stays
+        // with dark() and light() themselves.
+        palette.whatsapp = false;
+        palette
     }
 
     fn set(&mut self, name: &str, color: Color32) -> bool {
@@ -728,7 +890,10 @@ impl fastframe_theme::Palette for Palette {
             "text" => self.text = color,
             "secondary" => self.secondary = color,
             "dim" => self.dim = color,
-            "accent" => self.accent = color,
+            "accent" => {
+                self.accent = color;
+                self.accent_fill = color;
+            }
             "accent_hover" => self.accent_hover = color,
             "on_accent" => self.on_accent = color,
             "danger" => self.danger = color,
@@ -749,6 +914,9 @@ impl fastframe_theme::Palette for Palette {
     /// chat-only colours when importing one, while keeping explicit ZapFast
     /// overrides.
     fn derive(&mut self, given: &std::collections::BTreeSet<&str>) {
+        // Import starts from dark() or light(). The file keeps colours,
+        // not the built-in WhatsApp look.
+        self.whatsapp = false;
         if given.contains("window") && !given.contains("chat") {
             self.chat = self.window;
         }
@@ -770,6 +938,11 @@ impl fastframe_theme::Palette for Palette {
         }
         if given.contains("panel") && !given.contains("overlay") {
             self.overlay = self.panel;
+        }
+        // A file does not name this colour. Filled controls follow the
+        // accent, so a light base does not keep WhatsApp's split.
+        if !given.contains("accent_fill") {
+            self.accent_fill = self.accent;
         }
     }
 }
@@ -1950,7 +2123,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
         rect,
         rect.height() / 2.0,
         if primary {
-            palette.accent
+            palette.accent_fill
         } else {
             Color32::TRANSPARENT
         },
@@ -1967,7 +2140,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
             let fill = if hovered {
                 palette.accent_hover
             } else {
-                palette.accent
+                palette.accent_fill
             };
             ui.painter().rect_filled(rect, radius, fill);
         } else {
@@ -2079,7 +2252,11 @@ pub fn focus_ring_color(palette: &Palette, outline: Option<FocusOutline>) -> Col
         Some(FocusOutline {
             color: Some(color), ..
         }) => color,
-        Some(outline) if outline.fill == palette.accent => palette.on_accent,
+        Some(outline)
+            if outline.fill == palette.accent || outline.fill == palette.accent_fill =>
+        {
+            palette.on_accent
+        }
         _ => palette.accent,
     }
 }
@@ -2619,7 +2796,16 @@ mod tests {
             // instead. Their text colours above still reach AA.
             if p.bubbles != BubbleStyle::Messages {
                 pairs.push(("accent text on panel".into(), p.accent, p.panel));
-                pairs.push(("button label on accent".into(), p.on_accent, p.accent));
+                // WhatsApp light fills the button with #51a768 and draws
+                // white on it, about 2.97:1, as the macOS app does. Checked
+                // in `whatsapp_light_fills_buttons_as_whatsapp_does`.
+                if !(p.whatsapp && !p.dark) {
+                    pairs.push((
+                        "button label on accent".into(),
+                        p.on_accent,
+                        p.accent_fill,
+                    ));
+                }
             }
             let pairs: Vec<_> = pairs
                 .iter()
@@ -2650,6 +2836,171 @@ mod tests {
                 assert!(ratio >= 4.5, "dark {}, {what}: {ratio:.2}:1", palette.dark);
             }
         }
+    }
+
+    /// WhatsApp light fills buttons with #51a768 and draws white on it, as
+    /// the macOS app does. White on that green is about 2.97:1. Green text
+    /// and icons on white stay the darker accent, which reaches 4.5:1.
+    /// Dark uses #51a768 for both, with near-black on the fill.
+    #[test]
+    fn whatsapp_light_fills_buttons_as_whatsapp_does() {
+        let light = Palette::light();
+        assert_eq!(light.accent, Color32::from_rgb(0x4a, 0x81, 0x64));
+        assert_eq!(light.accent_fill, Color32::from_rgb(0x51, 0xa7, 0x68));
+        assert_eq!(light.on_accent, Color32::WHITE);
+        let dark = Palette::dark();
+        assert_eq!(dark.accent, Color32::from_rgb(0x51, 0xa7, 0x68));
+        assert_eq!(dark.accent_fill, dark.accent);
+        assert_eq!(dark.on_accent, Color32::from_rgb(0x0a, 0x0a, 0x0a));
+    }
+
+    /// Filled controls match the accent everywhere except WhatsApp light.
+    /// A palette saved before `accent_fill` existed still loads, and the
+    /// fill then is the accent.
+    #[test]
+    fn accent_fill_matches_the_accent_outside_whatsapp_light() {
+        for palette in [
+            Palette::dark(),
+            Palette::messages(),
+            Palette::messages_light(),
+            Palette::nothing_dark(),
+            Palette::nothing_light(),
+            Palette::nothing_tinted([0xff, 0x45, 0x3a]),
+            Palette::light().with_accent([0x00, 0x88, 0xff]),
+        ] {
+            assert_eq!(palette.accent_fill, palette.accent);
+        }
+        for theme in presets() {
+            assert_eq!(
+                theme.palette.accent_fill,
+                theme.palette.accent,
+                "{}",
+                theme.filename
+            );
+        }
+        let parsed: Palette = fastframe_theme::parse_palette(
+            r##"{"base":"light","colors":{"accent":"#203040"}}"##,
+        )
+        .unwrap();
+        assert_eq!(parsed.accent, Color32::from_rgb(0x20, 0x30, 0x40));
+        assert_eq!(parsed.accent_fill, parsed.accent);
+        let mut stored = serde_json::to_value(Palette::light()).unwrap();
+        assert!(stored.as_object_mut().unwrap().remove("accent_fill").is_some());
+        let loaded: Palette = serde_json::from_value(stored).unwrap();
+        assert_eq!(loaded.accent_fill, loaded.accent);
+        assert_eq!(loaded.bubbles, BubbleStyle::WhatsApp);
+    }
+
+    /// WhatsApp's placeholders are a pale fill and a shaded glyph of the
+    /// same hue. Zeus and Messages keep the saturated fill and a white glyph.
+    #[test]
+    fn whatsapp_placeholders_shade_the_glyph_and_other_looks_stay_white() {
+        let hue = 200.0;
+        assert_eq!(
+            Palette::nothing_light().avatar(hue),
+            Color32::from_rgb(114, 173, 202)
+        );
+        assert_eq!(
+            Palette::nothing_dark().avatar(hue),
+            Color32::from_rgb(66, 121, 148)
+        );
+        assert_eq!(Palette::messages().avatar_glyph(hue), Color32::WHITE);
+        assert_eq!(Palette::nothing_light().avatar_glyph(hue), Color32::WHITE);
+        let light = Palette::light();
+        assert_ne!(light.avatar(hue), Palette::nothing_light().avatar(hue));
+        assert_ne!(light.avatar_glyph(hue), Color32::WHITE);
+        assert!(contrast(light.avatar_glyph(hue), light.avatar(hue)) >= 3.0);
+        assert!(contrast(light.avatar_glyph(60.0), light.avatar(60.0)) >= 3.0);
+        let dark = Palette::dark();
+        assert!(contrast(dark.avatar_glyph(hue), dark.avatar(hue)) >= 3.0);
+    }
+
+    /// The built-in WhatsApp palettes carry the look. Zeus, Messages, every
+    /// other chat theme, every preset file and a parsed palette do not, so
+    /// a preset keeps the saturated avatar.
+    #[test]
+    fn only_the_built_in_whatsapp_look_carries_its_flag() {
+        assert!(Palette::dark().whatsapp);
+        assert!(Palette::light().whatsapp);
+        assert!(Palette::dark().with_accent([0xff, 0x45, 0x3a]).whatsapp);
+        assert!(Palette::light().with_accent([0x00, 0x88, 0xff]).whatsapp);
+        let accents = crate::chat_themes::Accent::ALL;
+        for dark in [false, true] {
+            for accent in accents {
+                let palette = crate::chat_themes::ChatTheme::WhatsApp.palette(dark, accent);
+                assert!(palette.whatsapp, "{dark} {accent:?}");
+            }
+            let own = crate::chat_themes::CustomAccent {
+                hue: 20.0,
+                strength: 0.7,
+            };
+            let wheeled = crate::chat_themes::ChatTheme::WhatsApp.palette_with(
+                dark,
+                crate::chat_themes::Accent::Theme,
+                Some(own),
+            );
+            assert!(wheeled.whatsapp);
+        }
+        for palette in [
+            Palette::nothing_dark(),
+            Palette::nothing_light(),
+            Palette::nothing_tinted([0xff, 0x45, 0x3a]),
+            Palette::messages(),
+            Palette::messages_light(),
+        ] {
+            assert!(!palette.whatsapp);
+        }
+        for theme in crate::chat_themes::ChatTheme::ALL {
+            if theme == crate::chat_themes::ChatTheme::WhatsApp {
+                continue;
+            }
+            for dark in [false, true] {
+                let palette = theme.palette(dark, crate::chat_themes::Accent::Theme);
+                assert!(!palette.whatsapp, "{}", theme.label());
+            }
+        }
+        let hue = 200.0;
+        for theme in presets() {
+            let palette = theme.palette;
+            assert!(!palette.whatsapp, "{}", theme.filename);
+            let (saturation, lightness) = if palette.dark {
+                (0.38, 0.42)
+            } else {
+                (0.45, 0.62)
+            };
+            assert_eq!(
+                palette.avatar(hue),
+                hsl(hue, saturation, lightness),
+                "{}",
+                theme.filename
+            );
+            assert_eq!(palette.avatar_glyph(hue), Color32::WHITE, "{}", theme.filename);
+            assert_eq!(
+                palette.rail(),
+                palette.shaded_rail(palette.sidebar()),
+                "{}",
+                theme.filename
+            );
+            assert_eq!(palette.column(), palette.rail(), "{}", theme.filename);
+            let head = palette.shaded_rail(palette.panel);
+            let [r, g, b, _] = head.to_array();
+            assert_eq!(
+                palette.titlebar(),
+                Color32::from_rgb(r, g, b),
+                "{}",
+                theme.filename
+            );
+        }
+        let parsed: Palette = fastframe_theme::parse_palette(
+            r##"{"base":"dark","colors":{"window":"#101010"}}"##,
+        )
+        .unwrap();
+        assert!(!parsed.whatsapp);
+        assert_eq!(parsed.bubbles, BubbleStyle::WhatsApp);
+        let loaded: Palette =
+            serde_json::from_value(serde_json::to_value(Palette::light()).unwrap()).unwrap();
+        assert!(!loaded.whatsapp);
+        assert_eq!(loaded.bubbles, BubbleStyle::WhatsApp);
     }
 
     /// The Messages palettes' accent is the Mac's system blue

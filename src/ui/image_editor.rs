@@ -359,7 +359,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
                         ui,
                         Icon::Check,
                         KEEP,
-                        palette.accent,
+                        palette.accent_fill,
                         palette.accent_hover,
                         palette.on_accent,
                         &keep,
@@ -1043,7 +1043,7 @@ fn shade_outside(
         return;
     }
     for (_, at) in handles(crop) {
-        ui.painter().circle_filled(at, HANDLE / 2.0, palette.accent);
+        ui.painter().circle_filled(at, HANDLE / 2.0, palette.accent_fill);
         ui.painter()
             .circle_stroke(at, HANDLE / 2.0, Stroke::new(1.5, palette.on_accent));
     }

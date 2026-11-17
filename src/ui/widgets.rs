@@ -387,15 +387,17 @@ pub fn paint_avatar(
         }
     }
     if !painted {
-        let fill = palette.avatar(crate::util::hue(id));
+        let hue = crate::util::hue(id);
+        let fill = palette.avatar(hue);
+        let glyph = palette.avatar_glyph(hue);
         ui.painter().circle_filled(rect.center(), size / 2.0, fill);
         let initials = crate::util::initials(name);
         if crate::model::ChatKind::from_id(id) == crate::model::ChatKind::Group {
-            theme::paint_icon(ui, Icon::Users, rect, size * 0.5, Color32::WHITE);
+            theme::paint_icon(ui, Icon::Users, rect, size * 0.5, glyph);
         } else if initials.is_empty() {
             // A name with no letters, as an unsaved contact's number: a
             // person, not its digits.
-            theme::paint_icon(ui, Icon::User, rect, size * 0.5, Color32::WHITE);
+            theme::paint_icon(ui, Icon::User, rect, size * 0.5, glyph);
         } else {
             // In whole points: each size of a font fills the glyph atlas
             // anew, and an avatar that grows or shrinks would make one each
@@ -405,7 +407,7 @@ pub fn paint_avatar(
                 egui::Align2::CENTER_CENTER,
                 initials,
                 theme::semibold((size * 0.38).round()),
-                Color32::WHITE,
+                glyph,
             );
         }
     }
@@ -467,7 +469,7 @@ pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool
         pos2(at.x + 10.0 - width, at.y - 10.0),
         pos2(at.x + 10.0, at.y + 10.0),
     );
-    let fill = if muted { palette.dim } else { palette.accent };
+    let fill = if muted { palette.dim } else { palette.accent_fill };
     ui.painter().rect_filled(rect, 10.0, fill);
     ui.painter().galley(
         rect.center() - galley.size() / 2.0,
@@ -565,7 +567,7 @@ pub fn badge_animated(
         pos2(at.x + 10.0 - width, at.y - 10.0),
         pos2(at.x + 10.0, at.y + 10.0),
     );
-    let fill = if muted { palette.dim } else { palette.accent };
+    let fill = if muted { palette.dim } else { palette.accent_fill };
     let mut shapes = vec![egui::Shape::rect_filled(rect, 10.0, fill)];
     let slide = ((now - state.changed) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0);
     let slide = theme::ease_out(slide);
@@ -727,7 +729,7 @@ pub fn mention_badge(ui: &Ui, palette: &Palette, at: egui::Pos2) -> f32 {
     );
     let rect = Rect::from_center_size(at, vec2(20.0, 20.0));
     ui.painter()
-        .circle_filled(rect.center(), 10.0, palette.accent);
+        .circle_filled(rect.center(), 10.0, palette.accent_fill);
     ui.painter().galley(
         rect.center() - galley.size() / 2.0,
         galley,
@@ -738,7 +740,7 @@ pub fn mention_badge(ui: &Ui, palette: &Palette, at: egui::Pos2) -> f32 {
 
 /// Empty unread reminder: the same round as a count badge, with no digit.
 pub fn unread_dot(ui: &Ui, palette: &Palette, at: egui::Pos2, muted: bool) -> f32 {
-    let fill = if muted { palette.dim } else { palette.accent };
+    let fill = if muted { palette.dim } else { palette.accent_fill };
     ui.painter().circle_filled(at, 5.0, fill);
     10.0
 }
@@ -1267,14 +1269,26 @@ pub fn search_field(
     let height = 34.0;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let has_focus = ui.memory(|memory| memory.has_focus(id));
-    // A tint of the text colour stands out from whatever the sidebar is:
-    // a vibrant window's material or the rail's shade under the list.
-    let fill = if has_focus {
+    // WhatsApp's field is the list colour with a hairline, as on macOS.
+    // Elsewhere a tint of the text colour stands out from whatever the
+    // sidebar is: a vibrant window's material or the rail's shade.
+    let whatsapp = palette.whatsapp;
+    let fill = if whatsapp {
+        palette.column()
+    } else if has_focus {
         palette.tint(theme::TINT_FIELD + theme::TINT_HOVER)
     } else {
         palette.tint(theme::TINT_FIELD)
     };
     ui.painter().rect_filled(rect, height / 2.0, fill);
+    if whatsapp {
+        ui.painter().rect_stroke(
+            rect,
+            height / 2.0,
+            Stroke::new(1.0, palette.outline),
+            egui::StrokeKind::Inside,
+        );
+    }
     let icon_rect =
         Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
     Icon::Search
@@ -1394,7 +1408,7 @@ pub fn switch(ui: &mut Ui, palette: &Palette, on: &mut bool) -> egui::Response {
     if ui.is_rect_visible(rect) {
         let t = theme::animate(ui.ctx(), response.id, *on, theme::MOTION_QUICK);
         let fill = egui::lerp(
-            egui::Rgba::from(palette.surface_active)..=egui::Rgba::from(palette.accent),
+            egui::Rgba::from(palette.surface_active)..=egui::Rgba::from(palette.accent_fill),
             t,
         );
         let radius = rect.height() / 2.0;
@@ -1533,12 +1547,12 @@ pub fn slider_thumb(ui: &Ui, palette: &Palette, center: egui::Pos2, active: f32)
     );
 }
 
-/// The knob of a switch that is on: white on the accent track, unless the
-/// accent is so light that white would vanish into it (Nothing Dark's near
+/// The knob of a switch that is on: white on the accent fill, unless the
+/// fill is so light that white would vanish into it (Nothing Dark's near
 /// white), where it takes the colour drawn on the accent instead, and the
 /// accent check on it shows again.
 fn switch_knob(palette: &Palette) -> Color32 {
-    if theme::contrast(Color32::WHITE, palette.accent) >= SWITCH_KNOB_CONTRAST {
+    if theme::contrast(Color32::WHITE, palette.accent_fill) >= SWITCH_KNOB_CONTRAST {
         Color32::WHITE
     } else {
         palette.on_accent
@@ -1683,6 +1697,12 @@ pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
 /// hovered plates look as the selected and hovered chat rows do.
 pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
     let radius = CornerRadius::same(theme::RADIUS);
+    // WhatsApp's rows are flat fills: the selected chat is one grey, the
+    // one under the pointer a lighter step, in both themes.
+    if palette.whatsapp {
+        ui.painter().rect_filled(card, radius, color);
+        return;
+    }
     // Over a vibrant window's material, a flat tint: the selected row
     // stronger than the one under the pointer.
     if palette.vibrant() {
@@ -1743,7 +1763,7 @@ pub fn round_check(
         let radius = rect.width() / 2.0 - 1.0;
         if checked {
             ui.painter()
-                .circle_filled(rect.center(), radius, palette.accent);
+                .circle_filled(rect.center(), radius, palette.accent_fill);
             theme::paint_icon(ui, Icon::Check, rect, rect.width() * 0.7, Color32::WHITE);
         } else {
             let color = if enabled && response.hovered() {
@@ -2552,10 +2572,20 @@ mod tests {
             Palette::nothing_dark(),
         ] {
             let knob = switch_knob(&palette);
+            let track = palette.accent_fill;
+            // WhatsApp light's track is #51a768. A white knob on it is
+            // about 2.97:1, which is how the macOS app draws the switch.
+            if palette.whatsapp && !palette.dark {
+                assert_eq!(knob, Color32::WHITE);
+                assert!(
+                    theme::contrast(knob, track) > 2.5,
+                    "{knob:?} on {track:?}"
+                );
+                continue;
+            }
             assert!(
-                theme::contrast(knob, palette.accent) >= 3.0,
-                "{knob:?} on {:?}",
-                palette.accent
+                theme::contrast(knob, track) >= 3.0,
+                "{knob:?} on {track:?}"
             );
         }
         assert_eq!(switch_knob(&Palette::dark()), Color32::WHITE);
@@ -2919,11 +2949,12 @@ mod tests {
     }
 
     /// A WhatsApp bubble casts no shadow in either theme, and a date chip
-    /// casts none in either theme. A hovered or selected light list row is flat black
-    /// at 5%, in either state; a dark row keeps the lift.
+    /// casts none in either theme. A WhatsApp list row is a flat fill of the
+    /// colour it is given, hovered or selected, light or dark.
     #[test]
     fn light_messages_and_rows_are_flat() {
-        // The solid look: at any other Glass these rows are glass tints.
+        // WhatsApp rows stay a flat fill at every Glass. Solid Glass is what
+        // the bubble checks below were written against.
         crate::backdrop::set_glass(1.0);
         let rect = Rect::from_min_size(pos2(100.5, 50.25), vec2(213.75, 41.5));
         let light = Palette::light();
@@ -2961,10 +2992,14 @@ mod tests {
         }
 
         let card = Rect::from_min_size(pos2(8.0, 8.0), vec2(240.0, 64.0));
-        for color in [light.surface_hover, light.surface_active] {
+        for (palette, color) in [
+            (&light, light.surface_hover),
+            (&light, light.surface_active),
+            (&dark, dark.surface_active),
+        ] {
             let ctx = egui::Context::default();
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                highlight_card(ui, &light, card, color);
+                highlight_card(ui, palette, card, color);
             });
             output.textures_delta.clear();
             let fills: Vec<_> = output
@@ -2975,30 +3010,15 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(fills, vec![(card, theme::LIGHT_ROW)]);
+            assert_eq!(fills, vec![(card, color)]);
         }
-
-        let ctx = egui::Context::default();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-            highlight_card(ui, &dark, card, dark.surface_active);
-        });
-        output.textures_delta.clear();
-        let mut lifted = dark.bubble_shadow();
-        lifted.color = lifted.color.gamma_multiply(0.6);
-        assert!(
-            output
-                .shapes
-                .iter()
-                .any(|clipped| uses_color(&clipped.shape, lifted.color)),
-            "a dark row keeps its shadow"
-        );
     }
 
     /// The elevated row is a card, inset from the list's sides, with the
     /// avatar and trailing text further in than the card.
     #[test]
     fn elevated_row_clears_the_list_edges() {
-        // The solid look: at any other Glass these rows are glass tints.
+        // WhatsApp's selected row is this flat card at every Glass.
         crate::backdrop::set_glass(1.0);
         let ctx = egui::Context::default();
         let dark = Palette::dark();

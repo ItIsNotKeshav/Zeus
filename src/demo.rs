@@ -2888,6 +2888,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 use crate::theme::{Catalog, CustomTheme};
                 let mut palette = crate::theme::Palette::dark();
                 palette.accent = egui::Color32::from_rgb(137, 180, 250);
+                palette.accent_fill = palette.accent;
                 palette.bubble_out = egui::Color32::from_rgb(41, 57, 84);
                 let theme = CustomTheme {
                     filename: "Moonlight 🌙.json".into(),

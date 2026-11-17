@@ -87,7 +87,7 @@ pub fn tab_button(
             // Ringed in the bar's colour so it reads on any picture.
             let at = avatar.right_top() + vec2(-2.0, 2.0);
             ui.painter().circle_filled(at, 6.0, palette.overlay);
-            ui.painter().circle_filled(at, 4.5, palette.accent);
+            ui.painter().circle_filled(at, 4.5, palette.accent_fill);
         }
     }
     let response = response
@@ -121,7 +121,7 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
         // Ringed in the panel colour so it reads on any picture.
         let at = response.rect.right_top() + vec2(-3.0, 3.0);
         ui.painter().circle_filled(at, 6.0, palette.panel);
-        ui.painter().circle_filled(at, 4.5, palette.accent);
+        ui.painter().circle_filled(at, 4.5, palette.accent_fill);
     }
     let response = response
         .on_hover_text(tooltip(app, &name))

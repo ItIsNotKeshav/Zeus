@@ -1523,17 +1523,18 @@ fn mention_picker(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: egui::Id
                     );
                     let everyone = id == crate::mentions::ALL_ID;
                     if everyone {
+                        let hue = crate::util::hue(id);
                         ui.painter().circle_filled(
                             avatar.center(),
                             avatar.width() / 2.0,
-                            palette.avatar(crate::util::hue(id)),
+                            palette.avatar(hue),
                         );
                         theme::paint_icon(
                             ui,
                             Icon::Users,
                             avatar,
                             avatar.width() * 0.5,
-                            Color32::WHITE,
+                            palette.avatar_glyph(hue),
                         );
                     } else {
                         let picture = app.avatar(id);
@@ -2260,7 +2261,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                     || !app.pending.is_empty()
                     || (unsent_voice.is_some() && app.editing.is_none());
                 let (fill, hover, icon) = if ready {
-                    (palette.accent, palette.accent_hover, palette.on_accent)
+                    (palette.accent_fill, palette.accent_hover, palette.on_accent)
                 } else {
                     // On the glass field the plain surface colour nearly
                     // vanishes, so the idle circle takes a text-tinted fill.
@@ -4612,7 +4613,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
 /// The disc behind a message's react or reply button: opaque, so the chat's
 /// wallpaper does not show through, and flat like a bubble.
 fn floating_circle(ui: &egui::Ui, palette: &Palette, rect: Rect, hovered: bool, opacity: f32) {
-    let fill = if hovered {
+    // The react disc on a dark WhatsApp chat is this grey, not the menu colour.
+    let fill = if palette.whatsapp && palette.dark && !hovered {
+        Color32::from_rgb(0x75, 0x77, 0x78)
+    } else if hovered {
         palette.surface_hover
     } else {
         palette.overlay
@@ -4957,6 +4961,8 @@ fn reaction_affordance(
             15.0,
             if reply.hovered() {
                 view.palette.text
+            } else if view.palette.whatsapp && view.palette.dark {
+                Color32::from_rgb(0xe3, 0xe4, 0xe4)
             } else {
                 view.palette.secondary
             }
@@ -6212,8 +6218,9 @@ struct QuoteColours {
 /// all white, as Messages draws what sits on that blue: a bold white name,
 /// its text at Apple's secondary 60% white
 /// (`CKUITheme.blue_balloonTranslationSecondaryTextColor`), the bar at 60%
-/// and the fill a 15% white wash over the bubble. Elsewhere the bar and name
-/// take `tint`, the quoted sender's colour, over the window's.
+/// and the fill a 15% white wash over the bubble. WhatsApp uses the flat
+/// fills and blues of the macOS app. Elsewhere the bar and name take `tint`,
+/// the quoted sender's colour, over the window's.
 fn quote_colours(palette: &Palette, own: bool, tint: impl FnOnce() -> Color32) -> QuoteColours {
     if own && palette.bubbles == theme::BubbleStyle::Messages {
         return QuoteColours {
@@ -6221,6 +6228,36 @@ fn quote_colours(palette: &Palette, own: bool, tint: impl FnOnce() -> Color32) -
             bar: Color32::WHITE.gamma_multiply(0.6),
             name: Color32::WHITE,
             text: Color32::WHITE.gamma_multiply(0.6),
+        };
+    }
+    // The macOS app's quote block: a flat fill on each bubble, and one blue
+    // for the bar and the name (a deeper blue on a light outgoing bubble).
+    if palette.whatsapp {
+        let (fill, blue) = if palette.dark {
+            (
+                if own {
+                    Color32::from_rgb(0x1e, 0x3d, 0x2e)
+                } else {
+                    Color32::from_rgb(0x1d, 0x1e, 0x1e)
+                },
+                Color32::from_rgb(0x70, 0xbb, 0xe6),
+            )
+        } else if own {
+            (
+                Color32::from_rgb(0xdc, 0xf3, 0xd3),
+                Color32::from_rgb(0x37, 0x7c, 0xb0),
+            )
+        } else {
+            (
+                Color32::from_rgb(0xf6, 0xf6, 0xf6),
+                Color32::from_rgb(0x02, 0x63, 0xcb),
+            )
+        };
+        return QuoteColours {
+            fill,
+            bar: blue,
+            name: blue,
+            text: palette.secondary,
         };
     }
     let tint = tint();
@@ -11544,7 +11581,7 @@ fn recording_strip(app: &mut App, ui: &mut egui::Ui) {
                 ui,
                 Icon::Send,
                 button,
-                palette.accent,
+                palette.accent_fill,
                 palette.accent_hover,
                 palette.on_accent,
                 "Send",
@@ -13929,8 +13966,8 @@ mod reaction_tests {
     /// Messages draws a photo alone in its message without a bubble, with
     /// a bubble's corners; anything else in the message keeps the bubble.
     /// A quote on your own Messages balloon is white on its blue, in both
-    /// appearances; on others' balloons and in WhatsApp's style it keeps the
-    /// quoted sender's colour.
+    /// appearances; on others' balloons it keeps the quoted sender's colour.
+    /// WhatsApp uses the macOS app's flat fills and blues.
     #[test]
     fn quotes_on_own_messages_balloons_are_white() {
         let tint = Color32::from_rgb(0x80, 0x40, 0xc0);
@@ -13945,9 +13982,34 @@ mod reaction_tests {
         }
         for palette in [Palette::dark(), Palette::light()] {
             let own = quote_colours(&palette.on_bubble(true), true, || tint);
-            assert_eq!((own.name, own.bar), (tint, tint));
-            assert_eq!(own.fill, palette.window.gamma_multiply(0.35));
+            let theirs = quote_colours(&palette.on_bubble(false), false, || tint);
+            let (own_fill, their_fill, blue, their_blue) = if palette.dark {
+                (
+                    Color32::from_rgb(0x1e, 0x3d, 0x2e),
+                    Color32::from_rgb(0x1d, 0x1e, 0x1e),
+                    Color32::from_rgb(0x70, 0xbb, 0xe6),
+                    Color32::from_rgb(0x70, 0xbb, 0xe6),
+                )
+            } else {
+                (
+                    Color32::from_rgb(0xdc, 0xf3, 0xd3),
+                    Color32::from_rgb(0xf6, 0xf6, 0xf6),
+                    Color32::from_rgb(0x37, 0x7c, 0xb0),
+                    Color32::from_rgb(0x02, 0x63, 0xcb),
+                )
+            };
+            assert_eq!((own.fill, own.name, own.bar), (own_fill, blue, blue));
+            assert_eq!(
+                (theirs.fill, theirs.name, theirs.bar),
+                (their_fill, their_blue, their_blue)
+            );
         }
+        // A palette file keeps WhatsApp's bubble shape and the old quote.
+        let mut file = Palette::dark();
+        file.whatsapp = false;
+        let quoted = quote_colours(&file, true, || tint);
+        assert_eq!((quoted.name, quoted.bar), (tint, tint));
+        assert_eq!(quoted.fill, file.window.gamma_multiply(0.35));
     }
 
     #[test]
@@ -14934,7 +14996,7 @@ fn view_once_button(app: &App, ui: &mut egui::Ui, shown: f32) -> egui::Response 
             if hovered {
                 palette.accent_hover
             } else {
-                palette.accent
+                palette.accent_fill
             }
         } else if hovered {
             palette.surface_hover

@@ -69,7 +69,7 @@ pub(super) fn preview(ui: &mut egui::Ui, app: &App, rect: Rect) {
         Align2::CENTER_CENTER,
         "A",
         theme::semibold(theme::TEXT_CONTROL),
-        Color32::WHITE,
+        palette.avatar_glyph(0.58),
     );
     painter.text(
         pos2(avatar.x + 22.0, header.center().y - 8.0),
@@ -170,7 +170,7 @@ pub(super) fn preview(ui: &mut egui::Ui, app: &App, rect: Rect) {
         palette.dim,
     );
     let send = pos2(rect.right() - PREVIEW_PAD - 14.0, field.center().y);
-    painter.circle_filled(send, 16.0, palette.accent);
+    painter.circle_filled(send, 16.0, palette.accent_fill);
     theme::paint_icon(
         ui,
         Icon::Send,

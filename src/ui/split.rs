@@ -223,7 +223,7 @@ const GRIP_REACH: f32 = 3.0;
 /// last, so what it leaves for the pointer and the selection wins.
 pub(super) fn show(app: &mut App, ui: &mut egui::Ui, panes: Panes, open: Chat) {
     let palette = app.palette;
-    let gutter = palette.rail();
+    let gutter = palette.column();
     let ctx = ui.ctx().clone();
     let area = ui.max_rect();
     // The gap is the gutter's colour; the strips around the card are painted

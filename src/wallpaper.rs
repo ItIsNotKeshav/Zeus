@@ -60,6 +60,9 @@ pub struct Look {
     pub density: f32,
     /// The accent they are drawn in, or nothing for the grey ink.
     pub accent: Option<Color32>,
+    /// WhatsApp's own canvases use its doodle ink. Every other look keeps
+    /// the shared ink.
+    pub whatsapp: bool,
     /// A decoded image of the reader's, which wins over colour and doodles.
     pub image: Option<(u64, Arc<Pixels>)>,
 }
@@ -240,12 +243,32 @@ fn ink(look: &Look) -> Color32 {
     } else {
         1.0
     };
+    if look.accent.is_none()
+        && let Some(stroke) = whatsapp_stroke(look)
+    {
+        let alpha = (255.0 * intensity).round().min(255.0) as u8;
+        return Color32::from_rgba_unmultiplied(stroke.r(), stroke.g(), stroke.b(), alpha);
+    }
     let alpha = (f32::from(grey.a()) * intensity).round().min(255.0) as u8;
     let [r, g, b] = match look.accent {
         Some(accent) => [accent.r(), accent.g(), accent.b()],
         None => [grey.r(), grey.g(), grey.b()],
     };
     Color32::from_rgba_unmultiplied(r, g, b, alpha)
+}
+
+/// WhatsApp's doodle ink on its own canvas, opaque at the default strength:
+/// light `#e8e5e0` on `#f4f1ec`, dark `#212121` on `#0a0a0a`. Any other
+/// wallpaper colour, and every other look, keeps [`doodle_ink`].
+fn whatsapp_stroke(look: &Look) -> Option<Color32> {
+    if !look.whatsapp {
+        return None;
+    }
+    match (look.color.r(), look.color.g(), look.color.b()) {
+        (0xf4, 0xf1, 0xec) => Some(Color32::from_rgb(0xe8, 0xe5, 0xe0)),
+        (0x0a, 0x0a, 0x0a) => Some(Color32::from_rgb(0x21, 0x21, 0x21)),
+        _ => None,
+    }
 }
 
 /// The doodles' tint over `background`: whichever of near-black or white
@@ -801,7 +824,32 @@ mod tests {
             density: 1.0,
             accent,
             image: None,
+            whatsapp: false,
         }
+    }
+
+    /// WhatsApp's own canvases stroke the doodles in its ink. The same
+    /// colour on another look, an accent doodle, and any other wallpaper
+    /// colour keep the shared ink.
+    #[test]
+    fn whatsapp_doodles_use_its_ink_and_other_looks_keep_the_shared_one() {
+        let mut light = look(1.0, None);
+        light.color = Color32::from_rgb(0xf4, 0xf1, 0xec);
+        light.whatsapp = true;
+        assert_eq!(ink(&light), Color32::from_rgb(0xe8, 0xe5, 0xe0));
+        let mut dark = look(1.0, None);
+        dark.color = Color32::from_rgb(0x0a, 0x0a, 0x0a);
+        dark.whatsapp = true;
+        assert_eq!(ink(&dark), Color32::from_rgb(0x21, 0x21, 0x21));
+        let mut shared = look(1.0, None);
+        shared.color = light.color;
+        light.whatsapp = false;
+        assert_eq!(ink(&light), ink(&shared));
+        light.whatsapp = true;
+        light.accent = Some(Color32::from_rgb(0x51, 0xa7, 0x68));
+        assert_ne!(ink(&light).to_srgba_unmultiplied()[..3], [0xe8, 0xe5, 0xe0]);
+        dark.color = Color32::from_rgb(22, 23, 23);
+        assert_eq!(ink(&dark), ink(&look(1.0, None)));
     }
 
     #[test]

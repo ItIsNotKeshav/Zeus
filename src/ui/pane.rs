@@ -570,7 +570,7 @@ fn month_grid(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         let radius = CELL / 2.0 - 1.0;
         if selected {
             ui.painter()
-                .circle_filled(cell.center(), radius, palette.accent);
+                .circle_filled(cell.center(), radius, palette.accent_fill);
         } else if response.hovered() && !future {
             ui.painter()
                 .circle_filled(cell.center(), radius, palette.surface_hover);

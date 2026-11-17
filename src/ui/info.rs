@@ -234,7 +234,7 @@ fn column(
         .resizable(false)
         .exact_size(width)
         .show_separator_line(false)
-        .frame(Frame::new().fill(app.palette.rail()))
+        .frame(Frame::new().fill(app.palette.column()))
         .show(ui, |ui| contents(app, ui));
 }
 

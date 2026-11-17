@@ -224,7 +224,7 @@ pub fn ballot(
                     }
                     let center = pos2(rect.left() + 10.0, rect.top() + 16.0);
                     if selected {
-                        ui.painter().circle_filled(center, 8.0, palette.accent);
+                        ui.painter().circle_filled(center, 8.0, palette.accent_fill);
                         theme::paint_icon(
                             ui,
                             Icon::Check,

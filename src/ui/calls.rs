@@ -699,7 +699,7 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
             ui,
             Icon::PhonePlus,
             72.0,
-            palette.accent,
+            palette.accent_fill,
             palette.accent_hover,
             palette.on_accent,
             label.as_ref(),

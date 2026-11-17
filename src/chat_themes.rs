@@ -594,10 +594,20 @@ mod tests {
                         "{name}: text on own bubble"
                     );
                     assert!(contrast(p.secondary, p.panel) >= 3.0, "{name}: secondary");
-                    assert!(
-                        contrast(p.on_accent, p.accent) >= 3.0,
-                        "{name}: label on accent"
-                    );
+                    if theme == ChatTheme::WhatsApp && !dark && accent == Accent::Theme {
+                        // White on WhatsApp's #51a768 is about 2.97:1. The
+                        // macOS app draws it that way. Green text on white
+                        // stays the darker accent, which reaches 4.5:1.
+                        assert_eq!(p.accent_fill, Color32::from_rgb(0x51, 0xa7, 0x68));
+                        assert_eq!(p.on_accent, Color32::WHITE);
+                        assert!(contrast(p.accent, p.panel) >= 4.5, "{name}: accent text");
+                    } else {
+                        assert_eq!(p.accent_fill, p.accent, "{name}");
+                        assert!(
+                            contrast(p.on_accent, p.accent_fill) >= 3.0,
+                            "{name}: label on accent"
+                        );
+                    }
                 }
             }
         }

@@ -325,7 +325,7 @@ fn update_button(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         let fill = if hovered {
             palette.accent_hover
         } else {
-            palette.accent
+            palette.accent_fill
         };
         let scale = if response.is_pointer_button_down_on() {
             0.92

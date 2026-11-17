@@ -106,7 +106,7 @@ pub fn strip(app: &mut App, ui: &mut egui::Ui) {
         .show_separator_line(false)
         .frame(
             Frame::new()
-                .fill(palette.accent)
+                .fill(palette.accent_fill)
                 .inner_margin(Margin::symmetric(14, 6)),
         )
         .show(ui, |ui| {
@@ -652,7 +652,7 @@ fn talk_button(
         )
     };
     let (fill, tint) = if talking {
-        (palette.accent, palette.on_accent)
+        (palette.accent_fill, palette.on_accent)
     } else {
         (palette.surface_active, palette.text)
     };
@@ -922,7 +922,7 @@ fn ringing(
         if answer(
             ui,
             Icon::Phone,
-            palette.accent,
+            palette.accent_fill,
             palette.on_accent,
             &accept,
             palette,

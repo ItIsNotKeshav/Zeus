@@ -2137,6 +2137,7 @@ impl App {
             density: self.settings.doodle_density,
             accent: (self.settings.doodle_color == crate::settings::DoodleColor::Accent)
                 .then_some(self.palette.accent),
+            whatsapp: self.palette.whatsapp,
             image: self
                 .account()
                 .settings

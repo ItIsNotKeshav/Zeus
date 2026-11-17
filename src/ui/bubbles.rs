@@ -528,7 +528,7 @@ fn bubble(
         painter.rect(
             badge,
             10.0,
-            palette.accent,
+            palette.accent_fill,
             Stroke::new(2.0, palette.window.to_opaque()),
             egui::StrokeKind::Outside,
         );
@@ -1384,7 +1384,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
         ("bubble-send", chat.id.as_str()),
         Icon::Send,
         send.width(),
-        idle.lerp_to_gamma(palette.accent, lit),
+        idle.lerp_to_gamma(palette.accent_fill, lit),
         idle_hover.lerp_to_gamma(palette.accent_hover, lit),
         idle_icon.lerp_to_gamma(palette.on_accent, lit),
         &crate::i18n::gettext(locale, "Send"),

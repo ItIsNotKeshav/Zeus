@@ -1039,7 +1039,7 @@ fn paint(
         painter.circle(
             badge,
             12.0,
-            palette.accent,
+            palette.accent_fill,
             Stroke::new(2.0, palette.window),
         );
         painter.text(
