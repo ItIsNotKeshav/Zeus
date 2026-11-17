@@ -469,7 +469,11 @@ pub fn badge(ui: &Ui, palette: &Palette, at: egui::Pos2, count: u32, muted: bool
         pos2(at.x + 10.0 - width, at.y - 10.0),
         pos2(at.x + 10.0, at.y + 10.0),
     );
-    let fill = if muted { palette.dim } else { palette.accent_fill };
+    let fill = if muted {
+        palette.dim
+    } else {
+        palette.accent_fill
+    };
     ui.painter().rect_filled(rect, 10.0, fill);
     ui.painter().galley(
         rect.center() - galley.size() / 2.0,
@@ -567,7 +571,11 @@ pub fn badge_animated(
         pos2(at.x + 10.0 - width, at.y - 10.0),
         pos2(at.x + 10.0, at.y + 10.0),
     );
-    let fill = if muted { palette.dim } else { palette.accent_fill };
+    let fill = if muted {
+        palette.dim
+    } else {
+        palette.accent_fill
+    };
     let mut shapes = vec![egui::Shape::rect_filled(rect, 10.0, fill)];
     let slide = ((now - state.changed) as f32 / theme::MOTION_QUICK).clamp(0.0, 1.0);
     let slide = theme::ease_out(slide);
@@ -740,7 +748,11 @@ pub fn mention_badge(ui: &Ui, palette: &Palette, at: egui::Pos2) -> f32 {
 
 /// Empty unread reminder: the same round as a count badge, with no digit.
 pub fn unread_dot(ui: &Ui, palette: &Palette, at: egui::Pos2, muted: bool) -> f32 {
-    let fill = if muted { palette.dim } else { palette.accent_fill };
+    let fill = if muted {
+        palette.dim
+    } else {
+        palette.accent_fill
+    };
     ui.painter().circle_filled(at, 5.0, fill);
     10.0
 }
@@ -1285,7 +1297,7 @@ pub fn search_field(
         ui.painter().rect_stroke(
             rect,
             height / 2.0,
-            Stroke::new(1.0, palette.outline),
+            Stroke::new(theme::OUTLINE_STROKE, palette.outline),
             egui::StrokeKind::Inside,
         );
     }
@@ -2488,7 +2500,7 @@ pub fn dotted_chip(
             ui.painter().rect_stroke(
                 rect,
                 radius,
-                Stroke::new(1.0, edge),
+                Stroke::new(theme::OUTLINE_STROKE, edge),
                 egui::StrokeKind::Inside,
             );
         }
@@ -2577,16 +2589,10 @@ mod tests {
             // about 2.97:1, which is how the macOS app draws the switch.
             if palette.whatsapp && !palette.dark {
                 assert_eq!(knob, Color32::WHITE);
-                assert!(
-                    theme::contrast(knob, track) > 2.5,
-                    "{knob:?} on {track:?}"
-                );
+                assert!(theme::contrast(knob, track) > 2.5, "{knob:?} on {track:?}");
                 continue;
             }
-            assert!(
-                theme::contrast(knob, track) >= 3.0,
-                "{knob:?} on {track:?}"
-            );
+            assert!(theme::contrast(knob, track) >= 3.0, "{knob:?} on {track:?}");
         }
         assert_eq!(switch_knob(&Palette::dark()), Color32::WHITE);
         assert_eq!(

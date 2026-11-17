@@ -566,7 +566,9 @@ pub(super) fn sized_primary_button(
         ui.painter().rect_filled(
             shape,
             shape.height() / 2.0,
-            palette.accent_fill.lerp_to_gamma(palette.accent_hover, hover),
+            palette
+                .accent_fill
+                .lerp_to_gamma(palette.accent_hover, hover),
         );
         let text = pos2(
             rect.center().x - content / 2.0,

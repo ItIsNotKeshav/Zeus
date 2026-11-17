@@ -1043,7 +1043,8 @@ fn shade_outside(
         return;
     }
     for (_, at) in handles(crop) {
-        ui.painter().circle_filled(at, HANDLE / 2.0, palette.accent_fill);
+        ui.painter()
+            .circle_filled(at, HANDLE / 2.0, palette.accent_fill);
         ui.painter()
             .circle_stroke(at, HANDLE / 2.0, Stroke::new(1.5, palette.on_accent));
     }

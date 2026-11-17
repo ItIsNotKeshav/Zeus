@@ -637,7 +637,7 @@ impl Palette {
 
     /// The faint edge around glass.
     pub fn glass_edge(&self) -> Stroke {
-        Stroke::new(1.0, self.text.gamma_multiply(0.08))
+        Stroke::new(OUTLINE_STROKE, self.text.gamma_multiply(0.08))
     }
 
     /// The palette for a message bubble's contents. Secondary and dim text,
@@ -1207,6 +1207,9 @@ pub const TYPE_CAPTION: f32 = 12.0;
 /// The smallest text, for badges and fine print.
 pub const TYPE_MICRO: f32 = 11.0;
 pub const FOCUS_STROKE_WIDTH: f32 = 1.0;
+/// Resting outline of fields, chips and glass edges, in points. Half a point
+/// is one physical pixel on a 2x display, the hairline macOS draws.
+pub const OUTLINE_STROKE: f32 = 0.5;
 pub const ROW_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
 
@@ -2148,7 +2151,7 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
             ui.painter().rect_stroke(
                 rect,
                 radius,
-                Stroke::new(1.0, stroke_color),
+                Stroke::new(OUTLINE_STROKE, stroke_color),
                 egui::StrokeKind::Inside,
             );
         }
@@ -2252,9 +2255,7 @@ pub fn focus_ring_color(palette: &Palette, outline: Option<FocusOutline>) -> Col
         Some(FocusOutline {
             color: Some(color), ..
         }) => color,
-        Some(outline)
-            if outline.fill == palette.accent || outline.fill == palette.accent_fill =>
-        {
+        Some(outline) if outline.fill == palette.accent || outline.fill == palette.accent_fill => {
             palette.on_accent
         }
         _ => palette.accent,
@@ -2800,11 +2801,7 @@ mod tests {
                 // white on it, about 2.97:1, as the macOS app does. Checked
                 // in `whatsapp_light_fills_buttons_as_whatsapp_does`.
                 if !(p.whatsapp && !p.dark) {
-                    pairs.push((
-                        "button label on accent".into(),
-                        p.on_accent,
-                        p.accent_fill,
-                    ));
+                    pairs.push(("button label on accent".into(), p.on_accent, p.accent_fill));
                 }
             }
             let pairs: Vec<_> = pairs
@@ -2872,20 +2869,24 @@ mod tests {
         }
         for theme in presets() {
             assert_eq!(
-                theme.palette.accent_fill,
-                theme.palette.accent,
+                theme.palette.accent_fill, theme.palette.accent,
                 "{}",
                 theme.filename
             );
         }
-        let parsed: Palette = fastframe_theme::parse_palette(
-            r##"{"base":"light","colors":{"accent":"#203040"}}"##,
-        )
-        .unwrap();
+        let parsed: Palette =
+            fastframe_theme::parse_palette(r##"{"base":"light","colors":{"accent":"#203040"}}"##)
+                .unwrap();
         assert_eq!(parsed.accent, Color32::from_rgb(0x20, 0x30, 0x40));
         assert_eq!(parsed.accent_fill, parsed.accent);
         let mut stored = serde_json::to_value(Palette::light()).unwrap();
-        assert!(stored.as_object_mut().unwrap().remove("accent_fill").is_some());
+        assert!(
+            stored
+                .as_object_mut()
+                .unwrap()
+                .remove("accent_fill")
+                .is_some()
+        );
         let loaded: Palette = serde_json::from_value(stored).unwrap();
         assert_eq!(loaded.accent_fill, loaded.accent);
         assert_eq!(loaded.bubbles, BubbleStyle::WhatsApp);
@@ -2996,10 +2997,9 @@ mod tests {
                 theme.filename
             );
         }
-        let parsed: Palette = fastframe_theme::parse_palette(
-            r##"{"base":"dark","colors":{"window":"#101010"}}"##,
-        )
-        .unwrap();
+        let parsed: Palette =
+            fastframe_theme::parse_palette(r##"{"base":"dark","colors":{"window":"#101010"}}"##)
+                .unwrap();
         assert!(!parsed.whatsapp);
         assert_eq!(parsed.bubbles, BubbleStyle::WhatsApp);
         let loaded: Palette =

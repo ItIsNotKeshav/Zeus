@@ -783,7 +783,7 @@ fn fade_zones(
     for (rect, label, glow) in drawn {
         let scale = 0.97 + 0.03 * appear;
         let card = Rect::from_center_size(rect.center(), rect.size() * scale).shrink(4.0);
-        let radius = f32::from(chats::CARD_RADIUS);
+        let radius = super::chat_card_radius();
         painter.rect(
             card,
             radius,

@@ -1051,7 +1051,8 @@ fn check_circle(
 ) {
     let radius = 11.0;
     if checked {
-        ui.painter().circle_filled(center, radius, palette.accent_fill);
+        ui.painter()
+            .circle_filled(center, radius, palette.accent_fill);
         let icon = egui::Rect::from_center_size(center, egui::Vec2::splat(14.0));
         Icon::Check
             .image(palette.on_accent, 14.0)

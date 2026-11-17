@@ -135,7 +135,7 @@ fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
     let radius = if super::narrow(ui.ctx()) {
         0.0
     } else {
-        f32::from(super::chats::CARD_RADIUS)
+        super::chat_card_radius()
     };
     wallpaper::paint(ui, &app.wallpaper(), radius);
     let card = ui.max_rect();
@@ -2479,7 +2479,7 @@ fn composer_pill(palette: &Palette) -> Frame {
     let (fill, edge) = if palette.vibrant() {
         (
             palette.menu_glass(),
-            Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
+            Stroke::new(theme::OUTLINE_STROKE, palette.text.gamma_multiply(0.16)),
         )
     } else {
         (palette.bubble_in, Stroke::NONE)

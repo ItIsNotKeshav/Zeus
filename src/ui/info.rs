@@ -250,7 +250,7 @@ fn side_card(app: &mut App, ui: &mut egui::Ui) {
         pos2(column.right() - gap - CARD_WIDTH, column.top() + gap),
         pos2(column.right() - gap, column.bottom() - gap),
     );
-    let radius = f32::from(super::chats::CARD_RADIUS);
+    let radius = super::chat_card_radius();
     let layer = card_layer();
     // An area of its own, so it is ordered and hit like any other surface.
     egui::Area::new(layer.id)

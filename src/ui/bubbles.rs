@@ -1023,7 +1023,10 @@ fn field_look(palette: &crate::theme::Palette) -> (egui::Color32, Stroke) {
     if palette.vibrant() {
         (
             palette.menu_glass(),
-            Stroke::new(1.0, palette.text.gamma_multiply(0.16)),
+            Stroke::new(
+                crate::theme::OUTLINE_STROKE,
+                palette.text.gamma_multiply(0.16),
+            ),
         )
     } else {
         (palette.bubble_in, Stroke::NONE)

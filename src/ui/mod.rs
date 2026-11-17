@@ -292,9 +292,30 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     }
 }
 
+/// macOS titled-window corner, in points. Sequoia (darwin 24) and earlier
+/// use 10. The card is inset by [`chats::CARD_GAP`], so a concentric corner
+/// is this minus that gap.
+#[cfg(target_os = "macos")]
+const MAC_WINDOW_CORNER: f32 = 10.0;
+
+/// Corner of the floating conversation card. On macOS it is concentric with
+/// the window: the system corner (10 points on Sequoia) less
+/// [`chats::CARD_GAP`], and never below zero. Elsewhere the card stays as
+/// round as the composer ([`chats::CARD_RADIUS`]).
+pub(crate) fn chat_card_radius() -> f32 {
+    #[cfg(target_os = "macos")]
+    {
+        (MAC_WINDOW_CORNER - chats::CARD_GAP).max(0.0)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        f32::from(chats::CARD_RADIUS)
+    }
+}
+
 /// The card behind the chat panel (or one pane of it), over the gutter.
 pub(crate) fn card_back(app: &App, ui: &egui::Ui, rect: egui::Rect, gutter: egui::Color32) {
-    let radius = f32::from(chats::CARD_RADIUS);
+    let radius = chat_card_radius();
     let frame = central_frame(app);
     let painter = ui.painter();
     painter.add(widgets::card_corners(rect, radius, gutter));
@@ -317,7 +338,7 @@ pub(crate) fn card_front(
     outline: Stroke,
 ) {
     let _ = app;
-    let radius = f32::from(chats::CARD_RADIUS);
+    let radius = chat_card_radius();
     if gutter.is_opaque() {
         ui.painter()
             .add(widgets::card_corners(rect, radius, gutter));

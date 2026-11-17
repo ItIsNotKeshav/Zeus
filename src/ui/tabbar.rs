@@ -147,13 +147,28 @@ fn plate_corners() -> CornerRadius {
     CornerRadius::same(PLATE_RADIUS as u8)
 }
 
-/// The soft shadow the pill casts on the list under it, with its outline
-/// what parts the two.
-fn shadow(palette: &Palette) -> egui::epaint::Shadow {
-    egui::epaint::Shadow {
-        offset: [0, 4],
-        blur: 16,
-        ..palette.float_shadow()
+/// The tight shadow the pill casts on the list under it. Three short layers:
+/// a contact line, then two small falls. Alphas are for a light list; a dark
+/// list needs a little more before they read.
+fn paint_shadow(painter: &egui::Painter, pill: Rect, corners: CornerRadius, palette: &Palette) {
+    const LAYERS: [(i8, u8, f32); 3] = [(1, 1, 18.0), (1, 2, 12.0), (2, 4, 8.0)];
+    let [r, g, b, _] = palette.shadow.to_srgba_unmultiplied();
+    let strength = if palette.dark { 1.4 } else { 1.0 };
+    for (y, blur, alpha) in LAYERS {
+        painter.add(
+            egui::epaint::Shadow {
+                offset: [0, y],
+                blur,
+                spread: 0,
+                color: egui::Color32::from_rgba_unmultiplied(
+                    r,
+                    g,
+                    b,
+                    (alpha * strength).round().min(255.0) as u8,
+                ),
+            }
+            .as_shape(pill, corners),
+        );
     }
 }
 
@@ -192,14 +207,17 @@ fn bar(app: &mut App, ui: &mut egui::Ui, pill: Rect, frosted: bool) {
     let palette = app.palette;
     let painter = ui.painter().clone();
     let corners = CornerRadius::same((HEIGHT / 2.0) as u8);
-    // Raised off the list: a shadow under it and a hairline round it, the
-    // line that parts the bar from the rows scrolling beneath.
-    painter.add(shadow(&palette).as_shape(pill, corners));
+    // Raised off the list: a tight shadow under it and a hairline round it,
+    // the line that parts the bar from the rows scrolling beneath.
+    paint_shadow(&painter, pill, corners, &palette);
     let (fill, edge) = if frosted {
         painter.add(super::glass::sheet_rounded(pill, HEIGHT / 2.0));
         (palette.frosted(palette.overlay), palette.glass_edge())
     } else {
-        (palette.overlay, Stroke::new(1.0, palette.outline))
+        (
+            palette.overlay,
+            Stroke::new(theme::OUTLINE_STROKE, palette.outline),
+        )
     };
     painter.rect_filled(pill, corners, fill);
     painter.rect_stroke(pill, corners, edge, egui::StrokeKind::Inside);

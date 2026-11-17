@@ -428,9 +428,7 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
     let before = wheel_point(rect, current_place(app));
     let on_knob = |pointer: Pos2| shown && pointer.distance(before) <= KNOB_REACH;
     let grabbed_id = response.id.with("knob");
-    if response.is_pointer_button_down_on()
-        && ui.input(|input| input.pointer.primary_pressed())
-    {
+    if response.is_pointer_button_down_on() && ui.input(|input| input.pointer.primary_pressed()) {
         let grabbed = response.interact_pointer_pos().is_some_and(on_knob);
         ui.ctx()
             .data_mut(|data| data.insert_temp(grabbed_id, grabbed));

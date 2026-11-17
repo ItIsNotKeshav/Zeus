@@ -145,16 +145,9 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
     let left = list.left() + LIST_INSET;
     let right = list.right() - LIST_INSET;
     let top = rect.top() + chats::HEADER_DROP;
-    // The title starts right of the macOS traffic lights, as the list's own
-    // header does now that no rail stands under them.
-    let lights = if theme::macos_chrome(painter.ctx()) {
-        (theme::traffic_light_inset(painter.ctx()) - LIST_INSET).max(0.0)
-    } else {
-        0.0
-    };
     look.bar(
         painter,
-        Rect::from_min_size(pos2(left + lights, top + 16.0), vec2(96.0, 20.0)),
+        Rect::from_min_size(pos2(left, top + 16.0), vec2(96.0, 20.0)),
     );
     look.bar(
         painter,
@@ -200,7 +193,7 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
     }
     painter.rect_filled(
         card,
-        CornerRadius::same(chats::CARD_RADIUS),
+        CornerRadius::same(super::chat_card_radius().round() as u8),
         look.fill(palette.panel),
     );
     let inner_left = card.left() + 20.0;
