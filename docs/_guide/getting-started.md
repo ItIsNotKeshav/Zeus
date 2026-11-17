@@ -68,9 +68,9 @@ Zeus links as a companion device, like WhatsApp Web. Start it and either:
 The link survives restarts. Your phone does not need to stay on the same
 network or be online to read messages already stored in Zeus.
 
-Several numbers can stay linked in one window. Click your own picture at the
-bottom of the rail beside the chat list to switch between them or to add
-another (**Settings >
+Several numbers can stay linked in one window. Click **Profile**, your own
+picture in the tab bar at the foot of the chat list, to switch between them or
+to add another (**Settings >
 Account > Add account** works too); a dot on it means another number has
 unread chats. `Ctrl+Shift+A` (Command+Shift+A on macOS) switches to the next
 number. Each number keeps its own keys, archive, media, and

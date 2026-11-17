@@ -136,14 +136,13 @@ by sender, time, and a short summary.
 **Development builds** can star messages. Right-click a message and choose
 **Star**; once WhatsApp confirms it, a small star shows beside the message's
 time. Stars made on your phone or another linked device show up here too, and
-the other way round. The star near the foot of the rail on the left of the chat list, above
-**Archived** and **Settings**, opens
+the other way round. The title at the top of the chat list is a menu: choose **Starred** in it to open
 **Starred**, which lists every starred message, newest star first, with its
 chat's name and when it was starred. Text shows as written; a photo, video,
 document, or voice message shows the same label the chat list uses. Clicking a
 row opens the chat at that message, and right-clicking it offers the chat's own
 menu, including **Unstar**. Messages from locked chats stay out of the list.
-Click **Chats** in the rail, or press Escape, to go back to the chats.
+Choose **Chats** in the title menu, or press Escape, to go back to the chats.
 
 ## Pinned messages
 
@@ -588,7 +587,7 @@ the ones it reports as they happen, the calls missed while Zeus was closed,
 and the call history it sends when the computer is linked. Right-click a call
 in a chat to call back from there.
 
-**Calls** in the rail on the left of the chat list (`Ctrl+Shift+2`, Command
+**Calls** in the tab bar at the foot of the chat list (`Ctrl+Shift+2`, Command
 on macOS) opens the **Calls** tab, laid out as in WhatsApp: the list shows
 every call of the number on screen, newest first, with calls in a row from the
 same person folded into one row with a count. Each row says which way the call
@@ -602,10 +601,10 @@ person's chat there instead, at the call, with the voice and video buttons in
 its header. With no chat open, the pane beside the list offers **Start call**.
 The **New call** button in the list's header (or **Start call**) opens a list
 of the people you call most often and all your contacts, searchable by name or
-number, each with a voice and a video button. Click **Chats** in the rail,
+number, each with a voice and a video button. Click **Chats** in the tab bar,
 press `Ctrl+Shift+1`, or press Escape to go back to the chats. Switching
 numbers keeps the Calls tab open on the other number's calls. In a narrow
-window the list takes the whole window beside the rail, and a picked call's
+window the list takes the whole window with the tab bar under it, and a picked call's
 chat opens over both, with a Back button. Group calls show up in the history
 under their group, named by who called; they are started on the phone.
 
@@ -687,8 +686,8 @@ disappear on your other devices.
 
 The chips under the search bar narrow the list to **Unread**, **Private**
 (one-to-one chats), **Favorites** (in your phone's order), or **Groups**.
-Followed channels have their own **Channels** chip. **Archived**, in the rail
-on the left above **Settings**, opens the archived chats in the list, and
+Followed channels have their own **Channels** chip. **Archived**, in the menu on the
+list's title, opens the archived chats in the list, and
 shows how many of them are unread. A chip with unread chats shows how many it
 has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything.
@@ -724,7 +723,7 @@ chat's matches, newest first. Its calendar narrows them to one day.
 Click the chat header, or choose **Info** in its menu, to open the info card,
 which stands beside the chat as a rounded card of its own. The window grows
 to make room for it, so the chat keeps its width; when the window cannot grow
-(maximized, full screen, or tiled), the chat list folds into the rail's
+(maximized, full screen, or tiled), the chat list folds into a rail of
 pictures first, and a window still too tight shows the card as a page over
 the chat. It shows the picture, the number or the members (ten, with **Show
 all** and a search for a large group), and the chat's actions. When WhatsApp
@@ -819,7 +818,7 @@ it guessed at.
 leaves the chat list, search, and the unread count, and never raises a
 notification. The lock syncs with your phone and other linked devices.
 
-Choose **Locked** in the rail on the left, above **Settings**, and type your
+Choose **Locked chats** in the menu on the list's title, and type your
 local code to open
 them; the first time, Zeus offers to set one up. The code is separate from
 your phone's and adds no encryption beyond the encrypted message archive.
@@ -847,17 +846,21 @@ wearing it, channels included. A label is one more chip: picking it lets go of
 the other chips, it does not narrow search or the archive. Click the active
 label chip again, or **All**, to see every chat.
 
-A thin rail runs down the left of the chat list: **Chats** and **Calls**
-(`Ctrl+Shift+1` and `Ctrl+Shift+2`, Command on macOS) at the top;
-**Starred**, **Archived** and **Locked** (while you have archived or locked
-chats), **Settings**, and your own picture (the account switcher) at the
-bottom. The one on screen is lit. The chat list's header keeps its title, **New
-chat**, and the button beside it (`Ctrl+B`), which hides the list: the chats'
-avatars then fill the rail between its top and bottom buttons. Unread chats
-show their badge, hovering names a chat, clicking opens it, and `Ctrl+B` or
-the button under **Calls** brings the full list back.
-In a short window, scroll the rail to reach its lower buttons. Tab and
-Shift+Tab bring the focused button into view, too.
+A floating tab bar at the foot of the chat list holds **Chats**, **Calls**
+(`Ctrl+Shift+1` and `Ctrl+Shift+2`, Command on macOS), **Profile** (your own
+picture, which opens the account switcher upward) and **Settings**. The one on
+screen is lit. The same bar sits under Settings' categories and the Calls
+list, and under the list alone in a narrow window. The chat list's title is a
+menu: **Chats**, **Starred**, **Archived** (with its unread count) and **Locked
+chats** (while you have any). It names what the list shows, so there is no Back
+button. Next to it are **New chat** and the button (`Ctrl+B`) that hides the
+list. With the list hidden (or crowded out by an open info card), a thin rail
+takes its place on the left: **Chats** and **Calls** at the top, the chats'
+avatars between, and **Starred**, **Archived**, **Locked**, **Settings** and
+your picture at the bottom. Unread chats show their badge, hovering names a
+chat, clicking opens it, and `Ctrl+B` or the button under **Calls** brings the
+full list back. In a short window, scroll the rail to reach its lower buttons.
+Tab and Shift+Tab bring the focused button into view, too.
 
 ## Notifications and the tray
 

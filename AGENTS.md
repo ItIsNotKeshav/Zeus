@@ -100,21 +100,32 @@ reading files blindly:
   (`app/conversations.rs`, settled when a chat is left, never on a timer).
   Events for a chat not in memory create no conversation; reopening one
   loads a page through `ensure_loaded` like a first open.
-  A navigation rail (`src/ui/rail.rs`) runs down the left of the chat list
-  on every platform, 52 points wide and a shade darker than the list:
-  Chats and Calls at the top, the one on screen lit (Calls and Starred
-  are left through Chats or Escape, never toggled); Starred, Archived and
-  Locked (while there are such chats; they open in the list column),
-  Settings and our own avatar at the bottom. While the list is hidden the
-  chats' avatars fill it between the two (`chats::compact_list`); beside the
-  list they would only repeat it. On macOS the traffic lights reach
-  past it over the header beside it, which leaves `rail::lights_overhang`
-  free; a narrow window hides the rail with the list. The Calls tab keeps
-  the open chat beside its history (`App::chat_view`), and a picked call row
-  opens its chat there. Our avatar opens the account switcher
-  (`src/ui/accounts.rs`): only the accounts (picture, name or number, unread
-  chats, a check on the one on screen) and Add account. A dot on the avatar
-  means another account has unread chats. Events from an account that is not on screen are
+  Navigation beside the full chat list is a floating tab bar
+  (`src/ui/tabbar.rs`) at the foot of the list column, `tabbar::HEIGHT` tall
+  with a `tabbar::MARGIN` around it: Chats, Calls, Profile (our avatar) and
+  Settings, the one on screen lit (Calls and Starred are left through Chats or
+  Escape, never toggled). The same bar closes the Settings category sidebar
+  and the Calls list column, and a narrow window shows the list alone at full
+  width with the bar at its foot. There is no rail beside the full list. The
+  list header's title is a menu (`chats::title_menu_id`): Chats, Starred,
+  Archived (with its unread count) and Locked chats (only while there are
+  such chats; they open in the list column). It names the view on screen, so
+  starred, archived and locked have no Back arrow. An available update is an
+  accent icon in the list header while the rail is hidden. Header search,
+  chips and buttons span the row highlight card's edges (`ROW_CARD_X`). The
+  navigation rail (`src/ui/rail.rs`, 52 points wide and a shade darker than
+  the list) stands only while the list is hidden, collapsed or crowded out:
+  Chats and Calls at the top, the chats' avatars between (`chats::compact_list`),
+  Starred, Archived and Locked, Settings and our avatar at the bottom, each
+  button at least 40 points with hairlines between the groups. On macOS the
+  traffic lights sit over the list header, whose title starts right of them
+  (`rail::lights_overhang` stays free beside a rail). Our avatar (the tab bar's
+  Profile, or the rail's) opens the account switcher
+  (`src/ui/accounts.rs`), a drawer that opens upward from the bar: only the
+  accounts (picture, name or number, unread chats, a check on the one on
+  screen) and Add account. A dot on the avatar means another account has
+  unread chats. The Calls tab keeps the open chat beside its history
+  (`App::chat_view`), and a picked call row opens its chat there. Events from an account that is not on screen are
   applied with `App::events_hidden` set: they update that account only, never
   the window's composer, dialogs, playback, or read state (a hidden account's
   remembered chat is not being read, so it sends no receipts). Process-wide

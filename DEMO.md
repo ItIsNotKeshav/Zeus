@@ -82,6 +82,12 @@ search, and the light theme). `--demo-tour-script launch` is the default.
 Demo runs never open the microphone: recording plays back a synthetic tone.
 Add `loaded` to a chat page (`--demo-page chat,loaded`) to show the sample
 photos downloaded instead of their blurred previews, as the README shots do.
+The default `chat` page shows the full list with the floating tab bar (Chats,
+Calls, Profile, Settings) at its foot and no rail. `--demo-page rail` (or
+`nosidebar`) collapses the list, which brings the navigation rail back with the
+chats' avatars; `--demo-page accounts` opens the account switcher drawer from the
+tab bar over two numbers, and `account-menu` over one. `--demo-page starred` and
+`archived` show the list with its title menu naming that view.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
