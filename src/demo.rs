@@ -20702,7 +20702,10 @@ mod rail_tests {
     fn the_tab_bar_serves_the_list_and_the_rail_serves_a_hidden_one() {
         for macos in [false, true] {
             let (app, ctx) = open("chat", macos);
-            assert!(rail_rect(&ctx).is_none(), "{macos}: no rail beside the list");
+            assert!(
+                rail_rect(&ctx).is_none(),
+                "{macos}: no rail beside the list"
+            );
             let header = list_header(&ctx).expect("the list is drawn");
             let bar = tabbar_rect(&ctx).expect("the tab bar is drawn");
             assert!(
@@ -20772,7 +20775,10 @@ mod rail_tests {
             }
             assert!(chats.bottom() <= calls.top());
             assert!(show.top() >= calls.bottom());
-            assert!(starred.top() > calls.bottom() + 100.0, "{macos}: at the foot");
+            assert!(
+                starred.top() > calls.bottom() + 100.0,
+                "{macos}: at the foot"
+            );
             assert!(settings.bottom() <= me.top());
             if crate::theme::macos_chrome(&ctx) {
                 assert!(
@@ -21052,7 +21058,8 @@ mod rail_tests {
         );
         assert!(rail_rect(&ctx).is_none(), "no rail beside the list");
         assert!(
-            ctx.read_response(crate::ui::chats::title_menu_id()).is_some(),
+            ctx.read_response(crate::ui::chats::title_menu_id())
+                .is_some(),
             "the title is the menu's button"
         );
         assert!(
@@ -21242,7 +21249,10 @@ mod rail_tests {
         assert!(rail_rect(&ctx).is_none(), "no rail in a narrow window");
         let bar = tabbar_rect(&ctx).expect("the tab bar stands under the history");
         let header = list_header(&ctx).expect("the history fills the window");
-        assert!(header.width() > 440.0, "the list takes the width: {header:?}");
+        assert!(
+            header.width() > 440.0,
+            "the list takes the width: {header:?}"
+        );
         assert!(bar.top() > header.bottom() && bar.right() <= 480.0);
         let call = app.call_log[0].clone();
         app.actions.push(Action::PickCall {

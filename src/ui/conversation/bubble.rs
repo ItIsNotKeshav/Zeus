@@ -258,9 +258,9 @@ pub(super) fn bubble_arriving(
     } else {
         sticker.unwrap_or(now)
     };
-    let (landed, typing) = ui.ctx().data_mut(|data| {
-        *data.get_temp_mut_or_insert_with(id, || (arrived, typing))
-    });
+    let (landed, typing) = ui
+        .ctx()
+        .data_mut(|data| *data.get_temp_mut_or_insert_with(id, || (arrived, typing)));
     let elapsed = now - landed;
     if POP.settled(elapsed) || landed <= shown {
         return bubble_row(ui, view, message, album, place, reduce_motion, actions);
@@ -865,9 +865,8 @@ pub(super) fn reference_timestamp(
         glyph.map(|(glyph, _)| width_of(glyph, &glyph_font)),
     ];
     let shown_parts = parts.iter().flatten().count();
-    let needed = parts.iter().flatten().sum::<f32>()
-        + GAP * shown_parts.saturating_sub(1) as f32
-        + 2.0;
+    let needed =
+        parts.iter().flatten().sum::<f32>() + GAP * shown_parts.saturating_sub(1) as f32 + 2.0;
     // Under the bubble, from its outer edge. A bubble narrower than the row
     // (a two-letter reply) lets it reach past the bubble's inner edge instead
     // of cutting it short.

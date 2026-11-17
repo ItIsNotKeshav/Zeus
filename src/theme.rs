@@ -2974,7 +2974,12 @@ mod tests {
                 "{}",
                 theme.filename
             );
-            assert_eq!(palette.avatar_glyph(hue), Color32::WHITE, "{}", theme.filename);
+            assert_eq!(
+                palette.avatar_glyph(hue),
+                Color32::WHITE,
+                "{}",
+                theme.filename
+            );
             assert_eq!(
                 palette.rail(),
                 palette.shaded_rail(palette.sidebar()),

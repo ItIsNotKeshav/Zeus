@@ -66,8 +66,7 @@ pub fn tab_button(
     if elsewhere > 0 {
         label.push_str(", ");
         label.push_str(
-            &gettext(app.locale, "{count} unread chats")
-                .replace("{count}", &elsewhere.to_string()),
+            &gettext(app.locale, "{count} unread chats").replace("{count}", &elsewhere.to_string()),
         );
     }
     response.widget_info(|| {

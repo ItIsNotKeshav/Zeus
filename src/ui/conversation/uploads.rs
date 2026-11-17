@@ -81,11 +81,9 @@ pub(super) fn upload_rows(
 pub(super) fn upload_row(ui: &mut egui::Ui, look: UploadLook<'_>, upload: &crate::model::Upload) {
     let palette = look.palette;
     let id = ui.id().with(("upload", upload.id));
-    let shown = ui.ctx().animate_bool_with_time(
-        id,
-        true,
-        theme::motion_time(ui.ctx(), UPLOAD_ENTRANCE),
-    );
+    let shown =
+        ui.ctx()
+            .animate_bool_with_time(id, true, theme::motion_time(ui.ctx(), UPLOAD_ENTRANCE));
     let fraction = upload_fraction(ui, upload);
     if upload.kind == crate::model::UploadKind::Sticker
         && let Some(crate::model::UploadPreview::File(path)) = &upload.preview
@@ -132,11 +130,9 @@ pub(super) fn upload_album(
         .map(|member| fly.then(|| take_flight(ui.ctx(), member, now)).flatten())
         .collect();
     let id = ui.id().with(("upload", members[0].id));
-    let shown = ui.ctx().animate_bool_with_time(
-        id,
-        true,
-        theme::motion_time(ui.ctx(), UPLOAD_ENTRANCE),
-    );
+    let shown =
+        ui.ctx()
+            .animate_bool_with_time(id, true, theme::motion_time(ui.ctx(), UPLOAD_ENTRANCE));
     let eased = if flights.iter().any(Option::is_some) {
         1.0
     } else {
@@ -179,9 +175,8 @@ pub(super) fn upload_album(
     let count = members.len();
     for (index, (member, flight)) in members.iter().zip(flights).enumerate() {
         let (row, column) = (index / 2, index % 2);
-        let corner = |first: bool, second: bool| {
-            if first || second { inner } else { outer }.round() as u8
-        };
+        let corner =
+            |first: bool, second: bool| if first || second { inner } else { outer }.round() as u8;
         let (left, above) = (column > 0, row > 0);
         let right = column == 0 && index + 1 < count;
         let below = index + 2 < count;
@@ -464,7 +459,7 @@ impl UploadCaption {
     /// Paints it from `at` in a column `wrap` wide, where its message's
     /// starts, `eased` of the way in. Right-to-left text keeps to the
     /// column's right, as the message's does.
-    pub(super) fn paint(&self, ui: &egui::Ui, at: egui::Pos2, wrap: f32, eased: f32) {
+    pub(super) fn paint(&self, ui: &mut egui::Ui, at: egui::Pos2, wrap: f32, eased: f32) {
         let x = if self.rtl {
             at.x + wrap - self.text.galley.size().x
         } else {
@@ -547,7 +542,11 @@ pub(super) fn paint_upload_media(
     if upload.message.is_some() {
         return;
     }
-    painter.rect_filled(rect, corners, Color32::from_black_alpha((90.0 * eased) as u8));
+    painter.rect_filled(
+        rect,
+        corners,
+        Color32::from_black_alpha((90.0 * eased) as u8),
+    );
     let ring = Rect::from_center_size(rect.center(), Vec2::splat(UPLOAD_RING * 2.0 + 12.0));
     painter.circle_filled(
         ring.center(),
@@ -1581,10 +1580,7 @@ pub(super) fn note_live_flights(ctx: &egui::Context, chat: &str, uploads: &[crat
 }
 
 /// The attachments of `chat` flying from the strip.
-pub(super) fn flying_attachments(
-    ctx: &egui::Context,
-    chat: &str,
-) -> Vec<crate::app::AttachmentId> {
+pub(super) fn flying_attachments(ctx: &egui::Context, chat: &str) -> Vec<crate::app::AttachmentId> {
     let now = ctx.input(|input| input.time);
     ctx.data(|data| data.get_temp::<Flights>(attachment_flights_id()))
         .unwrap_or_default()

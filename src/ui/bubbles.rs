@@ -1741,7 +1741,10 @@ fn fly_staged(app: &mut App, ctx: &egui::Context, chat: &str) {
     let faces = ctx
         .data(|data| data.get_temp::<Vec<(egui::Id, Rect)>>(id.with("faces")))
         .unwrap_or_default();
-    let staged = app.bubbles.get(chat).map_or(0, |bubble| bubble.staged.len());
+    let staged = app
+        .bubbles
+        .get(chat)
+        .map_or(0, |bubble| bubble.staged.len());
     if !focused || crate::motion::reduced(ctx) || faces.is_empty() || faces.len() != staged {
         return;
     }

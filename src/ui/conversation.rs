@@ -82,7 +82,7 @@ pub(crate) use messages::flying_to;
 use messages::*;
 use recording::*;
 use selection::*;
-pub use uploads::*;
+pub(crate) use uploads::*;
 /// The side of a selecting row's check box, and the column that holds it.
 const SELECT_BOX: f32 = 18.0;
 const SELECT_GUTTER: f32 = SELECT_BOX + 14.0;
@@ -3484,9 +3484,11 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             // composer into the selection bar, and the view's new height
             // would otherwise move every row under the pointer.
             let filler_id = scroll_id.with("filler");
-            let held = ui.input(|input| input.pointer.any_down());
+            // Named apart from `held` above, the album members still drawn
+            // among their uploads. This one is only whether a button is down.
+            let pointer_down = ui.input(|input| input.pointer.any_down());
             let filler = match ui.ctx().data(|data| data.get_temp::<f32>(filler_id)) {
-                Some(kept) if held => kept,
+                Some(kept) if pointer_down => kept,
                 _ => filler,
             };
             ui.ctx()
@@ -13515,7 +13517,11 @@ mod tests {
         assert!(time_line_above(Some(0), TIME_LINE_GAP));
         assert!(!time_line_above(Some(0), TIME_LINE_GAP - 1));
         // Back to back, the newest says nothing.
-        assert!(!says_time_below(true, Some(1_000), 1_000 + TIME_RUN_GAP - 1));
+        assert!(!says_time_below(
+            true,
+            Some(1_000),
+            1_000 + TIME_RUN_GAP - 1
+        ));
         // After a short pause the newest says its time, an older one never.
         assert!(says_time_below(true, Some(1_000), 1_000 + TIME_RUN_GAP));
         assert!(!says_time_below(false, Some(1_000), 1_000 + TIME_RUN_GAP));
@@ -14710,7 +14716,12 @@ mod reaction_tests {
             };
             draw(&picture);
             assert_eq!(flying_to(&ctx), None, "the picture leaves the flight alone");
-            draw(&crate::archive::tests::message(&view.chat.id, "text", now, true));
+            draw(&crate::archive::tests::message(
+                &view.chat.id,
+                "text",
+                now,
+                true,
+            ));
             assert_eq!(flying_to(&ctx).as_deref(), Some("text"));
         });
     }
