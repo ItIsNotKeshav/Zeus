@@ -1,4 +1,4 @@
-//! The left panel: the chat list.
+//! The left panel: the chat list, with the tab bar floating at its foot.
 
 use egui::{Align, Frame, Key, Layout, Margin, Rect, Sense, Vec2, pos2, vec2};
 
@@ -11,7 +11,20 @@ use crate::theme::{self, Icon, Palette};
 use super::conversation;
 use super::focus::{Stop, TabStop};
 use super::labels;
+use super::rail::Destination;
 use super::widgets;
+
+/// The list panel's margins: as much room on either side, so the rows'
+/// cards (and the header's controls over them) stand as far from the
+/// window's left edge as from the conversation card, and end where the tab
+/// bar floating over the panel does; and the header's drop at the top. The
+/// tab bar keeps its own margin at the bottom.
+const LIST_MARGIN: Margin = Margin {
+    left: 4,
+    right: 4,
+    top: HEADER_DROP as i8,
+    bottom: 0,
+};
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     search_keyboard(app, ui);
@@ -21,13 +34,11 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         .default_size(app.settings.sidebar_width)
         .size_range(260.0..=520.0)
         .show_separator_line(false)
-        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
-            left: 4,
-            right: 8,
-            top: HEADER_DROP as i8,
-            bottom: 0,
-        }));
+        .frame(Frame::new().fill(palette.rail()).inner_margin(LIST_MARGIN));
     let response = panel.show(ui, |ui| column(app, ui));
+    // The tab bar floats at the foot of the whole column, as it does beside
+    // Settings' categories, so it stays put going from one to the other.
+    super::tabbar::show(app, ui, response.response.rect);
     let width = response.response.rect.width();
     ui.ctx()
         .data_mut(|data| data.insert_temp(panel_rect_id(), response.response.rect));
@@ -43,19 +54,16 @@ pub(crate) fn panel_rect_id() -> egui::Id {
 }
 
 /// The chat list across the whole window, when the window is too narrow to
-/// hold it beside a conversation. Opening a chat replaces it.
+/// hold it beside a conversation. Opening a chat replaces it. No rail stands
+/// beside it: the tab bar at its foot leads to Calls, our account and
+/// Settings, and the title's menu to the other lists.
 pub fn full_show(app: &mut App, ui: &mut egui::Ui) {
     search_keyboard(app, ui);
     let palette = app.palette;
-    super::rail::show(app, ui, false);
-    egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.rail()).inner_margin(Margin {
-            left: 4,
-            right: 8,
-            top: HEADER_DROP as i8,
-            bottom: 0,
-        }))
+    let response = egui::CentralPanel::default()
+        .frame(Frame::new().fill(palette.rail()).inner_margin(LIST_MARGIN))
         .show(ui, |ui| column(app, ui));
+    super::tabbar::show(app, ui, response.response.rect);
 }
 
 /// The gutter between the window's edges and the floating conversation card.
@@ -78,7 +86,9 @@ const FROST_OVERLAP: f32 = 8.0;
 /// The list pane's header and the list under it. On a vibrant window the
 /// header goes on a layer above the list, which scrolls on under it through a
 /// frost that is strongest at the top and eases to sharp towards the bottom,
-/// as the conversation's header does over its messages.
+/// as the conversation's header does over its messages. Elsewhere a hairline
+/// under the header marks where the list is cut off while it is scrolled.
+/// The panel around it draws the tab bar over the list's foot.
 fn column(app: &mut App, ui: &mut egui::Ui) {
     // A narrow window's slide draws copies of the list; they keep the plain
     // header, so one layer is never drawn twice.
@@ -87,8 +97,14 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
         .data(|data| data.get_temp::<bool>(slide_copy_id()))
         .is_some();
     if copy || !app.palette.vibrant() || !crate::backdrop::blur() {
-        header(app, ui);
+        // Last frame's list says whether it is scrolled: the body resets it.
+        let scrolled = list_scrolled(ui.ctx());
+        let head = header(app, ui);
         body(app, ui);
+        if scrolled {
+            let edge = head.shrink2(vec2(widgets::ROW_CARD_X, 0.0));
+            widgets::paint_edge_below(ui, &app.palette, edge.left(), edge.right(), edge.bottom());
+        }
         return;
     }
     let area = ui.available_rect_before_wrap();
@@ -105,7 +121,7 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
         }
         let glass = ui.painter().add(egui::Shape::Noop);
         let veil = ui.painter().add(egui::Shape::Noop);
-        header(app, ui);
+        let _ = header(app, ui);
         let bar = ui.min_rect();
         let reach = Rect::from_x_y_ranges(area.x_range(), top..=bar.bottom());
         // Fully frosted down to the filters, so no row under the header can
@@ -139,6 +155,30 @@ fn column(app: &mut App, ui: &mut egui::Ui) {
 /// the body is drawn.
 fn header_inset_id() -> egui::Id {
     egui::Id::new("chat-list-header-inset")
+}
+
+/// Whether the list under the header was scrolled off its top when it was
+/// last drawn, so the plain header draws a hairline over it.
+fn list_scrolled_id() -> egui::Id {
+    egui::Id::new("chat-list-scrolled")
+}
+
+/// Where the scroll area of the list being drawn starts, which
+/// [`plain_rows`] measures its content's offset from.
+fn list_top_id() -> egui::Id {
+    egui::Id::new("chat-list-scroll-top")
+}
+
+fn list_scrolled(ctx: &egui::Context) -> bool {
+    ctx.data(|data| data.get_temp::<bool>(list_scrolled_id()))
+        .unwrap_or(false)
+}
+
+/// Notes that the list under the header is `offset` points down.
+fn note_scrolled(ctx: &egui::Context, offset: f32) {
+    if offset > 0.5 {
+        ctx.data_mut(|data| data.insert_temp(list_scrolled_id(), true));
+    }
 }
 
 /// Runs `contents` in a rect that reaches up under the frosted header, given
@@ -189,18 +229,32 @@ fn widget_visuals(visuals: &mut egui::Visuals) -> [&mut egui::style::WidgetVisua
 
 /// A vertical scroll area for a list drawn by [`under_header`]: its bar
 /// runs from the first row down, clear of the header, rather than from the
-/// panel's top.
+/// panel's top, and ends above the tab bar floating over the list's foot.
 pub(super) fn scroll_area(ui: &egui::Ui, inset: f32) -> egui::ScrollArea {
     let rect = ui.available_rect_before_wrap();
     let top = (rect.top() + inset).min(rect.bottom());
+    let bottom = (rect.bottom() - super::tabbar::RESERVE).max(top);
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(list_top_id(), rect.top()));
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .scroll_bar_rect(Rect::from_x_y_ranges(rect.x_range(), top..=rect.bottom()))
+        .scroll_bar_rect(Rect::from_x_y_ranges(rect.x_range(), top..=bottom))
 }
 
-/// Puts back, inside a list's [`scroll_area`], the colours its accent scroll
-/// bar took, so the rows' own widgets keep the theme's.
+/// Puts back, at the top of a list's [`scroll_area`], the colours its accent
+/// scroll bar took, so the rows' own widgets keep the theme's, and notes how
+/// far the list is scrolled for the header's hairline: the content starts
+/// that far above the scroll area's top.
 pub(super) fn plain_rows(ui: &mut egui::Ui) {
+    plain_colours(ui);
+    if let Some(top) = ui.ctx().data(|data| data.get_temp::<f32>(list_top_id())) {
+        note_scrolled(ui.ctx(), top - ui.max_rect().top());
+    }
+}
+
+/// [`plain_rows`]' colours alone, for rows laid out inside the scroll area
+/// rather than at its top.
+fn plain_colours(ui: &mut egui::Ui) {
     let global = ui.ctx().global_style();
     let mut plain = global.visuals.clone();
     let plain = widget_visuals(&mut plain).map(|widget| widget.fg_stroke.color);
@@ -210,7 +264,8 @@ pub(super) fn plain_rows(ui: &mut egui::Ui) {
 }
 
 /// [`egui::ScrollArea::show_rows`] with `inset` points of space above the
-/// first of its `total` rows.
+/// first of its `total` rows, and room below the last for it to scroll clear
+/// of the tab bar.
 fn show_rows_under(
     area: egui::ScrollArea,
     ui: &mut egui::Ui,
@@ -222,8 +277,9 @@ fn show_rows_under(
 ) -> egui::scroll_area::ScrollAreaOutput<()> {
     let spacing = ui.spacing().item_spacing.y;
     let step = row_height + spacing;
-    area.show_viewport(ui, |ui, viewport| {
-        ui.set_height((inset + step * total as f32 - spacing).max(0.0));
+    let output = area.show_viewport(ui, |ui, viewport| {
+        let rows = (inset + step * total as f32 - spacing).max(0.0);
+        ui.set_height(rows + super::tabbar::RESERVE);
         let mut first = ((viewport.min.y - inset) / step).floor().max(0.0) as usize;
         let mut last = ((viewport.max.y - inset) / step).ceil().max(0.0) as usize + 1;
         if last > total {
@@ -236,16 +292,23 @@ fn show_rows_under(
         let rect = Rect::from_x_y_ranges(ui.max_rect().x_range(), y_min..=y_max)
             .translate(vec2(0.0, stretch));
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |rows_ui| {
-            plain_rows(rows_ui);
+            plain_colours(rows_ui);
             rows_ui.skip_ahead_auto_ids(first);
             add_rows(rows_ui, first..last);
         });
-    })
+    });
+    note_scrolled(ui.ctx(), output.state.offset.y);
+    output
 }
 
 /// What the list pane holds under its header: the chats, or on the Calls
-/// tab the call history or the new-call list.
+/// tab the call history or the new-call list. Whichever it is says again
+/// whether it is scrolled.
 fn body(app: &mut App, ui: &mut egui::Ui) {
+    ui.ctx().data_mut(|data| {
+        data.insert_temp(list_scrolled_id(), false);
+        data.remove::<f32>(list_top_id());
+    });
     if app.page == Page::Calls {
         super::calls::list(app, ui);
     } else {
@@ -312,20 +375,21 @@ fn search_keyboard(app: &mut App, ui: &egui::Ui) {
     }
 }
 
-fn header(app: &mut App, ui: &mut egui::Ui) {
+/// The list's header: its first row, then the search field and the chips.
+/// Returns where it was laid out.
+fn header(app: &mut App, ui: &mut egui::Ui) -> Rect {
     if theme::macos_chrome(ui.ctx()) {
-        macos_header(app, ui);
-        return;
+        return macos_header(app, ui);
     }
-    let palette = app.palette;
-    // The same margins as the conversation header beside it, and a row as
-    // tall as its own, so the two titles share a centre line. The right
-    // margin matches the left, so the search field and the chips end where
-    // the rows' timestamps do.
+    // The same vertical margins as the conversation header beside it, and a
+    // row as tall as its own, so the two titles share a centre line. Across,
+    // the header spans the rows' hover and selection cards: the search field,
+    // the chips and the buttons on the right end where the cards do, and the
+    // title starts on the avatars' line (see [`title_lead`]).
     Frame::new()
         .inner_margin(Margin {
-            left: widgets::ROW_SIDE as i8,
-            right: widgets::ROW_SIDE as i8,
+            left: widgets::ROW_CARD_X as i8,
+            right: widgets::ROW_CARD_X as i8,
             top: 8,
             bottom: 8,
         })
@@ -333,96 +397,324 @@ fn header(app: &mut App, ui: &mut egui::Ui) {
             let row = ui.allocate_ui_with_layout(
                 vec2(ui.available_width(), super::conversation::HEADER_ROW),
                 Layout::left_to_right(Align::Center),
-                |ui| {
-                    let buttons = list_header_buttons(app, ui.ctx());
-                    // The title measures its room from the buttons after it.
-                    let buttons_width = header_buttons_width(ui, &buttons);
-                    if app.page == Page::Calls && app.new_call {
-                        new_call_header(app, ui, 20.0, buttons_width);
-                    } else if app.page != Page::Calls && app.show_starred {
-                        if theme::icon_button(
-                            ui,
-                            Icon::ArrowLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            "Back to chats",
-                        )
-                        .tab_stop(Stop::Back)
-                        .clicked()
-                        {
-                            app.actions.push(Action::ToggleStarred);
-                        }
-                        header_title(
-                            ui,
-                            crate::i18n::gettext(app.locale, "Starred").as_ref(),
-                            theme::bold(theme::TEXT_TITLE),
-                            palette.text,
-                            buttons_width,
-                        );
-                    } else if app.page != Page::Calls && (app.show_archived || app.locked_folder) {
-                        if theme::icon_button(
-                            ui,
-                            Icon::ArrowLeft,
-                            18.0,
-                            palette.secondary,
-                            palette.text,
-                            "Back to chats",
-                        )
-                        .tab_stop(Stop::Back)
-                        .clicked()
-                        {
-                            app.show_archived = false;
-                            if app.locked_folder {
-                                app.actions.push(Action::CloseLockedFolder);
-                            }
-                        }
-                        header_title(
-                            ui,
-                            if app.locked_folder {
-                                "Locked chats"
-                            } else {
-                                "Archived"
-                            },
-                            theme::bold(theme::TEXT_TITLE),
-                            palette.text,
-                            buttons_width,
-                        );
-                    } else {
-                        // Our avatar and the account switcher are in the
-                        // rail beside the list.
-                        header_title(
-                            ui,
-                            &crate::i18n::gettext(app.locale, tab_title(&app.page)),
-                            theme::bold(theme::TEXT_TITLE),
-                            palette.text,
-                            buttons_width,
-                        );
-                    }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        header_button_row(app, ui, &buttons, false);
-                    });
-                },
+                |ui| header_row(app, ui, false),
             );
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
 
             ui.add_space(8.0);
             search_and_filters(app, ui);
-        });
+        })
+        .response
+        .rect
 }
 
-/// The header's title beside our avatar: the tab the list shows.
-fn tab_title(page: &Page) -> &'static str {
-    if *page == Page::Calls {
-        "Calls"
+/// The header's first row: the title (on the Chats tab the menu of the
+/// lists the column shows), or the new-call list's Back and "New call", and
+/// the buttons on the right, with the macOS shortcuts in their tooltips when
+/// `macos`.
+fn header_row(app: &mut App, ui: &mut egui::Ui, macos: bool) {
+    let palette = app.palette;
+    let buttons = list_header_buttons(app, ui.ctx());
+    // The title measures its room from the buttons after it.
+    let buttons_width = header_buttons_width(ui, &buttons);
+    let lead = title_lead(ui);
+    if app.page == Page::Calls && app.new_call {
+        ui.add_space(lead);
+        new_call_header(app, ui, if macos { 16.0 } else { 20.0 }, buttons_width);
+    } else if app.page == Page::Calls {
+        ui.add_space(lead);
+        header_title(
+            ui,
+            &crate::i18n::gettext(app.locale, "Calls"),
+            theme::bold(theme::TEXT_TITLE),
+            palette.text,
+            buttons_width,
+        );
     } else {
-        "Chats"
+        // The menu's hover plate reaches a little before its text.
+        ui.add_space((lead - TITLE_INSET).max(0.0));
+        title_menu(app, ui, buttons_width, macos);
+    }
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        header_button_row(app, ui, &buttons, macos);
+    });
+}
+
+/// How far into the header's first row its title starts: on the line of the
+/// rows' avatars, inside the cards the header spans, or right of the macOS
+/// traffic lights, which lie over the header now that the list runs to the
+/// window's left edge.
+fn title_lead(ui: &egui::Ui) -> f32 {
+    let lead = widgets::ROW_SIDE - widgets::ROW_CARD_X;
+    let ctx = ui.ctx();
+    if !theme::macos_chrome(ctx) {
+        return lead;
+    }
+    let row_left = ui.cursor().min.x - ctx.content_rect().left();
+    lead.max(theme::traffic_light_inset(ctx) - row_left)
+}
+
+/// Stable id of the title's menu button on the Chats tab, for tests and the
+/// demo.
+pub fn title_menu_id() -> egui::Id {
+    egui::Id::new("chat-list-title-menu")
+}
+
+/// How far the title's text sits inside its menu button, whose hover plate
+/// reaches that much past it on each side.
+const TITLE_INSET: f32 = 8.0;
+/// The chevron after the title, and the room before it.
+const TITLE_CHEVRON: f32 = 16.0;
+const TITLE_GAP: f32 = 4.0;
+/// How tall the title's menu button is: a comfortable target in the row.
+const TITLE_HEIGHT: f32 = 32.0;
+/// What a row of the title's menu takes after its label: a check, or the
+/// archived chats' unread count.
+const TITLE_MENU_TRAIL: f32 = 40.0;
+
+/// The list the column shows now, which the title names. The starred
+/// messages cover the rest, and the locked folder covers the archive.
+fn shown_list(app: &App) -> Destination {
+    if app.show_starred {
+        Destination::Starred
+    } else if app.locked_folder {
+        Destination::Locked
+    } else if app.show_archived {
+        Destination::Archived
+    } else {
+        Destination::Chats
     }
 }
 
+/// The lists the title's menu offers, in its order: Chats, Starred,
+/// Archived, and Locked chats while there are any (or while the folder is
+/// what the column shows).
+fn title_menu_entries(app: &App) -> Vec<Destination> {
+    let mut entries = vec![
+        Destination::Chats,
+        Destination::Starred,
+        Destination::Archived,
+    ];
+    if Destination::Locked.offered(app) || shown_list(app) == Destination::Locked {
+        entries.push(Destination::Locked);
+    }
+    entries
+}
+
+/// A list's name, as the title and its menu write it.
+fn list_title(list: Destination) -> &'static str {
+    match list {
+        Destination::Starred => "Starred",
+        Destination::Archived => "Archived",
+        Destination::Locked => "Locked chats",
+        _ => "Chats",
+    }
+}
+
+/// A list's icon in the title's menu, the one the rail gives it.
+fn list_icon(list: Destination) -> Icon {
+    match list {
+        Destination::Starred => Icon::Star,
+        Destination::Archived => Icon::Archive,
+        Destination::Locked => Icon::Lock,
+        _ => Icon::MessageCircle,
+    }
+}
+
+/// What picking `list` in the title's menu does: what the rail's button does,
+/// and leaving the locked folder for the archive or the starred messages,
+/// which it would otherwise keep covering.
+fn title_menu_actions(app: &App, list: Destination) -> Vec<Action> {
+    let mut actions = list.actions(app);
+    if app.locked_folder
+        && matches!(list, Destination::Archived | Destination::Starred)
+        && !actions.contains(&Action::CloseLockedFolder)
+    {
+        actions.push(Action::CloseLockedFolder);
+    }
+    actions
+}
+
+/// The Chats tab's title: the name of the list on screen and a chevron, a
+/// button that opens the menu of the lists the column shows (Chats, Starred,
+/// Archived and Locked chats), in place of the rail's buttons for them. The
+/// name is cut short before the buttons after it, `buttons` points wide,
+/// but the chevron always shows, as the menu is the only way to those lists.
+/// Beside the macOS traffic lights the other lists' longer names are a size
+/// smaller, as their titles were there.
+fn title_menu(app: &mut App, ui: &mut egui::Ui, buttons: f32, macos: bool) {
+    let palette = app.palette;
+    let shown = shown_list(app);
+    let title = crate::i18n::gettext(app.locale, list_title(shown));
+    let size = if macos && shown != Destination::Chats {
+        theme::TEXT_SECTION
+    } else {
+        theme::TEXT_TITLE
+    };
+    let spacing = ui.spacing().item_spacing.x;
+    let room = (ui.available_width() - buttons - spacing).max(0.0);
+    let text_room = (room - 2.0 * TITLE_INSET - TITLE_GAP - TITLE_CHEVRON).max(0.0);
+    let line = widgets::line(ui, &title, theme::bold(size), palette.text, text_room, 1);
+    let width = 2.0 * TITLE_INSET + line.size().x + TITLE_GAP + TITLE_CHEVRON;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, TITLE_HEIGHT), Sense::hover());
+    let response = ui
+        .interact(rect, title_menu_id(), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    theme::reveal_focus(&response);
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    let label = format!(
+        "{title}, {}",
+        crate::i18n::gettext(app.locale, "switch to Starred or Archived")
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), &label)
+    });
+    if ui.is_rect_visible(rect) {
+        let lit = theme::animate(
+            ui.ctx(),
+            response.id.with("title-hover"),
+            open || response.hovered() || response.has_focus(),
+            theme::MOTION_QUICK,
+        );
+        if lit > 0.0 {
+            ui.painter().rect_filled(
+                rect,
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.tint(theme::TINT_HOVER * lit),
+            );
+        }
+        line.paint(
+            ui,
+            pos2(
+                rect.left() + TITLE_INSET,
+                rect.center().y - line.size().y / 2.0,
+            ),
+            palette.text,
+        );
+        let chevron = Rect::from_center_size(
+            pos2(
+                rect.right() - TITLE_INSET - TITLE_CHEVRON / 2.0,
+                rect.center().y,
+            ),
+            Vec2::splat(TITLE_CHEVRON),
+        );
+        let icon = if open {
+            Icon::ChevronUp
+        } else {
+            Icon::ChevronDown
+        };
+        let tint = palette.secondary.lerp_to_gamma(palette.text, lit);
+        icon.image(tint, TITLE_CHEVRON).paint_at(ui, chevron);
+    }
+    // Back's place in the order: the title leads out of the starred
+    // messages, the archive and the locked folder as Back did.
+    let response = response.tab_stop(Stop::Back);
+    let entries = title_menu_entries(app);
+    let labels: Vec<_> = entries
+        .iter()
+        .map(|list| crate::i18n::gettext(app.locale, list_title(*list)))
+        .collect();
+    let names: Vec<&str> = labels.iter().map(|label| label.as_ref()).collect();
+    let menu_width = (widgets::menu_width(ui, &names, true) + TITLE_MENU_TRAIL).max(180.0);
+    let archived_unread = u32::try_from(app.archived_unread()).unwrap_or(u32::MAX);
+    let mut picked = None;
+    egui::Popup::menu(&response)
+        .width(menu_width)
+        .frame(widgets::menu_frame(&palette))
+        .show_frosted(ui.ctx(), |ui| {
+            for (list, name) in entries.iter().zip(&names) {
+                let badge = if *list == Destination::Archived {
+                    archived_unread
+                } else {
+                    0
+                };
+                if title_menu_row(ui, &palette, *list, name, *list == shown, badge) {
+                    picked = Some(*list);
+                }
+            }
+        });
+    if let Some(list) = picked {
+        let actions = title_menu_actions(app, list);
+        app.actions.extend(actions);
+    }
+}
+
+/// One list in the title's menu: its icon and name, with a check on the one
+/// on screen and, for the archive, the count of its unread chats, as the
+/// rail's Archived button carries. Returns whether it was picked.
+fn title_menu_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    list: Destination,
+    name: &str,
+    current: bool,
+    badge: u32,
+) -> bool {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    theme::reveal_focus(&response);
+    let spoken = if badge > 0 {
+        format!("{name}, {badge}")
+    } else {
+        name.to_owned()
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            current,
+            spoken.as_str(),
+        )
+    });
+    if ui.is_rect_visible(rect) {
+        if response.hovered() || response.has_focus() {
+            ui.painter().rect_filled(
+                rect,
+                egui::CornerRadius::same(theme::RADIUS),
+                palette.surface_hover,
+            );
+        }
+        let tint = if current {
+            palette.accent
+        } else {
+            palette.secondary
+        };
+        let middle = rect.center().y;
+        let icon = Rect::from_center_size(pos2(rect.left() + 18.0, middle), Vec2::splat(16.0));
+        list_icon(list).image(tint, 16.0).paint_at(ui, icon);
+        let mut right = rect.right() - 10.0;
+        if current {
+            let check = Rect::from_center_size(pos2(right - 8.0, middle), Vec2::splat(16.0));
+            Icon::Check.image(palette.accent, 16.0).paint_at(ui, check);
+            right -= 24.0;
+        }
+        if badge > 0 {
+            let at = pos2(right - 10.0, middle);
+            let width = widgets::badge(ui, palette, at, badge, false);
+            right -= width + 6.0;
+        }
+        let x = rect.left() + 36.0;
+        let line = widgets::line(
+            ui,
+            name,
+            theme::regular(theme::TEXT_BODY),
+            palette.text,
+            (right - x).max(0.0),
+            1,
+        );
+        line.paint(ui, pos2(x, middle - line.size().y / 2.0), palette.text);
+    }
+    let clicked = response.clicked();
+    if clicked {
+        ui.close();
+    }
+    let _ = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    clicked
+}
+
 /// The new-call list's header, as WhatsApp's drawer has it: Back and "New
-/// call" in place of the avatar and the tab's title.
+/// call" in place of the tab's title.
 fn new_call_header(app: &mut App, ui: &mut egui::Ui, title: f32, buttons: f32) {
     let palette = app.palette;
     if theme::icon_button(
@@ -508,6 +800,8 @@ enum HeaderButton {
     NewChat,
     NewCall,
     HideList,
+    /// A release is waiting: the accent arrow the rail carried.
+    Update,
 }
 
 /// The size of the header buttons' icons.
@@ -515,8 +809,9 @@ const HEADER_ICON: f32 = 18.0;
 
 /// The buttons on the right of the chat list header, rightmost first, as
 /// `header_button_row` draws them: New chat, and Hide the chat list unless
-/// the window is narrow. Calls, Starred and Settings are in the rail beside
-/// the list. The title before them measures its room from the same list.
+/// the window is narrow. Calls, our account and Settings are in the tab bar
+/// at the column's foot, and Starred, Archived and Locked chats in the
+/// title's menu. The title before them measures its room from the same list.
 ///
 /// On the Calls tab, as in WhatsApp's Calls pane, New call takes New chat's
 /// place and Hide the chat list leaves: the call history needs the list.
@@ -531,14 +826,22 @@ fn header_buttons(ctx: &egui::Context, calls: bool) -> Vec<HeaderButton> {
     buttons
 }
 
-/// The buttons the list header draws for what it shows: none over the
-/// new-call list or the starred messages, whose Back leads out of them.
+/// The buttons the list header draws for what it shows: none of its own over
+/// the new-call list, whose Back leads out of it, or the starred messages,
+/// whose title's menu does. On the Chats tab a waiting release adds the
+/// update arrow, leftmost, which the rail carried before the list stood
+/// alone in its column.
 fn list_header_buttons(app: &App, ctx: &egui::Context) -> Vec<HeaderButton> {
     let calls = app.page == Page::Calls;
-    if (calls && app.new_call) || (!calls && app.show_starred) {
-        return Vec::new();
+    let mut buttons = if (calls && app.new_call) || (!calls && app.show_starred) {
+        Vec::new()
+    } else {
+        header_buttons(ctx, calls)
+    };
+    if !calls && app.update.is_some() {
+        buttons.push(HeaderButton::Update);
     }
-    header_buttons(ctx, calls)
+    buttons
 }
 
 /// Draws `buttons` in a right-to-left layout, with the macOS shortcuts in
@@ -596,7 +899,57 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
                     app.actions.push(Action::ToggleSidebar);
                 }
             }
+            HeaderButton::Update => update_button(app, ui),
         }
+    }
+}
+
+/// The accent arrow among the header's buttons while a release is waiting,
+/// as the rail's update ellipse was: it opens that release's page, where the
+/// update is downloaded. It keeps the rail's id, so tests find it either way.
+fn update_button(app: &mut App, ui: &mut egui::Ui) {
+    let Some(release) = app.update.clone() else {
+        return;
+    };
+    let palette = app.palette;
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::splat(HEADER_ICON + theme::ICON_BUTTON_PAD),
+        Sense::hover(),
+    );
+    let response = ui
+        .interact(rect, super::rail::update_id(), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    theme::reveal_focus(&response);
+    let locale = app.locale;
+    let label = crate::i18n::gettext(locale, "Update available, version {current} to {next}")
+        .replace("{current}", env!("CARGO_PKG_VERSION"))
+        .replace("{next}", &release.version);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+    });
+    if ui.is_rect_visible(rect) {
+        let lit = theme::animate(
+            ui.ctx(),
+            response.id.with("update-hover"),
+            response.hovered() || response.has_focus(),
+            theme::MOTION_QUICK,
+        );
+        let fill = palette.accent.lerp_to_gamma(palette.accent_hover, lit);
+        let scale = if response.is_pointer_button_down_on() {
+            0.92
+        } else {
+            1.0
+        };
+        let ellipse = Rect::from_center_size(rect.center(), vec2(28.0, 22.0) * scale);
+        ui.painter().add(egui::Shape::ellipse_filled(
+            ellipse.center(),
+            ellipse.size() * 0.5,
+            fill,
+        ));
+        theme::paint_icon(ui, Icon::ArrowUp, ellipse, 14.0 * scale, palette.on_accent);
+    }
+    if response.on_hover_text(label).clicked() {
+        app.actions.push(Action::OpenUrl(release.url));
     }
 }
 
@@ -619,8 +972,8 @@ fn row_width(count: usize, edge: f32, spacing: f32) -> f32 {
 
 /// Draws the chat list header's title when it fits before the buttons that
 /// follow it on the right, `buttons` points wide, and leaves it out
-/// otherwise: in a narrow list it ran under them. The avatar or Back before
-/// it says where you are.
+/// otherwise: in a narrow list it ran under them. The tab bar's lit tab, or
+/// Back before it, says where you are.
 fn header_title(
     ui: &mut egui::Ui,
     text: &str,
@@ -650,91 +1003,27 @@ pub(crate) fn header_row_id() -> egui::Id {
     egui::Id::new("chat-list-header-row")
 }
 
-fn macos_header(app: &mut App, ui: &mut egui::Ui) {
-    let palette = app.palette;
-    // The traffic lights sit over the rail and the start of this header.
+/// [`header`] in the macOS chrome. The list runs to the window's left edge,
+/// so the traffic lights sit over the start of this header, and the title
+/// starts right of them.
+fn macos_header(app: &mut App, ui: &mut egui::Ui) -> Rect {
     let mut drag = ui.max_rect();
     drag.max.y = drag.min.y + 60.0;
     super::titlebar_drag(ui, drag);
     Frame::new()
-        .inner_margin(Margin::symmetric(widgets::ROW_SIDE as i8, 8))
+        .inner_margin(Margin::symmetric(widgets::ROW_CARD_X as i8, 8))
         .show(ui, |ui| {
             let row = ui.horizontal(|ui| {
                 ui.set_min_height(super::conversation::HEADER_ROW);
-                // The traffic lights reach past the rail over this header.
-                ui.add_space(super::rail::lights_overhang(ui.ctx()));
-                let buttons = list_header_buttons(app, ui.ctx());
-                if app.page == Page::Calls && app.new_call {
-                    new_call_header(app, ui, 16.0, header_buttons_width(ui, &buttons));
-                } else if app.page != Page::Calls && app.show_starred {
-                    if theme::icon_button(
-                        ui,
-                        Icon::ArrowLeft,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        "Back to chats",
-                    )
-                    .tab_stop(Stop::Back)
-                    .clicked()
-                    {
-                        app.actions.push(Action::ToggleStarred);
-                    }
-                    header_title(
-                        ui,
-                        crate::i18n::gettext(app.locale, "Starred").as_ref(),
-                        theme::bold(theme::TEXT_SECTION),
-                        palette.text,
-                        header_buttons_width(ui, &buttons),
-                    );
-                } else if app.page != Page::Calls && (app.show_archived || app.locked_folder) {
-                    if theme::icon_button(
-                        ui,
-                        Icon::ArrowLeft,
-                        18.0,
-                        palette.secondary,
-                        palette.text,
-                        "Back to chats",
-                    )
-                    .tab_stop(Stop::Back)
-                    .clicked()
-                    {
-                        app.show_archived = false;
-                        if app.locked_folder {
-                            app.actions.push(Action::CloseLockedFolder);
-                        }
-                    }
-                    header_title(
-                        ui,
-                        if app.locked_folder {
-                            "Locked chats"
-                        } else {
-                            "Archived"
-                        },
-                        theme::bold(theme::TEXT_SECTION),
-                        palette.text,
-                        header_buttons_width(ui, &buttons),
-                    );
-                } else {
-                    // Our avatar and the account switcher are in the rail,
-                    // under the traffic lights.
-                    header_title(
-                        ui,
-                        &crate::i18n::gettext(app.locale, tab_title(&app.page)),
-                        theme::bold(theme::TEXT_TITLE),
-                        palette.text,
-                        header_buttons_width(ui, &buttons),
-                    );
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    header_button_row(app, ui, &buttons, true);
-                });
+                header_row(app, ui, true);
             });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
             ui.add_space(8.0);
             search_and_filters(app, ui);
-        });
+        })
+        .response
+        .rect
 }
 
 /// Stable main-list row id used by interaction tests.
@@ -892,6 +1181,8 @@ fn starred_list(app: &mut App, ui: &mut egui::Ui) {
                     &mut actions,
                 );
             }
+            // The last row scrolls clear of the tab bar.
+            ui.add_space(super::tabbar::RESERVE);
         });
     });
     app.actions.append(&mut actions);
@@ -1189,9 +1480,10 @@ fn chat_rows(app: &mut App, ui: &mut egui::Ui, chats: &[usize], to_top: bool, in
             .unwrap_or_default()
             .offset
             .y;
+        // Revealed clear of the header and of the tab bar.
         let offset = row_scroll_offset(
             current,
-            ui.available_height() - inset,
+            ui.available_height() - inset - super::tabbar::RESERVE,
             target_row,
             row_height,
             ui.spacing().item_spacing.y,
@@ -1657,7 +1949,7 @@ fn locked_list(app: &mut App, ui: &mut egui::Ui) {
                 .y;
             let offset = row_scroll_offset(
                 current,
-                ui.available_height() - inset,
+                ui.available_height() - inset - super::tabbar::RESERVE,
                 target_row,
                 theme::ROW_HEIGHT,
                 ui.spacing().item_spacing.y,
@@ -1865,7 +2157,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 .unwrap_or_default()
                 .offset
                 .y;
-            let height = ui.available_height() - inset;
+            let height = ui.available_height() - inset - super::tabbar::RESERVE;
             let (top, bottom) = (view.tops[position], view.tops[position + 1]);
             let offset = if top < current {
                 top
@@ -1877,8 +2169,9 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
             area = area.vertical_scroll_offset(offset);
             app.scroll_chat_into_view = None;
         }
-        area.show_viewport(ui, |ui, viewport| {
-            let total = view.tops.last().copied().unwrap_or(0.0) + 8.0;
+        let output = area.show_viewport(ui, |ui, viewport| {
+            // Room below the last row for it to scroll clear of the tab bar.
+            let total = view.tops.last().copied().unwrap_or(0.0) + 8.0 + super::tabbar::RESERVE;
             ui.set_height(inset + total);
             let range = view.visible(viewport.min.y - inset, viewport.max.y - inset);
             let origin = ui.max_rect().top() + inset;
@@ -1890,7 +2183,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                     origin + view.tops[index]..=origin + view.tops[index + 1],
                 );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                    plain_rows(ui);
+                    plain_colours(ui);
                     ui.skip_ahead_auto_ids(index);
                     match row {
                         ResultRow::Section(label) => section(ui, &palette, label),
@@ -1926,6 +2219,7 @@ fn results(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
         });
+        note_scrolled(ui.ctx(), output.state.offset.y);
     });
 }
 
@@ -2638,9 +2932,9 @@ pub fn compact_chat_id(chat: &str) -> egui::Id {
     egui::Id::new(("chat-rail", chat))
 }
 
-/// Width of the navigation rail, which the chats' avatars fill while the
-/// list is hidden. On macOS the traffic lights reach past it, over the
-/// header beside it.
+/// Width of the navigation rail, which stands only where the list is hidden
+/// and the chats' avatars fill. On macOS the traffic lights reach past it,
+/// over the conversation's header beside it.
 pub fn compact_width(_ctx: &egui::Context) -> f32 {
     super::rail::WIDTH
 }
@@ -3268,7 +3562,7 @@ mod tests {
         assert_eq!(two, 68.0);
         assert!(title_fits(100.0, 176.0, two, spacing));
         assert!(!title_fits(100.0, 175.0, two, spacing));
-        // A third button, the Settings one off macOS, needs 38 more.
+        // A third button, the update arrow, needs 38 more.
         let three = row_width(3, 30.0, spacing);
         assert!(!title_fits(100.0, 176.0, three, spacing));
         assert!(title_fits(100.0, 214.0, three, spacing));
@@ -3277,7 +3571,8 @@ mod tests {
 
     /// The title measures its room from the list the header draws: New chat,
     /// and Hide the chat list only when the window is wide enough to show the
-    /// list beside a chat. Calls, Starred and Settings are in the rail.
+    /// list beside a chat. Calls and Settings are in the tab bar, Starred in
+    /// the title's menu.
     #[test]
     fn header_buttons_follow_the_width() {
         use HeaderButton::{HideList, NewChat};
@@ -3319,6 +3614,166 @@ mod tests {
         app.page = Page::Chats;
         app.show_starred = true;
         assert!(list_header_buttons(&app, &ctx).is_empty());
+    }
+
+    /// With the rail gone from beside the list, a waiting release is the
+    /// leftmost of the Chats tab's header buttons, in every list the column
+    /// shows, and never on the Calls tab's.
+    #[test]
+    fn a_waiting_release_joins_the_chats_header_buttons() {
+        use HeaderButton::{NewCall, NewChat, Update};
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        );
+        let ctx = egui::Context::default();
+        assert!(!list_header_buttons(&app, &ctx).contains(&Update));
+        app.update = Some(crate::updates::Release {
+            version: "99.0.0".into(),
+            url: "https://example.invalid/release".into(),
+        });
+        let buttons = list_header_buttons(&app, &ctx);
+        assert_eq!(buttons.first(), Some(&NewChat), "New chat is rightmost");
+        assert_eq!(buttons.last(), Some(&Update), "the arrow is leftmost");
+        app.show_starred = true;
+        assert_eq!(list_header_buttons(&app, &ctx), [Update]);
+        app.show_starred = false;
+        app.page = Page::Calls;
+        assert_eq!(list_header_buttons(&app, &ctx), [NewCall]);
+    }
+
+    /// The title's menu lists Chats, Starred and Archived, and Locked chats
+    /// only while chats are locked; the title names the list on screen, and
+    /// picking the archive from the locked folder leaves the folder.
+    #[test]
+    fn the_title_menu_offers_locked_chats_only_while_there_are_any() {
+        use Destination::{Archived, Chats, Locked, Starred};
+        let (_directory, mut app, _ids, _ctx) = rail_app(2);
+        assert_eq!(title_menu_entries(&app), [Chats, Starred, Archived]);
+        assert_eq!(shown_list(&app), Chats);
+        app.chats[0].locked = true;
+        assert!(Locked.offered(&app));
+        assert_eq!(title_menu_entries(&app), [Chats, Starred, Archived, Locked]);
+        app.chats[0].locked = false;
+        assert_eq!(title_menu_entries(&app), [Chats, Starred, Archived]);
+
+        app.show_archived = true;
+        assert_eq!(shown_list(&app), Archived);
+        app.show_starred = true;
+        assert_eq!(shown_list(&app), Starred, "starred covers it");
+        app.show_starred = false;
+        app.show_archived = false;
+        app.locked_folder = true;
+        assert_eq!(shown_list(&app), Locked);
+        assert!(
+            title_menu_entries(&app).contains(&Locked),
+            "the list on screen is always offered"
+        );
+        let archived = title_menu_actions(&app, Archived);
+        assert!(archived.contains(&Action::CloseLockedFolder));
+        assert!(archived.contains(&Action::ShowArchived(true)));
+        let starred = title_menu_actions(&app, Starred);
+        assert!(starred.contains(&Action::CloseLockedFolder));
+        assert_eq!(
+            title_menu_actions(&app, Chats)
+                .iter()
+                .filter(|action| **action == Action::CloseLockedFolder)
+                .count(),
+            1,
+            "Chats leaves the folder once"
+        );
+    }
+
+    /// The header spans the rows' hover and selection cards: the search
+    /// field and the buttons on the right end where a card does, the field
+    /// starts where it does, the tab bar keeps within them, centred on them,
+    /// and the title starts on the avatars' line (or right of the macOS
+    /// traffic lights).
+    #[test]
+    fn the_header_controls_end_where_the_row_cards_do() {
+        for macos in [false, true] {
+            let (_directory, mut app, ids, ctx) = rail_app(3);
+            if macos {
+                crate::theme::preview_macos(&ctx);
+            }
+            app.open_chat = Some(ids[0].clone());
+            for _ in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(1180.0, 500.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| show(&mut app, ui),
+                );
+                output.textures_delta.clear();
+            }
+            let row = ctx
+                .data(|data| data.get_temp::<Rect>(chat_row_id(&ids[0])))
+                .expect("the first row was laid out");
+            let card = row.shrink2(vec2(widgets::ROW_CARD_X, 0.0));
+            let header = ctx
+                .data(|data| data.get_temp::<Rect>(header_row_id()))
+                .expect("the header row was laid out");
+            let field = ctx
+                .read_response(egui::Id::new("chat-search").with("pill"))
+                .expect("the search field was drawn")
+                .rect;
+            let new_chat = super::super::focus::control(&ctx, Stop::NewChat)
+                .and_then(|id| ctx.read_response(id))
+                .expect("New chat was drawn")
+                .rect;
+            for (what, right) in [
+                ("header row", header.right()),
+                ("search field", field.right()),
+                ("New chat", new_chat.right()),
+            ] {
+                assert!(
+                    (right - card.right()).abs() < 0.5,
+                    "macOS={macos}: the {what} ends at {right}, the card at {}",
+                    card.right()
+                );
+            }
+            assert!(
+                (field.left() - card.left()).abs() < 0.5,
+                "macOS={macos}: the search field starts at {}, the card at {}",
+                field.left(),
+                card.left()
+            );
+            let pill = ctx
+                .data(|data| data.get_temp::<Rect>(super::super::tabbar::rect_id()))
+                .expect("the tab bar was drawn");
+            assert!(
+                card.expand(0.5).x_range().contains(pill.left())
+                    && card.expand(0.5).x_range().contains(pill.right())
+                    && (pill.center().x - card.center().x).abs() < 0.5,
+                "macOS={macos}: the tab bar {pill:?} is not centred within the card {card:?}"
+            );
+            let title = ctx
+                .read_response(title_menu_id())
+                .expect("the title is the menu's button")
+                .rect;
+            let text = title.left() + TITLE_INSET;
+            let avatars = row.left() + widgets::ROW_SIDE;
+            assert!(
+                text >= avatars - 0.5,
+                "macOS={macos}: {text} before {avatars}"
+            );
+            if crate::theme::traffic_light_inset(&ctx) > 0.0 {
+                assert!(
+                    text >= crate::theme::traffic_light_inset(&ctx) - 0.5,
+                    "the title clears the traffic lights: {text}"
+                );
+            } else {
+                assert!(
+                    (text - avatars).abs() < 0.5,
+                    "macOS={macos}: the title starts at {text}, the avatars at {avatars}"
+                );
+            }
+        }
     }
 
     use crate::paths::AppDirs;

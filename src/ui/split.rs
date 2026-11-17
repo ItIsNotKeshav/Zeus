@@ -82,8 +82,10 @@ fn live(app: &App, ctx: &egui::Context, area: Rect) -> bool {
 /// Whether a panel `card` wide could take a second pane: it has room, or the
 /// window can grow for it, or the list can fold away for it.
 fn could_split(app: &App, ctx: &egui::Context, card: f32) -> bool {
+    // Folding the list gives back its width less the rail's, which stands
+    // in for it.
     let list = if app.sidebar_mode() == crate::model::SidebarDisplayMode::Expanded {
-        app.settings.sidebar_width
+        (app.settings.sidebar_width - super::rail::PANE_WIDTH).max(0.0)
     } else {
         0.0
     };

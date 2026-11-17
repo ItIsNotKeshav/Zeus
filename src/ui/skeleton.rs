@@ -10,7 +10,7 @@ use egui::{Color32, CornerRadius, Painter, Pos2, Rect, Sense, Ui, pos2, vec2};
 use crate::app::App;
 use crate::theme::{self, Palette};
 
-use super::{chats, rail};
+use super::{chats, tabbar};
 
 /// Seconds one shimmer takes to cross the window.
 const SHIMMER: f64 = 1.8;
@@ -132,43 +132,29 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
     };
     let narrow = rect.width() < NARROW;
 
-    // The rail: its two tabs at the top, settings and our picture at the
-    // bottom.
-    let rail_rect = Rect::from_min_max(rect.min, pos2(rect.left() + rail::WIDTH, rect.bottom()));
-    painter.rect_filled(rail_rect, 0, look.fill(palette.rail()));
-    let rail_x = rail_rect.center().x;
-    for index in 0..2 {
-        look.dot(
-            painter,
-            pos2(rail_x, rect.top() + 40.0 + 48.0 * index as f32),
-            14.0,
-        );
-    }
-    for index in 0..2 {
-        look.dot(
-            painter,
-            pos2(rail_x, rect.bottom() - 40.0 - 48.0 * index as f32),
-            14.0,
-        );
-    }
-
-    // The list: its title, search field, filter chips and rows.
+    // The list column from the window's edge, with no rail before it: its
+    // title, search field, filter chips and rows, and the tab bar floating
+    // at its foot.
     let list_right = if narrow {
         rect.right()
     } else {
-        (rail::PANE_WIDTH + app.settings.sidebar_width + rect.left()).min(rect.right())
+        (app.settings.sidebar_width + rect.left()).min(rect.right())
     };
-    let list = Rect::from_min_max(
-        pos2(rail_rect.right(), rect.top()),
-        pos2(list_right, rect.bottom()),
-    );
-    painter.rect_filled(list, 0, look.fill(palette.sidebar()));
+    let list = Rect::from_min_max(rect.min, pos2(list_right, rect.bottom()));
+    painter.rect_filled(list, 0, look.fill(palette.rail()));
     let left = list.left() + LIST_INSET;
     let right = list.right() - LIST_INSET;
     let top = rect.top() + chats::HEADER_DROP;
+    // The title starts right of the macOS traffic lights, as the list's own
+    // header does now that no rail stands under them.
+    let lights = if theme::macos_chrome(painter.ctx()) {
+        (theme::traffic_light_inset(painter.ctx()) - LIST_INSET).max(0.0)
+    } else {
+        0.0
+    };
     look.bar(
         painter,
-        Rect::from_min_size(pos2(left, top + 16.0), vec2(96.0, 20.0)),
+        Rect::from_min_size(pos2(left + lights, top + 16.0), vec2(96.0, 20.0)),
     );
     look.bar(
         painter,
@@ -185,11 +171,16 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
         );
         x += width + 8.0;
     }
+    // The rows stop above the tab bar, which floats over the list's end.
     rows(
         &look,
         painter,
-        Rect::from_min_max(pos2(list.left(), top + 160.0), list.max),
+        Rect::from_min_max(
+            pos2(list.left(), top + 160.0),
+            pos2(list.right(), list.bottom() - tabbar::RESERVE),
+        ),
     );
+    tab_bar(&look, painter, list);
 
     if narrow {
         return;
@@ -248,6 +239,25 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
             super::widgets::BUBBLE_RADIUS,
         );
         y -= 12.0;
+    }
+}
+
+/// The tab bar as a placeholder: a faint pill at the foot of the list
+/// column, where the real one floats, with a dot for each of its tabs.
+fn tab_bar(look: &Look<'_>, painter: &Painter, column: Rect) {
+    let pill = tabbar::pill_rect(column);
+    if pill.width() < tabbar::HEIGHT || pill.top() < column.top() {
+        return;
+    }
+    look.bar(painter, pill);
+    let tabs = 4;
+    let step = pill.width() / tabs as f32;
+    for index in 0..tabs {
+        look.dot(
+            painter,
+            pos2(pill.left() + step * (index as f32 + 0.5), pill.center().y),
+            10.0,
+        );
     }
 }
 

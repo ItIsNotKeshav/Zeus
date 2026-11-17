@@ -397,7 +397,8 @@ fn category_icon(source: &str) -> Icon {
 }
 
 /// The settings categories in the list column, where the chats are on the
-/// Chats tab, with the settings search above them.
+/// Chats tab, with the settings search above them and the tab bar floating
+/// at the column's foot.
 pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let panel = egui::Panel::left("settings-categories")
@@ -410,7 +411,14 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
             top: super::chats::HEADER_DROP as i8,
             bottom: 0,
         }));
-    panel.show(ui, |ui| {
+    let column = panel.show(ui, |ui| {
+        if theme::chrome_in_headers(ui.ctx()) {
+            // The traffic lights sit over this header with no rail before
+            // it, so its top drags the window as the chat list's does.
+            let mut drag = ui.max_rect();
+            drag.max.y = drag.min.y + 8.0 + super::conversation::HEADER_ROW;
+            super::titlebar_drag(ui, drag);
+        }
         Frame::new()
             .inner_margin(Margin {
                 left: 14,
@@ -423,6 +431,13 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                     vec2(ui.available_width(), super::conversation::HEADER_ROW),
                     Layout::left_to_right(Align::Center),
                     |ui| {
+                        // The title starts right of the traffic lights.
+                        if theme::macos_chrome(ui.ctx()) {
+                            let from_edge = ui.cursor().left() - ui.ctx().content_rect().left();
+                            let clearance =
+                                (theme::traffic_light_inset(ui.ctx()) - from_edge).max(0.0);
+                            ui.add_space(clearance);
+                        }
                         theme::text(
                             ui,
                             crate::i18n::gettext(app.locale, "Settings"),
@@ -521,8 +536,11 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         }
                     }
                 });
+                // The last category scrolls clear of the tab bar.
+                ui.add_space(super::tabbar::RESERVE);
             });
     });
+    super::tabbar::show(app, ui, column.response.rect);
 }
 
 /// Extra room between settings on a card.

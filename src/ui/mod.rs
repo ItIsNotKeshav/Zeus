@@ -40,6 +40,7 @@ pub mod setup;
 pub mod skeleton;
 pub mod split;
 pub(crate) mod swipe;
+pub mod tabbar;
 pub mod update;
 pub mod widgets;
 
@@ -96,6 +97,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
     ctx.data_mut(|data| data.remove::<egui::Rect>(composer_rect_id()));
+    // So does the list column's tab bar, where it floats.
+    ctx.data_mut(|data| data.remove::<egui::Rect>(tabbar::rect_id()));
     ctx.data_mut(|data| data.remove::<bool>(side_columns_id()));
     titlebar_strip(app, ui);
     if !app.is_linked() {
@@ -156,7 +159,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
 
 /// Whether a narrow window shows the list pane: the chat list with no chat
 /// open, or the Calls tab's history with no call picked from it. Its header's
-/// buttons, its rows and the rail beside it lead on to the rest.
+/// buttons, its rows and the tab bar at its foot lead on to the rest.
 fn list_pane_only(app: &App) -> bool {
     match app.page {
         Page::Chats => app.current_chat().is_none(),
@@ -179,16 +182,19 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
         return;
     }
     // A narrow window gives the open chat or page all of its width; the
-    // conversation header's Back returns to the list, and the rail beside
-    // it. The info card takes a column of its own, and when the list leaves
-    // too little room for it and the conversation, the list folds into the
+    // conversation header's Back returns to the list. The list column holds
+    // its own way around (the tab bar at its foot, the title's menu), so the
+    // rail stands only where the list is hidden, beside the conversation.
+    // The info card takes a column of its own, and when the list leaves too
+    // little room for it and the conversation, the list folds into the
     // rail's avatars while the card is open. The Calls tab's history needs the
     // full list pane: only the chats collapse into the rail's avatars.
     let full_list = app.sidebar_mode() == SidebarDisplayMode::Expanded || app.page == Page::Calls;
-    let mut list_width = rail::PANE_WIDTH;
-    if full_list {
-        list_width += app.settings.sidebar_width;
-    }
+    let list_width = if full_list {
+        app.settings.sidebar_width
+    } else {
+        rail::PANE_WIDTH
+    };
     // The window grows for the info card when it can; when it cannot
     // (maximized, full screen, tiled), the list steps aside before the chat
     // gets too narrow for its header.
@@ -218,11 +224,12 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     } else if !narrow(ui.ctx()) {
         ui.ctx()
             .data_mut(|data| data.insert_temp(side_columns_id(), full_list));
-        rail::show(app, ui, !full_list);
-        if full_list && app.page == Page::Settings {
+        if !full_list {
+            rail::show(app, ui, true);
+        } else if app.page == Page::Settings {
             // Settings puts its categories where the chats were.
             settings::sidebar(app, ui);
-        } else if full_list {
+        } else {
             chats::show(app, ui);
         }
     }
@@ -648,8 +655,8 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Connection and history-sync status, a small toast at the bottom left
-/// above `floor`, clear of the rail's account and settings buttons. Returns
-/// where it was drawn, if it was.
+/// above `floor`, clear of the list's tab bar and the rail's buttons.
+/// Returns where it was drawn, if it was.
 fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> {
     let palette = app.palette;
     // An available release is the rail's ellipse, not this toast.
@@ -689,10 +696,10 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
         ),
     };
     // One row at the bottom left of the side columns (or of the chat when
-    // they are hidden), lifted above the composer if it would cover it.
+    // they are hidden), lifted above the composer and the list's tab bar if
+    // it would cover them.
     let content = ctx.content_rect();
     let left = bottom_left(ctx);
-    let mut bottom = floor - 12.0;
     let width = (content.right() - left - 12.0).max(120.0);
     let row = Frame::new()
         .fill(palette.overlay)
@@ -704,13 +711,7 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
     let reach = ctx
         .memory(|memory| memory.area_rect(egui::Id::new("banner")))
         .map_or(width, |rect| rect.width());
-    if let Some(composer) = ctx.data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
-        && composer
-            .x_range()
-            .intersects(egui::Rangef::new(left, left + reach))
-    {
-        bottom = bottom.min(composer.top() - 8.0);
-    }
+    let bottom = clear_of_floaters(ctx, left, reach, floor - 12.0);
     let shown = egui::Area::new(egui::Id::new("banner"))
         .pivot(Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, bottom))
@@ -752,18 +753,34 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
     Some(shown.response.rect)
 }
 
-/// Where the status banner and the toasts start: the left of the side
-/// columns, past the rail, or of the chat when they are hidden.
+/// Where the status banner and the toasts start: inside the list column,
+/// level with its tab bar, or past the rail when the list is hidden, or at
+/// the edge of a narrow window's single view.
 fn bottom_left(ctx: &egui::Context) -> f32 {
     let side = ctx.data(|data| data.get_temp::<bool>(side_columns_id()));
     ctx.content_rect().left()
         + match side {
-            Some(_) => rail::PANE_WIDTH,
-            None => 12.0,
+            Some(false) => rail::PANE_WIDTH,
+            Some(true) | None => 12.0,
         }
 }
 
-/// Whether the rail was drawn this frame, and the chat list beside it.
+/// How low a toast `reach` wide at `left` may sit: at `bottom`, or above
+/// the open chat's composer or the list's tab bar where it would cover
+/// either (an error waiting to be dismissed must not cover the send button
+/// or a tab).
+fn clear_of_floaters(ctx: &egui::Context, left: f32, reach: f32, bottom: f32) -> f32 {
+    let span = egui::Rangef::new(left, left + reach);
+    [composer_rect_id(), tabbar::rect_id()]
+        .into_iter()
+        .filter_map(|id| ctx.data(|data| data.get_temp::<egui::Rect>(id)))
+        .filter(|rect| rect.x_range().intersects(span))
+        .fold(bottom, |bottom, rect| bottom.min(rect.top() - 8.0))
+}
+
+/// Which side columns were drawn this frame: `true` for the chat list (or
+/// Settings' categories) in the list column, `false` for the rail alone
+/// beside the chat. Absent in a narrow window, which shows one view.
 pub(crate) fn side_columns_id() -> egui::Id {
     egui::Id::new("side-columns")
 }
@@ -805,18 +822,14 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
     });
     let mut actions = Vec::new();
     let left = bottom_left(ctx);
-    let mut bottom = status.map_or(floor - 12.0, |status| status.top() - 8.0);
-    // Stay clear of the composer: an error waiting to be dismissed must not
-    // cover the send button. Last frame's width tells whether it reaches.
+    // Stay clear of the composer and the tab bar.
     let width = TOAST_WIDTH.min(ctx.content_rect().width() - 2.0 * left.max(12.0));
-    let reach = width;
-    if let Some(composer) = ctx.data(|data| data.get_temp::<egui::Rect>(composer_rect_id()))
-        && composer
-            .x_range()
-            .intersects(egui::Rangef::new(left, left + reach))
-    {
-        bottom = bottom.min(composer.top() - 8.0);
-    }
+    let bottom = clear_of_floaters(
+        ctx,
+        left,
+        width,
+        status.map_or(floor - 12.0, |status| status.top() - 8.0),
+    );
     egui::Area::new(egui::Id::new("toasts"))
         .pivot(Align2::LEFT_BOTTOM)
         .fixed_pos(egui::pos2(left, bottom))
@@ -1339,6 +1352,7 @@ mod idle_tests {
                 data.remove::<egui::Rect>(chats::header_row_id());
                 data.remove::<egui::Rect>(conversation::header_row_id());
                 data.remove::<egui::Rect>(rail::rect_id());
+                data.remove::<egui::Rect>(tabbar::rect_id());
             });
             // Frame times a click apart; egui ignores a press held too long.
             frame.set(frame.get() + 1.0 / 60.0);
@@ -1368,18 +1382,26 @@ mod idle_tests {
         let (list, header) = run(&mut app, 1180.0, Vec::new());
         assert!(list.is_some() && header.is_some());
 
-        // Narrow with no chat open: the list takes the whole window beside
-        // the rail.
+        // Narrow with no chat open: the list takes the whole window, with
+        // its tab bar at its foot and no rail.
         app.open_chat = None;
         let (list, header) = run(&mut app, 480.0, Vec::new());
         let list = list.expect("the chat list is drawn");
-        let rail = ctx
-            .data(|data| data.get_temp::<egui::Rect>(rail::rect_id()))
-            .expect("the rail stands beside the narrow list");
-        assert!(rail.left() < 1.0 && rail.right() <= list.left());
         assert!(
-            list.width() > 400.0 - rail.width(),
-            "the list fills the rest of the window: {list:?}"
+            ctx.data(|data| data.get_temp::<egui::Rect>(rail::rect_id()))
+                .is_none(),
+            "no rail beside the narrow list"
+        );
+        assert!(
+            list.left() < 40.0 && list.width() > 400.0,
+            "the list fills the window from its edge: {list:?}"
+        );
+        let bar = ctx
+            .data(|data| data.get_temp::<egui::Rect>(tabbar::rect_id()))
+            .expect("the tab bar is drawn under the narrow list");
+        assert!(
+            bar.left() >= 0.0 && bar.right() <= 480.0 && bar.bottom() <= 780.0,
+            "the tab bar stays in the window: {bar:?}"
         );
         assert!(header.is_none());
 
@@ -1393,7 +1415,12 @@ mod idle_tests {
         assert!(
             ctx.data(|data| data.get_temp::<egui::Rect>(rail::rect_id()))
                 .is_none(),
-            "the rail goes with the list"
+            "no rail beside a narrow conversation"
+        );
+        assert!(
+            ctx.data(|data| data.get_temp::<egui::Rect>(tabbar::rect_id()))
+                .is_none(),
+            "the tab bar goes with the list"
         );
         let header = header.expect("the conversation header is drawn");
         assert!(
@@ -1422,6 +1449,85 @@ mod idle_tests {
             "Back returns to the list: {:?}",
             app.actions
         );
+    }
+
+    /// The list column carries its own way around, the tab bar at its foot,
+    /// so no rail stands before it; with the list hidden the rail stands
+    /// beside the chat instead, and the tab bar goes with the list.
+    #[test]
+    fn the_tab_bar_floats_under_the_list_and_the_rail_stands_in_when_it_hides() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        app.link = LinkStatus::Connected;
+        let chat = crate::model::Chat::new("123@s.whatsapp.net".into(), "Alice".into());
+        app.chats.push(chat.clone());
+        app.open_chat = Some(chat.id.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let run = |app: &mut App| {
+            ctx.data_mut(|data| {
+                data.remove::<egui::Rect>(rail::rect_id());
+                data.remove::<egui::Rect>(tabbar::rect_id());
+                data.remove::<egui::Rect>(chats::panel_rect_id());
+            });
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 780.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| show(app, ui),
+            );
+            output.textures_delta.clear();
+            ctx.data(|data| {
+                (
+                    data.get_temp::<egui::Rect>(rail::rect_id()),
+                    data.get_temp::<egui::Rect>(tabbar::rect_id()),
+                    data.get_temp::<egui::Rect>(chats::panel_rect_id()),
+                )
+            })
+        };
+
+        // The list shown: it starts at the window's edge, and the tab bar
+        // floats at its foot.
+        let (strip, bar, column) = run(&mut app);
+        assert!(strip.is_none(), "no rail beside the list: {strip:?}");
+        let column = column.expect("the chat list is drawn");
+        assert!(
+            column.left() < 1.0,
+            "the list starts at the window's edge: {column:?}"
+        );
+        assert!(
+            (column.width() - app.settings.sidebar_width).abs() < 1.5,
+            "the list column is the list's own width: {column:?}"
+        );
+        let bar = bar.expect("the tab bar is drawn under the list");
+        assert!(
+            column.expand(0.5).contains_rect(bar),
+            "the tab bar stays inside the list column: {bar:?} in {column:?}"
+        );
+        assert!(
+            bar.bottom() <= column.bottom() && bar.bottom() > column.bottom() - tabbar::RESERVE,
+            "the tab bar sits at the column's foot: {bar:?} in {column:?}"
+        );
+
+        // The list hidden: the rail stands beside the chat, and the tab bar
+        // goes with the list.
+        app.sidebar_visible = false;
+        let (strip, bar, column) = run(&mut app);
+        let strip = strip.expect("the rail stands in for the hidden list");
+        assert!(
+            strip.left() < 1.0 && (strip.width() - rail::PANE_WIDTH).abs() < 1.0,
+            "the rail runs down the window's left: {strip:?}"
+        );
+        assert!(bar.is_none(), "no tab bar without the list: {bar:?}");
+        assert!(column.is_none(), "no list column: {column:?}");
     }
 
     #[test]

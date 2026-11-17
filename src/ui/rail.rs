@@ -1,9 +1,12 @@
-//! The navigation rail on the left of the chat list, as WhatsApp's desktop
-//! clients have it: Chats and Calls at the top; Starred, Archived and Locked
-//! chats (while there are any), Settings and our own avatar (the account
-//! switcher) at the bottom. While the chat list is hidden, the chats'
-//! avatars fill the rail between the two, so every chat is still one click
-//! away. Beside the list they would only repeat it.
+//! The navigation rail, as WhatsApp's desktop clients have it, standing
+//! beside the conversation while the chat list is hidden (or folded away
+//! for the info card or a split): Chats and Calls at the top, the button that
+//! brings the list back, the chats' avatars, so every chat is still one
+//! click away, then Starred, Archived and Locked (while there are such
+//! chats), Settings and our own avatar (the account switcher) at the
+//! bottom, a hairline between each group. While the list is shown it
+//! carries its own way around instead: the tab bar at its foot
+//! (`super::tabbar`) and its title's menu of folders.
 
 use egui::{Frame, Margin, Rect, Sense, Vec2, vec2};
 
@@ -19,25 +22,29 @@ use super::widgets;
 pub const WIDTH: f32 = 52.0;
 /// Total panel width including the rail's outer gutters.
 pub const PANE_WIDTH: f32 = WIDTH + 12.0;
-/// Height of one destination at the top: the list header's title, search
-/// field and chips sit level with Chats and Calls.
+/// Height of one destination at the top, and of the button that shows the
+/// list under them.
 const CELL: f32 = 48.0;
-/// The destination hit area stays comfortable while its selected surface is
-/// a little smaller, so the icons have more breathing room.
-const HIT_AREA: f32 = 36.0;
-const PLATE: f32 = 32.0;
+/// What a destination takes clicks on: nearly the rail's whole width, so a
+/// press a little off the icon still lands.
+const HIT_AREA: f32 = 44.0;
+/// The lit or hovered plate behind a destination's icon, a little inside
+/// its hit area.
+const PLATE: f32 = 40.0;
 /// A destination's icon.
-const ICON: f32 = 20.0;
+const ICON: f32 = 22.0;
 /// Our avatar at the foot of the rail.
-const AVATAR: f32 = 32.0;
+const AVATAR: f32 = 36.0;
 /// Space above the first destination, as the list header's own margin, and
 /// between the bottom group's plates, the avatar and the window's edge.
 const GAP: f32 = 8.0;
 /// The least height the chats' avatars take. If the rail cannot fit this
 /// and both groups, the whole rail scrolls below the window buttons.
 const MIN_AVATARS: f32 = 64.0;
-/// Width of the line between the destinations and the chats' avatars.
-const DIVIDER: f32 = 24.0;
+/// Width of the hairlines between the rail's groups.
+const DIVIDER: f32 = 32.0;
+/// Height a hairline takes with the space either side of it.
+const DIVIDER_SPACE: f32 = GAP;
 /// How far below the window's top the macOS traffic lights end, centred as
 /// they are in the 60-point title bar. The rail's outer top gutter supplies
 /// the extra clearance below them.
@@ -161,8 +168,9 @@ impl Destination {
 }
 
 /// The rail as a fixed panel on the left, with the chats' avatars between
-/// its two groups. `hidden` says the chat list is hidden: the rail then
-/// offers to show it again and stands beside the conversation.
+/// its two groups. `hidden` says the chat list is hidden, as it is whenever
+/// the window draws the rail: the rail then offers to show it again and
+/// stands beside the conversation, ending at a hairline as the list does.
 pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
     let palette = app.palette;
     // Its own panel id: sharing the list's would hand that resizable panel
@@ -178,7 +186,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             bottom: 4,
         }));
     let response = panel.show(ui, |ui| {
-        // Flat on the sidebar's colour, one column with the list beside it.
+        // Flat on the gutter's colour, one column beside the chat's card.
         Frame::new().show(ui, |ui| {
             // The avatars keep the spacing they always had; the rest is tight.
             let row_gap = ui.spacing().item_spacing.y;
@@ -205,11 +213,15 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
             .filter(|destination| destination.offered(app))
             .collect();
             let update = if app.update.is_some() { 1.0 } else { 0.0 };
-            let foot = (bottom.len() as f32 + update) * (HIT_AREA + GAP) + GAP + AVATAR + GAP;
+            // The bottom group, from the hairline over it (with the avatars
+            // above) to the margin under our avatar.
+            let rule = if hidden { DIVIDER_SPACE } else { 0.0 };
+            let buttons = (bottom.len() as f32 + update) * (HIT_AREA + GAP);
+            let foot = rule + buttons + GAP + AVATAR + GAP;
             let minimum = 2.0 * CELL
                 + foot
                 + if hidden {
-                    CELL + GAP + MIN_AVATARS
+                    CELL + DIVIDER_SPACE + MIN_AVATARS
                 } else {
                     0.0
                 };
@@ -230,13 +242,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                         // A cell of its own under Calls: nothing above it moves
                         // when the list comes and goes.
                         show_list_button(app, ui, &palette);
-                        ui.add_space(GAP / 2.0);
-                        let line = Rect::from_center_size(
-                            ui.cursor().min + vec2(width / 2.0, 0.0),
-                            vec2(DIVIDER, 1.0),
-                        );
-                        ui.painter().rect_filled(line, 0.0, palette.outline);
-                        ui.add_space(GAP / 2.0);
+                        divider(ui, &palette);
                         let middle = (ui.available_height() - foot).max(MIN_AVATARS);
                         ui.allocate_ui_with_layout(
                             vec2(width, middle),
@@ -249,6 +255,9 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
                     }
                     let rest = (ui.available_height() - foot).max(0.0);
                     ui.add_space(rest);
+                    if hidden {
+                        divider(ui, &palette);
+                    }
                     let archive_shown = bottom.contains(&Destination::Archived);
                     let mut update_drawn = false;
                     for destination in bottom {
@@ -277,11 +286,19 @@ pub fn show(app: &mut App, ui: &mut egui::Ui, hidden: bool) {
     });
     let rect = response.response.rect;
     ui.ctx().data_mut(|data| data.insert_temp(rect_id(), rect));
-    // No line between the rail and the list, whose shades tell them apart;
-    // beside the conversation the rail ends as the list does.
+    // Beside the conversation the rail ends as the list does.
     if hidden {
         widgets::paint_edge_beside(ui, &palette, rect);
     }
+}
+
+/// A hairline across the middle of the rail between two of its groups, in
+/// `DIVIDER_SPACE` of height.
+fn divider(ui: &mut egui::Ui, palette: &Palette) {
+    let (space, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), DIVIDER_SPACE), Sense::hover());
+    let line = Rect::from_center_size(space.center(), vec2(DIVIDER, 1.0));
+    ui.painter().rect_filled(line, 0.0, palette.outline);
 }
 
 /// Filled ellipse above Archived while a release is waiting. Opens that
@@ -328,27 +345,23 @@ fn update_button(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     }
 }
 
-/// The button that brings the hidden chat list back.
+/// The button that brings the hidden chat list back, on a plate as the
+/// destinations are.
 fn show_list_button(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
-    ui.allocate_ui_with_layout(
-        vec2(ui.available_width(), CELL),
-        egui::Layout::centered_and_justified(egui::Direction::TopDown),
-        |ui| {
-            if theme::icon_button(
-                ui,
-                Icon::PanelLeft,
-                18.0,
-                palette.secondary,
-                palette.text,
-                &super::keys::label("Show the chat list (Ctrl+B)"),
-            )
-            .tab_stop(Stop::Sidebar)
-            .clicked()
-            {
-                app.actions.push(Action::ToggleSidebar);
-            }
-        },
-    );
+    let label = super::keys::label("Show the chat list (Ctrl+B)");
+    let (response, _) = plate_button(ui, palette, show_list_id(), Icon::PanelLeft, false, CELL);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), &label)
+    });
+    let response = response.on_hover_text(label).tab_stop(Stop::Sidebar);
+    if response.clicked() {
+        app.actions.push(Action::ToggleSidebar);
+    }
+}
+
+/// Stable id of the button that shows the chat list again.
+fn show_list_id() -> egui::Id {
+    egui::Id::new("nav-rail-show-list")
 }
 
 /// One destination: its icon on a rounded plate, lit as the selected chat
@@ -412,13 +425,8 @@ fn destination_button(
             }),
         ),
     };
-    let (cell, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
-    let plate = Rect::from_center_size(cell.center(), Vec2::splat(PLATE));
-    let hit_area = Rect::from_center_size(cell.center(), Vec2::splat(HIT_AREA));
-    let response = ui
-        .interact(hit_area, destination_id(destination), Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    theme::reveal_focus(&response);
+    let (response, plate) =
+        plate_button(ui, palette, destination_id(destination), icon, lit, height);
     let spoken = if badge > 0 {
         format!("{label}, {badge}")
     } else {
@@ -432,6 +440,42 @@ fn destination_button(
             spoken.as_str(),
         )
     });
+    if badge > 0 && ui.is_rect_visible(plate) {
+        widgets::unread_indicator(
+            ui,
+            palette,
+            plate.right_top() + vec2(-3.0, 5.0),
+            badge,
+            false,
+            false,
+        );
+    }
+    let response = response.on_hover_text(label).tab_stop(stop);
+    if response.clicked() {
+        let actions = destination.actions(app);
+        app.actions.extend(actions);
+    }
+}
+
+/// An icon on a rounded plate in a cell `height` points tall across the
+/// rail, taking clicks on `HIT_AREA` around its centre: lit with the accent
+/// while `lit`, else a plate easing in under the pointer or the keyboard's
+/// focus. Returns the response and where the plate is.
+fn plate_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    id: egui::Id,
+    icon: Icon,
+    lit: bool,
+    height: f32,
+) -> (egui::Response, Rect) {
+    let (cell, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let plate = Rect::from_center_size(cell.center(), Vec2::splat(PLATE));
+    let hit_area = Rect::from_center_size(cell.center(), Vec2::splat(HIT_AREA));
+    let response = ui
+        .interact(hit_area, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    theme::reveal_focus(&response);
     if ui.is_rect_visible(plate) {
         let ctx = ui.ctx().clone();
         let hover = theme::animate(
@@ -469,22 +513,8 @@ fn destination_button(
         };
         let scale = 1.0 - 0.08 * press;
         theme::paint_icon(ui, icon, plate, ICON * scale, tint);
-        if badge > 0 {
-            widgets::unread_indicator(
-                ui,
-                palette,
-                plate.right_top() + vec2(-3.0, 5.0),
-                badge,
-                false,
-                false,
-            );
-        }
     }
-    let response = response.on_hover_text(label).tab_stop(stop);
-    if response.clicked() {
-        let actions = destination.actions(app);
-        app.actions.extend(actions);
-    }
+    (response, plate)
 }
 
 #[cfg(test)]
@@ -579,5 +609,45 @@ mod tests {
             Destination::Chats.actions(&app).as_slice(),
             [Action::ShowArchived(false)]
         ));
+    }
+
+    /// Beside the conversation every button takes a roomy press, inside
+    /// the rail and in order: Chats, Calls and Show the chat list at the
+    /// top, the chats' avatars' room, then Starred and Settings at the foot.
+    #[test]
+    fn every_rail_button_takes_a_roomy_press() {
+        let (_root, mut app) = app();
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 700.0))),
+                ..Default::default()
+            },
+            |ui| show(&mut app, ui, true),
+        );
+        output.textures_delta.clear();
+        let rail = ctx
+            .data(|data| data.get_temp::<Rect>(rect_id()))
+            .expect("the rail is drawn");
+        let target = |id| ctx.read_response(id).expect("the button is drawn").rect;
+        let chats = target(destination_id(Destination::Chats));
+        let calls = target(destination_id(Destination::Calls));
+        let show_list = target(show_list_id());
+        let starred = target(destination_id(Destination::Starred));
+        let settings = target(destination_id(Destination::Settings));
+        for rect in [chats, calls, show_list, starred, settings] {
+            assert!(
+                rect.width() >= HIT_AREA - 0.5 && rect.height() >= HIT_AREA - 0.5,
+                "a roomy target: {rect:?}"
+            );
+            assert!(rail.contains_rect(rect), "{rect:?} in {rail:?}");
+        }
+        assert!(chats.bottom() <= calls.top() && calls.bottom() <= show_list.top());
+        assert!(
+            starred.top() > show_list.bottom() + MIN_AVATARS,
+            "the avatars' room between the groups: {show_list:?} {starred:?}"
+        );
+        assert!(starred.bottom() <= settings.top() && settings.bottom() <= rail.bottom());
     }
 }

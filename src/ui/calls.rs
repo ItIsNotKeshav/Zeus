@@ -263,7 +263,8 @@ fn history(app: &mut App, ui: &mut egui::Ui) {
                 for row in &rows {
                     history_row(app, ui, row, &mut actions);
                 }
-                ui.add_space(crate::theme::SPACE_M);
+                // The last row scrolls clear of the list's tab bar.
+                ui.add_space(super::tabbar::RESERVE);
             });
     });
     app.actions.extend(actions);
@@ -565,7 +566,8 @@ fn new_call_list(app: &mut App, ui: &mut egui::Ui) {
                         person(app, ui, &contact.id, &mut actions);
                     });
                 }
-                ui.add_space(crate::theme::SPACE_M);
+                // The last contact scrolls clear of the list's tab bar.
+                ui.add_space(super::tabbar::RESERVE);
             });
     });
     if !actions.is_empty() {

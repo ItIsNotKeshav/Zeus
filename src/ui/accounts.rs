@@ -1,6 +1,9 @@
-//! The account switcher: our own avatar at the foot of the navigation rail
-//! opens a menu of the numbers linked here and a way to add another. The
-//! settings keep their own button above it.
+//! The account switcher: our own avatar opens a menu of the numbers linked
+//! here and a way to add another. Beside the chat list the avatar is the tab
+//! bar's Profile tab ([`tab_button`]), and the menu rises from the bar as a
+//! drawer as wide as it; at the foot of the rail, with the list hidden, and
+//! in the linking screen's corner it drops from the avatar ([`avatar_button`]).
+//! The settings keep their own button beside it.
 
 use egui::{Align2, CornerRadius, Rect, Sense, Vec2, pos2, vec2};
 
@@ -18,10 +21,86 @@ const MENU_WIDTH: f32 = 280.0;
 const ROW: f32 = 48.0;
 /// Avatar size in an account row.
 const ROW_AVATAR: f32 = 32.0;
+/// Our avatar in the tab bar.
+const TAB_AVATAR: f32 = 28.0;
+/// The space between the tab bar and the drawer that rises from it.
+const DRAWER_GAP: f32 = 8.0;
 
 /// Stable id of the switcher button, for tests and the demo.
 pub fn button_id() -> egui::Id {
     egui::Id::new("account-switcher")
+}
+
+/// Stable id of the drawer the tab bar's avatar opens, for tests and the demo.
+pub fn drawer_id() -> egui::Id {
+    egui::Id::new("account-drawer")
+}
+
+/// Whether the drawer over the tab bar is open: the bar lights our avatar's
+/// tab while it is.
+pub fn drawer_open(ctx: &egui::Context) -> bool {
+    egui::Popup::is_id_open(ctx, drawer_id())
+}
+
+/// Our avatar as the tab bar's Profile tab, centred in `cell`, whose whole
+/// area is its target, registered under `id`. A click opens the switcher as
+/// a drawer rising above `bar`, as wide as it; so does
+/// [`App::account_menu`]. A dot on the avatar says another account has
+/// unread chats. The bar draws the tab's plate and focus ring itself.
+pub fn tab_button(
+    app: &mut App,
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    cell: Rect,
+    bar: Rect,
+) -> egui::Response {
+    let palette = app.palette;
+    let me = app.me.clone().unwrap_or_default();
+    let name = app.me_name.clone().unwrap_or_else(|| "You".to_owned());
+    let picture = app.avatar(&me);
+    let elsewhere = app.unread_chat_count_elsewhere();
+    let open = drawer_open(ui.ctx());
+    let response = ui.interact(cell, id, Sense::click());
+    theme::reveal_focus(&response);
+    let mut label = gettext(app.locale, "Switch account").into_owned();
+    if elsewhere > 0 {
+        label.push_str(", ");
+        label.push_str(
+            &gettext(app.locale, "{count} unread chats")
+                .replace("{count}", &elsewhere.to_string()),
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            open,
+            label.as_str(),
+        )
+    });
+    if ui.is_rect_visible(cell) {
+        // Always the same size: a picture that shrank as it was pressed
+        // would be fetched at every size it passed through.
+        let avatar = Rect::from_center_size(cell.center(), Vec2::splat(TAB_AVATAR));
+        widgets::paint_avatar(ui, &palette, avatar, &name, &me, picture.as_deref());
+        if elsewhere > 0 {
+            // Ringed in the bar's colour so it reads on any picture.
+            let at = avatar.right_top() + vec2(-2.0, 2.0);
+            ui.painter().circle_filled(at, 6.0, palette.overlay);
+            ui.painter().circle_filled(at, 4.5, palette.accent);
+        }
+    }
+    let response = response
+        .on_hover_text(tooltip(app, &name))
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let drawer = egui::Popup::menu(&response)
+        .id(drawer_id())
+        .anchor(bar)
+        .align(egui::RectAlign::TOP)
+        .gap(DRAWER_GAP)
+        .width(bar.width());
+    switcher(app, &response, drawer);
+    response
 }
 
 /// Our avatar as the switcher's button. A dot on it says another account has
@@ -44,16 +123,24 @@ pub fn avatar_button(app: &mut App, ui: &mut egui::Ui, size: f32) -> egui::Respo
         ui.painter().circle_filled(at, 6.0, palette.panel);
         ui.painter().circle_filled(at, 4.5, palette.accent);
     }
-    let tooltip = match (&app.me_about, app.has_several_accounts()) {
+    let response = response
+        .on_hover_text(tooltip(app, &name))
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let menu = egui::Popup::menu(&response)
+        .id(response.id.with("popup"))
+        .width(MENU_WIDTH);
+    switcher(app, &response, menu);
+    response
+}
+
+/// What hovering our avatar says: the account on screen when there are
+/// several, else our name and about.
+fn tooltip(app: &App, name: &str) -> String {
+    match (&app.me_about, app.has_several_accounts()) {
         (_, true) => app.account().display_label(app.locale),
         (Some(about), false) => format!("{name}\n{about}"),
-        (None, false) => name.clone(),
-    };
-    let response = response
-        .on_hover_text(tooltip)
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    menu(app, &response);
-    response
+        (None, false) => name.to_owned(),
+    }
 }
 
 /// What the switcher lists for one account.
@@ -97,17 +184,16 @@ fn entries(app: &mut App) -> Vec<Entry> {
         .collect()
 }
 
-fn menu(app: &mut App, button: &egui::Response) {
+/// The switcher in `popup`, which `button` opens: its click, a right-click,
+/// or [`App::account_menu`] from the keyboard or the linking screen.
+fn switcher(app: &mut App, button: &egui::Response, popup: egui::Popup<'_>) {
     let palette = app.palette;
-    let popup_id = button.id.with("popup");
     if app.account_menu || button.secondary_clicked() {
         app.account_menu = false;
-        egui::Popup::open_id(&button.ctx, popup_id);
+        egui::Popup::open_id(&button.ctx, popup.get_id());
     }
     let entries = entries(app);
-    egui::Popup::menu(button)
-        .id(popup_id)
-        .width(MENU_WIDTH)
+    popup
         .frame(widgets::menu_frame(&palette))
         .show_frosted(&button.ctx, |ui| {
             for entry in &entries {
