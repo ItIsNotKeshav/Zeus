@@ -110,7 +110,22 @@ enum Control {
     AccountToggle(fn(&mut crate::settings::AccountSettings) -> &mut bool),
     /// Something that lays itself out, like the account card.
     Block(Draw),
+    /// A faint hairline between topic groups. Drawn only between two shown
+    /// rows, never first, last or twice in a row, and not while searching.
+    Separator,
+    /// A collapsible group of rows (see [`Section::accordion`]).
+    Group(Group),
 }
+
+/// An accordion: a header with a chevron over rows that show when open.
+struct Group {
+    summary: Text,
+    children: Vec<(Row, Control)>,
+    /// Set by a search: the group opens to show what matched.
+    searching: bool,
+}
+
+const ACCORDION_ROW: f32 = 28.0;
 
 /// A titled card of settings, drawn only when the search leaves a row in it.
 struct Section {
@@ -168,6 +183,37 @@ impl Section {
         self.entries.push((row, Control::AccountToggle(field)));
     }
 
+    /// A hairline between topic groups.
+    fn separator(&mut self) {
+        self.entries.push((Row::default(), Control::Separator));
+    }
+
+    /// A group of rows folded under `title` (and an optional one-line
+    /// `summary`), closed until clicked; its open state is remembered per
+    /// title. A search opens it when a row inside matches, and finds the
+    /// group by its title too. Build the rows on the `Section` handed to
+    /// `fill`; its own title is unused.
+    fn accordion(
+        &mut self,
+        title: impl Into<Text>,
+        summary: impl Into<Text>,
+        fill: impl FnOnce(&mut Section),
+    ) {
+        let title = title.into();
+        let mut inner = Section::new(title.clone());
+        fill(&mut inner);
+        let row = Row {
+            title,
+            ..Row::default()
+        };
+        let group = Group {
+            summary: summary.into(),
+            children: inner.entries,
+            searching: false,
+        };
+        self.entries.push((row, Control::Group(group)));
+    }
+
     fn block(&mut self, keywords: Vec<Text>, draw: impl FnOnce(&mut egui::Ui, &mut App) + 'static) {
         let row = Row {
             keywords,
@@ -207,11 +253,7 @@ impl Section {
 
     /// The rows the search leaves, in order.
     fn visible(self, filter: &Filter) -> (Text, Vec<(Row, Control)>) {
-        let entries = self
-            .entries
-            .into_iter()
-            .filter(|(row, _)| filter.shows(&self.title, row))
-            .collect();
+        let entries = filter_entries(self.entries, &self.title, filter);
         (self.title, entries)
     }
 
@@ -226,30 +268,207 @@ impl Section {
         // Room between settings, more on the open page than on a card.
         let gap = if titled { ROW_GAP } else { PAGE_ROW_GAP };
         section(ui, &palette, &title, |ui| {
-            for (index, (row, control)) in entries.into_iter().enumerate() {
-                if index > 0 {
-                    ui.add_space(gap);
-                }
-                match control {
-                    Control::Row(control) => widgets::setting_row(
-                        ui,
-                        &palette,
-                        &row.title.shown,
-                        &row.description.shown,
-                        |ui| control(ui, app),
-                    ),
-                    Control::Toggle(field) => {
-                        toggle(ui, app, &row.title.shown, &row.description.shown, field);
-                    }
-                    Control::AccountToggle(field) => {
-                        account_toggle(ui, app, &row.title.shown, &row.description.shown, field);
-                    }
-                    Control::Block(draw) => draw(ui, app),
-                }
-            }
+            draw_entries(ui, app, &palette, entries, gap);
         });
         true
     }
+}
+
+/// Keeps the entries the search leaves. Groups keep the children that
+/// match (all of them when the group's own title matches); separators go
+/// while searching, and never lead, trail or repeat.
+fn filter_entries(
+    entries: Vec<(Row, Control)>,
+    section: &Text,
+    filter: &Filter,
+) -> Vec<(Row, Control)> {
+    let mut out: Vec<(Row, Control)> = Vec::new();
+    for (row, control) in entries {
+        match control {
+            Control::Separator => {
+                if filter.is_empty() && !matches!(out.last(), None | Some((_, Control::Separator)))
+                {
+                    out.push((row, Control::Separator));
+                }
+            }
+            Control::Group(mut group) => {
+                let own =
+                    filter.is_empty() || filter.finds(&row.title) || filter.shows(section, &row);
+                let children = if own {
+                    group.children
+                } else {
+                    filter_entries(group.children, section, filter)
+                };
+                if children.is_empty() {
+                    continue;
+                }
+                group.children = children;
+                group.searching = !filter.is_empty();
+                out.push((row, Control::Group(group)));
+            }
+            control => {
+                if filter.shows(section, &row) {
+                    out.push((row, control));
+                }
+            }
+        }
+    }
+    while matches!(out.last(), Some((_, Control::Separator))) {
+        out.pop();
+    }
+    out
+}
+
+/// Draws entries one after another, `gap` apart.
+fn draw_entries(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    palette: &Palette,
+    entries: Vec<(Row, Control)>,
+    gap: f32,
+) {
+    for (index, (row, control)) in entries.into_iter().enumerate() {
+        if index > 0 && !matches!(control, Control::Separator) {
+            ui.add_space(gap);
+        }
+        match control {
+            Control::Row(control) => widgets::setting_row(
+                ui,
+                palette,
+                &row.title.shown,
+                &row.description.shown,
+                |ui| control(ui, app),
+            ),
+            Control::Toggle(field) => {
+                toggle(ui, app, &row.title.shown, &row.description.shown, field);
+            }
+            Control::AccountToggle(field) => {
+                account_toggle(ui, app, &row.title.shown, &row.description.shown, field);
+            }
+            Control::Block(draw) => draw(ui, app),
+            Control::Separator => {
+                ui.add_space(theme::SPACE_XS);
+                let (rect, _) =
+                    ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+                ui.painter().line_segment(
+                    [rect.left_center(), rect.right_center()],
+                    Stroke::new(theme::OUTLINE_STROKE, palette.text.gamma_multiply(0.07)),
+                );
+                ui.add_space(theme::SPACE_M);
+            }
+            Control::Group(group) => accordion(ui, app, palette, &row.title, group, gap),
+        }
+    }
+}
+
+/// The one settings group left open, so opening another closes it.
+fn open_accordion_id() -> egui::Id {
+    egui::Id::new("settings-accordion-open")
+}
+
+/// An accordion's header and, when open, its rows. The open state lives in
+/// egui memory under the group's English title; a search opens it.
+fn accordion(
+    ui: &mut egui::Ui,
+    app: &mut App,
+    palette: &Palette,
+    title: &Text,
+    group: Group,
+    gap: f32,
+) {
+    let id = egui::Id::new(("settings-accordion", title.source.as_ref()));
+    let mut state =
+        egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false);
+    // One group open at a time: opening another closes this one.
+    let lead = ui
+        .ctx()
+        .data(|data| data.get_temp::<egui::Id>(open_accordion_id()));
+    if state.is_open() && lead != Some(id) && !group.searching {
+        state.set_open(false);
+    }
+    let open = state.is_open() || group.searching;
+    let height = if group.summary.shown.is_empty() {
+        ACCORDION_ROW
+    } else {
+        ACCORDION_ROW + 16.0
+    };
+    let (rect, response) =
+        ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::click());
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, 12.0);
+    if ui.is_rect_visible(rect) {
+        let top = if group.summary.shown.is_empty() {
+            rect.center().y
+        } else {
+            rect.top() + ACCORDION_ROW / 2.0
+        };
+        ui.painter().text(
+            pos2(rect.left(), top),
+            egui::Align2::LEFT_CENTER,
+            title.shown.as_ref(),
+            theme::medium(theme::TEXT_BODY),
+            palette.text,
+        );
+        if !group.summary.shown.is_empty() {
+            ui.painter().text(
+                pos2(rect.left(), top + 18.0),
+                egui::Align2::LEFT_CENTER,
+                group.summary.shown.as_ref(),
+                theme::regular(theme::TEXT_CAPTION),
+                palette.secondary,
+            );
+        }
+        let chevron = if open {
+            Icon::ChevronDown
+        } else {
+            Icon::ChevronRight
+        };
+        theme::paint_icon(
+            ui,
+            chevron,
+            Rect::from_center_size(
+                pos2(rect.right() - 10.0, rect.center().y),
+                Vec2::splat(18.0),
+            ),
+            18.0,
+            if response.hovered() {
+                palette.text
+            } else {
+                palette.secondary
+            },
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::CollapsingHeader,
+            ui.is_enabled(),
+            open,
+            title.shown.as_ref(),
+        )
+    });
+    if response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        state.toggle(ui);
+        if state.is_open() {
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(open_accordion_id(), id));
+        }
+    }
+    if group.searching {
+        state.set_open(true);
+    }
+    state.show_body_unindented(ui, |ui| {
+        ui.add_space(theme::SPACE_S);
+        let inset = theme::SPACE_M;
+        ui.horizontal_top(|ui| {
+            ui.add_space(inset);
+            ui.vertical(|ui| {
+                draw_entries(ui, app, palette, group.children, gap);
+            });
+        });
+    });
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -611,6 +830,7 @@ fn sections(app: &App) -> Vec<Section> {
             translated(locale, "Density"),
             translated(locale, "Strength"),
             translated(locale, "Doodle colour"),
+            translated(locale, "Custom"),
         ],
         appearance::doodles,
     );
@@ -618,9 +838,11 @@ fn sections(app: &App) -> Vec<Section> {
     appearance.block(vec![translated(locale, "Zoom")], appearance::zoom);
     appearance.block(
         vec![
-            translated(locale, "More"),
+            translated(locale, "Interface"),
+            translated(locale, "Motion"),
             translated(locale, "Language"),
             translated(locale, "Animations"),
+            translated(locale, "Motion speed"),
             translated(locale, "Always show time"),
             translated(locale, "Wallpaper colour"),
         ],
@@ -628,35 +850,33 @@ fn sections(app: &App) -> Vec<Section> {
     );
 
     let mut chats = Section::new(translated(locale, "Chats"));
+    // Opening and sending.
     chats.toggle(translated(locale, "Open the last chat"), "", |settings| {
         &mut settings.restore_last_chat
     });
-    chats.toggle(
-        translated(locale, "Enter sends"),
-        keyed(translated(locale, "When off, Ctrl+Enter sends.")),
-        |settings| &mut settings.enter_sends,
-    );
-    chats.row(
-        translated(locale, "Motion"),
-        translated(
-            locale,
-            "Fast runs the chat's springs and animations in 70% of their time.",
-        ),
-        motion_picker,
-    );
+    {
+        let send = Row {
+            title: translated(locale, "Shortcut to send message"),
+            keywords: vec![
+                translated(locale, "Enter sends"),
+                Text::from("Enter".to_owned()),
+            ],
+            ..Row::default()
+        };
+        chats
+            .entries
+            .push((send, Control::Row(Box::new(send_shortcut_picker))));
+    }
+    chats.separator();
+    // Media and history.
     chats.account_toggle(
         translated(locale, "Download files automatically"),
-        translated(locale, "Files up to 64 MiB."),
+        "",
         |settings| &mut settings.auto_download,
     );
-    chats.account_toggle(
-        translated(locale, "Fetch older history"),
-        translated(
-            locale,
-            "Asks your phone for older messages in recent chats.",
-        ),
-        |settings| &mut settings.history_prefetch,
-    );
+    chats.account_toggle(translated(locale, "Fetch older history"), "", |settings| {
+        &mut settings.history_prefetch
+    });
     // macOS has no public API to pause other apps' media.
     if crate::media_pause::SUPPORTED {
         chats.toggle(
@@ -665,9 +885,11 @@ fn sections(app: &App) -> Vec<Section> {
             |settings| &mut settings.pause_other_media,
         );
     }
+    chats.separator();
+    // Archive and privacy.
     chats.row(
         translated(locale, "Keep chats archived"),
-        translated(locale, "When off, a new message unarchives the chat."),
+        "",
         move |ui, app| {
             let mut keep = app.settings.keep_chats_archived;
             let response = widgets::switch(ui, &palette, &mut keep);
@@ -688,7 +910,7 @@ fn sections(app: &App) -> Vec<Section> {
     );
     chats.row(
         translated(locale, "Locked chats code"),
-        translated(locale, "Hides chats. It does not encrypt them."),
+        "",
         move |ui, app| {
             // The buffer lives in egui memory: the hash is the only
             // stored form, so there is nothing to read it back from.
@@ -715,71 +937,81 @@ fn sections(app: &App) -> Vec<Section> {
         },
     );
 
-    chats.absorb(swipe_section(locale));
+    chats.separator();
+    let swipes = swipe_section(locale);
+    chats.accordion(swipes.title.clone(), "", move |inner| {
+        inner.entries = swipes.entries;
+    });
 
     let mut notifications = Section::new(translated(locale, "Notifications"));
+    // Alerts.
     notifications.account_toggle(
         translated(locale, "Desktop notifications"),
         "",
         |settings| &mut settings.notifications,
     );
     if app.account().settings.notifications {
-        let (title, description) = sound_text(locale, false);
         notifications.toggle(
             translated(locale, "Show message content in notifications"),
             "",
             |settings| &mut settings.notification_content,
         );
-        notifications.row(title, description, |ui, app| sound_control(ui, app, false));
-        notifications.toggle(
-            translated(locale, "Notification cooldown"),
-            translated(locale, "Only one sound when many messages arrive at once."),
-            |settings| &mut settings.notification_cooldown,
-        );
-        notifications.row(
-            translated(locale, "Limit repeat notifications"),
-            translated(
-                locale,
-                "A chat stays quiet for 10 minutes after it notifies. Mentions and replies still notify.",
-            ),
-            |ui, app| {
-                let palette = app.palette;
-                let locale = app.locale;
-                let selected = app.account().settings.limit_notifications;
-                let mut picked = None;
-                controls::dropdown(
-                    ui,
-                    &palette,
-                    "limit_notifications",
-                    &translated(locale, "Limit repeat notifications").shown,
-                    selected.label(locale).as_ref(),
-                    controls::WIDTH,
-                    |ui| {
-                        for limit in crate::settings::NotificationLimit::ALL {
-                            if controls::option(
-                                ui,
-                                &palette,
-                                limit.label(locale).as_ref(),
-                                limit == selected,
-                            ) {
-                                picked = Some(limit);
-                            }
-                        }
-                    },
-                );
-                if let Some(limit) = picked {
-                    app.account_mut().settings.limit_notifications = limit;
-                    app.account_mut().mark_settings_dirty();
-                }
-            },
-        );
+        notifications.separator();
+        // Sounds.
+        let (title, _) = sound_text(locale, false);
+        notifications.row(title, "", |ui, app| sound_control(ui, app, false));
         notifications.toggle(
             translated(locale, "Play sounds for group messages"),
-            translated(locale, "Off: only mentions and replies make a sound."),
+            "",
             |settings| &mut settings.group_sounds,
         );
-        let (title, description) = sound_text(locale, true);
-        notifications.row(title, description, |ui, app| sound_control(ui, app, true));
+        let (title, _) = sound_text(locale, true);
+        notifications.row(title, "", |ui, app| sound_control(ui, app, true));
+        notifications.separator();
+        notifications.accordion(translated(locale, "Fewer notifications"), "", |inner| {
+            inner.toggle(
+                translated(locale, "Notification cooldown"),
+                translated(locale, "Only one sound when many messages arrive at once."),
+                |settings| &mut settings.notification_cooldown,
+            );
+            inner.row(
+                translated(locale, "Limit repeat notifications"),
+                translated(
+                    locale,
+                    "A chat stays quiet for 10 minutes after it notifies. Mentions and replies still notify.",
+                ),
+                |ui, app| {
+                    let palette = app.palette;
+                    let locale = app.locale;
+                    let selected = app.account().settings.limit_notifications;
+                    let mut picked = None;
+                    controls::dropdown(
+                        ui,
+                        &palette,
+                        "limit_notifications",
+                        &translated(locale, "Limit repeat notifications").shown,
+                        selected.label(locale).as_ref(),
+                        controls::WIDTH,
+                        |ui| {
+                            for limit in crate::settings::NotificationLimit::ALL {
+                                if controls::option(
+                                    ui,
+                                    &palette,
+                                    limit.label(locale).as_ref(),
+                                    limit == selected,
+                                ) {
+                                    picked = Some(limit);
+                                }
+                            }
+                        },
+                    );
+                    if let Some(limit) = picked {
+                        app.account_mut().settings.limit_notifications = limit;
+                        app.account_mut().mark_settings_dirty();
+                    }
+                },
+            );
+        });
     }
 
     let voice = voice_section(app);
@@ -800,6 +1032,7 @@ fn sections(app: &App) -> Vec<Section> {
         "",
         |settings| &mut settings.send_typing,
     );
+    privacy.separator();
     app_lock_rows(app, &mut privacy);
     privacy.row(
         translated(locale, "Blocked contacts"),
@@ -818,6 +1051,7 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    privacy.separator();
     // The account values live on the phone: they are shown once fetched and
     // edited only while connected with a fresh snapshot.
     let editable = app.is_connected() && app.account_privacy.editable();
@@ -839,48 +1073,50 @@ fn sections(app: &App) -> Vec<Section> {
     } else {
         None
     };
-    if let Some(note) = note {
-        privacy.block(Vec::new(), move |ui, _app| {
-            widgets::rich_text(
-                ui,
-                &note,
-                theme::regular(theme::TEXT_CAPTION),
-                palette.secondary,
-            );
-            ui.add_space(8.0);
-        });
-    }
-    for kind in PrivacyKind::ALL {
-        let Some(current) = app.account_privacy.get(kind) else {
-            continue;
-        };
-        let title = Text {
-            shown: kind.label(locale),
-            source: kind.label(Locale::English),
-        };
-        let mut description = Text {
-            shown: kind.hint(locale),
-            source: kind.hint(Locale::English),
-        };
-        // The people an Except list leaves out are chosen on the phone.
-        if current == PrivacyChoice::Except {
-            let note = translated(locale, "Change who is excluded on your phone.");
-            let join = |hint: &str, note: &str| {
-                if hint.is_empty() {
-                    note.to_owned()
-                } else {
-                    format!("{hint} {note}")
-                }
-            };
-            description = Text {
-                shown: join(&description.shown, &note.shown).into(),
-                source: join(&description.source, &note.source).into(),
-            };
+    privacy.accordion(translated(locale, "Who can see my info"), "", |inner| {
+        if let Some(note) = note {
+            inner.block(Vec::new(), move |ui, _app| {
+                widgets::rich_text(
+                    ui,
+                    &note,
+                    theme::regular(theme::TEXT_CAPTION),
+                    palette.secondary,
+                );
+                ui.add_space(8.0);
+            });
         }
-        privacy.row(title, description, move |ui, app| {
-            ui.add_enabled_ui(editable, |ui| privacy_control(ui, app, kind));
-        });
-    }
+        for kind in PrivacyKind::ALL {
+            let Some(current) = app.account_privacy.get(kind) else {
+                continue;
+            };
+            let title = Text {
+                shown: kind.label(locale),
+                source: kind.label(Locale::English),
+            };
+            let mut description = Text {
+                shown: kind.hint(locale),
+                source: kind.hint(Locale::English),
+            };
+            // The people an Except list leaves out are chosen on the phone.
+            if current == PrivacyChoice::Except {
+                let note = translated(locale, "Change who is excluded on your phone.");
+                let join = |hint: &str, note: &str| {
+                    if hint.is_empty() {
+                        note.to_owned()
+                    } else {
+                        format!("{hint} {note}")
+                    }
+                };
+                description = Text {
+                    shown: join(&description.shown, &note.shown).into(),
+                    source: join(&description.source, &note.source).into(),
+                };
+            }
+            inner.row(title, description, move |ui, app| {
+                ui.add_enabled_ui(editable, |ui| privacy_control(ui, app, kind));
+            });
+        }
+    });
 
     let mut system = Section::new(translated(locale, "General"));
     system.toggle(
@@ -1138,6 +1374,36 @@ fn swipe_section(locale: Locale) -> Section {
         });
     }
     swipes
+}
+
+/// Settings' Shortcut to send message: Enter, or Command/Ctrl+Enter with
+/// Enter adding a line. Bound to `enter_sends`.
+fn send_shortcut_picker(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let enter = crate::i18n::gettext(locale, "Enter to send");
+    let modified = super::keys::label(&crate::i18n::gettext(locale, "Ctrl+Enter to send"));
+    let selected = if app.settings.enter_sends {
+        &enter
+    } else {
+        &modified
+    };
+    controls::dropdown(
+        ui,
+        &palette,
+        "send-shortcut",
+        &crate::i18n::gettext(locale, "Shortcut to send message"),
+        selected,
+        controls::WIDTH,
+        |ui| {
+            for (value, label) in [(true, &enter), (false, &modified)] {
+                if controls::option(ui, &palette, label, app.settings.enter_sends == value) {
+                    app.settings.enter_sends = value;
+                    app.actions.push(Action::SettingsChanged);
+                }
+            }
+        },
+    );
 }
 
 /// Settings' Motion: the chat's springs and animations at their tuned
@@ -2768,18 +3034,16 @@ fn account_toggle(
     }
 }
 
-/// Title and description of the sound for new messages or for mentions and
-/// replies to us, as Pidgin plays one sound for messages and alerts when a
+/// Title of the sound for new messages, or for mentions and replies. Neither
+/// row has a caption. Pidgin plays one sound for messages and alerts when a
 /// chat says your name.
 fn sound_text(locale: Locale, mention: bool) -> (Text, Text) {
-    if mention {
-        (
-            translated(locale, "Mention sound"),
-            translated(locale, "For mentions and replies in groups."),
-        )
+    let title = if mention {
+        translated(locale, "Mention sound")
     } else {
-        (translated(locale, "Message sound"), Text::default())
-    }
+        translated(locale, "Message sound")
+    };
+    (title, Text::default())
 }
 
 /// The sound menu, with a button that plays the current choice.

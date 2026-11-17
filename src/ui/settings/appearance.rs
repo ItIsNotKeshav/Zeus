@@ -1,16 +1,18 @@
 //! Settings > Appearance: one card for the theme (the mode, a colour wheel
 //! for the accent, the themes, Glass and the wallpaper's tint), the doodles,
-//! the font, zoom and a More group, beside a live preview of a chat.
+//! the font, zoom and two folded groups (Interface, Motion), beside a live
+//! preview of a chat.
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
-use super::{block_heading, language_picker, segmented};
+use super::{Control, Group, Row, draw_entries, language_picker, segmented, translated};
 use crate::app::App;
 use crate::chat_themes::{Accent, ChatTheme, CustomAccent, Mode};
 use crate::model::Action;
 use crate::motion::MotionPreference;
 use crate::settings::{DOODLE_DENSITY, DOODLE_INTENSITY, DoodleColor, DoodleStyle, FontChoice};
 use crate::theme::{self, Icon, Palette};
+use crate::ui::controls;
 use crate::ui::widgets;
 use crate::wallpaper;
 
@@ -203,8 +205,11 @@ pub(super) fn theme_card(ui: &mut egui::Ui, app: &mut App) {
             ui.add_space(theme::SPACE_M);
             theme_swatches(ui, app);
             ui.add_space(theme::SPACE_S);
-            glass_wave(ui, app);
-            ui.add_space(theme::SPACE_S);
+            // macOS draws no glass, so its slider would move nothing.
+            if !cfg!(target_os = "macos") {
+                glass_wave(ui, app);
+                ui.add_space(theme::SPACE_S);
+            }
             let mut tint = app.settings.tint_wallpaper;
             let label = crate::i18n::gettext(app.locale, "Tint the wallpaper");
             let mut changed = false;
@@ -405,6 +410,73 @@ fn settle(place: CustomAccent, rect: Rect) -> Action {
     }
 }
 
+/// Dots and knob for a colour wheel already allocated in `rect`.
+fn draw_colour_wheel(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    response: &egui::Response,
+    palette: &Palette,
+    enabled: bool,
+    place: CustomAccent,
+    show_knob: bool,
+    knob_fill: Color32,
+    on_knob: impl Fn(Pos2) -> bool,
+) {
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let columns = ((rect.width() / DOT_GAP).floor() as usize).max(3) | 1;
+    let rows = ((rect.height() / DOT_GAP).floor() as usize).max(3) | 1;
+    let colours = dot_colours(ui.ctx(), rect, columns, rows, palette.dark);
+    let knob = wheel_point(rect, place);
+    let origin = rect.center()
+        - vec2(
+            (columns - 1) as f32 * DOT_GAP / 2.0,
+            (rows - 1) as f32 * DOT_GAP / 2.0,
+        );
+    let painter = ui.painter();
+    for row in 0..rows {
+        for column in 0..columns {
+            let at = origin + vec2(column as f32 * DOT_GAP, row as f32 * DOT_GAP);
+            // Dots swell near the knob, as under a lens.
+            let near = (1.0 - at.distance(knob) / (DOT_GAP * 3.0)).max(0.0);
+            let color = colours[row * columns + column];
+            let color = if enabled {
+                color
+            } else {
+                color.gamma_multiply(0.35)
+            };
+            painter.circle_filled(at, 3.0 + 2.5 * near, color);
+        }
+    }
+    if enabled && show_knob {
+        let active = theme::animate(
+            ui.ctx(),
+            response.id,
+            response.hovered() || response.dragged(),
+            theme::MOTION_QUICK,
+        );
+        let size = 11.0 + 2.0 * active;
+        for (grow, alpha) in [(5.0, 12u8), (3.0, 18), (1.5, 26)] {
+            painter.circle_filled(
+                knob + vec2(0.0, 1.5),
+                size + 3.0 + grow,
+                Color32::from_black_alpha(alpha),
+            );
+        }
+        painter.circle_filled(knob, size + 3.0, Color32::WHITE);
+        painter.circle_filled(knob, size, knob_fill);
+    }
+    if enabled && (response.hovered() || response.dragged()) {
+        let over_knob = !response.dragged() && response.hover_pos().is_some_and(on_knob);
+        ui.ctx().set_cursor_icon(if over_knob {
+            egui::CursorIcon::PointingHand
+        } else {
+            egui::CursorIcon::Crosshair
+        });
+    }
+}
+
 /// The accent as a field of dots: drag the knob round for the hue and out
 /// for the strength. The middle is the theme's own accent, and the named
 /// accents catch the knob when it is let go near one.
@@ -466,59 +538,68 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
         )
     });
 
-    if !ui.is_rect_visible(rect) {
-        return;
+    draw_colour_wheel(
+        ui,
+        rect,
+        &response,
+        &palette,
+        enabled,
+        place,
+        picked.is_some() || !own_accent(app),
+        palette.accent,
+        on_knob,
+    );
+}
+
+/// The doodle ink colour on its own map: every pick is stored as
+/// [`Action::SetDoodleCustom`], never the app accent.
+fn doodle_colour_wheel(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let width = ui.available_width();
+    let height = (width * 0.34).clamp(96.0, 130.0);
+    let (rect, response) = ui
+        .push_id("doodle-colour-wheel", |ui| {
+            ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag())
+        })
+        .inner;
+    theme::reveal_focus(&response);
+    let stored = app
+        .settings
+        .doodle_custom
+        .unwrap_or_else(|| current_place(app));
+    let pressed = response.dragged() || response.is_pointer_button_down_on() || response.clicked();
+    let picked = response
+        .interact_pointer_pos()
+        .filter(|_| pressed)
+        .map(|pointer| wheel_at(rect, pointer));
+    if let Some(place) = picked
+        && app.settings.doodle_custom != Some(place)
+    {
+        app.actions.push(Action::SetDoodleCustom(place));
     }
-    let columns = ((rect.width() / DOT_GAP).floor() as usize).max(3) | 1;
-    let rows = ((rect.height() / DOT_GAP).floor() as usize).max(3) | 1;
-    let colours = dot_colours(ui.ctx(), rect, columns, rows, palette.dark);
-    let knob = wheel_point(rect, place);
-    let origin = rect.center()
-        - vec2(
-            (columns - 1) as f32 * DOT_GAP / 2.0,
-            (rows - 1) as f32 * DOT_GAP / 2.0,
-        );
-    let painter = ui.painter();
-    for row in 0..rows {
-        for column in 0..columns {
-            let at = origin + vec2(column as f32 * DOT_GAP, row as f32 * DOT_GAP);
-            // Dots swell near the knob, as under a lens.
-            let near = (1.0 - at.distance(knob) / (DOT_GAP * 3.0)).max(0.0);
-            let color = colours[row * columns + column];
-            let color = if enabled {
-                color
-            } else {
-                color.gamma_multiply(0.35)
-            };
-            painter.circle_filled(at, 3.0 + 2.5 * near, color);
+    if response.drag_stopped() || response.clicked() {
+        let place = picked.unwrap_or(stored);
+        if app.settings.doodle_custom != Some(place) {
+            app.actions.push(Action::SetDoodleCustom(place));
         }
     }
-    if enabled && (picked.is_some() || !own_accent(app)) {
-        let active = theme::animate(
-            ui.ctx(),
-            response.id,
-            response.hovered() || response.dragged(),
-            theme::MOTION_QUICK,
-        );
-        let size = 11.0 + 2.0 * active;
-        for (grow, alpha) in [(5.0, 12u8), (3.0, 18), (1.5, 26)] {
-            painter.circle_filled(
-                knob + vec2(0.0, 1.5),
-                size + 3.0 + grow,
-                Color32::from_black_alpha(alpha),
-            );
-        }
-        painter.circle_filled(knob, size + 3.0, Color32::WHITE);
-        painter.circle_filled(knob, size, palette.accent);
-    }
-    if enabled && (response.hovered() || response.dragged()) {
-        let over_knob = !response.dragged() && response.hover_pos().is_some_and(on_knob);
-        ui.ctx().set_cursor_icon(if over_knob {
-            egui::CursorIcon::PointingHand
-        } else {
-            egui::CursorIcon::Crosshair
-        });
-    }
+    let place = picked.unwrap_or(stored);
+    let knob = {
+        let [r, g, b] = place.rgb(palette.dark);
+        Color32::from_rgb(r, g, b)
+    };
+    response.widget_info(|| {
+        egui::WidgetInfo::slider(
+            true,
+            f64::from(place.hue),
+            crate::i18n::gettext(app.locale, "Custom").as_ref(),
+        )
+    });
+    let knob_at = wheel_point(rect, stored);
+    let on_knob = |pointer: Pos2| pointer.distance(knob_at) <= KNOB_REACH;
+    draw_colour_wheel(
+        ui, rect, &response, &palette, true, place, true, knob, on_knob,
+    );
 }
 
 /// The wheel's dot colours for its size and mode, worked out once and kept:
@@ -851,13 +932,32 @@ enum Doodle {
     Photo,
 }
 
-/// The doodles: a row of tiles (none, each pattern, a photo of your own),
-/// then how many there are and how strongly they show, each on a strip of
-/// the real thing, and their colour.
+/// The Doodles accordion, closed until clicked: its body is
+/// [`doodles_body`]. Anything else about the doodles (such as their colour
+/// following the theme or standing alone) is another child of this group.
 pub(super) fn doodles(ui: &mut egui::Ui, app: &mut App) {
+    let group = Group {
+        summary: Default::default(),
+        children: vec![(Row::default(), Control::Block(Box::new(doodles_body)))],
+        searching: !app.settings_search.trim().is_empty(),
+    };
+    let entries = vec![(
+        Row {
+            title: translated(app.locale, "Doodles"),
+            ..Row::default()
+        },
+        Control::Group(group),
+    )];
+    accordion_entries(ui, app, entries);
+    ui.add_space(theme::SPACE_XS);
+}
+
+/// A row of tiles (none, each pattern, a photo of your own), then how many
+/// doodles there are and how strongly they show, each on a strip of the real
+/// thing, and their colour.
+fn doodles_body(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let locale = app.locale;
-    block_heading(ui, &palette, &crate::i18n::gettext(locale, "Doodles"), "");
     let look = app.wallpaper();
     // Each tile shows its whole pattern, whatever the density.
     let tile_look = wallpaper::Look {
@@ -944,7 +1044,6 @@ pub(super) fn doodles(ui: &mut egui::Ui, app: &mut App) {
     }
 
     if chosen == Doodle::None || chosen == Doodle::Photo {
-        ui.add_space(theme::SPACE_S);
         return;
     }
     ui.add_space(theme::SPACE_M);
@@ -991,11 +1090,23 @@ pub(super) fn doodles(ui: &mut egui::Ui, app: &mut App) {
         &crate::i18n::gettext(locale, "Doodle colour"),
         "",
         |ui| {
-            picked = segmented(ui, &palette, "doodle-color", &options, Some(current), 88.0);
+            picked = segmented(ui, &palette, "doodle-color", &options, Some(current), 76.0);
         },
     );
+    let mut colour = current;
     if let Some(color) = picked {
-        app.actions.push(Action::SetDoodleColor(color));
+        colour = color;
+        if color == DoodleColor::Custom && app.settings.doodle_custom.is_none() {
+            app.actions.push(Action::SetDoodleColor(color));
+            app.actions
+                .push(Action::SetDoodleCustom(current_place(app)));
+        } else {
+            app.actions.push(Action::SetDoodleColor(color));
+        }
+    }
+    if colour == DoodleColor::Custom {
+        ui.add_space(theme::SPACE_M);
+        doodle_colour_wheel(ui, app);
     }
 }
 
@@ -1056,6 +1167,12 @@ fn doodle_strip(
     });
     ui.add_space(theme::SPACE_S);
     moved
+}
+
+/// Draws folded groups with the shared accordion of the settings page.
+fn accordion_entries(ui: &mut egui::Ui, app: &mut App, entries: Vec<(Row, Control)>) {
+    let palette = app.palette;
+    draw_entries(ui, app, &palette, entries, theme::SPACE_XS);
 }
 
 /// A tile with a picture above its name, ringed in the accent when chosen.
@@ -1139,53 +1256,46 @@ fn tile_button(
         .clicked()
 }
 
-/// The interface font as tiles, each showing "Aa" in its own typeface.
+/// The interface font as a dropdown: the closed button names the current
+/// typeface and each choice in the list is set in its own.
 pub(super) fn fonts(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let locale = app.locale;
-    block_heading(ui, &palette, &crate::i18n::gettext(locale, "Font"), "");
-    let selected = app.settings.font;
-    let mut clicked = None;
-    egui::ScrollArea::horizontal()
-        .id_salt("appearance-fonts")
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                for choice in FontChoice::ALL {
-                    // Font family names stay in their own branding.
-                    let label = match choice {
-                        FontChoice::System => {
-                            crate::i18n::gettext(locale, choice.label()).into_owned()
+    widgets::setting_row(
+        ui,
+        &palette,
+        &crate::i18n::gettext(locale, "Font"),
+        "",
+        |ui| {
+            let selected = app.settings.font;
+            // Font family names stay in their own branding; only System is words.
+            let name = |choice: FontChoice| match choice {
+                FontChoice::System => crate::i18n::gettext(locale, choice.label()).into_owned(),
+                _ => choice.label().to_owned(),
+            };
+            controls::dropdown(
+                ui,
+                &palette,
+                "interface_font",
+                &crate::i18n::gettext(locale, "Font"),
+                &name(selected),
+                controls::WIDTH,
+                |ui| {
+                    for choice in FontChoice::ALL {
+                        if controls::option_in(
+                            ui,
+                            &palette,
+                            &name(choice),
+                            choice == selected,
+                            theme::preview_font(choice, theme::TEXT_BODY),
+                        ) {
+                            app.actions.push(Action::SetFont(choice));
                         }
-                        _ => choice.label().to_owned(),
-                    };
-                    let picked = tile_button(
-                        ui,
-                        &palette,
-                        choice == selected,
-                        &label,
-                        palette.surface_hover,
-                        |ui, picture| {
-                            ui.painter().text(
-                                picture.center(),
-                                Align2::CENTER_CENTER,
-                                "Aa",
-                                theme::preview_font(choice, 28.0),
-                                palette.text,
-                            );
-                        },
-                    );
-                    if picked {
-                        clicked = Some(choice);
                     }
-                }
-            });
-        });
-    if let Some(choice) = clicked {
-        app.actions.push(Action::SetFont(choice));
-    }
-    ui.add_space(theme::SPACE_S);
+                },
+            );
+        },
+    );
 }
 
 /// The zoom steps the slider stops at.
@@ -1330,127 +1440,85 @@ pub(super) fn zoom(ui: &mut egui::Ui, app: &mut App) {
     ui.add_space(theme::SPACE_M);
 }
 
-/// How tall a folding group's own row is.
-const FOLD_ROW: f32 = 40.0;
-
-/// Settings opened less often, folded under More: the language, motion and
-/// whether every message shows its time. A search opens it.
+/// Settings opened less often, in two folded groups: Interface (language,
+/// whether every message shows its time, the wallpaper's colour) and Motion
+/// (animations and their speed). A search opens them.
 pub(super) fn more(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
     let locale = app.locale;
-    let mut state = egui::collapsing_header::CollapsingState::load_with_default_open(
-        ui.ctx(),
-        egui::Id::new("settings-appearance-more"),
-        false,
-    );
-    if !app.settings_search.trim().is_empty() && !state.is_open() {
-        state.set_open(true);
-    }
-    let (rect, response) =
-        ui.allocate_exact_size(vec2(ui.available_width(), FOLD_ROW), Sense::click());
-    theme::reveal_focus(&response);
-    theme::focus_outline(ui, response.id, rect, 12.0);
-    let title = crate::i18n::gettext(locale, "More");
-    if ui.is_rect_visible(rect) {
-        ui.painter().text(
-            pos2(rect.left(), rect.center().y),
-            Align2::LEFT_CENTER,
-            title.as_ref(),
-            theme::medium(theme::TEXT_BODY),
-            palette.text,
-        );
-        let chevron = if state.is_open() {
-            Icon::ChevronDown
-        } else {
-            Icon::ChevronRight
-        };
-        theme::paint_icon(
-            ui,
-            chevron,
-            Rect::from_center_size(
-                pos2(rect.right() - 10.0, rect.center().y),
-                Vec2::splat(18.0),
+    let searching = !app.settings_search.trim().is_empty();
+    let row = |title: &'static str, description: &'static str| Row {
+        title: translated(locale, title),
+        description: translated(locale, description),
+        keywords: Vec::new(),
+    };
+    let interface = vec![
+        (
+            row("Language", ""),
+            Control::Row(Box::new(|ui, app| language_picker(ui, app))),
+        ),
+        (
+            row("Always show time", ""),
+            Control::Toggle(|settings| &mut settings.always_show_time),
+        ),
+        (
+            row("Wallpaper colour", ""),
+            Control::Row(Box::new(|ui, app| {
+                let palette = app.palette;
+                let label = crate::i18n::gettext(app.locale, "Wallpaper colour");
+                if theme::soft_button(ui, &palette, Some(Icon::ChevronRight), &label, false)
+                    .clicked()
+                {
+                    app.actions
+                        .push(Action::Open(crate::model::Page::Wallpaper));
+                }
+            })),
+        ),
+    ];
+    let motion = vec![
+        (
+            row("Animations", ""),
+            Control::Row(Box::new(|ui, app| {
+                let palette = app.palette;
+                let locale = app.locale;
+                let options: Vec<_> = MotionPreference::ALL
+                    .into_iter()
+                    .map(|motion| (motion, crate::i18n::gettext(locale, motion.label())))
+                    .collect();
+                let current = app.settings.motion_preference;
+                if let Some(motion) =
+                    segmented(ui, &palette, "motion", &options, Some(current), 76.0)
+                {
+                    app.actions.push(Action::SetMotion(motion));
+                }
+            })),
+        ),
+        (
+            row(
+                "Motion speed",
+                "Fast runs the chat's springs and animations in 70% of their time.",
             ),
-            18.0,
-            if response.hovered() {
-                palette.text
-            } else {
-                palette.secondary
+            Control::Row(Box::new(|ui, app| super::motion_picker(ui, app))),
+        ),
+    ];
+    let group = |title: &'static str, children| {
+        (
+            Row {
+                title: translated(locale, title),
+                ..Row::default()
             },
-        );
-    }
-    let open = state.is_open();
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::CollapsingHeader,
-            ui.is_enabled(),
-            open,
-            title.as_ref(),
+            Control::Group(Group {
+                summary: Default::default(),
+                children,
+                searching,
+            }),
         )
-    });
-    if response
-        .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .clicked()
-    {
-        state.toggle(ui);
-    }
-    state.show_body_unindented(ui, |ui| {
-        ui.add_space(theme::SPACE_S);
-        widgets::setting_row(
-            ui,
-            &palette,
-            &crate::i18n::gettext(locale, "Language"),
-            "",
-            |ui| language_picker(ui, app),
-        );
-        let options: Vec<_> = MotionPreference::ALL
-            .into_iter()
-            .map(|motion| (motion, crate::i18n::gettext(locale, motion.label())))
-            .collect();
-        let current = app.settings.motion_preference;
-        let mut picked = None;
-        widgets::setting_row(
-            ui,
-            &palette,
-            &crate::i18n::gettext(locale, "Animations"),
-            "",
-            |ui| {
-                picked = segmented(ui, &palette, "motion", &options, Some(current), 76.0);
-            },
-        );
-        if let Some(motion) = picked {
-            app.actions.push(Action::SetMotion(motion));
-        }
-        let mut always = app.settings.always_show_time;
-        let label = crate::i18n::gettext(locale, "Always show time");
-        let mut changed = false;
-        widgets::setting_row(ui, &palette, &label, "", |ui| {
-            let response = widgets::switch(ui, &palette, &mut always);
-            theme::reveal_focus(&response);
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::Checkbox,
-                    ui.is_enabled(),
-                    always,
-                    label.as_ref(),
-                )
-            });
-            changed = response.changed();
-        });
-        if changed {
-            app.settings.always_show_time = always;
-            app.actions.push(Action::SettingsChanged);
-        }
-        let wallpaper = crate::i18n::gettext(locale, "Wallpaper colour");
-        widgets::setting_row(ui, &palette, &wallpaper, "", |ui| {
-            if theme::soft_button(ui, &palette, Some(Icon::ChevronRight), &wallpaper, false)
-                .clicked()
-            {
-                app.actions
-                    .push(Action::Open(crate::model::Page::Wallpaper));
-            }
-        });
-    });
+    };
+    let entries = vec![
+        group("Interface", interface),
+        (Row::default(), Control::Separator),
+        group("Motion", motion),
+    ];
+    accordion_entries(ui, app, entries);
     ui.add_space(theme::SPACE_XS);
 }
 

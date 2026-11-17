@@ -235,15 +235,18 @@ pub enum DoodleColor {
     Gray,
     /// The accent colour.
     Accent,
+    /// A colour of the reader's own from the doodle map.
+    Custom,
 }
 
 impl DoodleColor {
-    pub const ALL: [Self; 2] = [Self::Gray, Self::Accent];
+    pub const ALL: [Self; 3] = [Self::Gray, Self::Accent, Self::Custom];
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Gray => "Gray",
             Self::Accent => "Accent",
+            Self::Custom => "Custom",
         }
     }
 }
@@ -917,6 +920,9 @@ pub struct Settings {
     pub doodle_style: DoodleStyle,
     /// The colour of those doodles.
     pub doodle_color: DoodleColor,
+    /// Where on the doodle colour map those doodles are inked when
+    /// [`doodle_color`] is [`DoodleColor::Custom`].
+    pub doodle_custom: Option<crate::chat_themes::CustomAccent>,
     /// How strongly they show, as a multiple of the default (1.0).
     pub doodle_intensity: f32,
     /// How many of them there are, as a multiple of the default (1.0).
@@ -1098,6 +1104,7 @@ impl Default for Settings {
             show_wallpaper: true,
             doodle_style: DoodleStyle::Classic,
             doodle_color: DoodleColor::Gray,
+            doodle_custom: None,
             doodle_intensity: 1.0,
             doodle_density: 1.0,
             wallpaper_color: WallpaperColor::Theme,
@@ -1698,6 +1705,25 @@ mod tests {
         assert!(d(tinted, palette.accent) < d(plain, palette.accent));
         settings.tint_wallpaper = false;
         assert_eq!(settings.wallpaper_background(&palette), plain);
+    }
+
+    #[test]
+    fn doodle_custom_fields_default_and_round_trip() {
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(old.doodle_custom, None);
+        assert_eq!(old.doodle_color, DoodleColor::Gray);
+        let settings = Settings {
+            doodle_color: DoodleColor::Custom,
+            doodle_custom: Some(crate::chat_themes::CustomAccent {
+                hue: 200.0,
+                strength: 0.7,
+            }),
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.doodle_color, DoodleColor::Custom);
+        assert_eq!(back.doodle_custom, settings.doodle_custom);
     }
 
     #[test]

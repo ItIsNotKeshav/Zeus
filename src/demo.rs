@@ -3284,6 +3284,13 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "clearglass" => app.settings.set_glass(0.0),
             "focus-composer" => app.focus_composer = true,
             "doodles-accent" => app.settings.doodle_color = crate::settings::DoodleColor::Accent,
+            "doodles-custom" => {
+                app.settings.doodle_color = crate::settings::DoodleColor::Custom;
+                app.settings.doodle_custom = Some(crate::chat_themes::CustomAccent {
+                    hue: 120.0,
+                    strength: 0.85,
+                });
+            }
             // The doodles' strength as a percentage, such as doodle-intensity-200.
             part if let Some(percent) = part
                 .strip_prefix("doodle-intensity-")

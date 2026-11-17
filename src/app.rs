@@ -2135,8 +2135,12 @@ impl App {
             style: self.settings.doodle_style,
             intensity: self.settings.doodle_intensity,
             density: self.settings.doodle_density,
-            accent: (self.settings.doodle_color == crate::settings::DoodleColor::Accent)
-                .then_some(self.palette.accent),
+            accent: crate::wallpaper::doodle_accent(
+                self.settings.doodle_color,
+                self.settings.doodle_custom,
+                self.palette.accent,
+                self.palette.dark,
+            ),
             whatsapp: self.palette.whatsapp,
             image: self
                 .account()
@@ -9587,6 +9591,10 @@ impl App {
             }
             Action::SetDoodleColor(color) => {
                 self.settings.doodle_color = color;
+                self.mark_settings_dirty();
+            }
+            Action::SetDoodleCustom(place) => {
+                self.settings.doodle_custom = Some(place);
                 self.mark_settings_dirty();
             }
             Action::SetDoodleIntensity(intensity) => {

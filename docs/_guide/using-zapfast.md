@@ -12,7 +12,7 @@ Undo and redo in the message field apply to its current chat and account.
 Switching chats or accounts, closing a chat, or unlinking clears the editor's
 undo history. Saved drafts remain available when you return to their chat.
 
-Enter sends and Shift+Enter adds a line. Turn off **Enter sends** in Settings
+Enter sends and Shift+Enter adds a line. Pick **Ctrl+Enter to send** under **Shortcut to send message** in Settings
 to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
 like WhatsApp, and a message of nothing but emoji shows large.
@@ -903,9 +903,9 @@ archived chats stay quiet while they remain archived. You can change both settin
 To keep messages off the screen, turn off **Show message content in
 notifications** in Settings: notifications then say only "New message".
 To hear less from busy chats, set **Limit repeat notifications** in
-**Settings > Notifications** to direct messages, groups, or both: a chat then
-sends one notification, then stays quiet for 10 minutes or until you read it,
-here or on another device. In a group, a mention of you or a reply to you always notifies.
+**Settings > Notifications**, under **Fewer notifications**, to direct messages,
+groups, or both: a chat then sends one notification, then stays quiet for 10
+minutes or until you read it, here or on another device. In a group, a mention of you or a reply to you always notifies.
 
 Press `Ctrl+/` or click the keyboard button under the composer to list all
 shortcuts.

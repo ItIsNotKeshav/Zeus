@@ -118,6 +118,23 @@ pub fn dropdown(
 /// closes the list. Text goes through the shared line renderer, since names
 /// can hold emoji.
 pub fn option(ui: &mut Ui, palette: &Palette, text: &str, selected: bool) -> bool {
+    option_in(
+        ui,
+        palette,
+        text,
+        selected,
+        theme::regular(theme::TEXT_BODY),
+    )
+}
+
+/// [`option`] with its label drawn in `font`, such as a typeface's own name.
+pub fn option_in(
+    ui: &mut Ui,
+    palette: &Palette,
+    text: &str,
+    selected: bool,
+    font: egui::FontId,
+) -> bool {
     let (rect, response) =
         ui.allocate_exact_size(vec2(ui.available_width(), OPTION_HEIGHT), Sense::click());
     theme::reveal_focus(&response);
@@ -142,14 +159,7 @@ pub fn option(ui: &mut Ui, palette: &Palette, text: &str, selected: bool) -> boo
             palette.tint(strength.max(theme::TINT_HOVER * lift)),
         );
         let right = if selected { 36.0 } else { 14.0 };
-        let line = widgets::line(
-            ui,
-            text,
-            theme::regular(theme::TEXT_BODY),
-            palette.text,
-            rect.width() - 14.0 - right,
-            1,
-        );
+        let line = widgets::line(ui, text, font, palette.text, rect.width() - 14.0 - right, 1);
         line.paint(
             ui,
             pos2(rect.left() + 14.0, rect.center().y - line.size().y / 2.0),

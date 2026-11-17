@@ -1952,7 +1952,7 @@ mod tests {
         }
         assert!(tour.labels.contains_key("Profile photo"));
         assert!(!tour.labels.contains_key("Last seen"));
-        assert!(!tour.labels.contains_key("Enter sends"));
+        assert!(!tour.labels.contains_key("Shortcut to send message"));
         // The section title keeps every row in it.
         app.settings_search = "privacy".into();
         for _ in 0..3 {
@@ -1994,15 +1994,15 @@ mod tests {
                 },
             ]
         };
-        // The heading and the first category it writes, with both switches
-        // between them, have to share one frame for the order to mean
-        // anything.
+        // The heading, both switches, and the fold that holds the account
+        // categories have to share one frame for the order to mean anything.
+        // Last seen stays inside that fold until it opens.
         let on_screen = |tour: &Tour| {
             [
                 "Privacy",
                 "Send read receipts",
                 "Show when you are typing",
-                "Last seen",
+                "Who can see my info",
             ]
             .iter()
             .all(|label| tour.labels.contains_key(*label))
@@ -2017,21 +2017,28 @@ mod tests {
             "the Privacy section and its switches are on screen"
         );
         let privacy = *tour.labels.get("Privacy").expect("Privacy section");
-        let last_seen = *tour.labels.get("Last seen").expect("account last seen");
+        let who = *tour
+            .labels
+            .get("Who can see my info")
+            .expect("privacy fold");
         let receipts = *tour
             .labels
             .get("Send read receipts")
             .expect("read receipts");
         let typing = *tour.labels.get("Show when you are typing").expect("typing");
         // Both switches belong to the account, so they sit inside the Privacy
-        // section, between its heading and the first category it writes.
+        // section, between its heading and the fold of categories it writes.
         assert!(
-            privacy.y < receipts.y && receipts.y < last_seen.y,
-            "receipts at {receipts:?} should sit between Privacy {privacy:?} and Last seen {last_seen:?}"
+            privacy.y < receipts.y && receipts.y < who.y,
+            "receipts at {receipts:?} should sit between Privacy {privacy:?} and Who can see my info {who:?}"
         );
         assert!(
-            privacy.y < typing.y && typing.y < last_seen.y,
-            "typing at {typing:?} should sit between Privacy {privacy:?} and Last seen {last_seen:?}"
+            privacy.y < typing.y && typing.y < who.y,
+            "typing at {typing:?} should sit between Privacy {privacy:?} and Who can see my info {who:?}"
+        );
+        assert!(
+            !tour.labels.contains_key("Last seen"),
+            "Last seen stays inside Who can see my info until that fold opens"
         );
     }
 

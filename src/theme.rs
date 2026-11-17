@@ -2500,6 +2500,30 @@ pub fn readable_on(background: Color32, color: Color32, toward: Color32, target:
     }
 }
 
+/// Whether the system draws Liquid Glass: macOS 26 or later. Earlier
+/// macOS (15 and before) gets plain, opaque controls in its own style, as
+/// AppKit draws them there. Read once from the system's version file.
+pub fn macos_liquid_glass() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        static GLASS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *GLASS.get_or_init(|| {
+            std::fs::read_to_string("/System/Library/CoreServices/SystemVersion.plist")
+                .ok()
+                .and_then(|plist| {
+                    let after = plist.split("<key>ProductVersion</key>").nth(1)?;
+                    let version = after.split("<string>").nth(1)?.split('<').next()?;
+                    version.split('.').next()?.trim().parse::<u32>().ok()
+                })
+                .is_none_or(|major| major >= 26)
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
 /// Native macOS layout, also selectable in offline layout previews.
 pub fn macos_chrome(ctx: &egui::Context) -> bool {
     #[cfg(any(test, feature = "demo"))]

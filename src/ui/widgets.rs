@@ -1553,6 +1553,30 @@ pub const SLIDER_THUMB: Vec2 = vec2(30.0, 20.0);
 /// to 1, swells it while hovered or dragged.
 pub fn slider_thumb(ui: &Ui, palette: &Palette, center: egui::Pos2, active: f32) {
     let painter = ui.painter();
+    // macOS before 26 has no glass: its knob is a plain white disc with a
+    // hairline and a short, soft shadow.
+    if cfg!(target_os = "macos") && !theme::macos_liquid_glass() {
+        let radius = SLIDER_THUMB.y / 2.0 * egui::lerp(1.0..=1.06, active);
+        for (grow, y, alpha) in [(0.5, 0.5, 40u8), (1.5, 1.0, 18)] {
+            painter.circle_filled(
+                center + vec2(0.0, y),
+                radius + grow,
+                Color32::from_black_alpha(alpha),
+            );
+        }
+        let fill = if palette.dark {
+            Color32::from_gray(236)
+        } else {
+            Color32::WHITE
+        };
+        painter.circle(
+            center,
+            radius,
+            fill,
+            Stroke::new(theme::OUTLINE_STROKE, Color32::from_black_alpha(46)),
+        );
+        return;
+    }
     let size = SLIDER_THUMB * egui::lerp(1.0..=1.12, active);
     let thumb = Rect::from_center_size(center, size);
     let radius = size.y / 2.0;

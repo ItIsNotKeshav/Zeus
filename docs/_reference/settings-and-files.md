@@ -148,7 +148,9 @@ name or description, in the interface language or in English.
   **Delivered** and **Read** sit under your message, not in it; click one
   for **Message info**.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
-  without doodles.
+  without doodles. **Doodle colour** is **Gray**, **Accent** (the app accent),
+  or **Custom** (a colour from its own colour map, which does not change the
+  app accent; the colour wheel above still sets the app accent).
 - **Motion**: how much the interface moves. **Auto** (the default) follows
   the system's reduce-motion setting (Reduce motion on macOS, Animation
   effects on Windows, Animations on GNOME or the desktop portal's reduced
@@ -169,11 +171,8 @@ name or description, in the interface language or in English.
   again reopens the chat that was open, for each number on its own. When off,
   Zeus starts on the chat list with no chat open. Hiding the window still
   shows the chat that was already open.
-- **Enter sends**: when off, Enter adds a line and `Ctrl+Enter` (Command+Enter
-  on macOS) sends.
-- **Motion**: Default runs the chat's springs and animations at the speed they
-  were tuned at; Fast runs them in 70% of that time. With a screen reader
-  they are instant either way.
+- **Shortcut to send message**: **Enter to send**, or **Ctrl+Enter to send**
+  (Command+Enter on macOS), where Enter adds a line.
 - **Download files automatically**: attachments up to 64 MiB download as they
   come into view. When off, click one to download it. Visible stickers still
   download automatically. Larger attachments download only when clicked.
@@ -197,7 +196,7 @@ name or description, in the interface language or in English.
 - **Locked chats code**: the local code that opens the **Locked** tab. It hides
   chats and adds no encryption beyond the encrypted message archive.
 
-*Touchpad swipes*, at the end of Chats, chooses what each of the four
+*Touchpad swipes*, a fold at the end of Chats, chooses what each of the four
 swipes does.
 
 **Notifications**
@@ -216,11 +215,13 @@ swipes does.
   regardless.
 - **Play sounds for group messages**: when off, only mentions and replies to
   you make a sound in groups.
-- **Limit repeat notifications**: off by default. Choose **Direct messages**,
-  **Groups**, or **Direct messages and groups**. A limited chat sends one
-  notification (and its sound), then stays quiet for 10 minutes. Reading the
-  chat, here or on another device, starts over. In groups, a mention of you or a reply to you always
-  notifies. Settings for this account.
+- **Fewer notifications** holds **Notification cooldown** (one sound when many
+  messages arrive at once) and **Limit repeat notifications**. **Limit repeat
+  notifications** is off by default. Choose **Direct messages**, **Groups**,
+  or **Direct messages and groups**. A limited chat sends one notification
+  (and its sound), then stays quiet for 10 minutes. Reading the chat, here or
+  on another device, starts over. In groups, a mention of you or a reply to
+  you always notifies. Settings for this account.
 
 **Calls and voice**
 
@@ -247,16 +248,17 @@ swipes does.
 The account block edits your WhatsApp name, About, and picture, and
 unlinks this computer. Below it, **Privacy**:
 
-- **Send read receipts**: the blue ticks others see, subject to the account
-  setting below. When account read receipts are off, read ticks are also hidden
-  on outgoing direct messages in the conversation, chat list, and Message info,
-  as on the phone. Group receipts and voice-message played receipts are
-  unaffected.
+- **Send read receipts**: the blue ticks others see, subject to **Read
+  receipts** under **Who can see my info**. When account read receipts are
+  off, read ticks are also hidden on outgoing direct messages in the
+  conversation, chat list, and Message info, as on the phone. Group receipts
+  and voice-message played receipts are unaffected.
 - **Show when you are typing**: send typing and recording state.
-- **Last seen**, **Online**, **Profile photo**, **About**, **Groups**, **Read
-  receipts**, **Calls**: your WhatsApp account privacy, stored on WhatsApp's
-  servers and shared with your phone. They can be changed while connected.
 - **App lock**: hide Zeus behind a password. See [App lock](#app-lock).
+- **Who can see my info** holds **Last seen**, **Online**, **Profile photo**,
+  **About**, **Groups**, **Read receipts**, and **Calls**: your WhatsApp
+  account privacy, stored on WhatsApp's servers and shared with your phone.
+  They can be changed while connected.
 
 **Storage** (called Files before) shows the archive, the downloads folder
 (which you can change; earlier downloads stay where they are), the storage

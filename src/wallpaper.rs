@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 use egui::{Color32, ColorImage, CornerRadius, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 
-pub use crate::settings::DoodleStyle;
+pub use crate::settings::{DoodleColor, DoodleStyle};
 
 /// A doodle tile, drawn from Lucide icons (ISC, see
 /// `assets/icons/LICENSE.txt`). They are embedded so the wallpaper works
@@ -65,6 +65,27 @@ pub struct Look {
     pub whatsapp: bool,
     /// A decoded image of the reader's, which wins over colour and doodles.
     pub image: Option<(u64, Arc<Pixels>)>,
+}
+
+/// The RGB the doodles are inked with, or nothing for the grey ink.
+pub(crate) fn doodle_accent(
+    color: DoodleColor,
+    custom: Option<crate::chat_themes::CustomAccent>,
+    palette_accent: Color32,
+    dark: bool,
+) -> Option<Color32> {
+    match color {
+        DoodleColor::Gray => None,
+        DoodleColor::Accent => Some(palette_accent),
+        DoodleColor::Custom => {
+            let rgb = custom.map(|place| place.rgb(dark)).unwrap_or([
+                palette_accent.r(),
+                palette_accent.g(),
+                palette_accent.b(),
+            ]);
+            Some(Color32::from_rgb(rgb[0], rgb[1], rgb[2]))
+        }
+    }
 }
 
 /// Paint the wallpaper over the conversation panel, its colour rounded by
@@ -872,6 +893,30 @@ mod tests {
             ink_alpha(ink(&look(*range.start(), None)))
         );
         assert_eq!(ink_alpha(ink(&look(f32::NAN, None))), default);
+    }
+
+    #[test]
+    fn custom_doodle_colour_uses_its_own_rgb() {
+        let palette_accent = Color32::from_rgb(0x20, 0x90, 0xf0);
+        let place = crate::chat_themes::CustomAccent {
+            hue: 120.0,
+            strength: 0.8,
+        };
+        let custom_rgb = place.rgb(true);
+        let custom = doodle_accent(DoodleColor::Custom, Some(place), palette_accent, true).unwrap();
+        assert_ne!(
+            custom_rgb,
+            [palette_accent.r(), palette_accent.g(), palette_accent.b()]
+        );
+        assert_eq!([custom.r(), custom.g(), custom.b()], custom_rgb);
+        assert_eq!(
+            doodle_accent(DoodleColor::Accent, None, palette_accent, true),
+            Some(palette_accent)
+        );
+        assert_eq!(
+            doodle_accent(DoodleColor::Gray, None, palette_accent, true),
+            None
+        );
     }
 
     #[test]
