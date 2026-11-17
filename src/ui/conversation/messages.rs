@@ -218,13 +218,13 @@ impl Glide {
     }
 
     /// How far below its place a row with `rows_below` rows under it is
-    /// drawn at `now`: every lift rises on the sent bubble's own vertical
-    /// spring, the row starting [`wave_delay`] after the newest.
+    /// drawn at `now`: every lift rises by [`lift`], the row starting
+    /// [`wave_delay`] after the newest.
     pub(super) fn shift(&self, now: f64, rows_below: usize) -> f32 {
         let delay = wave_delay(rows_below);
         self.lifts
             .iter()
-            .map(|&(start, distance)| distance * (1.0 - SEND_RISE.value(now - start - delay)))
+            .map(|&(start, distance)| distance * (1.0 - lift(now - start - delay)))
             .sum()
     }
 
@@ -232,7 +232,21 @@ impl Glide {
     pub(super) fn moving(&self, now: f64) -> bool {
         self.lifts
             .iter()
-            .any(|&(start, _)| !SEND_RISE.settled(now - start - WAVE_CAP))
+            .any(|&(start, _)| lift(now - start - WAVE_CAP) < 1.0)
+    }
+}
+
+/// How far a row has risen, 0 to 1, `t` seconds into a lift: eased out over
+/// the time the sent bubble takes to settle, so the list arrives with it
+/// and never swings past its place.
+pub(super) fn lift(t: f64) -> f32 {
+    let seconds = SEND_RISE.settle_time();
+    if t <= 0.0 {
+        0.0
+    } else if t >= seconds {
+        1.0
+    } else {
+        theme::ease_out((t / seconds) as f32)
     }
 }
 
@@ -293,7 +307,7 @@ pub(super) fn glide_new_message<R>(
     let mut lifts = before
         .as_ref()
         .map_or_else(Vec::new, |glide| glide.lifts.clone());
-    lifts.retain(|&(start, _)| !SEND_RISE.settled(now - start - WAVE_CAP));
+    lifts.retain(|&(start, _)| lift(now - start - WAVE_CAP) < 1.0);
     let mut glide = Glide {
         newest: newest.clone(),
         height,

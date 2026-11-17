@@ -595,16 +595,18 @@ pub(super) fn bubble_row(
                 || (last_outgoing && keeps_glyph(display_message)));
         let visible = shows_time || says_state || glyph;
         let metadata_id = id.with("metadata-visible");
+        // Eased out over the time a sent bubble takes to settle, so the row
+        // opens with the bubble rather than ahead of it.
         let animation_time = if reduce_motion {
             0.0
         } else {
-            theme::MOTION_QUICK
+            SEND_RISE.settle_time() as f32
         };
-        let progress = theme::animate(
-            ui.ctx(),
+        let progress = ui.ctx().animate_bool_with_time_and_easing(
             metadata_id.with("reveal"),
             visible,
             animation_time,
+            theme::ease_out,
         );
         // The time stays while the row folds away, so it does not jump.
         let time_id = metadata_id.with("time");
@@ -688,7 +690,18 @@ pub(super) fn time_tooltip(ui: &egui::Ui, view: &View<'_>, message: &Message, bu
         bubble_id(&view.chat.id, &message.id).with("time-tip"),
         Sense::hover(),
     );
+    if !hover.hovered() {
+        return;
+    }
+    // egui's tooltips cast the popups' deep shadow, too heavy for a label
+    // this small: this one casts a near, faint one, put back after it.
+    let deep = ui.ctx().global_style().visuals.popup_shadow;
+    let tip = view.palette.tip_shadow();
+    ui.ctx()
+        .global_style_mut(|style| style.visuals.popup_shadow = tip);
     hover.on_hover_text(crate::util::moment_stamp(view.locale, message.timestamp));
+    ui.ctx()
+        .global_style_mut(|style| style.visuals.popup_shadow = deep);
 }
 
 /// The row just below a bubble: the message's time when `with_time`, and,

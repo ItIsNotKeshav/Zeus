@@ -597,6 +597,18 @@ impl Palette {
         }
     }
 
+    /// The shadow under a small label held just over what it names, such as
+    /// a message's time: close and soft, a point down and a few wide, at
+    /// the faint strength of a bubble's lift rather than a menu's depth.
+    pub fn tip_shadow(&self) -> egui::epaint::Shadow {
+        egui::epaint::Shadow {
+            offset: [0, 1],
+            blur: 4,
+            spread: 0,
+            color: denser(self.lift_shadow(), 0.6),
+        }
+    }
+
     /// The shadow under a message's menu, five layers cast by the same
     /// outline, nearest first: a tight, dense one where the menu all but
     /// touches the window, then ever lower, wider and fainter ones, each

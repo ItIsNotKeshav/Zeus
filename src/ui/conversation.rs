@@ -5676,6 +5676,20 @@ fn bubble_frame(
     // Where a photo that carries its time fills the bubble, to darken with
     // the bubble while its menu is open.
     let mut photo: Option<Rect> = None;
+    if matches!(message.content, Content::Call { .. }) {
+        // The call's chip rounds its corners to follow the bubble's.
+        let corners = bubble_outline_corners(
+            &palette,
+            message,
+            fill,
+            tail,
+            own,
+            first_in_run,
+            last_in_run,
+        );
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(bubble_id.with("corners"), corners));
+    }
     let inner = Frame::new()
         .inner_margin(bubble_margin(&palette, message, over_picture))
         .show(ui, |ui| {
@@ -6458,8 +6472,20 @@ fn call_entry(
         rect.center().y
     };
     if ui.is_rect_visible(rect) {
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(CALL_CHIP_RADIUS), CALL_CHIP_FILL);
+        // Each corner the bubble's own less the room between them, so the
+        // two outlines run parallel.
+        let pad = CALL_BUBBLE_PAD.unsigned_abs();
+        let bubble = bubble_id(chat, message_id).with("corners");
+        let corners = ui
+            .ctx()
+            .data(|data| data.get_temp::<CornerRadius>(bubble))
+            .map_or(CornerRadius::same(CALL_CHIP_RADIUS), |outer| CornerRadius {
+                nw: outer.nw.saturating_sub(pad),
+                ne: outer.ne.saturating_sub(pad),
+                sw: outer.sw.saturating_sub(pad),
+                se: outer.se.saturating_sub(pad),
+            });
+        ui.painter().rect_filled(rect, corners, CALL_CHIP_FILL);
         ui.painter()
             .circle_filled(badge.center(), CALL_BADGE / 2.0, tint.gamma_multiply(0.16));
         theme::paint_icon(
@@ -11802,11 +11828,11 @@ mod tests {
         assert_eq!(glide.shift(0.03, 2), 40.0);
         // Rows past the cap all wait the same.
         assert_eq!(glide.shift(0.2, WAVE_ROWS), glide.shift(0.2, WAVE_ROWS + 5));
-        // On the send's own spring: past its place a little, then on it.
+        // Eased out over the send's own time: never past its place.
         let lowest = (0..200)
             .map(|step| glide.shift(f64::from(step) / 200.0, 0))
             .fold(f32::MAX, f32::min);
-        assert!(lowest < 0.0 && lowest > -2.0, "overshoot {lowest}");
+        assert!(lowest >= 0.0, "overshoot {lowest}");
         let rest = SEND_RISE.settle_time() + WAVE_CAP;
         assert!(glide.moving(rest - 0.05));
         assert!(!glide.moving(rest + 0.001));

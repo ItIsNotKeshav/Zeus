@@ -38,8 +38,8 @@ pub(super) fn edge_card(ui: &egui::Ui, palette: &Palette, radius: u8) -> (Margin
 pub(super) const CALL_CHIP_PAD_X: f32 = 8.0;
 /// Room inside the chip, above and below the glyph and the words.
 pub(super) const CALL_CHIP_PAD_Y: f32 = 4.0;
-/// Corner of the chip. The bubble's own radius is 10, and the chip sits
-/// four points inside it.
+/// Corner of the chip where its bubble's are not known: WhatsApp's 10 less
+/// the four points it sits inside it.
 pub(super) const CALL_CHIP_RADIUS: u8 = 6;
 /// `#000` at 5%. 13 is `0.05 * 255`, rounded.
 pub(super) const CALL_CHIP_FILL: Color32 = Color32::from_rgba_unmultiplied_const(0, 0, 0, 13);
