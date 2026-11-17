@@ -6141,10 +6141,55 @@ fn settled_width(ui: &egui::Ui, view: &View<'_>, message: &Message, cap: f32) ->
             Content::Video { note, .. } => !note && message.thumbnail.is_none(),
             _ => false,
         };
+    // A plain text or caption reply shrinks to its quote and its text, not
+    // to a card's fixed floor.
+    let quote_only =
+        message.quoted.is_some() && matches!(message.content, Content::Text { preview: None, .. });
+    if quote_only {
+        let quote = message
+            .quoted
+            .as_ref()
+            .map_or(0.0, |quoted| quote_natural_width(ui, view, quoted));
+        let text = natural_text_width(ui, view, message, cap).unwrap_or(0.0);
+        return Some(quote.max(text).clamp(QUOTE_MIN_WIDTH.min(cap), cap));
+    }
     card.then(|| {
         let floor = CARD_WIDTH.min(cap).max(0.0);
         natural_text_width(ui, view, message, cap).map_or(floor, |width| width.clamp(floor, cap))
     })
+}
+
+/// Narrowest a reply bubble gets.
+const QUOTE_MIN_WIDTH: f32 = 120.0;
+
+/// Width a quote card wants: its name or summary on one line, whichever is
+/// wider, plus the bar, padding, thumbnail and bleed `quote_block` adds.
+fn quote_natural_width(ui: &egui::Ui, view: &View<'_>, quoted: &crate::model::Quoted) -> f32 {
+    let mine = view.me == Some(quoted.sender.as_str());
+    let who = if mine {
+        "You".to_owned()
+    } else {
+        (view.names_or)(&quoted.sender, quoted.sender_name.as_deref())
+    };
+    let summary = markup::plain(
+        &quoted.summary_in(view.locale),
+        &quote_mentions(view, quoted),
+    );
+    let line = |text: String, font: egui::FontId| {
+        ui.painter()
+            .layout_no_wrap(text, font, Color32::WHITE)
+            .size()
+            .x
+    };
+    let text = line(who, theme::semibold(theme::TEXT_CAPTION))
+        .max(line(summary, theme::regular(theme::TEXT_CAPTION)));
+    let (bleed, _) = edge_card(ui, &view.palette, QUOTE_RADIUS);
+    let right = if quoted_picture(view, quoted).is_some() {
+        6.0 + 7.0 + 2.0 * theme::regular(12.5).size * 1.25 + QUOTE_PICTURE_GAP
+    } else {
+        f32::from(QUOTE_SIDE)
+    };
+    text + QUOTE_BAR + f32::from(QUOTE_SIDE) + right + bleed.sum().x
 }
 
 /// Widest wrapped text row, including footer space on the last line.

@@ -604,12 +604,8 @@ pub(super) fn bubble_row(
         let departing = !says_state && presence > 0.0;
         // The clock under the bubble leaves on the same spring as a status
         // word. Reduced motion snaps it shut.
-        let time_presence = sync_under_time(
-            ui.ctx(),
-            &view.chat.id,
-            &display_message.id,
-            shows_time,
-        );
+        let time_presence =
+            sync_under_time(ui.ctx(), &view.chat.id, &display_message.id, shows_time);
         let time_departing = !shows_time && time_presence > 0.0;
         let glyph = own
             && (display_message.status == Delivery::Failed
@@ -724,6 +720,11 @@ pub(super) fn message_says_time(
             )
         })
         .is_some_and(|at| (index..end).contains(&at));
+    // Our own newest message always says its time, text or media, even in a
+    // quick run; only a time line above it already says it.
+    if newest && messages[index..end].iter().any(|message| message.from_me) {
+        return !time_line_above(previous, messages[index].timestamp);
+    }
     says_time_below(newest, previous, messages[index].timestamp)
 }
 
@@ -819,7 +820,10 @@ pub(super) fn reference_timestamp(
 
     let time = with_time.then(|| crate::util::clock(message.timestamp));
     let line = status_line(ui.ctx(), view, message);
-    let mut presence = line.as_ref().map(|(_, _, presence)| *presence).unwrap_or(1.0);
+    let mut presence = line
+        .as_ref()
+        .map(|(_, _, presence)| *presence)
+        .unwrap_or(1.0);
     let mut shown = line
         .as_ref()
         .map(|(_, delivery, _)| *delivery)
@@ -1146,7 +1150,11 @@ pub(super) fn status_rows(
     }
     let mut rows = HashSet::new();
     let mut furthest = 0;
-    for message in messages.iter().rev().filter(|message| outgoing_bubble(message)) {
+    for message in messages
+        .iter()
+        .rev()
+        .filter(|message| outgoing_bubble(message))
+    {
         let shown = display_delivery(message.status, true, chat_kind, account_receipts_off);
         if let Some(rank) = status_rank(shown)
             && rank > furthest
@@ -1170,9 +1178,7 @@ pub(super) fn status_wake(
     now: i64,
     typing: bool,
 ) -> Option<i64> {
-    if typing
-        || !status_rows(messages, chat_kind, account_receipts_off, now, false).is_empty()
-    {
+    if typing || !status_rows(messages, chat_kind, account_receipts_off, now, false).is_empty() {
         return None;
     }
     let Some(newest_at) = messages.iter().rposition(outgoing_bubble) else {
@@ -1240,8 +1246,8 @@ fn word_showing_before(
         }
         let end_time = next.map(|next| messages[next].timestamp).unwrap_or(time);
         let age = end_time.saturating_sub(message.timestamp);
-        let just_sent = matches!(message.status, Delivery::Pending | Delivery::Sent)
-            && age <= STATUS_HANDOFF;
+        let just_sent =
+            matches!(message.status, Delivery::Pending | Delivery::Sent) && age <= STATUS_HANDOFF;
         let first_wait = !showing_before && age < STATUS_FIRST_WAIT;
         let showing_after = !just_sent && !first_wait && has_rank;
         if next.is_none() {
@@ -1423,21 +1429,14 @@ pub(super) fn status_line(
     }
     let shown = shown_delivery(view, message);
     let live = message_status_text(view, message);
-    let presence = sync_status_word(
-        ctx,
-        &view.chat.id,
-        &message.id,
-        live.as_deref(),
-        shown,
-    );
+    let presence = sync_status_word(ctx, &view.chat.id, &message.id, live.as_deref(), shown);
     if let Some(text) = live {
         return Some((text, shown, presence));
     }
     if presence <= 0.0 {
         return None;
     }
-    held_status(ctx, &view.chat.id, &message.id)
-        .map(|(text, delivery)| (text, delivery, presence))
+    held_status(ctx, &view.chat.id, &message.id).map(|(text, delivery)| (text, delivery, presence))
 }
 
 /// Draws our message's status `text` with its right edge at `right`, centred
