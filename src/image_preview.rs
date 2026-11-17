@@ -102,6 +102,55 @@ pub fn fit_size(width: f32, height: f32, canvas_width: f32, canvas_height: f32) 
     (width * scale, height * scale)
 }
 
+/// The viewer's fitted texture size in pixels: the canvas in points times the
+/// display's scale, stepped up to a multiple of [`PIXEL_STEP`] so a resizing
+/// window does not decode a new texture every frame, at most
+/// [`crate::image_cache::VIEWER_LONGEST`] across.
+pub fn fitted_pixels(canvas: Vec2, pixels_per_point: f32) -> (u32, u32) {
+    let step = |points: f32| {
+        let pixels = (points.max(1.0) * pixels_per_point.max(0.1)).ceil() as u32;
+        (pixels.div_ceil(PIXEL_STEP) * PIXEL_STEP).min(crate::image_cache::VIEWER_LONGEST)
+    };
+    (step(canvas.x), step(canvas.y))
+}
+
+/// The texture size, in pixels, a zoomed picture wants, or `None` while the
+/// fitted texture (`fitted` pixels, across and down) already holds as many
+/// pixels as are drawn. `original` is the picture's own size and `drawn` the
+/// size painted, both in points as `display_size` gives them. The answer
+/// keeps the picture's shape, steps up to [`PIXEL_STEP`], and is never larger
+/// than the picture's own pixels nor [`crate::image_cache::VIEWER_LONGEST`]
+/// on the longer edge.
+pub fn zoom_pixels(
+    original: Vec2,
+    drawn: Vec2,
+    pixels_per_point: f32,
+    fitted: (u32, u32),
+) -> Option<(u32, u32)> {
+    if original.x < 1.0 || original.y < 1.0 || !drawn.x.is_finite() || !drawn.y.is_finite() {
+        return None;
+    }
+    let cap = crate::image_cache::VIEWER_LONGEST as f32;
+    let scale = (drawn.x * pixels_per_point / original.x)
+        .max(drawn.y * pixels_per_point / original.y)
+        .min(1.0)
+        .min(cap / original.x.max(original.y));
+    let wanted = (original.x * scale, original.y * scale);
+    // The fitted decode is the picture scaled to sit within `fitted`.
+    let held = (fitted.0 as f32 / original.x)
+        .min(fitted.1 as f32 / original.y)
+        .min(1.0);
+    if scale <= held * 1.0001 {
+        return None;
+    }
+    let up = |pixels: f32, own: f32| {
+        ((pixels.ceil() as u32).div_ceil(PIXEL_STEP) * PIXEL_STEP).min(own.ceil() as u32)
+    };
+    let width = up(wanted.0, original.x).clamp(1, crate::image_cache::VIEWER_LONGEST);
+    let height = up(wanted.1, original.y).clamp(1, crate::image_cache::VIEWER_LONGEST);
+    Some((width, height))
+}
+
 /// Image size for the zoom level, relative to the original pixels.
 pub fn zoomed_size(width: f32, height: f32, zoom: f32) -> (f32, f32) {
     (width * zoom, height * zoom)
@@ -134,6 +183,9 @@ pub fn anchored_offset(
     };
     vec2(axis(0), axis(1))
 }
+
+/// Step, in pixels, the viewer's textures are sized in.
+const PIXEL_STEP: u32 = 256;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreviewState {
@@ -733,5 +785,45 @@ mod tests {
             vec2(10.0, 20.0),
         );
         assert_eq!(offset, Vec2::ZERO);
+    }
+
+    #[test]
+    fn the_fitted_texture_follows_the_window_in_steps() {
+        assert_eq!(fitted_pixels(vec2(800.0, 600.0), 2.0), (1792, 1280));
+        assert_eq!(fitted_pixels(vec2(801.0, 600.0), 2.0), (1792, 1280));
+        assert_eq!(fitted_pixels(vec2(5000.0, 10.0), 2.0), (4096, 256));
+    }
+
+    #[test]
+    fn zoom_wants_nothing_until_it_passes_the_fitted_texture() {
+        let original = vec2(4000.0, 3000.0);
+        let fitted = (1792, 1280);
+        // Drawn at fit (800 x 600 points on a 2x display): 1600 px, held.
+        assert_eq!(zoom_pixels(original, vec2(800.0, 600.0), 2.0, fitted), None);
+        // Zoomed to 1200 x 900 points: 2400 px across, stepped to 2560.
+        assert_eq!(
+            zoom_pixels(original, vec2(1200.0, 900.0), 2.0, fitted),
+            Some((2560, 2048))
+        );
+    }
+
+    #[test]
+    fn zoom_is_capped_at_the_pictures_pixels_and_the_edge_limit() {
+        let fitted = (1792, 1280);
+        // A small picture never asks for more than its own pixels.
+        assert_eq!(
+            zoom_pixels(vec2(2000.0, 1000.0), vec2(4000.0, 2000.0), 2.0, fitted),
+            Some((2000, 1000))
+        );
+        // A huge zoom stops at 4096 on the longer edge.
+        let (width, height) =
+            zoom_pixels(vec2(8000.0, 6000.0), vec2(8000.0, 6000.0), 2.0, fitted).unwrap();
+        assert_eq!(width, 4096);
+        assert!(height <= 3072 + 256);
+        // A picture the fitted texture already holds whole wants no more.
+        assert_eq!(
+            zoom_pixels(vec2(1000.0, 800.0), vec2(2000.0, 1600.0), 2.0, fitted),
+            None
+        );
     }
 }
