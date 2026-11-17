@@ -101,7 +101,7 @@ const LIGHTS_DROP: f32 = 16.0;
 const LIGHTS_DROP: f32 = 0.0;
 /// Where a list row's avatar starts, from the row's edge: a little right of
 /// the search field's left edge (the card's inset), so they read as aligned.
-pub(crate) const ROW_LEAD: f32 = 16.0;
+pub(crate) const ROW_LEAD: f32 = 10.0;
 
 /// How far below the list's header its frost and veil carry on, easing off.
 const FROST_TAIL: f32 = 36.0;
@@ -447,12 +447,7 @@ fn header_row(app: &mut App, ui: &mut egui::Ui, macos: bool) {
     let lead = title_lead(ui);
     if app.page == Page::Calls && app.new_call {
         ui.add_space(lead);
-        new_call_header(
-            app,
-            ui,
-            if macos { 16.0 } else { theme::TEXT_LIST_TITLE },
-            buttons_width,
-        );
+        new_call_header(app, ui, theme::TEXT_LIST_TITLE, buttons_width);
     } else if app.page == Page::Calls {
         ui.add_space(lead);
         header_title(
@@ -571,15 +566,11 @@ fn title_menu_actions(app: &App, list: Destination) -> Vec<Action> {
 /// but the chevron always shows, as the menu is the only way to those lists.
 /// Beside the macOS traffic lights the other lists' longer names are a size
 /// smaller, as their titles were there.
-fn title_menu(app: &mut App, ui: &mut egui::Ui, buttons: f32, macos: bool) {
+fn title_menu(app: &mut App, ui: &mut egui::Ui, buttons: f32, _macos: bool) {
     let palette = app.palette;
     let shown = shown_list(app);
     let title = crate::i18n::gettext(app.locale, list_title(shown));
-    let size = if macos && shown != Destination::Chats {
-        theme::TEXT_SECTION
-    } else {
-        theme::TEXT_LIST_TITLE
-    };
+    let size = theme::TEXT_LIST_TITLE;
     let spacing = ui.spacing().item_spacing.x;
     let room = (ui.available_width() - buttons - spacing).max(0.0);
     let text_room = (room - 2.0 * TITLE_INSET - TITLE_GAP - TITLE_CHEVRON).max(0.0);
@@ -711,11 +702,6 @@ fn title_menu_row(
         let icon = Rect::from_center_size(pos2(rect.left() + 18.0, middle), Vec2::splat(16.0));
         list_icon(list).image(tint, 16.0).paint_at(ui, icon);
         let mut right = rect.right() - 10.0;
-        if current {
-            let check = Rect::from_center_size(pos2(right - 8.0, middle), Vec2::splat(16.0));
-            Icon::Check.image(palette.accent, 16.0).paint_at(ui, check);
-            right -= 24.0;
-        }
         if badge > 0 {
             let at = pos2(right - 10.0, middle);
             let width = widgets::badge(ui, palette, at, badge, false);

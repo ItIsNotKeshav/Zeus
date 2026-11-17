@@ -1747,7 +1747,7 @@ pub fn row_highlight(ui: &Ui, palette: &Palette, rect: Rect, color: Color32) {
 /// The card `row_highlight` paints, over `card` itself: the rail's lit and
 /// hovered plates look as the selected and hovered chat rows do.
 pub fn highlight_card(ui: &Ui, palette: &Palette, card: Rect, color: Color32) {
-    let radius = CornerRadius::same(theme::RADIUS);
+    let radius = CornerRadius::same(theme::RADIUS - 4);
     // WhatsApp's rows are flat fills: the selected chat is one grey, the
     // one under the pointer a lighter step, in both themes.
     if palette.whatsapp {
