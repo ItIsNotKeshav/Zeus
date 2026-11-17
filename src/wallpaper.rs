@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
-use egui::{Color32, ColorImage, Rect, TextureHandle, TextureOptions, Vec2, pos2};
+use egui::{Color32, ColorImage, CornerRadius, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 
 pub use crate::settings::DoodleStyle;
 
@@ -69,18 +69,18 @@ pub struct Look {
 
 /// Paint the wallpaper over the conversation panel, its colour rounded by
 /// `radius` so a translucent one leaves a card's corners clear.
-pub fn paint(ui: &egui::Ui, look: &Look, radius: f32) {
-    paint_rounded(ui, ui.max_rect(), look, radius);
+pub fn paint(ui: &egui::Ui, look: &Look, radius: impl Into<CornerRadius>) {
+    paint_rounded(ui, ui.max_rect(), look, radius.into());
 }
 
 /// Paint the wallpaper into a bounded rectangle: the image cover-fitted if
 /// there is one, otherwise the colour with the SVG's intrinsic 374 x 666
 /// logical-pixel doodle tile repeated in both axes.
 pub fn paint_rect(ui: &egui::Ui, rect: Rect, look: &Look) {
-    paint_rounded(ui, rect, look, 0.0);
+    paint_rounded(ui, rect, look, CornerRadius::ZERO);
 }
 
-fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: f32) {
+fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: CornerRadius) {
     let painter = ui.painter().with_clip_rect(rect);
     painter.rect_filled(rect, radius, look.color);
 

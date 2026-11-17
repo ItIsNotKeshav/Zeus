@@ -2536,20 +2536,49 @@ pub fn dotted_chip(
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
-/// Fills the four corners of `rect` outside a rounding of `radius` with
-/// `color`, so a card whose contents paint square edges reads as rounded.
-pub fn card_corners(rect: egui::Rect, radius: f32, color: Color32) -> egui::Shape {
+/// Fills the corners of `rect` outside `radius` with `color`, so a card
+/// whose contents paint square edges reads as rounded. Each corner uses its
+/// own radius. A square corner is left alone.
+pub fn card_corners(
+    rect: egui::Rect,
+    radius: impl Into<egui::CornerRadius>,
+    color: Color32,
+) -> egui::Shape {
     use std::f32::consts::FRAC_PI_2;
     const STEPS: usize = 8;
+    let radius = radius.into();
     let mut mesh = egui::Mesh::default();
     // Each corner is a fan from the window corner over the arc inside it.
     let corners = [
-        (rect.left_top(), egui::vec2(1.0, 1.0), 2.0),
-        (rect.right_top(), egui::vec2(-1.0, 1.0), 3.0),
-        (rect.right_bottom(), egui::vec2(-1.0, -1.0), 0.0),
-        (rect.left_bottom(), egui::vec2(1.0, -1.0), 1.0),
+        (
+            rect.left_top(),
+            egui::vec2(1.0, 1.0),
+            2.0,
+            f32::from(radius.nw),
+        ),
+        (
+            rect.right_top(),
+            egui::vec2(-1.0, 1.0),
+            3.0,
+            f32::from(radius.ne),
+        ),
+        (
+            rect.right_bottom(),
+            egui::vec2(-1.0, -1.0),
+            0.0,
+            f32::from(radius.se),
+        ),
+        (
+            rect.left_bottom(),
+            egui::vec2(1.0, -1.0),
+            1.0,
+            f32::from(radius.sw),
+        ),
     ];
-    for (corner, inward, quarter) in corners {
+    for (corner, inward, quarter, radius) in corners {
+        if radius <= 0.0 {
+            continue;
+        }
         let centre = corner + inward * radius;
         let base = mesh.vertices.len() as u32;
         mesh.colored_vertex(corner, color);
@@ -3404,6 +3433,27 @@ mod tests {
         }
         // Four fans of eight triangles.
         assert_eq!(mesh.indices.len(), 4 * 8 * 3);
+    }
+
+    #[test]
+    fn card_corners_leave_a_square_corner_alone() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let radius = egui::CornerRadius {
+            nw: 12,
+            ne: 0,
+            sw: 12,
+            se: 12,
+        };
+        let egui::Shape::Mesh(mesh) = super::card_corners(rect, radius, Color32::RED) else {
+            panic!("a mesh");
+        };
+        // The square corner adds no fan.
+        assert_eq!(mesh.indices.len(), 3 * 8 * 3);
+        assert!(
+            mesh.vertices
+                .iter()
+                .all(|vertex| vertex.pos != rect.right_top())
+        );
     }
 }
 

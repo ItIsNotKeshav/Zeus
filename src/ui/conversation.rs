@@ -133,9 +133,9 @@ pub(super) fn show_scoped(app: &mut App, ui: &mut egui::Ui, rect: Rect, chat: Ch
 
 fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
     let radius = if super::narrow(ui.ctx()) {
-        0.0
+        egui::CornerRadius::ZERO
     } else {
-        super::chat_card_radius()
+        super::chat_card_corners(super::card_at_window_right(ui.ctx(), ui.max_rect()))
     };
     wallpaper::paint(ui, &app.wallpaper(), radius);
     let card = ui.max_rect();
@@ -473,33 +473,61 @@ pub(super) const HEADER_TAIL: f32 = 24.0;
 /// Rows of the veil's ease, enough for its curve to look smooth.
 const VEIL_STEPS: usize = 8;
 
+/// Horizontal inset of a top corner's quarter circle, `radius` points, at
+/// `y_off` points below the top of the card. Past the arc the side is square.
+fn arc_inset(radius: f32, y_off: f32) -> f32 {
+    if radius <= 0.0 || y_off >= radius {
+        0.0
+    } else {
+        let dy = radius - y_off;
+        radius - (radius * radius - dy * dy).max(0.0).sqrt()
+    }
+}
+
 /// The veil over a vibrant header's frost: `top` at the top, then
 /// easing to nothing over the bottom `ease` points of `rect` along the same
 /// curve as the frost, so the messages under it never stop at a line. Its
 /// top corners follow the card's `radius`, so they stay round over a
 /// see-through window too.
-pub(super) fn header_veil(top: Color32, rect: Rect, ease: f32, radius: f32) -> egui::Shape {
+pub(super) fn header_veil(
+    top: Color32,
+    rect: Rect,
+    ease: f32,
+    radius: impl Into<egui::CornerRadius>,
+) -> egui::Shape {
     let start = rect.bottom() - ease;
-    let radius = radius.clamp(0.0, (rect.height() - ease).max(0.0));
+    let corners = radius.into();
+    let limit = (rect.height() - ease).max(0.0);
+    let left = f32::from(corners.nw).clamp(0.0, limit);
+    let right = f32::from(corners.ne).clamp(0.0, limit);
+    let radius = left.max(right);
     let mut mesh = egui::Mesh::default();
-    let mut row = |y: f32, inset: f32, color: Color32| {
-        mesh.colored_vertex(pos2(rect.left() + inset, y), color);
-        mesh.colored_vertex(pos2(rect.right() - inset, y), color);
+    let mut row = |y: f32, left_inset: f32, right_inset: f32, color: Color32| {
+        mesh.colored_vertex(pos2(rect.left() + left_inset, y), color);
+        mesh.colored_vertex(pos2(rect.right() - right_inset, y), color);
     };
-    // Down each top corner's quarter circle, then straight.
+    // Down each top corner's quarter circle, then straight. Equal corners
+    // keep the sine samples, so a uniform card does not move.
     if radius > 0.0 {
+        let uniform = (left - right).abs() < f32::EPSILON;
         for step in 0..CORNER_STEPS {
             let angle = std::f32::consts::FRAC_PI_2 * step as f32 / CORNER_STEPS as f32;
-            let y = rect.top() + radius - radius * angle.cos();
-            row(y, radius - radius * angle.sin(), top);
+            let y_off = radius - radius * angle.cos();
+            let (left_inset, right_inset) = if uniform {
+                let inset = radius - radius * angle.sin();
+                (inset, inset)
+            } else {
+                (arc_inset(left, y_off), arc_inset(right, y_off))
+            };
+            row(rect.top() + y_off, left_inset, right_inset, top);
         }
     }
-    row(rect.top() + radius, 0.0, top);
+    row(rect.top() + radius, 0.0, 0.0, top);
     for step in 0..=VEIL_STEPS {
         let t = step as f32 / VEIL_STEPS as f32;
         // smoothstep, as the frost's shader eases.
         let strength = 1.0 - t * t * (3.0 - 2.0 * t);
-        row(start + ease * t, 0.0, top.gamma_multiply(strength));
+        row(start + ease * t, 0.0, 0.0, top.gamma_multiply(strength));
     }
     let rows = mesh.vertices.len() as u32 / 2;
     for row in 0..rows - 1 {

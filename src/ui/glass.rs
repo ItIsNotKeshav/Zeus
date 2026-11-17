@@ -133,8 +133,12 @@ pub fn new_sheet() {
 /// `fade` points easing from blurred to sharp (the top ones, for a negative
 /// `fade`), within corners rounded by `radius` points, the card's it lies
 /// across.
-pub fn sheet_shape(rect: egui::Rect, fade: f32, radius: f32) -> egui::Shape {
-    on_sheet(rect, fade, radius, BAR)
+pub fn sheet_shape(
+    rect: egui::Rect,
+    fade: f32,
+    radius: impl Into<egui::CornerRadius>,
+) -> egui::Shape {
+    on_sheet(rect, fade, crate::ui::corner_span(radius.into()), BAR)
 }
 
 /// Whether `ZEUS_GLASS_SHEET=0` asks every frost to copy its own, for

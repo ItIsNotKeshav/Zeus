@@ -1877,15 +1877,20 @@ pub(super) fn paint_edit_focus(
     palette: &Palette,
     chat: &str,
     card: Rect,
-    radius: f32,
+    radius: impl Into<egui::CornerRadius>,
 ) {
+    let radius = radius.into();
     let Some((_, shown)) = edit_focus(ctx, chat) else {
         return;
     };
     let (scrim, row) = edit_focus_layers(chat);
     ctx.set_sublayer(scrim, row);
     let painter = ctx.layer_painter(scrim).with_clip_rect(card);
-    painter.add(crate::ui::glass::veil(card, radius, shown));
+    painter.add(crate::ui::glass::veil(
+        card,
+        crate::ui::corner_span(radius),
+        shown,
+    ));
     painter.rect_filled(
         card,
         radius,

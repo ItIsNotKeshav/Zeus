@@ -6,9 +6,15 @@ use super::*;
 /// square beneath a vibrant header or composer, such as messages scrolled
 /// under them, where the sidebar's gutter around the card is opaque. The
 /// header's own glass and veil keep to the corners themselves.
-pub(super) fn card_corners(ui: &egui::Ui, palette: &Palette, card: Rect, radius: f32) {
+pub(super) fn card_corners(
+    ui: &egui::Ui,
+    palette: &Palette,
+    card: Rect,
+    radius: impl Into<egui::CornerRadius>,
+) {
+    let radius = radius.into();
     let gutter = palette.column();
-    if radius > 0.0 && gutter.is_opaque() {
+    if radius != egui::CornerRadius::ZERO && gutter.is_opaque() {
         ui.painter()
             .add(widgets::card_corners(card, radius, gutter));
     }

@@ -193,7 +193,7 @@ fn paint_window(painter: &Painter, rect: Rect, app: &App, opacity: f32, shimmer:
     }
     painter.rect_filled(
         card,
-        CornerRadius::same(super::chat_card_radius().round() as u8),
+        super::chat_card_corners(rect.right() - card.right() <= chats::CARD_GAP + 1.0),
         look.fill(palette.panel),
     );
     let inner_left = card.left() + 20.0;

@@ -292,30 +292,56 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
     }
 }
 
-/// macOS titled-window corner, in points. Sequoia (darwin 24) and earlier
-/// use 10. The card is inset by [`chats::CARD_GAP`], so a concentric corner
-/// is this minus that gap.
+/// List-facing corner, and any corner where two cards meet, on macOS.
 #[cfg(target_os = "macos")]
-const MAC_WINDOW_CORNER: f32 = 10.0;
+const MAC_INNER_CORNER: u8 = 14;
+/// Corner that sits on the window's right edge on macOS.
+#[cfg(target_os = "macos")]
+const MAC_EDGE_CORNER: u8 = 4;
 
-/// Corner of the floating conversation card. On macOS it is concentric with
-/// the window: the system corner (10 points on Sequoia) less
-/// [`chats::CARD_GAP`], and never below zero. Elsewhere the card stays as
+/// Whether `rect`'s right edge is the window's. A floating card is inset by
+/// [`chats::CARD_GAP`], so that inset still counts as touching.
+pub(crate) fn card_at_window_right(ctx: &egui::Context, rect: egui::Rect) -> bool {
+    ctx.content_rect().right() - rect.right() <= chats::CARD_GAP + 1.0
+}
+
+/// Per-corner radius of a floating card.
+///
+/// On macOS the corners on the window's right edge are 4 and the corners
+/// toward the chat list, or between this card and the one beside it, are 14.
+/// `at_window_right` is that right edge. Elsewhere every corner stays as
 /// round as the composer ([`chats::CARD_RADIUS`]).
-pub(crate) fn chat_card_radius() -> f32 {
+pub(crate) fn chat_card_corners(at_window_right: bool) -> egui::CornerRadius {
     #[cfg(target_os = "macos")]
     {
-        (MAC_WINDOW_CORNER - chats::CARD_GAP).max(0.0)
+        let right = if at_window_right {
+            MAC_EDGE_CORNER
+        } else {
+            MAC_INNER_CORNER
+        };
+        egui::CornerRadius {
+            nw: MAC_INNER_CORNER,
+            ne: right,
+            sw: MAC_INNER_CORNER,
+            se: right,
+        }
     }
     #[cfg(not(target_os = "macos"))]
     {
-        f32::from(chats::CARD_RADIUS)
+        let _ = at_window_right;
+        egui::CornerRadius::same(chats::CARD_RADIUS)
     }
+}
+
+/// One radius for a shader or a veil that cannot round each corner alone.
+/// A uniform corner comes back as itself.
+pub(crate) fn corner_span(radius: egui::CornerRadius) -> f32 {
+    f32::from(radius.nw.max(radius.ne).max(radius.sw).max(radius.se))
 }
 
 /// The card behind the chat panel (or one pane of it), over the gutter.
 pub(crate) fn card_back(app: &App, ui: &egui::Ui, rect: egui::Rect, gutter: egui::Color32) {
-    let radius = chat_card_radius();
+    let radius = chat_card_corners(card_at_window_right(ui.ctx(), rect));
     let frame = central_frame(app);
     let painter = ui.painter();
     painter.add(widgets::card_corners(rect, radius, gutter));
@@ -338,7 +364,7 @@ pub(crate) fn card_front(
     outline: Stroke,
 ) {
     let _ = app;
-    let radius = chat_card_radius();
+    let radius = chat_card_corners(card_at_window_right(ui.ctx(), rect));
     if gutter.is_opaque() {
         ui.painter()
             .add(widgets::card_corners(rect, radius, gutter));
@@ -1053,6 +1079,36 @@ fn titlebar_strip(app: &App, ui: &mut egui::Ui) {
 /// platform does (fastframe-titlebar).
 pub fn titlebar_drag(ui: &mut egui::Ui, rect: egui::Rect) {
     fastframe_titlebar::drag(ui, rect);
+}
+
+#[cfg(test)]
+mod card_corner_tests {
+    use super::chat_card_corners;
+
+    #[test]
+    fn macos_edge_is_sharper_than_the_list_side() {
+        let edge = chat_card_corners(true);
+        let inner = chat_card_corners(false);
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(
+                edge,
+                egui::CornerRadius {
+                    nw: 14,
+                    ne: 4,
+                    sw: 14,
+                    se: 4,
+                }
+            );
+            assert_eq!(inner, egui::CornerRadius::same(14));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let same = egui::CornerRadius::same(super::chats::CARD_RADIUS);
+            assert_eq!(edge, same);
+            assert_eq!(inner, same);
+        }
+    }
 }
 
 #[cfg(test)]
