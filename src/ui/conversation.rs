@@ -553,13 +553,26 @@ const NAME_GLASS_LINES: f32 = 32.0;
 const BUTTON_GLASS: f32 = 36.0;
 /// The space between two of a vibrant header's buttons, beyond their glass.
 pub(super) const BUTTON_GAP: f32 = 10.0;
+/// The space between search, video and audio, which read as one group.
+const GROUP_GAP: f32 = 4.0;
+/// The space between that group and More.
+const MORE_GAP: f32 = 12.0;
 
-/// The round glass under one of a vibrant header's buttons.
+/// The round glass under one of a vibrant header's buttons, without an outline.
 pub(super) fn glass_button(palette: &Palette, button: Rect) -> egui::Shape {
-    glass(
+    glass_fill(
         palette,
         Rect::from_center_size(button.center(), Vec2::splat(BUTTON_GLASS)),
         BUTTON_GLASS / 2.0,
+    )
+}
+
+/// Header glass with no outline: the veil thickened where it sits.
+fn glass_fill(palette: &Palette, rect: Rect, radius: f32) -> egui::Shape {
+    egui::Shape::rect_filled(
+        rect,
+        CornerRadius::from(radius),
+        palette.vibrant_pill(palette.chat),
     )
 }
 
@@ -646,7 +659,10 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                     + call_buttons
                     + if pane == Pane::Solo { 0.0 } else { 1.0 };
                 let right_controls = if palette.vibrant() {
-                    buttons * 36.0 + (buttons - 0.5) * BUTTON_GAP + (BUTTON_GLASS - 30.0)
+                    buttons * 36.0
+                        + (buttons - 0.5) * GROUP_GAP
+                        + (MORE_GAP - GROUP_GAP)
+                        + (BUTTON_GLASS - 30.0)
                 } else {
                     buttons * 36.0
                 };
@@ -685,7 +701,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                 // Room for the name's glass pill to clear the avatar.
                                 ui.add_space(if palette.vibrant() { 14.0 } else { 4.0 });
                                 ui.vertical(|ui| {
-                                    let width = (ui.available_width() - right_controls).max(80.0);
+                                    // The outer allocation already stops short of the
+                                    // buttons: take all that remains of it.
+                                    let width = ui.available_width().max(80.0);
                                     ui.set_max_width(width);
                                     // On glass the lines centre on the avatar: the
                                     // column starts at the row's top otherwise.
@@ -787,11 +805,23 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                         pos2(text.center().x, avatar.center().y),
                         text.size() + 2.0 * padding,
                     );
-                    ui.painter()
-                        .set(name_pill, glass(&palette, glass_rect, NAME_GLASS_RADIUS));
+                    ui.painter().set(
+                        name_pill,
+                        glass_fill(&palette, glass_rect, NAME_GLASS_RADIUS),
+                    );
                 }
+                // The whole row opens the info panel; the buttons, added
+                // after this target, take their own clicks.
+                let row_rect = Rect::from_min_max(
+                    pos2(ui.max_rect().left(), ui.max_rect().top()),
+                    pos2(ui.max_rect().right(), ui.max_rect().top() + HEADER_ROW),
+                );
                 let block = ui
-                    .interact(block.rect, ui.id().with("chat-header-info"), Sense::click())
+                    .interact(
+                        row_rect.union(block.rect),
+                        ui.id().with("chat-header-info"),
+                        Sense::click(),
+                    )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if block.clicked() {
                     app.actions.push(Action::OpenInfo(chat.id.clone()));
@@ -1058,7 +1088,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                         // On a vibrant window each sits on its own glass, as
                         // Search and More do.
                         if palette.vibrant() {
-                            ui.add_space(BUTTON_GAP);
+                            ui.add_space(MORE_GAP);
                         }
                         let call_glass = ui.painter().add(egui::Shape::Noop);
                         let call_button = theme::icon_button(
@@ -1079,7 +1109,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                         if !call_here {
                             let tip = crate::i18n::gettext(app.locale, "Video call");
                             if palette.vibrant() {
-                                ui.add_space(BUTTON_GAP);
+                                ui.add_space(GROUP_GAP);
                             }
                             let video_glass = ui.painter().add(egui::Shape::Noop);
                             let video = theme::icon_button(
@@ -1106,7 +1136,11 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                         super::keys::label("Ctrl+F")
                     );
                     if palette.vibrant() {
-                        ui.add_space(BUTTON_GAP);
+                        ui.add_space(if call_buttons > 0.0 {
+                            GROUP_GAP
+                        } else {
+                            MORE_GAP
+                        });
                     }
                     let search_glass = ui.painter().add(egui::Shape::Noop);
                     let search = theme::icon_button(
