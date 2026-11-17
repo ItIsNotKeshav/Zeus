@@ -54,6 +54,7 @@ fn animation_json(path: &Path) -> Option<String> {
 
 /// Rasterize at most `requested` frames. One requested frame is the poster;
 /// the shared animation cache only requests the rest during actual playback.
+#[cfg(test)]
 pub(crate) fn decode(path: &Path, requested: usize) -> Option<Vec<(ColorImage, Duration)>> {
     decode_at(path, requested, MAX_OUTPUT_SIDE)
 }

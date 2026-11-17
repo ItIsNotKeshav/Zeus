@@ -1381,7 +1381,7 @@ fn swipe_section(locale: Locale) -> Section {
 fn send_shortcut_picker(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let locale = app.locale;
-    let enter = crate::i18n::gettext(locale, "Enter to send");
+    let enter = crate::i18n::gettext(locale, "Enter to send").into_owned();
     let modified = super::keys::label(&crate::i18n::gettext(locale, "Ctrl+Enter to send"));
     let selected = if app.settings.enter_sends {
         &enter

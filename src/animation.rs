@@ -607,6 +607,7 @@ fn ffmpeg_present() -> bool {
 }
 
 /// Decodes up to `limit` frames.
+#[cfg(test)]
 fn decode(path: &Path, limit: usize) -> Option<Decoded> {
     decode_at(path, limit, MAX_WIDTH)
 }

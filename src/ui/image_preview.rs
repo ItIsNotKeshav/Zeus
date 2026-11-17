@@ -869,7 +869,7 @@ fn motion_button(
 /// The textures the viewer holds for the photo on screen: the one fitted to
 /// the window (kept while zoomed, so it stays painted until a bigger one
 /// arrives) and the last zoomed one, when there is one.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct Textures {
     path: std::path::PathBuf,
     fitted: Option<String>,
