@@ -314,15 +314,18 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             None => crate::i18n::gettext(locale, "Settings"),
                         };
                         ui.horizontal(|ui| {
-                            if theme::icon_button(
-                                ui,
-                                Icon::ArrowLeft,
-                                20.0,
-                                palette.secondary,
-                                palette.text,
-                                "Back (Esc)",
-                            )
-                            .clicked()
+                            // Beside the categories the tab bar leads away;
+                            // alone, the page keeps a way back (Esc too).
+                            if !beside
+                                && theme::icon_button(
+                                    ui,
+                                    Icon::ArrowLeft,
+                                    20.0,
+                                    palette.secondary,
+                                    palette.text,
+                                    "Back (Esc)",
+                                )
+                                .clicked()
                             {
                                 app.actions.push(Action::Open(Page::Chats));
                             }
