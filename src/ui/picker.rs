@@ -12,6 +12,7 @@ use egui::{
 use super::controls;
 use super::widgets::FrostedPopup;
 use crate::app::App;
+use crate::emoji;
 use crate::i18n::gettext;
 use crate::model::{Action, Dialog, PickerTab, StickerPack, StickerShelf};
 use crate::theme::{self, Icon, Palette};
@@ -236,7 +237,7 @@ fn group_name(group: emojis::Group) -> &'static str {
 fn usable_recent(recent: &[String]) -> Vec<&'static str> {
     recent
         .iter()
-        .filter_map(|emoji| emojis::get(emoji).map(|emoji| emoji.as_str()))
+        .filter_map(|emoji| emoji::lookup(emoji).map(|emoji| emoji.as_str()))
         .collect()
 }
 
@@ -254,7 +255,7 @@ pub fn first_page(recent: &[String]) -> Vec<&'static str> {
         .chain(
             usable_recent(recent)
                 .into_iter()
-                .chain(emojis::iter().map(|emoji| emoji.as_str()))
+                .chain(emoji::catalogue().map(|emoji| emoji.as_str()))
                 .take(FIRST_PAGE),
         )
         .collect()
@@ -280,7 +281,7 @@ fn rows_for(
         }
     };
     if !query.is_empty() {
-        let found: Vec<&'static str> = emojis::iter()
+        let found: Vec<&'static str> = emoji::catalogue()
             .filter(|emoji| {
                 emoji.name().to_lowercase().contains(&query)
                     || emoji
@@ -305,7 +306,11 @@ fn rows_for(
         rows.push(Row::Header(group_name(group)));
         chunk(
             &mut rows,
-            group.emojis().map(|emoji| emoji.as_str()).collect(),
+            group
+                .emojis()
+                .filter(|emoji| emoji::offered(emoji))
+                .map(|emoji| emoji.as_str())
+                .collect(),
         );
     }
     rows
@@ -456,7 +461,7 @@ fn emoji_tab(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
         .as_ref()
         .unwrap_or(&app.settings.recent_emoji)
         .iter()
-        .any(|emoji| emojis::get(emoji).is_some());
+        .any(|emoji| emoji::lookup(emoji).is_some());
     category_tabs(app, ui, palette, "emoji-grid", "Recent", has_recent);
 }
 
@@ -593,7 +598,7 @@ fn reaction_picker(app: &mut App, ctx: &egui::Context) {
                                     .settings
                                     .reaction_emoji
                                     .iter()
-                                    .any(|(emoji, _)| emojis::get(emoji).is_some());
+                                    .any(|(emoji, _)| emoji::lookup(emoji).is_some());
                                 category_tabs(
                                     app,
                                     ui,
