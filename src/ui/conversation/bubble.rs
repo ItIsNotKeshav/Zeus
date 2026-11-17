@@ -851,8 +851,9 @@ pub(super) fn reference_timestamp(
         Delivery::Failed => Some(("✗", view.palette.danger)),
         _ => None,
     };
+    let painter = ui.painter().clone();
     let width_of = |text: &str, font: &egui::FontId| {
-        ui.painter()
+        painter
             .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
             .size()
             .x
@@ -1181,7 +1182,7 @@ pub(super) fn status_wake(
         return None;
     }
     let sent = messages[newest_at].timestamp;
-    let mut wake = None;
+    let mut wake: Option<i64> = None;
     let dues = [
         sent.saturating_add(STATUS_FIRST_WAIT),
         sent.saturating_add(STATUS_HANDOFF).saturating_add(1),
