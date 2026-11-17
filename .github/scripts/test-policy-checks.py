@@ -68,6 +68,13 @@ librespot-core = { git = "https://github.com/crmne/librespot", rev = "23fc42c" }
             lock = LOCK.format(source=f"git+{url}?rev=abc#abc").replace("librespot-core", "whatsapp-rust")
             self.assertEqual(sources.problems({"Cargo.toml": manifest, "Cargo.lock": lock}), [])
 
+    def test_zeus_egui_fork_passes_and_no_other_pratyakshm_repository(self):
+        manifest = '[dependencies]\negui = { git = "https://github.com/pratyakshm/egui", rev = "abc" }\n'
+        lock = LOCK.format(source="git+https://github.com/pratyakshm/egui?rev=abc#abc").replace("librespot-core", "egui")
+        self.assertEqual(sources.problems({"Cargo.toml": manifest, "Cargo.lock": lock}), [])
+        manifest = '[dependencies]\nwinit = { git = "https://github.com/pratyakshm/winit", rev = "abc" }\n'
+        self.assertEqual(flagged(sources.problems({"Cargo.toml": manifest})), ["Cargo.toml"])
+
     def test_whatsapp_exception_does_not_allow_other_sources(self):
         for url in (
             "https://github.com/oxidezap/other-repository",

@@ -2,8 +2,9 @@
 """Fails when a dependency comes from a source the maintainer has not approved.
 
 Crates come from crates.io. A git dependency or a [patch] entry may only name
-a repository under https://github.com/crmne/ or the explicitly approved upstream
-https://github.com/oxidezap/whatsapp-rust. Adding or changing one still needs the
+a repository under https://github.com/crmne/, the explicitly approved upstream
+https://github.com/oxidezap/whatsapp-rust, or Zeus's own egui fork
+https://github.com/pratyakshm/egui. Adding or changing one still needs the
 maintainer's approval (CONTRIBUTING.md, "Design principles"). This reads every
 tracked Cargo.toml, Cargo.lock and .cargo/config.toml.
 """
@@ -23,14 +24,17 @@ MANIFESTS = ("/Cargo.toml", "/Cargo.lock", "/.cargo/config.toml", "/.cargo/confi
 
 
 def allowed_git_source(url):
-    """True for maintainer repositories and the approved WhatsApp upstream."""
+    """True for maintainer repositories, the WhatsApp upstream and Zeus's egui fork."""
     parts = urlsplit(url)
     segments = parts.path.strip("/").removesuffix(".git").split("/")
     return (
         parts.scheme == "https"
         and parts.netloc == "github.com"
         and len(segments) == 2
-        and (segments[0] == "crmne" or segments == ["oxidezap", "whatsapp-rust"])
+        and (
+            segments[0] == "crmne"
+            or segments in (["oxidezap", "whatsapp-rust"], ["pratyakshm", "egui"])
+        )
         and segments[1] not in ("", ".", "..")
         and "%" not in parts.path
     )

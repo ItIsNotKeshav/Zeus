@@ -1971,7 +1971,7 @@ dependencies = [
 [[package]]
 name = "ecolor"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "bytemuck",
  "emath",
@@ -1981,7 +1981,7 @@ dependencies = [
 [[package]]
 name = "eframe"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2018,7 +2018,7 @@ dependencies = [
 [[package]]
 name = "egui"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "accesskit",
  "ahash",
@@ -2039,7 +2039,7 @@ dependencies = [
 [[package]]
 name = "egui-wgpu"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2047,6 +2047,8 @@ dependencies = [
  "egui",
  "epaint",
  "log",
+ "objc2 0.6.4",
+ "objc2-quartz-core 0.3.2",
  "profiling",
  "thiserror 2.0.20",
  "type-map",
@@ -2058,7 +2060,7 @@ dependencies = [
 [[package]]
 name = "egui-winit"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "accesskit_winit",
  "arboard",
@@ -2080,7 +2082,7 @@ dependencies = [
 [[package]]
 name = "egui_extras"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "ahash",
  "egui",
@@ -2096,7 +2098,7 @@ dependencies = [
 [[package]]
 name = "egui_glow"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "bytemuck",
  "egui",
@@ -2115,7 +2117,7 @@ checksum = "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34"
 [[package]]
 name = "emath"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "bytemuck",
  "serde",
@@ -2234,7 +2236,7 @@ dependencies = [
 [[package]]
 name = "epaint"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 dependencies = [
  "ahash",
  "bytemuck",
@@ -2260,7 +2262,7 @@ dependencies = [
 [[package]]
 name = "epaint_default_fonts"
 version = "0.36.2"
-source = "git+https://github.com/crmne/egui?rev=1cc61c8a83625855b08cb8fed912900cf3b01b70#1cc61c8a83625855b08cb8fed912900cf3b01b70"
+source = "git+https://github.com/pratyakshm/egui?rev=dcd382a844adec21d356ed0be405c1c7db08b61d#dcd382a844adec21d356ed0be405c1c7db08b61d"
 
 [[package]]
 name = "equivalent"

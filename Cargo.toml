@@ -226,7 +226,9 @@ fastframe-audio = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1" 
 fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1", features = ["reqwest"] }
 
 [patch.crates-io]
-# crmne/egui apps-0.36.2, shared with Spotifast, RekordFlash and TonePush: egui
+# pratyakshm/egui zeus-idle-gpu: crmne/egui apps-0.36.2 (shared with Spotifast,
+# RekordFlash and TonePush) plus dropping the wgpu device while idle on macOS
+# (`Frame::release_gpu`, see src/gpu_idle.rs). apps-0.36.2 brings egui
 # 0.36.2 with right-to-left shaping and glyph clusters from crmne/zapfast#144
 # and digits shaped left to right in text without right-to-left letters (#184)
 # (emilk/egui#8577), egui's busy-loop fix (emilk/egui#8398), and eframe pacing
@@ -243,16 +245,16 @@ fastframe-update = { git = "https://github.com/crmne/fastframe", tag = "v0.14.1"
 # (crmne/egui#2), and winit's `Ime::DeleteSurrounding` reaches egui (crmne/egui#4).
 # Every egui crate comes from the same revision so they share one emath and
 # epaint. Drop this once egui releases all three.
-ecolor = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-eframe = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui-wgpu = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui-winit = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui_extras = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-egui_glow = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-emath = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-epaint = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
-epaint_default_fonts = { git = "https://github.com/crmne/egui", rev = "1cc61c8a83625855b08cb8fed912900cf3b01b70" }
+ecolor = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+eframe = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+egui = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+egui-wgpu = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+egui-winit = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+egui_extras = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+egui_glow = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+emath = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+epaint = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
+epaint_default_fonts = { git = "https://github.com/pratyakshm/egui", rev = "dcd382a844adec21d356ed0be405c1c7db08b61d" }
 # crmne/winit apps-0.30, shared with the same apps: winit 0.30.13 plus Wayland
 # `Occluded` for the xdg-shell suspended state with commits on the app's behalf
 # while it isn't presenting (rust-windowing/winit#4709, #4710), macOS Quit
