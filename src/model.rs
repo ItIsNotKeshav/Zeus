@@ -29,13 +29,18 @@ pub struct Upload {
     /// upload begins, while the file is read, converted and encrypted.
     pub sent: u64,
     pub total: u64,
-    /// The caption that goes with it, as it was typed: only the upload that
-    /// carries it has one.
+    /// The caption that goes with it, as its message will carry it: only the
+    /// upload that carries it has one.
     pub caption: Option<String>,
+    /// Who the caption mentions, as its message will name them.
+    pub mentions: Vec<MentionRef>,
     /// The first upload of the album it goes in, when it goes in one.
     pub batch: Option<UploadId>,
     /// The attachment staged in the composer it was sent from, if it was.
     pub staged: Option<crate::app::AttachmentId>,
+    /// Its message, once it is in the archive while others of its album are
+    /// still on their way: the album stays one grid until the last arrives.
+    pub message: Option<String>,
 }
 
 impl Upload {

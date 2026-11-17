@@ -11,18 +11,37 @@ pub(super) const UPLOAD_RING: f32 = 22.0;
 pub(super) const UPLOAD_RING_STROKE: f32 = 3.0;
 /// The space between an upload's picture or card and its caption.
 pub(super) const UPLOAD_CAPTION_GAP: f32 = 4.0;
+/// The row the time takes under a bubble's contents when times show inside
+/// bubbles, with the space above it.
+pub(super) const UPLOAD_FOOTER: f32 = 4.0 + 15.0;
+
+/// How a transcript's uploads are drawn: in `palette`'s style, in a bubble
+/// that may grow `bubble` wide, the caption's mentions named by `names`,
+/// with a row for the time where its message keeps one inside (`footer`),
+/// and flying from where they were staged when `fly`.
+#[derive(Clone, Copy)]
+pub(super) struct UploadLook<'a> {
+    pub(super) palette: &'a Palette,
+    pub(super) bubble: f32,
+    pub(super) names: &'a dyn Fn(&str) -> String,
+    pub(super) footer: bool,
+    pub(super) fly: bool,
+}
 
 /// Attachments on their way, as your own messages at the end of the chat,
 /// each at the size its message will have: a picture or clip with a
-/// progress ring over it, pictures sent together as their album's grid, or
-/// a file card whose icon is ringed by its progress, the caption under the
-/// one that carries it. One sent from the composer flies there from its
-/// tile in the strip when `fly`; else it rises into place. Its message
-/// takes its place once it is in the archive.
+/// progress ring over it, pictures sent together as their album's grid
+/// (those already arrived among them, until the last has), or a file card
+/// whose icon is ringed by its progress, the caption under the one that
+/// carries it as its message shows it. One sent from the composer or a chat
+/// bubble flies there from its tile when `fly`; else it rises into place.
+/// Its message takes its place once it is in the archive.
 pub(super) fn upload_rows(
     ui: &mut egui::Ui,
     palette: &Palette,
     uploads: &[crate::model::Upload],
+    names: &dyn Fn(&str) -> String,
+    footer: bool,
     fly: bool,
 ) {
     let Some(first) = uploads.first() else {
@@ -34,7 +53,13 @@ pub(super) fn upload_rows(
     let now = ui.input(|input| input.time);
     ui.ctx()
         .data_mut(|data| data.insert_temp(upload_seen_id(&first.chat), now));
-    let bubble = own_bubble_width(palette, ui.available_width());
+    let look = UploadLook {
+        palette,
+        bubble: own_bubble_width(palette, ui.available_width()),
+        names,
+        footer,
+        fly,
+    };
     let mut rest = uploads;
     while let Some(upload) = rest.first() {
         let members = upload.batch.map_or(1, |batch| {
@@ -45,21 +70,16 @@ pub(super) fn upload_rows(
         rest = after;
         ui.add_space(RUN_GAP);
         if run.len() > 1 {
-            upload_album(ui, palette, run, bubble, fly);
+            upload_album(ui, look, run);
         } else {
-            upload_row(ui, palette, upload, bubble, fly);
+            upload_row(ui, look, upload);
         }
     }
 }
 
 /// One attachment on its way, on its own.
-pub(super) fn upload_row(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    upload: &crate::model::Upload,
-    bubble: f32,
-    fly: bool,
-) {
+pub(super) fn upload_row(ui: &mut egui::Ui, look: UploadLook<'_>, upload: &crate::model::Upload) {
+    let palette = look.palette;
     let id = ui.id().with(("upload", upload.id));
     let shown = ui.ctx().animate_bool_with_time(
         id,
@@ -74,6 +94,7 @@ pub(super) fn upload_row(
         return;
     }
     let now = ui.input(|input| input.time);
+    let fly = look.fly;
     let flight = fly.then(|| take_flight(ui.ctx(), upload, now)).flatten();
     // Flying, it needs no rise of its own. Eased out, so it settles softly.
     let eased = if flight.is_some() {
@@ -83,9 +104,9 @@ pub(super) fn upload_row(
     };
     let start = crate::ui::swipe::mark(ui);
     let face = if pictured(upload) {
-        upload_picture(ui, palette, upload, fraction, bubble, eased)
+        upload_picture(ui, look, upload, fraction, eased)
     } else {
-        upload_card(ui, palette, upload, fraction, bubble.min(CARD_WIDTH), eased)
+        upload_card(ui, look, upload, fraction, eased)
     };
     if let Some((from, started)) = flight {
         fly_from_composer(ui, start, &upload.chat, from, face, now - started);
@@ -93,16 +114,18 @@ pub(super) fn upload_row(
 }
 
 /// Pictures and clips on their way as one album, laid out as its message
-/// will be: square tiles two to a row, the caption under them. The first
-/// tile carries the bubble and the caption on its flight; the others fly
-/// on their own.
+/// will be, from the first to the last: square tiles two to a row in the
+/// album's bubble, the caption under them. Members already in the archive
+/// stay among them, done, until the last has arrived, so the grid never
+/// rearranges; the album's message then takes its place as it stands. The
+/// first tile carries the bubble and the caption on its flight; the others
+/// fly on their own.
 pub(super) fn upload_album(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    look: UploadLook<'_>,
     members: &[crate::model::Upload],
-    bubble: f32,
-    fly: bool,
 ) {
+    let (palette, fly) = (look.palette, look.fly);
     let now = ui.input(|input| input.time);
     let flights: Vec<Option<(Rect, f64)>> = members
         .iter()
@@ -119,40 +142,39 @@ pub(super) fn upload_album(
     } else {
         theme::ease_out(shown)
     };
-    let caption = members.iter().find_map(|member| member.caption.as_deref());
-    let captioned = caption.is_some();
-    let side = album_tile_side(palette, bubble, captioned);
+    let carrier = members.iter().find(|member| member.caption.is_some());
+    let captioned = carrier.is_some();
+    // The album's bubble is its first message's.
+    let video = members[0].kind == crate::model::UploadKind::Video;
+    let side = album_tile_side(palette, look.bubble, captioned, video);
     let rows = members.len().div_ceil(2);
     let grid = vec2(
         side * 2.0 + ALBUM_GAP,
         rows as f32 * (side + ALBUM_GAP) - ALBUM_GAP,
     );
-    let rim = own_picture_rim(palette, captioned, false);
-    let colours = palette.on_bubble(true);
-    let text = text_bubble_margin(palette);
-    let caption = caption.map(|caption| {
-        let wrap = grid.x + 2.0 * rim - f32::from(text.left) - f32::from(text.right);
-        let font = theme::regular(BODY_SIZE);
-        widgets::line(ui, caption, font, colours.text, wrap.max(0.0), usize::MAX)
-    });
-    let below = match &caption {
-        Some(caption) => UPLOAD_CAPTION_GAP + caption.size().y + f32::from(text.bottom),
-        None => rim,
-    };
+    let margin = own_album_margin(palette, captioned, video);
+    // The caption spans the grid under it, as the album's does.
+    let caption = carrier.and_then(|carrier| upload_caption(ui, look, carrier, grid.x));
+    let mut below = caption
+        .as_ref()
+        .map_or(0.0, |caption| UPLOAD_CAPTION_GAP + caption.height());
+    if look.footer {
+        below += UPLOAD_FOOTER;
+    }
     let mut start = crate::ui::swipe::mark(ui);
-    let size = vec2(grid.x + 2.0 * rim, rim + grid.y + below);
-    let (frame, eased) = upload_bubble(ui, palette, size, eased, rim > 0.0);
-    let origin = frame.min + Vec2::splat(rim);
+    let size = vec2(
+        grid.x + margin.sum().x,
+        f32::from(margin.top) + grid.y + below + f32::from(margin.bottom),
+    );
+    let (frame, eased) = upload_bubble(ui, palette, size, eased, margin != Margin::ZERO);
+    let origin = frame.min + vec2(f32::from(margin.left), f32::from(margin.top));
     if let Some(caption) = caption {
-        let at = pos2(
-            frame.left() + f32::from(text.left),
-            origin.y + grid.y + UPLOAD_CAPTION_GAP,
-        );
-        caption.paint(ui, at, colours.text.gamma_multiply(eased));
+        let at = pos2(origin.x, origin.y + grid.y + UPLOAD_CAPTION_GAP);
+        caption.paint(ui, at, grid.x, eased);
     }
     // The grid's outer corners follow the picture's own radius; corners
     // where two tiles meet share one small radius, as the album's do.
-    let outer = own_picture_corner(palette, captioned, false);
+    let outer = own_picture_corner(palette, captioned, video);
     let inner = ALBUM_SEAM_RADIUS.min(outer);
     let count = members.len();
     for (index, (member, flight)) in members.iter().zip(flights).enumerate() {
@@ -385,28 +407,24 @@ pub(super) fn upload_bubble(
 /// picture is drawn.
 pub(super) fn upload_picture(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    look: UploadLook<'_>,
     upload: &crate::model::Upload,
     fraction: Option<f32>,
-    bubble: f32,
     eased: f32,
 ) -> Rect {
+    let palette = look.palette;
     let captioned = upload.caption.is_some();
     let video = upload.kind == crate::model::UploadKind::Video;
-    let bounds = own_picture_bounds(palette, bubble, captioned, video);
+    let bounds = own_picture_bounds(palette, look.bubble, captioned, video);
     let natural = upload_natural(ui.ctx(), upload).unwrap_or(vec2(4.0, 3.0));
     let size = fit_picture(natural.x, natural.y, bounds.x, bounds.y);
     let rim = own_picture_rim(palette, captioned, video);
-    let colours = palette.on_bubble(true);
     // The caption keeps the bubble's text padding inside the rim.
     let text = text_bubble_margin(palette);
-    let caption = upload.caption.as_deref().map(|caption| {
-        let wrap = size.x + 2.0 * rim - f32::from(text.left) - f32::from(text.right);
-        let font = theme::regular(BODY_SIZE);
-        widgets::line(ui, caption, font, colours.text, wrap.max(0.0), usize::MAX)
-    });
+    let wrap = (size.x + 2.0 * rim - f32::from(text.left) - f32::from(text.right)).max(0.0);
+    let caption = upload_caption(ui, look, upload, wrap);
     let below = match &caption {
-        Some(caption) => UPLOAD_CAPTION_GAP + caption.size().y + f32::from(text.bottom),
+        Some(caption) => UPLOAD_CAPTION_GAP + caption.height() + f32::from(text.bottom),
         None => rim,
     };
     let outer = vec2(size.x + 2.0 * rim, rim + size.y + below);
@@ -420,9 +438,75 @@ pub(super) fn upload_picture(
             frame.left() + f32::from(text.left),
             picture.bottom() + UPLOAD_CAPTION_GAP,
         );
-        caption.paint(ui, at, colours.text.gamma_multiply(eased));
+        caption.paint(ui, at, wrap, eased);
     }
     picture
+}
+
+/// An upload's caption, laid out as its message's bubble lays it out.
+pub(super) struct UploadCaption {
+    text: markup::Text,
+    rtl: bool,
+    ink: Color32,
+}
+
+impl UploadCaption {
+    pub(super) fn height(&self) -> f32 {
+        self.text.galley.size().y
+    }
+
+    /// How wide its widest line is.
+    pub(super) fn widest(&self) -> f32 {
+        let rows = self.text.galley.rows.iter();
+        rows.map(|row| row.row.size.x).fold(0.0, f32::max)
+    }
+
+    /// Paints it from `at` in a column `wrap` wide, where its message's
+    /// starts, `eased` of the way in. Right-to-left text keeps to the
+    /// column's right, as the message's does.
+    pub(super) fn paint(&self, ui: &egui::Ui, at: egui::Pos2, wrap: f32, eased: f32) {
+        let x = if self.rtl {
+            at.x + wrap - self.text.galley.size().x
+        } else {
+            at.x
+        };
+        let mut faded = ui.new_child(egui::UiBuilder::new());
+        faded.multiply_opacity(eased);
+        markup::paint(&faded, &self.text, pos2(x, at.y), self.ink);
+    }
+}
+
+/// The caption an upload carries, laid out `wrap` wide as its message's
+/// body will be: WhatsApp's markup, links, mentions by name and emoji, in
+/// the bubble's font and colours.
+pub(super) fn upload_caption(
+    ui: &egui::Ui,
+    look: UploadLook<'_>,
+    upload: &crate::model::Upload,
+    wrap: f32,
+) -> Option<UploadCaption> {
+    let caption = upload.caption.as_deref()?;
+    let colours = look.palette.on_bubble(true);
+    let style = markup::Style {
+        size: BODY_SIZE,
+        color: colours.text,
+        secondary: colours.secondary,
+        link: colours.link,
+        mention: colours.accent,
+    };
+    let mentions: Vec<markup::Mention> = upload
+        .mentions
+        .iter()
+        .map(|mention| markup::Mention {
+            user: mention.user.clone(),
+            name: (look.names)(&mention.id),
+        })
+        .collect();
+    Some(UploadCaption {
+        text: markup::layout(ui, caption, &mentions, &style, wrap.max(0.0)),
+        rtl: crate::bidi::message_rtl(caption),
+        ink: colours.text,
+    })
 }
 
 /// An upload's picture in `rect`, dimmed, under its progress ring and an
@@ -458,6 +542,10 @@ pub(super) fn paint_upload_media(
             let place = Rect::from_center_size(rect.center(), Vec2::splat(28.0));
             theme::paint_icon(ui, icon, place, 28.0, palette.secondary);
         }
+    }
+    // One already in the archive waits for the rest of its album, done.
+    if upload.message.is_some() {
+        return;
     }
     painter.rect_filled(rect, corners, Color32::from_black_alpha((90.0 * eased) as u8));
     let ring = Rect::from_center_size(rect.center(), Vec2::splat(UPLOAD_RING * 2.0 + 12.0));
@@ -501,40 +589,65 @@ pub(super) fn paint_upload_media(
     }
 }
 
-/// A file on its way, laid out as its message will be: the file card with
-/// its icon ringed by the progress, its name, and how much has gone, and
-/// the caption under it. Answers where the card is drawn.
+/// A file or a sound on its way, laid out as its message will be: the file
+/// card, or the sound's player, as wide as its message's card, with its
+/// icon ringed by the progress and how much has gone, and the caption under
+/// it. Answers where the card or the player is drawn.
 pub(super) fn upload_card(
     ui: &mut egui::Ui,
-    palette: &Palette,
+    look: UploadLook<'_>,
     upload: &crate::model::Upload,
     fraction: Option<f32>,
-    cap: f32,
     eased: f32,
 ) -> Rect {
+    let palette = look.palette;
     let colours = palette.on_bubble(true);
-    let (margin, inset) = attachment_insets(palette);
-    let card = vec2(cap - margin.x * 2.0, ATTACHMENT_ROW);
-    let outer = card + inset * 2.0 + margin * 2.0;
-    let text = text_bubble_margin(palette);
-    let caption = upload.caption.as_deref().map(|caption| {
-        let wrap = outer.x - f32::from(text.left) - f32::from(text.right);
-        let font = theme::regular(BODY_SIZE);
-        widgets::line(ui, caption, font, colours.text, wrap.max(0.0), usize::MAX)
-    });
-    let below = match &caption {
-        Some(caption) => caption.size().y + f32::from(text.bottom),
-        None => 0.0,
+    let audio = upload.kind == crate::model::UploadKind::Audio;
+    let title = if upload.name.is_empty() {
+        "Photo"
+    } else {
+        upload.name.as_str()
     };
-    let (bubble, eased) = upload_bubble(ui, palette, outer + vec2(0.0, below), eased, true);
-    let card = Rect::from_min_size(bubble.min + margin, card + inset * 2.0);
-    let painter = ui.painter_at(bubble);
-    painter.rect_filled(
-        card,
-        attachment_radius(palette),
-        palette.window.gamma_multiply(0.35 * eased),
+    // A caption wider than the card widens it, as far as the bubble goes.
+    let cap = (look.bubble - own_media_inset(palette, true, false)).max(0.0);
+    let floor = own_card_width(palette, look.bubble);
+    let width = match upload_caption(ui, look, upload, cap) {
+        Some(caption) => caption.widest().clamp(floor, cap),
+        None => floor,
+    };
+    // A sound's bubble keeps a text bubble's room round its player.
+    let (margin, height) = if audio {
+        (text_bubble_margin(palette), audio_row_height(ui))
+    } else {
+        let height = file_card_height(ui, palette, title, width);
+        (own_file_margin(palette), height)
+    };
+    let caption = upload_caption(ui, look, upload, width);
+    let mut below = caption
+        .as_ref()
+        .map_or(0.0, |caption| UPLOAD_CAPTION_GAP + caption.height());
+    // Without a caption, the time takes a row of its own under the card.
+    if look.footer && caption.is_none() && !audio {
+        below += UPLOAD_FOOTER;
+    }
+    let size = vec2(
+        width + margin.sum().x,
+        f32::from(margin.top) + height + below + f32::from(margin.bottom),
     );
-    let content = card.shrink2(inset);
+    let (bubble, eased) = upload_bubble(ui, palette, size, eased, true);
+    let card = Rect::from_min_size(
+        bubble.min + vec2(f32::from(margin.left), f32::from(margin.top)),
+        vec2(width, height),
+    );
+    let painter = ui.painter_at(bubble);
+    // A file lies on its card's wash; a sound's player on the bubble.
+    let content = if audio {
+        card
+    } else {
+        let wash = colours.window.gamma_multiply(0.35 * eased);
+        painter.rect_filled(card, attachment_radius(palette), wash);
+        card.shrink2(attachment_insets(palette).1)
+    };
     let disc = pos2(content.left() + ATTACHMENT_DISC / 2.0, content.center().y);
     painter.circle_filled(
         disc,
@@ -548,10 +661,12 @@ pub(super) fn upload_card(
         fraction,
         colours.accent.gamma_multiply(eased),
     );
+    // A sound's play button turns into its arrow while it goes; its own
+    // disc stands after the track.
     let icon = match upload.kind {
         crate::model::UploadKind::Image => Icon::Image,
         crate::model::UploadKind::Video => Icon::Video,
-        crate::model::UploadKind::Audio => Icon::Music,
+        crate::model::UploadKind::Audio => Icon::ArrowUp,
         crate::model::UploadKind::Document => Icon::FileText,
         crate::model::UploadKind::Sticker => Icon::Sticker,
     };
@@ -561,20 +676,6 @@ pub(super) fn upload_card(
         Rect::from_center_size(disc, Vec2::splat(18.0)),
         18.0,
         colours.accent.gamma_multiply(eased),
-    );
-    let text_left = disc.x + ATTACHMENT_DISC / 2.0 + 12.0;
-    let text_width = (content.right() - text_left).max(0.0);
-    let name = widgets::line(
-        ui,
-        if upload.name.is_empty() {
-            "Photo"
-        } else {
-            &upload.name
-        },
-        theme::medium(theme::TEXT_BODY),
-        colours.text,
-        text_width,
-        1,
     );
     let detail = match fraction {
         Some(fraction) if fraction >= 1.0 => "Sending…".to_owned(),
@@ -586,27 +687,77 @@ pub(super) fn upload_card(
         ),
         None => "Preparing…".to_owned(),
     };
-    let detail = painter.layout_no_wrap(
-        detail,
-        theme::regular(theme::TEXT_CAPTION),
-        colours.secondary,
-    );
-    let gap = 2.0;
-    let top = content.center().y - (name.size().y + gap + detail.size().y) / 2.0;
-    name.paint(ui, pos2(text_left, top), colours.text.gamma_multiply(eased));
-    painter.galley(
-        pos2(text_left, top + name.size().y + gap),
-        detail,
-        colours.secondary.gamma_multiply(eased),
-    );
-    if let Some(caption) = caption {
-        let at = pos2(
-            bubble.left() + f32::from(text.left),
-            card.bottom() + margin.y,
+    if audio {
+        paint_upload_track(ui, &colours, card, fraction, &detail, eased);
+    } else {
+        let text_left = content.left() + ATTACHMENT_DISC + ATTACHMENT_GAP;
+        let text_width = file_card_text_width(palette, width);
+        let name = file_card_name(ui, title, colours.text, text_width);
+        let font = theme::regular(theme::TEXT_CAPTION);
+        let detail = widgets::line(ui, &detail, font, colours.secondary, text_width, 1);
+        let lines = name.size().y + ATTACHMENT_LINE_GAP + detail.size().y;
+        let top = content.center().y - lines / 2.0;
+        name.paint(ui, pos2(text_left, top), colours.text.gamma_multiply(eased));
+        detail.paint(
+            ui,
+            pos2(text_left, top + name.size().y + ATTACHMENT_LINE_GAP),
+            colours.secondary.gamma_multiply(eased),
         );
-        caption.paint(ui, at, colours.text.gamma_multiply(eased));
+    }
+    // The caption starts where the card does, as its message's.
+    if let Some(caption) = caption {
+        let at = pos2(card.left(), card.bottom() + UPLOAD_CAPTION_GAP);
+        caption.paint(ui, at, width, eased);
     }
     card
+}
+
+/// A sound's player on its way, `row` its whole place as [`voice_player`]
+/// lays it out: its track filling with the progress and how much has gone
+/// under it, and the sound's disc after it, where the chip's room is kept.
+fn paint_upload_track(
+    ui: &egui::Ui,
+    colours: &Palette,
+    row: Rect,
+    fraction: Option<f32>,
+    detail: &str,
+    eased: f32,
+) {
+    let left = row.left() + ATTACHMENT_DISC + PLAYER_GAP;
+    let room = ATTACHMENT_DISC * 2.0 + PLAYER_CHIP + PLAYER_GAP * 3.0;
+    let wave = Rect::from_min_size(
+        pos2(left, row.top()),
+        vec2((row.width() - room).max(0.0), PLAYER_BAR),
+    );
+    let quiet = colours.secondary.gamma_multiply(0.7 * eased);
+    let track = Rect::from_center_size(wave.center(), vec2(wave.width(), 4.0));
+    ui.painter().rect_filled(track, 2.0, quiet);
+    if let Some(fraction) = fraction {
+        let filled = pos2(track.left() + track.width() * fraction, track.bottom());
+        let done = Rect::from_min_max(track.min, filled);
+        ui.painter()
+            .rect_filled(done, 2.0, colours.accent.gamma_multiply(eased));
+    }
+    let font = theme::tabular(fastframe_fonts::Weight::Regular, PLAYER_TIME);
+    let detail = widgets::line(ui, detail, font, colours.secondary, wave.width(), 1);
+    let under = pos2(wave.left(), wave.bottom() + 2.0);
+    detail.paint(ui, under, colours.secondary.gamma_multiply(eased));
+    let disc = pos2(
+        wave.right() + PLAYER_GAP + ATTACHMENT_DISC / 2.0,
+        wave.center().y,
+    );
+    ui.painter().circle_filled(
+        disc,
+        ATTACHMENT_DISC / 2.0,
+        colours.accent.gamma_multiply(0.22 * eased),
+    );
+    theme::paint_icon(
+        ui,
+        Icon::Music,
+        Rect::from_center_size(disc, Vec2::splat(ATTACHMENT_DISC)),
+        20.0,
+        colours.accent.gamma_multiply(eased),
+    );
 }
 
 /// A ring of `fraction` round from the top, clockwise, over a faint track;
@@ -871,10 +1022,87 @@ pub(super) fn own_picture_corner(palette: &Palette, captioned: bool, video: bool
 }
 
 /// The side of each square tile of an album we send, in a bubble `bubble`
-/// wide.
-pub(super) fn album_tile_side(palette: &Palette, bubble: f32, captioned: bool) -> f32 {
-    let width = CARD_WIDTH.min(bubble - own_media_inset(palette, captioned, false));
+/// wide; `captioned` and `video` say what its first member is.
+pub(super) fn album_tile_side(palette: &Palette, bubble: f32, captioned: bool, video: bool) -> f32 {
+    let width = CARD_WIDTH.min(bubble - own_media_inset(palette, captioned, video));
     ((width.max(0.0) - ALBUM_GAP) / 2.0).max(80.0)
+}
+
+/// The room our bubble keeps round an album we send, as [`bubble_margin`]
+/// gives it for the album's first message: `captioned` and `video` say what
+/// that is. One led by a lone picture stands without a bubble in Messages.
+pub(super) fn own_album_margin(palette: &Palette, captioned: bool, video: bool) -> Margin {
+    match palette.bubbles {
+        theme::BubbleStyle::Messages if !captioned && !video => Margin::ZERO,
+        theme::BubbleStyle::Messages => MESSAGES_BUBBLE_MARGIN,
+        theme::BubbleStyle::Nothing if captioned => NOTHING_TEXT_MARGIN,
+        theme::BubbleStyle::Nothing => Margin::same(NOTHING_ATTACHMENT_RIM),
+        theme::BubbleStyle::WhatsApp => WHATSAPP_TEXT_MARGIN,
+    }
+}
+
+/// The room our bubble keeps round a file's card we send, as
+/// [`bubble_margin`] gives it.
+pub(super) fn own_file_margin(palette: &Palette) -> Margin {
+    match palette.bubbles {
+        theme::BubbleStyle::Messages => MESSAGES_BUBBLE_MARGIN,
+        theme::BubbleStyle::Nothing => Margin::same(NOTHING_ATTACHMENT_RIM),
+        theme::BubbleStyle::WhatsApp => WHATSAPP_TEXT_MARGIN,
+    }
+}
+
+/// How wide the card of a file or a sound we send is, in a bubble `bubble`
+/// wide, as [`settled_width`] makes it for one without a caption.
+pub(super) fn own_card_width(palette: &Palette, bubble: f32) -> f32 {
+    CARD_WIDTH
+        .min(bubble - own_media_inset(palette, true, false))
+        .max(0.0)
+}
+
+/// How wide a file's name and detail may run on its card `width` wide,
+/// clear of its icon and its action, as [`attachment`] lets them.
+pub(super) fn file_card_text_width(palette: &Palette, width: f32) -> f32 {
+    let (_, inset) = attachment_insets(palette);
+    let text_left = ATTACHMENT_DISC + ATTACHMENT_GAP;
+    (width - inset.x * 2.0 - text_left - ATTACHMENT_GAP - ATTACHMENT_ACTION).max(0.0)
+}
+
+/// A file's name on its card, in two lines at most, as [`attachment`] sets
+/// it in `width`.
+pub(super) fn file_card_name(
+    ui: &egui::Ui,
+    title: &str,
+    ink: Color32,
+    width: f32,
+) -> widgets::Line {
+    widgets::line(ui, title, theme::medium(theme::TEXT_BODY), ink, width, 2)
+}
+
+/// How tall a file's card `width` wide is with `title` on it: its icon or
+/// its two lines, whichever is more, with even room round them, as
+/// [`attachment`] lays it out.
+pub(super) fn file_card_height(ui: &egui::Ui, palette: &Palette, title: &str, width: f32) -> f32 {
+    let (_, inset) = attachment_insets(palette);
+    let text = file_card_text_width(palette, width);
+    let name = file_card_name(ui, title, palette.text, text);
+    let font = theme::regular(theme::TEXT_CAPTION);
+    let detail = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    (name.size().y + ATTACHMENT_LINE_GAP + detail).max(ATTACHMENT_ROW) + inset.y * 2.0
+}
+
+/// A sound's player, as [`voice_player`] lays it out: the room between its
+/// parts, its speed chip, its track and the time under it.
+pub(super) const PLAYER_GAP: f32 = 10.0;
+pub(super) const PLAYER_CHIP: f32 = 44.0;
+pub(super) const PLAYER_BAR: f32 = 30.0;
+pub(super) const PLAYER_TIME: f32 = 11.5;
+
+/// How tall a sound's player is: its button, or its track with the time
+/// under it, whichever is more.
+pub(super) fn audio_row_height(ui: &egui::Ui) -> f32 {
+    let font = theme::tabular(fastframe_fonts::Weight::Regular, PLAYER_TIME);
+    let time = ui.fonts_mut(|fonts| fonts.row_height(&font));
+    (PLAYER_BAR + 2.0 + time).max(ATTACHMENT_DISC)
 }
 
 /// The size a staged picture of `native` pixels is shown at: the size it
@@ -991,6 +1219,88 @@ pub(crate) fn paint_file_card(
     detail.paint(
         ui,
         pos2(text_left, top + name.size().y + gap),
+        palette.secondary,
+    );
+}
+
+/// A file's name, as its card shows it.
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// Whether a staged file goes as a sound, played in its bubble, rather than
+/// as a file's card.
+fn staged_sound(path: &Path, document: bool) -> bool {
+    crate::model::UploadKind::of(path, document) == crate::model::UploadKind::Audio
+}
+
+/// The size a staged file or sound is shown at in the composer's strip: the
+/// size its message's card or player will be in a bubble `bubble` wide, so
+/// it flies to its row without growing, and never wider than `room`.
+pub(super) fn staged_card_size(
+    ui: &egui::Ui,
+    palette: &Palette,
+    bubble: f32,
+    item: &crate::app::Pending,
+    room: f32,
+) -> Vec2 {
+    let (path, document) = match item {
+        crate::app::Pending::File(path) => (path.as_path(), false),
+        crate::app::Pending::Document(path) => (path.as_path(), true),
+        crate::app::Pending::Picture { .. } => return Vec2::splat(PENDING_TILE),
+    };
+    let width = own_card_width(palette, bubble).min(room.max(PENDING_TILE));
+    let height = if staged_sound(path, document) {
+        audio_row_height(ui)
+    } else {
+        file_card_height(ui, palette, &file_name_of(path), width)
+    };
+    vec2(width, height)
+}
+
+/// A staged file on `rect`, drawn as its message's card will show it: its
+/// icon in a tinted disc, then its name in two lines at most and its type
+/// and size under it, on the card's wash; a sound as its player, with its
+/// button, its track, its type and size, and its disc.
+pub(super) fn paint_staged_card(
+    ui: &egui::Ui,
+    palette: &Palette,
+    rect: Rect,
+    path: &Path,
+    document: bool,
+) {
+    let detail = file_detail(ui.ctx(), path);
+    let painter = ui.painter();
+    if staged_sound(path, document) {
+        let disc = pos2(rect.left() + ATTACHMENT_DISC / 2.0, rect.center().y);
+        let fill = palette.accent.gamma_multiply(0.22);
+        painter.circle_filled(disc, ATTACHMENT_DISC / 2.0, fill);
+        let button = Rect::from_center_size(disc, Vec2::splat(ATTACHMENT_DISC));
+        theme::paint_icon(ui, Icon::Play, button, 18.0, palette.accent);
+        paint_upload_track(ui, palette, rect, None, &detail, 1.0);
+        return;
+    }
+    let (_, inset) = attachment_insets(palette);
+    let wash = palette.window.gamma_multiply(0.35);
+    painter.rect_filled(rect, attachment_radius(palette), wash);
+    let content = rect.shrink2(inset);
+    let disc = pos2(content.left() + ATTACHMENT_DISC / 2.0, content.center().y);
+    let fill = palette.accent.gamma_multiply(0.25);
+    painter.circle_filled(disc, ATTACHMENT_DISC / 2.0, fill);
+    let icon = Rect::from_center_size(disc, Vec2::splat(18.0));
+    theme::paint_icon(ui, file_icon(path), icon, 18.0, palette.accent);
+    let text_left = content.left() + ATTACHMENT_DISC + ATTACHMENT_GAP;
+    let width = file_card_text_width(palette, rect.width());
+    let name = file_card_name(ui, &file_name_of(path), palette.text, width);
+    let font = theme::regular(theme::TEXT_CAPTION);
+    let detail = widgets::line(ui, &detail, font, palette.secondary, width, 1);
+    let top = content.center().y - (name.size().y + ATTACHMENT_LINE_GAP + detail.size().y) / 2.0;
+    name.paint(ui, pos2(text_left, top), palette.text);
+    detail.paint(
+        ui,
+        pos2(text_left, top + name.size().y + ATTACHMENT_LINE_GAP),
         palette.secondary,
     );
 }
@@ -1161,11 +1471,14 @@ pub(super) fn paint_tile_ghosts(
     ui.add_space(card.height);
 }
 
-/// An attachment just sent from a chat's composer, on its way from its tile
-/// in the strip to its row in the transcript.
+/// An attachment just sent from a chat's composer or its chat bubble, on
+/// its way from its tile to its row in that window's transcript.
 #[derive(Clone)]
 pub(super) struct AttachmentFlight {
     pub(super) chat: String,
+    /// The window it flies in: the main window and a chat bubble's may
+    /// show the same chat, and only the one it was sent from flies it.
+    pub(super) viewport: egui::ViewportId,
     pub(super) staged: crate::app::AttachmentId,
     /// Where its picture or card was drawn in the strip, on screen.
     pub(super) from: Rect,
@@ -1211,16 +1524,32 @@ pub(super) fn record_attachment_flights(app: &App, ctx: &egui::Context, chat: &s
     else {
         return;
     };
-    let now = ctx.input(|input| input.time);
-    let wall = crate::util::now();
-    let flights: Vec<AttachmentFlight> = app
+    let tiles: Vec<(crate::app::AttachmentId, Rect)> = app
         .pending
         .iter()
         .filter_map(|staged| motions.ghosts.iter().find(|ghost| ghost.id == staged.id))
-        .map(|ghost| AttachmentFlight {
+        .map(|ghost| (ghost.id, ghost.face.translate(motions.origin.to_vec2())))
+        .collect();
+    start_flights(ctx, chat, &tiles);
+}
+
+/// Starts a flight for each of `tiles`, an attachment sent to `chat` and
+/// where it was drawn on screen, in the window drawing now.
+pub(crate) fn start_flights(
+    ctx: &egui::Context,
+    chat: &str,
+    tiles: &[(crate::app::AttachmentId, Rect)],
+) {
+    let now = ctx.input(|input| input.time);
+    let wall = crate::util::now();
+    let viewport = ctx.viewport_id();
+    let flights: Vec<AttachmentFlight> = tiles
+        .iter()
+        .map(|&(staged, from)| AttachmentFlight {
             chat: chat.to_owned(),
-            staged: ghost.id,
-            from: ghost.face.translate(motions.origin.to_vec2()),
+            viewport,
+            staged,
+            from,
             sent: now,
             wall,
             started: None,
@@ -1273,10 +1602,14 @@ pub(super) fn take_flight(
     now: f64,
 ) -> Option<(Rect, f64)> {
     let staged = upload.staged?;
+    let viewport = ctx.viewport_id();
     ctx.data_mut(|data| {
         let flights = data.get_temp_mut_or_default::<Flights>(attachment_flights_id());
         let ours = |flight: &&mut AttachmentFlight| {
-            flight.chat == upload.chat && flight.staged == staged && flight.message.is_none()
+            flight.chat == upload.chat
+                && flight.viewport == viewport
+                && flight.staged == staged
+                && flight.message.is_none()
         };
         let flight = flights.iter_mut().rev().find(ours)?;
         let started = *flight.started.get_or_insert(now);
@@ -1307,6 +1640,36 @@ pub(super) fn sent_attachment(message: &Message) -> bool {
     )
 }
 
+/// The ids of `messages` drawn among their album's uploads for now: each
+/// that `uploads` names as arrived while others of its album are still on
+/// their way, and our others of the same album, so the album never shows in
+/// part.
+pub(super) fn held_album_messages(
+    messages: &[Message],
+    uploads: &[crate::model::Upload],
+) -> HashSet<String> {
+    let arrived: HashSet<&str> = uploads
+        .iter()
+        .filter_map(|upload| upload.message.as_deref())
+        .collect();
+    if arrived.is_empty() {
+        return HashSet::new();
+    }
+    let albums: HashSet<&str> = messages
+        .iter()
+        .filter(|message| arrived.contains(message.id.as_str()))
+        .filter_map(album_id)
+        .collect();
+    messages
+        .iter()
+        .filter(|message| {
+            arrived.contains(message.id.as_str())
+                || (message.from_me && album_id(message).is_some_and(|id| albums.contains(id)))
+        })
+        .map(|message| message.id.clone())
+        .collect()
+}
+
 /// Where a message we sent flies from and when its flight set off, while
 /// it carries on the flight of the upload it took the place of: the upload
 /// ended a moment ago, mid-way, and the message came since it was sent.
@@ -1316,16 +1679,21 @@ pub(super) fn carried_flight(
     message: &Message,
     now: f64,
 ) -> Option<(Rect, f64)> {
-    if !message.from_me || !sent_attachment(message) {
+    // An album takes its grid's place as it stands, once all of it is in.
+    if !message.from_me || !sent_attachment(message) || album_id(message).is_some() {
         return None;
     }
+    let viewport = ctx.viewport_id();
     ctx.data_mut(|data| {
         let flights = data.get_temp_mut_or_default::<Flights>(attachment_flights_id());
         let mine = |flight: &AttachmentFlight| {
-            flight.chat == chat && flight.message.as_deref() == Some(message.id.as_str())
+            flight.chat == chat
+                && flight.viewport == viewport
+                && flight.message.as_deref() == Some(message.id.as_str())
         };
         let free = |flight: &AttachmentFlight| {
             flight.chat == chat
+                && flight.viewport == viewport
                 && flight.message.is_none()
                 && !flight.live
                 && flight.started.is_some()

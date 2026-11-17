@@ -34,6 +34,9 @@ pub struct Bubble {
     pub focus: bool,
     /// Whether a file picker opened from it has not answered yet.
     pub picking: bool,
+    /// What each staged attachment is named by as it flies from its tile to
+    /// its place in the card, once sent, in order; empty when they do not.
+    pub flights: Vec<crate::app::AttachmentId>,
     /// When it was last opened or made, for letting the oldest go.
     used: u64,
 }
@@ -113,6 +116,7 @@ impl Bubbles {
                     },
                     focus: false,
                     picking: false,
+                    flights: Vec::new(),
                     used: 0,
                 },
             );
@@ -325,6 +329,7 @@ impl App {
         }
         bubble.text.clear();
         let staged = std::mem::take(&mut bubble.staged);
+        let flights = std::mem::take(&mut bubble.flights);
         // Its own transcript follows what it sent.
         bubble.view.scroll_to_bottom = true;
         bubble.focus = true;
@@ -339,7 +344,11 @@ impl App {
             });
         } else {
             let caption = Some(text).filter(|text| !text.is_empty());
-            self.send_staged(&chat, staged, caption, Vec::new(), None, false);
+            let uploads = self.send_staged(&chat, staged, caption, Vec::new(), None, false);
+            // Each flies from its tile, when all of them were drawn there.
+            if flights.len() == uploads.len() {
+                self.name_staged_uploads(&uploads, &flights);
+            }
         }
     }
 

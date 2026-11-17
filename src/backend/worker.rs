@@ -7443,9 +7443,14 @@ impl Worker {
                 raw,
                 upload,
             } => {
+                let message = Some(row.id.clone());
                 self.outbound(chat.clone(), *row, raw);
                 if let Some(upload) = upload {
-                    self.emit(Event::UploadEnded { chat, upload });
+                    self.emit(Event::UploadEnded {
+                        chat,
+                        upload,
+                        message,
+                    });
                 }
             }
             Command::UploadProgress {
@@ -7460,7 +7465,11 @@ impl Worker {
                 total,
             }),
             Command::UploadEnded { chat, upload } => {
-                self.emit(Event::UploadEnded { chat, upload });
+                self.emit(Event::UploadEnded {
+                    chat,
+                    upload,
+                    message: None,
+                });
             }
             Command::SendSticker {
                 chat,
@@ -11228,9 +11237,15 @@ impl Worker {
             .then(|| self.begin_album(&chat, &client, &paths))
             .flatten();
         let gate = Arc::new(tokio::sync::Semaphore::new(2));
+        // An album's members go out in the order they were picked, whichever
+        // finishes uploading first, so the album never rearranges: each waits
+        // for the one before it.
+        let mut ahead: Option<tokio::sync::oneshot::Receiver<()>> = None;
         for (index, path) in paths.into_iter().enumerate() {
             let client = client.clone();
             let album = album.clone();
+            let (turn, next) = tokio::sync::oneshot::channel::<()>();
+            let behind = ahead.replace(next).filter(|_| album.is_some());
             // Like the caption, the reply belongs to the first file.
             let quote = quote.take();
             let commands = self.commands.clone();
@@ -11285,8 +11300,14 @@ impl Worker {
                     .await
                 })
                 .await;
+                // One that failed or ended early still lets the next go.
+                if let Some(behind) = behind {
+                    let _ = behind.await;
+                }
                 match outcome {
-                    Ok((row, raw)) => {
+                    Ok((mut row, raw)) => {
+                        // It goes now, after those before it.
+                        row.timestamp = row.timestamp.max(crate::util::now());
                         let _ = commands.send(Command::Outbound {
                             chat,
                             row: Box::new(row),
@@ -11308,6 +11329,7 @@ impl Worker {
                         });
                     }
                 }
+                let _ = turn.send(());
             });
         }
     }
@@ -11675,6 +11697,7 @@ impl Worker {
             self.emit(Event::UploadEnded {
                 chat: chat.clone(),
                 upload,
+                message: None,
             });
         }
     }

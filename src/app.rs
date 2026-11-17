@@ -1154,7 +1154,7 @@ impl App {
 
     /// The identity for the next attachment, whether it lands in the composer
     /// or in a chat's draft.
-    fn next_attachment_id(&mut self) -> AttachmentId {
+    pub(crate) fn next_attachment_id(&mut self) -> AttachmentId {
         let id = self.next_pending_id;
         self.next_pending_id += 1;
         id
@@ -4144,10 +4144,11 @@ impl App {
                     entry.total = total;
                 }
             }
-            Event::UploadEnded { chat, upload } => {
-                self.uploads
-                    .retain(|entry| entry.id != upload || entry.chat != chat);
-            }
+            Event::UploadEnded {
+                chat,
+                upload,
+                message,
+            } => self.end_upload(&chat, upload, message),
             Event::Typing {
                 chat,
                 sender,
@@ -6558,8 +6559,6 @@ impl App {
         let quoting = self.reply_to.take();
         let quoted = quoting.clone();
         let caption = caption.trim().to_owned();
-        // Its upload shows the caption as it was typed, names and all.
-        let typed = Some(caption.clone()).filter(|text| !text.is_empty());
         let (caption, mentions) = self.encode_composer_mentions(&chat, caption);
         let caption = Some(caption).filter(|text| !text.is_empty());
         self.emoji_start = None;
@@ -6570,16 +6569,7 @@ impl App {
             .map(|staged| staged.item)
             .collect();
         let uploads = self.send_staged(&chat, items, caption, mentions, quoting, view_once);
-        // Each upload names the attachment it was, for its row to fly from
-        // that attachment's tile.
-        for (upload, staged) in uploads.into_iter().zip(staged) {
-            if let Some(entry) = self.uploads.iter_mut().find(|entry| entry.id == upload) {
-                entry.staged = Some(staged);
-                if entry.caption.is_some() {
-                    entry.caption.clone_from(&typed);
-                }
-            }
-        }
+        self.name_staged_uploads(&uploads, &staged);
         // Everything staged has gone, so nothing is remembered about it.
         self.forget_unstaged_pictures();
         self.follow_outgoing(quoted.as_ref());
@@ -6599,6 +6589,8 @@ impl App {
     ) -> Vec<crate::model::UploadId> {
         let chat = chat.clone();
         let mut uploads: Vec<crate::model::UploadId> = vec![0; items.len()];
+        // The upload that carries the caption shows it as its message will.
+        let mut named = self.caption_mentions(&chat, caption.as_deref(), &mentions);
         // Files go in runs of one kind, in the order they were staged.
         let mut runs: Vec<(bool, Vec<(usize, PathBuf)>)> = Vec::new();
         for (index, item) in items.into_iter().enumerate() {
@@ -6622,8 +6614,11 @@ impl App {
                     );
                     uploads[index] = upload;
                     let caption = caption.take();
-                    if let Some(entry) = self.uploads.last_mut() {
+                    if let Some(entry) = self.uploads.last_mut()
+                        && caption.is_some()
+                    {
                         entry.caption.clone_from(&caption);
+                        entry.mentions = std::mem::take(&mut named);
                     }
                     self.backend.send(Command::SendImage {
                         chat: chat.clone(),
@@ -6669,8 +6664,9 @@ impl App {
                 let batch = ids.first().copied().unwrap_or(upload);
                 if let Some(entry) = self.uploads.last_mut() {
                     entry.batch = album.then_some(batch);
-                    if ids.is_empty() {
+                    if ids.is_empty() && caption.is_some() {
                         entry.caption.clone_from(&caption);
+                        entry.mentions = std::mem::take(&mut named);
                     }
                 }
                 uploads[index] = upload;
@@ -6737,10 +6733,89 @@ impl App {
             sent: 0,
             total: 0,
             caption: None,
+            mentions: Vec::new(),
             batch: None,
             staged: None,
+            message: None,
         });
         id
+    }
+
+    /// Who a caption sent to `chat` mentions, as its message will name them:
+    /// each of `ids`, and everyone when it says `@all` and may.
+    fn caption_mentions(
+        &self,
+        chat: &str,
+        caption: Option<&str>,
+        ids: &[String],
+    ) -> Vec<crate::model::MentionRef> {
+        let mut named: Vec<crate::model::MentionRef> = ids
+            .iter()
+            .filter_map(|id| {
+                if id == crate::mentions::ALL_ID {
+                    return Some(crate::mentions::everyone_ref());
+                }
+                let user = id.split('@').next().filter(|user| !user.is_empty())?;
+                Some(crate::model::MentionRef {
+                    user: user.to_owned(),
+                    id: id.clone(),
+                })
+            })
+            .collect();
+        if caption.is_some_and(crate::mentions::has_everyone_token)
+            && self.chat(chat).is_some_and(Chat::can_mention_everyone)
+        {
+            crate::mentions::push_everyone(&mut named);
+        }
+        named
+    }
+
+    /// Names the attachment each of `uploads` was staged as, in the same
+    /// order, for its row to fly from that attachment's tile.
+    pub(crate) fn name_staged_uploads(
+        &mut self,
+        uploads: &[crate::model::UploadId],
+        staged: &[AttachmentId],
+    ) {
+        for (upload, staged) in uploads.iter().zip(staged) {
+            if let Some(entry) = self.uploads.iter_mut().find(|entry| entry.id == *upload) {
+                entry.staged = Some(*staged);
+            }
+        }
+    }
+
+    /// An upload is no longer on its way: its `message` is in the archive,
+    /// or it failed. A member of an album that arrived waits, drawn in the
+    /// album's grid, until the last of the album has; then they all go at
+    /// once, for the album's message to take the grid's place as it stands.
+    fn end_upload(&mut self, chat: &str, upload: crate::model::UploadId, message: Option<String>) {
+        let Some(index) = self
+            .uploads
+            .iter()
+            .position(|entry| entry.id == upload && entry.chat == chat)
+        else {
+            return;
+        };
+        let batch = self.uploads[index].batch;
+        match (batch, message) {
+            (Some(_), Some(message)) => self.uploads[index].message = Some(message),
+            _ => {
+                self.uploads.remove(index);
+            }
+        }
+        let Some(batch) = batch else {
+            return;
+        };
+        let together =
+            |entry: &crate::model::Upload| entry.chat == chat && entry.batch == Some(batch);
+        if self
+            .uploads
+            .iter()
+            .filter(|entry| together(entry))
+            .all(|entry| entry.message.is_some())
+        {
+            self.uploads.retain(|entry| !together(entry));
+        }
     }
 
     /// Cleans up every account's media cache as Settings > Storage asks, at
@@ -20812,6 +20887,91 @@ mod tests {
                 (Some(second), None, album),
             ]
         );
+    }
+
+    /// An album that arrives a member at a time stays one grid: a member in
+    /// the archive waits with its message until the last has arrived, and
+    /// then they all give way to the album's messages together.
+    #[test]
+    fn an_album_waits_for_its_last_member_before_its_messages_take_its_place() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands, events) = Backend::recording_with_events();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        app.stage(Pending::File("/fixture/a.jpg".into()));
+        app.stage(Pending::File("/fixture/b.jpg".into()));
+        app.apply(
+            Action::SendPending {
+                account: app.account().id.clone(),
+                mentions: Vec::new(),
+                chat: chat.into(),
+                caption: String::new(),
+            },
+            &ctx,
+        );
+        let ids: Vec<_> = app.uploads.iter().map(|upload| upload.id).collect();
+        assert_eq!(ids.len(), 2);
+        events
+            .send(Event::UploadEnded {
+                chat: chat.into(),
+                upload: ids[1],
+                message: Some("fixture-second".into()),
+            })
+            .unwrap();
+        app.handle_events();
+        let held: Vec<_> = app
+            .uploads
+            .iter()
+            .map(|upload| (upload.id, upload.message.clone()))
+            .collect();
+        assert_eq!(
+            held,
+            vec![(ids[0], None), (ids[1], Some("fixture-second".to_owned()))]
+        );
+        events
+            .send(Event::UploadEnded {
+                chat: chat.into(),
+                upload: ids[0],
+                message: Some("fixture-first".into()),
+            })
+            .unwrap();
+        app.handle_events();
+        assert!(app.uploads.is_empty());
+    }
+
+    /// A failed member of an album goes at once; the rest still wait.
+    #[test]
+    fn a_failed_album_member_leaves_the_grid_at_once() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = App::headless(AppDirs::under(root.path()), Settings::default());
+        let (backend, _commands) = Backend::recording();
+        app.backend = backend;
+        let ctx = egui::Context::default();
+        let chat = "fixture@s.whatsapp.net";
+        app.open_chat = Some(chat.into());
+        for name in ["a", "b", "c"] {
+            app.stage(Pending::File(format!("/fixture/{name}.jpg").into()));
+        }
+        app.apply(
+            Action::SendPending {
+                account: app.account().id.clone(),
+                mentions: Vec::new(),
+                chat: chat.into(),
+                caption: String::new(),
+            },
+            &ctx,
+        );
+        let ids: Vec<_> = app.uploads.iter().map(|upload| upload.id).collect();
+        assert_eq!(ids.len(), 3);
+        app.end_upload(chat, ids[0], Some("fixture-first".into()));
+        app.end_upload(chat, ids[1], None);
+        let left: Vec<_> = app.uploads.iter().map(|upload| upload.id).collect();
+        assert_eq!(left, vec![ids[0], ids[2]]);
+        app.end_upload(chat, ids[2], Some("fixture-third".into()));
+        assert!(app.uploads.is_empty());
     }
 
     #[test]

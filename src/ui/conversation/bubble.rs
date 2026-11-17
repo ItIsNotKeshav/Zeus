@@ -202,6 +202,7 @@ pub(super) fn bubble_arriving(
             let to = ui.ctx().data(|data| {
                 data.get_temp::<Rect>(id.with("picture"))
                     .or_else(|| data.get_temp::<Rect>(album_tile_id(&view.chat.id, &message.id)))
+                    .or_else(|| data.get_temp::<Rect>(id.with("card")))
                     .or_else(|| data.get_temp::<Rect>(id.with("rect")))
             });
             // It has taken the upload's place, so it never pops in after.

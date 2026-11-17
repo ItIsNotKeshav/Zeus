@@ -1184,10 +1184,11 @@ pub enum Event {
         total: u64,
     },
     /// An attachment that is no longer on its way: its message is in the
-    /// archive, or it failed.
+    /// archive (`message`), or it failed.
     UploadEnded {
         chat: ChatId,
         upload: crate::model::UploadId,
+        message: Option<String>,
     },
     InteractiveReplyState {
         chat: ChatId,

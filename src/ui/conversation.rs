@@ -3029,6 +3029,10 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         .cloned()
         .collect();
     note_live_flights(ui.ctx(), &chat.id, &uploads);
+    // An album's members already in the archive stay in its grid of
+    // uploads until the last has arrived, and not in the transcript: the
+    // album takes the grid's place whole.
+    let held = held_album_messages(&conversation.messages, &uploads);
     let mut avatars = HashMap::new();
     if shows_sender_pictures(chat) {
         let mut senders: HashSet<String> = conversation
@@ -3507,6 +3511,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     };
                     let last_outgoing = conversation.messages.iter().rposition(|message| {
                         message.from_me
+                            && !held.contains(&message.id)
                             && !matches!(
                                 message.content,
                                 Content::Revoked | Content::DisappearingTimer { .. }
@@ -3518,6 +3523,17 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                             .checked_sub(1)
                             .map(|before| conversation.messages[before].id.as_str());
                         leaving_rows(ui, &view, &conversation.leaving, above, leaving_now);
+                        // Drawn among its album's uploads for now.
+                        if held.contains(&message.id) {
+                            rows.insert(
+                                message.id.clone(),
+                                RowHeight {
+                                    height: 0.0,
+                                    pass: Some(pass),
+                                },
+                            );
+                            continue;
+                        }
                         // WhatsApp marks every item in a media album with the
                         // same parent id. Only its first item owns a row; the
                         // remaining consecutive items are painted in that row.
@@ -4206,8 +4222,17 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                     if pane != Pane::Bubble {
                         note_own_bubble_width(ui, &palette, &chat.id);
                     }
-                    let fly = view.animate && !reduce_motion && pane != Pane::Bubble;
-                    upload_rows(ui, &palette, &uploads, fly);
+                    // Each flies only in the window it was sent from, while
+                    // that window is in front: a bubble's card is a window
+                    // of its own.
+                    let front = if pane == Pane::Bubble {
+                        ui.input(|input| input.viewport().focused.unwrap_or(false))
+                    } else {
+                        view.animate
+                    };
+                    let fly = front && !reduce_motion;
+                    let names = view.mention_names;
+                    upload_rows(ui, &palette, &uploads, names, view.time_inside, fly);
                     if !typing.is_empty() {
                         typing_indicator(ui, &view, &typing);
                     }
@@ -11387,6 +11412,14 @@ fn voice_player(
             }
         },
     );
+    // A sound we send flies from its upload's player into this one, so it
+    // lands on the player rather than on the whole bubble.
+    if !voice_note {
+        let card = bubble_id(&view.chat.id, &message.id).with("card");
+        ui.ctx().data_mut(|data| {
+            data.insert_temp(card, row.response.rect);
+        });
+    }
     let auto = media.path.is_none()
         && matches!(media.state, MediaState::Idle)
         && view.auto_download
@@ -14492,8 +14525,12 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
             crate::app::Pending::Picture { .. } => {}
         }
     }
+    // An album's bubble is its first member's.
+    let first_clip = files
+        .first()
+        .is_some_and(|path| crate::image_preview::is_video(path));
     let album = !documents && crate::model::forms_album(files);
-    let album_side = album_tile_side(&palette, bubble, captioned);
+    let album_side = album_tile_side(&palette, bubble, captioned, first_clip);
     let shared = (count > 1).then(|| {
         let side = ((available - spacing) / 2.0 - frame).clamp(120.0, 220.0);
         Vec2::splat(side)
@@ -14551,12 +14588,13 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                     let bounds = own_picture_bounds(&palette, bubble, captioned, video);
                     staged_media_size(native, bounds, shared, room) + Vec2::splat(frame)
                 }
-                // A file is a card with its name, type and size, as wide as
-                // the strip allows and never past it.
-                _ => vec2(
-                    FILE_CARD_WIDTH.min((available - frame).max(PENDING_TILE)),
-                    FILE_CARD_HEIGHT,
-                ),
+                // A file is a card with its name, type and size, and a sound
+                // its player, the size its message's card will be, and never
+                // past the strip.
+                _ => {
+                    let room = available - frame;
+                    staged_card_size(ui, &palette, bubble, &item.item, room) + Vec2::splat(frame)
+                }
             };
             let size = vec2(
                 ctx.animate_value_with_time(
@@ -14685,7 +14723,8 @@ fn pending_strip(app: &mut App, ui: &mut egui::Ui, chat: &str, calm: bool) {
                             );
                             theme::paint_icon(ui, Icon::Play, disc, 22.0, Color32::WHITE);
                         } else {
-                            paint_file_card(ui, &palette, media, path);
+                            paint_staged_card(ui, &palette, media, path, document);
+                            face = media;
                         }
                     }
                 }

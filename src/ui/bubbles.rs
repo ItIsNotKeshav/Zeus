@@ -1390,6 +1390,7 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat, card: Rect, settled: 
         &crate::i18n::gettext(locale, "Send"),
     );
     if (enter || pressed.clicked()) && ready {
+        fly_staged(app, ui.ctx(), &chat.id);
         app.actions.push(Action::BubbleSend(chat.id.clone()));
     }
 }
@@ -1573,12 +1574,19 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
     let mut kept = ctx
         .data(|data| data.get_temp::<Tray>(id))
         .unwrap_or_default();
+    // Tiles sent last frame that fly into the transcript.
+    let flown = ctx
+        .data_mut(|data| data.remove_temp::<Vec<egui::Id>>(id.with("flown")))
+        .unwrap_or_default();
     if open <= 0.0 && tiles.is_empty() {
         if !kept.tiles.is_empty() || !kept.leaving.is_empty() {
             // Lets go of the pictures once nothing shows them.
             ctx.data_mut(|data| data.remove::<Tray>(id));
         }
-        ctx.data_mut(|data| data.remove::<f32>(id.with("top")));
+        ctx.data_mut(|data| {
+            data.remove::<f32>(id.with("top"));
+            data.remove::<Vec<(egui::Id, Rect)>>(id.with("faces"));
+        });
         return 0;
     }
     let spring = crate::motion::Spring::settling_in(f64::from(theme::MOTION_PANEL));
@@ -1594,7 +1602,10 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
     // Tiles gone since the last frame fade where they were.
     for (tile, place) in &kept.tiles {
         if !tiles.iter().any(|staged| staged.key == tile.key) {
-            kept.leaving.push((tile.clone(), *place, now));
+            // One that flies away leaves no ghost behind.
+            if !flown.contains(&tile.key) {
+                kept.leaving.push((tile.clone(), *place, now));
+            }
             for part in ["x", "w", "h", "in"] {
                 crate::motion::forget(&ctx, tile.key.with(part));
             }
@@ -1627,6 +1638,7 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
     let content_width = places.last().map_or(0.0, |place| place.right());
     let mut remove = None;
     let mut drawn = Vec::new();
+    let mut faces: Vec<(egui::Id, Rect)> = Vec::new();
     let mut moving = !kept.leaving.is_empty();
     scope.set_clip_rect(tray.intersect(scope.clip_rect()));
     let mut row_ui = scope.new_child(egui::UiBuilder::new().max_rect(inner));
@@ -1692,6 +1704,7 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
                     remove = Some(index);
                 }
                 drawn.push((tile.clone(), place));
+                faces.push((tile.key, rect));
             }
         });
     if moving {
@@ -1705,6 +1718,7 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
     }
     let count = tiles.len();
     ctx.data_mut(|data| {
+        data.insert_temp(id.with("faces"), faces);
         data.insert_temp(
             id,
             Tray {
@@ -1715,6 +1729,32 @@ fn tray(app: &mut App, ui: &mut egui::Ui, chat: &Chat, field: Rect) -> usize {
         )
     });
     count
+}
+
+/// Sets what `chat`'s bubble has attached flying from its tiles into the
+/// card's transcript once it is sent, each with the face drawn this frame.
+/// While motion is reduced, or the window is not in front, each appears in
+/// its place instead.
+fn fly_staged(app: &mut App, ctx: &egui::Context, chat: &str) {
+    let id = tray_id(chat);
+    let focused = ctx.input(|input| input.viewport().focused.unwrap_or(false));
+    let faces = ctx
+        .data(|data| data.get_temp::<Vec<(egui::Id, Rect)>>(id.with("faces")))
+        .unwrap_or_default();
+    let staged = app.bubbles.get(chat).map_or(0, |bubble| bubble.staged.len());
+    if !focused || crate::motion::reduced(ctx) || faces.is_empty() || faces.len() != staged {
+        return;
+    }
+    let tiles: Vec<(crate::app::AttachmentId, Rect)> = faces
+        .iter()
+        .map(|&(_, face)| (app.next_attachment_id(), face))
+        .collect();
+    if let Some(bubble) = app.bubbles.get_mut(chat) {
+        bubble.flights = tiles.iter().map(|&(staged, _)| staged).collect();
+    }
+    conversation::start_flights(ctx, chat, &tiles);
+    let flown: Vec<egui::Id> = faces.iter().map(|&(key, _)| key).collect();
+    ctx.data_mut(|data| data.insert_temp(id.with("flown"), flown));
 }
 
 #[cfg(test)]
