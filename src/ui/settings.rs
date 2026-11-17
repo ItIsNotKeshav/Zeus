@@ -439,7 +439,7 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         theme::text(
                             ui,
                             crate::i18n::gettext(app.locale, "Settings"),
-                            theme::bold(theme::TEXT_TITLE),
+                            theme::bold(theme::TEXT_LIST_TITLE),
                             palette.text,
                         );
                     },

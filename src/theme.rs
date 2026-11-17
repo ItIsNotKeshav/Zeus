@@ -1228,6 +1228,9 @@ pub const TEXT_BODY: f32 = 14.0;
 pub const TEXT_SECTION: f32 = 16.0;
 /// A screen's or dialog's one title.
 pub const TEXT_TITLE: f32 = 20.0;
+/// The title of a list column (Chats, Calls, Settings), under [`TEXT_TITLE`]
+/// so it sits well with the menu text it opens.
+pub const TEXT_LIST_TITLE: f32 = 17.0;
 /// The largest text: a call's name, the link screen's title.
 pub const TEXT_DISPLAY: f32 = 24.0;
 

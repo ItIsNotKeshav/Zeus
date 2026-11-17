@@ -447,13 +447,18 @@ fn header_row(app: &mut App, ui: &mut egui::Ui, macos: bool) {
     let lead = title_lead(ui);
     if app.page == Page::Calls && app.new_call {
         ui.add_space(lead);
-        new_call_header(app, ui, if macos { 16.0 } else { 20.0 }, buttons_width);
+        new_call_header(
+            app,
+            ui,
+            if macos { 16.0 } else { theme::TEXT_LIST_TITLE },
+            buttons_width,
+        );
     } else if app.page == Page::Calls {
         ui.add_space(lead);
         header_title(
             ui,
             &crate::i18n::gettext(app.locale, "Calls"),
-            theme::bold(theme::TEXT_TITLE),
+            theme::bold(theme::TEXT_LIST_TITLE),
             palette.text,
             buttons_width,
         );
@@ -573,7 +578,7 @@ fn title_menu(app: &mut App, ui: &mut egui::Ui, buttons: f32, macos: bool) {
     let size = if macos && shown != Destination::Chats {
         theme::TEXT_SECTION
     } else {
-        theme::TEXT_TITLE
+        theme::TEXT_LIST_TITLE
     };
     let spacing = ui.spacing().item_spacing.x;
     let room = (ui.available_width() - buttons - spacing).max(0.0);
@@ -644,8 +649,7 @@ fn title_menu(app: &mut App, ui: &mut egui::Ui, buttons: f32, macos: bool) {
     let mut picked = None;
     egui::Popup::menu(&response)
         .width(menu_width)
-        .frame(widgets::menu_frame(&palette))
-        .show_frosted(ui.ctx(), |ui| {
+        .show_tight(ui.ctx(), &palette, |ui| {
             for (list, name) in entries.iter().zip(&names) {
                 let badge = if *list == Destination::Archived {
                     archived_unread

@@ -1082,6 +1082,10 @@ impl Frost {
 const POPUP_FROM_SCALE: f32 = 0.92;
 
 /// Shows a popup menu over frosted glass.
+/// Corner radius of the chat list's title menu, a little under
+/// [`theme::RADIUS_MENU`].
+const TIGHT_MENU_RADIUS: u8 = 16;
+
 pub trait FrostedPopup {
     /// [`egui::Popup::show`] over frosted glass. Its first frame only
     /// measures the menu, unseen, so it is frosted from the second.
@@ -1101,6 +1105,15 @@ pub trait FrostedPopup {
         palette: &Palette,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>>;
+
+    /// [`FrostedPopup::show_frosted`] under the floating tab bar's tight
+    /// shadow ([`super::tabbar::shadow_layers`]).
+    fn show_tight<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>>;
 }
 
 impl FrostedPopup for egui::Popup<'_> {
@@ -1112,6 +1125,20 @@ impl FrostedPopup for egui::Popup<'_> {
         show_over_glass(self, ctx, None, add)
     }
 
+    fn show_tight<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let popup = self.frame(
+            menu_frame(palette)
+                .shadow(egui::epaint::Shadow::NONE)
+                .corner_radius(CornerRadius::same(TIGHT_MENU_RADIUS)),
+        );
+        show_over_glass(popup, ctx, Some((palette, true)), add)
+    }
+
     fn show_lifted<R>(
         self,
         ctx: &egui::Context,
@@ -1119,7 +1146,7 @@ impl FrostedPopup for egui::Popup<'_> {
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>> {
         let popup = self.frame(menu_frame(palette).shadow(egui::epaint::Shadow::NONE));
-        show_over_glass(popup, ctx, Some(palette), add)
+        show_over_glass(popup, ctx, Some((palette, false)), add)
     }
 }
 
@@ -1128,7 +1155,7 @@ impl FrostedPopup for egui::Popup<'_> {
 fn show_over_glass<R>(
     popup: egui::Popup<'_>,
     ctx: &egui::Context,
-    lift: Option<&Palette>,
+    lift: Option<(&Palette, bool)>,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> Option<egui::InnerResponse<R>> {
     let id = popup.get_id();
@@ -1136,7 +1163,11 @@ fn show_over_glass<R>(
     let measured = ctx.read_response(id).is_some();
     // Reserved before the glass, so the shadow lies under it.
     let shadow = lift.map(|_| ctx.layer_painter(layer).add(egui::Shape::Noop));
-    let frost = Frost::reserve(ctx, layer, theme::RADIUS_MENU);
+    let radius = match lift {
+        Some((_, true)) => TIGHT_MENU_RADIUS,
+        _ => theme::RADIUS_MENU,
+    };
+    let frost = Frost::reserve(ctx, layer, radius);
     // Only an open popup runs its animation: a closed one asking for it
     // each frame would start it anew and keep the window repainting.
     let appear = if popup.is_open() {
@@ -1155,14 +1186,14 @@ fn show_over_glass<R>(
     };
     if measured {
         let rect = shown.response.rect;
-        if let (Some(palette), Some(at)) = (lift, shadow) {
+        if let (Some((palette, tight)), Some(at)) = (lift, shadow) {
             let painter = ctx.layer_painter(layer);
-            painter.set(at, menu_shadow(palette, rect, appear));
+            painter.set(at, menu_shadow(palette, rect, appear, tight));
             if let Some(edge) = palette.menu_inner_edge() {
                 // Just inside the outline, which takes the outermost point.
                 painter.rect_stroke(
                     rect.shrink(1.0),
-                    CornerRadius::same(theme::RADIUS_MENU.saturating_sub(1)),
+                    CornerRadius::same(radius.saturating_sub(1)),
                     Stroke::new(edge.width, edge.color.gamma_multiply(appear)),
                     egui::StrokeKind::Inside,
                 );
@@ -1184,11 +1215,19 @@ fn show_over_glass<R>(
 
 /// The layers of `palette`'s menu shadow under a menu at `rect`, the
 /// farthest first, faded to `appear`.
-fn menu_shadow(palette: &Palette, rect: Rect, appear: f32) -> egui::Shape {
-    let corners = CornerRadius::same(theme::RADIUS_MENU);
+fn menu_shadow(palette: &Palette, rect: Rect, appear: f32, tight: bool) -> egui::Shape {
+    let corners = CornerRadius::same(if tight {
+        TIGHT_MENU_RADIUS
+    } else {
+        theme::RADIUS_MENU
+    });
+    let layers = if tight {
+        super::tabbar::shadow_layers(palette).to_vec()
+    } else {
+        palette.menu_shadows().to_vec()
+    };
     egui::Shape::Vec(
-        palette
-            .menu_shadows()
+        layers
             .iter()
             .rev()
             .map(|layer| {
@@ -2009,6 +2048,96 @@ pub fn bubble_shape(
         shapes.push(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
     }
     egui::Shape::Vec(shapes)
+}
+
+/// A bubble's faint relief: a tight two-layer shadow under `shape` and, in a
+/// light palette, a half-point #121F10 stroke at 5% over it. The stroke
+/// follows the whole outline, tail included, in the Messages and WhatsApp
+/// styles, and the body in the others. Dark palettes get the shadow alone.
+pub fn bubble_relief(
+    palette: &Palette,
+    rect: Rect,
+    tail: Option<Side>,
+    corners: Option<CornerRadius>,
+    shape: egui::Shape,
+) -> egui::Shape {
+    const LAYERS: [(i8, u8, u8); 2] = [(1, 1, 8), (1, 2, 5)];
+    let messages = palette.bubbles == theme::BubbleStyle::Messages;
+    let corners = if messages {
+        let radius = MESSAGES_BUBBLE_RADIUS.min((rect.height() / 2.0) as u8);
+        CornerRadius::same(radius)
+    } else {
+        corners.unwrap_or_else(|| bubble_corners(tail))
+    };
+    let [r, g, b, _] = palette.shadow.to_srgba_unmultiplied();
+    let mut shapes: Vec<egui::Shape> = LAYERS
+        .iter()
+        .rev()
+        .map(|(y, blur, alpha)| {
+            egui::epaint::Shadow {
+                offset: [0, *y],
+                blur: *blur,
+                spread: 0,
+                color: Color32::from_rgba_unmultiplied(r, g, b, *alpha),
+            }
+            .as_shape(rect, corners)
+            .into()
+        })
+        .collect();
+    shapes.push(shape);
+    if !palette.dark {
+        let stroke = Stroke::new(
+            theme::OUTLINE_STROKE,
+            Color32::from_rgba_unmultiplied(0x12, 0x1F, 0x10, 13),
+        );
+        if messages {
+            let outline = messages_balloon(rect, tail, MESSAGES_SCALE);
+            shapes.push(egui::Shape::closed_line(outline, stroke));
+        } else if palette.bubbles == theme::BubbleStyle::WhatsApp && tail.is_some() {
+            let outline = tailed_outline(rect, corners, tail);
+            shapes.push(egui::Shape::closed_line(outline, stroke));
+        } else {
+            shapes.push(egui::Shape::rect_stroke(
+                rect,
+                corners,
+                stroke,
+                egui::StrokeKind::Inside,
+            ));
+        }
+    }
+    egui::Shape::Vec(shapes)
+}
+
+/// A WhatsApp bubble's outline with its tail: the rounded body, its square
+/// tail corner swapped for the wedge's two outer edges, so a stroke runs
+/// round both with no seam where they meet.
+fn tailed_outline(rect: Rect, corners: CornerRadius, tail: Option<Side>) -> Vec<egui::Pos2> {
+    let mut path = Vec::new();
+    egui::epaint::tessellator::path::rounded_rectangle(&mut path, rect, corners.into());
+    let (corner, wedge) = match tail {
+        Some(Side::Left) => (
+            rect.left_top(),
+            [
+                pos2(rect.left(), rect.top() + TAIL_HEIGHT),
+                pos2(rect.left() - TAIL_WIDTH, rect.top()),
+            ],
+        ),
+        Some(Side::Right) => (
+            rect.right_top(),
+            [
+                pos2(rect.right() + TAIL_WIDTH, rect.top()),
+                pos2(rect.right(), rect.top() + TAIL_HEIGHT),
+            ],
+        ),
+        None => return path,
+    };
+    // The path runs clockwise from the bottom right, so the square corner's
+    // one vertex sits between the left edge and the top (left tail), or the
+    // top and the right edge (right tail), the order `wedge` follows.
+    if let Some(index) = path.iter().position(|point| point.distance(corner) < 0.01) {
+        path.splice(index..=index, wedge);
+    }
+    path
 }
 
 /// How round a Nothing balloon is.

@@ -5923,6 +5923,9 @@ fn bubble_frame(
         if shade > 0.0 {
             shade_shape(&mut shape, shade);
         }
+        let corners = (palette.bubbles == theme::BubbleStyle::Nothing)
+            .then(|| widgets::grouped_bubble_corners(own, first_in_run, last_in_run));
+        let shape = widgets::bubble_relief(&palette, inner.response.rect, tail, corners, shape);
         ui.painter().set(backdrop, shape);
     } else if shade > 0.0
         && photo.is_none()

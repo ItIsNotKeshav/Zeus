@@ -150,25 +150,31 @@ fn plate_corners() -> CornerRadius {
 /// The tight shadow the pill casts on the list under it. Three short layers:
 /// a contact line, then two small falls. Alphas are for a light list; a dark
 /// list needs a little more before they read.
-fn paint_shadow(painter: &egui::Painter, pill: Rect, corners: CornerRadius, palette: &Palette) {
+pub(crate) fn shadow_layers(palette: &Palette) -> [egui::epaint::Shadow; 3] {
     const LAYERS: [(i8, u8, f32); 3] = [(1, 1, 18.0), (1, 2, 12.0), (2, 4, 8.0)];
     let [r, g, b, _] = palette.shadow.to_srgba_unmultiplied();
     let strength = if palette.dark { 1.4 } else { 1.0 };
-    for (y, blur, alpha) in LAYERS {
-        painter.add(
-            egui::epaint::Shadow {
-                offset: [0, y],
-                blur,
-                spread: 0,
-                color: egui::Color32::from_rgba_unmultiplied(
-                    r,
-                    g,
-                    b,
-                    (alpha * strength).round().min(255.0) as u8,
-                ),
-            }
-            .as_shape(pill, corners),
-        );
+    LAYERS.map(|(y, blur, alpha)| egui::epaint::Shadow {
+        offset: [0, y],
+        blur,
+        spread: 0,
+        color: egui::Color32::from_rgba_unmultiplied(
+            r,
+            g,
+            b,
+            (alpha * strength).round().min(255.0) as u8,
+        ),
+    })
+}
+
+pub(crate) fn paint_shadow(
+    painter: &egui::Painter,
+    pill: Rect,
+    corners: CornerRadius,
+    palette: &Palette,
+) {
+    for shadow in shadow_layers(palette) {
+        painter.add(shadow.as_shape(pill, corners));
     }
 }
 
