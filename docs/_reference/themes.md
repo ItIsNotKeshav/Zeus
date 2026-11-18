@@ -4,9 +4,8 @@ description: Write a JSON palette to colour Zeus your way.
 nav_order: 5
 ---
 
-Zeus does not list theme files: its **Settings → Appearance → Colours**
-offers its own looks and ready-made themes instead. This page describes
-Zeus's theme files.
+Zeus does not list theme files: **Settings → Appearance** shows them as
+tiles in the theme card. This page describes Zeus's theme files.
 
 ## Where themes live
 

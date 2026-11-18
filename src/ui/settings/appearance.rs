@@ -1,7 +1,8 @@
-//! Settings > Appearance: one card for the theme (the mode, a colour wheel
-//! for the accent, the themes, Glass and the wallpaper's tint), the doodles,
-//! the font, zoom and two folded groups (Interface, Motion), beside a live
-//! preview of a chat.
+//! Settings > Appearance: a theme card (the live preview of a chat, a row of
+//! theme tiles to scroll, the accent swatches and the colour wheel's dialog),
+//! a card for the mode, Glass and the wallpaper's tint, then the doodles, the
+//! font, zoom and two folded groups (Interface, Motion). The theme and the
+//! accent are two choices, one over the other.
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
@@ -16,220 +17,185 @@ use crate::ui::controls;
 use crate::ui::widgets;
 use crate::wallpaper;
 
-/// The room between the preview's edge and what is drawn in it.
-const PREVIEW_PAD: f32 = 20.0;
-/// How tall the preview is when it sits above the controls.
-pub(super) const PREVIEW_HEIGHT: f32 = 248.0;
+/// How tall the preview is at the top of the theme card.
+pub(super) const PREVIEW_HEIGHT: f32 = 260.0;
 
-/// A conversation drawn in the colours on screen, filling `rect`, so a change
-/// of theme, mode, accent, glass, wallpaper or motion shows as it would in
-/// the chats. Beside the controls it runs the window's height; above them it
-/// is [`PREVIEW_HEIGHT`] tall.
+/// A group chat drawn by the transcript's own rows in the colours and bubble
+/// style on screen, on the chat's wallpaper, filling `rect` at the top of the
+/// theme card, so a change of theme, mode, accent, bubbles, glass, wallpaper
+/// or motion shows as it would in the chats. Its top corners follow the
+/// card's; the bottom ones are square, where the card goes on.
 pub(super) fn preview(ui: &mut egui::Ui, app: &App, rect: Rect) {
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let palette = app.palette;
     let locale = app.locale;
     let text = |source: &'static str| crate::i18n::gettext(locale, source).into_owned();
-    let painter = ui.painter_at(rect);
-    let radius = f32::from(theme::RADIUS_CARD);
+    let radius = theme::RADIUS_CARD;
     let look = app.wallpaper();
-    painter.rect_filled(rect, radius, look.color);
-
-    let header = Rect::from_min_size(rect.min, vec2(rect.width(), 58.0));
-    let field_top = rect.bottom() - PREVIEW_PAD - 30.0;
-    // The doodles stop short of the rounded corners at the bottom.
-    let body = Rect::from_min_max(
-        pos2(rect.left(), header.bottom()),
-        pos2(rect.right(), rect.bottom() - radius),
-    );
-    if look.doodles && look.image.is_none() {
-        wallpaper::paint_doodles(ui, body, &look, look.style);
-    }
-
-    let header_fill = if palette.vibrant() {
-        palette.vibrant_header(palette.chat)
-    } else {
-        palette.panel
-    };
-    let r = radius as u8;
-    painter.rect_filled(
-        header,
+    ui.painter_at(rect).rect_filled(
+        rect,
         CornerRadius {
-            nw: r,
-            ne: r,
+            nw: radius,
+            ne: radius,
             sw: 0,
             se: 0,
         },
-        header_fill,
+        look.color,
     );
-    let avatar = pos2(header.left() + PREVIEW_PAD + 14.0, header.center().y);
-    painter.circle_filled(avatar, 14.0, palette.avatar(0.58));
-    painter.text(
-        avatar,
-        Align2::CENTER_CENTER,
-        "A",
-        theme::semibold(theme::TEXT_CONTROL),
-        palette.avatar_glyph(0.58),
-    );
-    painter.text(
-        pos2(avatar.x + 22.0, header.center().y - 8.0),
-        Align2::LEFT_CENTER,
-        "Ava",
-        theme::semibold(theme::TEXT_BODY),
-        palette.text,
-    );
-    painter.text(
-        pos2(avatar.x + 22.0, header.center().y + 8.0),
-        Align2::LEFT_CENTER,
-        text("online"),
-        theme::regular(theme::TEXT_CAPTION),
-        palette.secondary,
-    );
-
-    // Messages from the bottom up, newest last, as many as fit. The newest
-    // arrives again whenever Motion changes, so its setting can be seen.
-    let messages = [
-        (text("Did you see the new themes?"), false),
-        (text("Trying them all right now"), true),
-        (text("Pick one with a light mode too"), false),
-        (text("This one, with the doodles"), true),
-        (text("Looks great"), false),
-        (text("Going with it"), true),
-    ];
-    let arrive_id = egui::Id::new(("appearance-preview-arrive", app.settings.motion_preference));
-    let arrival = theme::appear(ui.ctx(), arrive_id, theme::MOTION_PANEL);
-    let mut bottom = field_top - 14.0;
-    for (index, (label, own)) in messages.iter().enumerate().rev() {
-        let colours = palette.on_bubble(*own);
-        let galley = painter.layout_no_wrap(
-            label.clone(),
-            theme::regular(theme::TEXT_CONTROL),
-            colours.text,
+    if look.doodles && look.image.is_none() {
+        // Clear of the rounded corners: under them, and between them along
+        // the top. The tiles line up across both.
+        let round = f32::from(radius);
+        let body = Rect::from_min_max(pos2(rect.left(), rect.top() + round), rect.max);
+        let band = Rect::from_min_max(
+            pos2(rect.left() + round, rect.top()),
+            pos2(rect.right() - round, rect.top() + round),
         );
-        let meta = if *own { 30.0 } else { 0.0 };
-        let size = galley.size() + vec2(28.0 + meta, 18.0);
-        let top = bottom - size.y;
-        if top < header.bottom() + 12.0 {
-            break;
-        }
-        let newest = index == messages.len() - 1;
-        let lift = if newest { (1.0 - arrival) * 18.0 } else { 0.0 };
-        let fade = if newest { arrival } else { 1.0 };
-        let left = if *own {
-            rect.right() - PREVIEW_PAD - size.x
-        } else {
-            rect.left() + PREVIEW_PAD
-        };
-        let shape = Rect::from_min_size(pos2(left, top + lift), size);
-        let fill = if *own {
-            palette.bubble_out
-        } else {
-            palette.bubble_in
-        };
-        painter.rect_filled(shape, theme::RADIUS, fill.gamma_multiply(fade));
-        painter.galley(
-            shape.min + vec2(14.0, 9.0),
-            galley,
-            colours.text.gamma_multiply(fade),
-        );
-        if *own {
-            let ticks = Rect::from_center_size(
-                pos2(shape.right() - 22.0, shape.center().y),
-                Vec2::splat(14.0),
-            );
-            widgets::ticks_in(
-                ui,
-                &colours,
-                ticks,
-                crate::model::Delivery::Read,
-                colours.secondary,
-            );
-        }
-        bottom = top - 6.0;
+        wallpaper::paint_doodles(ui, body, &look, look.style);
+        wallpaper::paint_doodles(ui, band, &look, look.style);
     }
 
-    // The message field, on glass or a solid pill.
-    let field = Rect::from_min_max(
-        pos2(rect.left() + PREVIEW_PAD - 4.0, field_top),
-        pos2(
-            rect.right() - PREVIEW_PAD - 40.0,
-            rect.bottom() - PREVIEW_PAD + 2.0,
-        ),
-    );
-    let field_fill = if palette.vibrant() {
-        palette.glass()
-    } else {
-        palette.surface
+    // A pause, then Ava, our reply to her, Leo and our last word. Ids no
+    // chat has, so nothing kept for a real chat's rows is shared.
+    const CHAT: &str = "appearance-preview@g.us";
+    const ME: &str = "appearance-preview-me@s.whatsapp.net";
+    const AVA: &str = "appearance-preview-ava@s.whatsapp.net";
+    const LEO: &str = "appearance-preview-leo@s.whatsapp.net";
+    let start = crate::util::now() - 20 * 60;
+    let message = |id: &str, sender: &str, name: Option<&str>, at: i64, body: String| {
+        let own = sender == ME;
+        crate::model::Message {
+            id: id.to_owned(),
+            chat: CHAT.to_owned(),
+            sender: sender.to_owned(),
+            sender_name: name.map(str::to_owned),
+            from_me: own,
+            timestamp: start + at,
+            history_order: None,
+            content: crate::model::Content::Text {
+                text: body,
+                preview: None,
+            },
+            status: if own {
+                crate::model::Delivery::Read
+            } else {
+                crate::model::Delivery::None
+            },
+            delivered_at: own.then_some(start + at),
+            read_at: own.then_some(start + at),
+            quoted: None,
+            reactions: Vec::new(),
+            edited: false,
+            mentions: Vec::new(),
+            forwarded: false,
+            thumbnail: None,
+        }
     };
-    painter.rect_filled(field, field.height() / 2.0, field_fill);
-    painter.text(
-        pos2(field.left() + 16.0, field.center().y),
-        Align2::LEFT_CENTER,
-        text("Message"),
-        theme::regular(theme::TEXT_CONTROL),
-        palette.dim,
-    );
-    let send = pos2(rect.right() - PREVIEW_PAD - 14.0, field.center().y);
-    painter.circle_filled(send, 16.0, palette.accent_fill);
-    theme::paint_icon(
-        ui,
-        Icon::Send,
-        Rect::from_center_size(send, Vec2::splat(16.0)),
-        16.0,
-        palette.on_accent,
-    );
-    painter.rect_stroke(
-        rect,
-        radius,
-        Stroke::new(1.0, palette.outline),
-        egui::StrokeKind::Inside,
-    );
+    let asked = text("Did you see the new themes?");
+    let mut reply = message("reply", ME, None, 40, text("Trying them all right now"));
+    reply.quoted = Some(crate::model::Quoted {
+        chat: None,
+        id: "asked".to_owned(),
+        sender: AVA.to_owned(),
+        sender_name: Some("Ava".to_owned()),
+        summary: asked.clone(),
+        labelled: Some(false),
+        mentions: Vec::new(),
+    });
+    let messages = [
+        message("asked", AVA, Some("Ava"), 0, asked),
+        reply,
+        message(
+            "light",
+            LEO,
+            Some("Leo"),
+            90,
+            text("Pick one with a light mode too"),
+        ),
+        message("going", ME, None, 120, text("Going with it")),
+    ];
+    let chat = crate::model::Chat::new(CHAT.to_owned(), String::new());
+    // The newest arrives again whenever Motion changes, so its setting can
+    // be seen.
+    let arrive_id = egui::Id::new(("appearance-preview-arrive", app.settings.motion_preference));
+    let arrival = theme::appear(ui.ctx(), arrive_id, theme::MOTION_PANEL);
+    crate::ui::conversation::still_transcript(ui, app, rect, &chat, &messages, ME, arrival);
 }
 
-/// The theme card: the mode, the colour wheel, the themes, Glass and the
-/// wallpaper's tint.
-pub(super) fn theme_card(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
+/// A settings card's frame: the shared fill and hairline, with `margin` of
+/// room inside it.
+fn card_frame(palette: &Palette, margin: egui::Margin) -> egui::Frame {
     egui::Frame::new()
         .fill(theme::blend(palette.panel, palette.surface, 0.5))
         .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(egui::Margin::same(16))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.vertical_centered(|ui| mode_icons(ui, app));
-            ui.add_space(theme::SPACE_M);
-            colour_wheel(ui, app);
-            ui.add_space(theme::SPACE_M);
-            theme_swatches(ui, app);
+        .inner_margin(margin)
+}
+
+/// The room between a card's edge and its controls.
+const CARD_PAD: f32 = 16.0;
+
+/// The theme card, Telegram's way: the preview flush at the top, a row of
+/// theme tiles to scroll, then the accent swatches. A theme and an accent
+/// are two choices, one over the other.
+pub(super) fn theme_card(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    card_frame(&palette, egui::Margin::ZERO).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let (rect, _) =
+            ui.allocate_exact_size(vec2(ui.available_width(), PREVIEW_HEIGHT), Sense::hover());
+        preview(ui, app, rect);
+        ui.add_space(theme::SPACE_L);
+        theme_tiles(ui, app);
+        ui.add_space(theme::SPACE_M);
+        let (line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+        ui.painter().hline(
+            line.x_range().shrink(CARD_PAD),
+            line.center().y,
+            Stroke::new(1.0, palette.outline),
+        );
+        ui.add_space(theme::SPACE_S);
+        accent_swatches(ui, app);
+        ui.add_space(theme::SPACE_S);
+    });
+    ui.add_space(theme::SPACE_S);
+    accent_modal(ui.ctx(), app);
+}
+
+/// The card under the theme card: the mode, Glass and the wallpaper's tint.
+pub(super) fn look_card(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    card_frame(&palette, egui::Margin::same(CARD_PAD as i8)).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let label = crate::i18n::gettext(app.locale, "Mode");
+        widgets::setting_row(ui, &palette, &label, "", |ui| mode_icons(ui, app));
+        ui.add_space(theme::SPACE_S);
+        // macOS draws no glass, so its slider would move nothing.
+        if !cfg!(target_os = "macos") {
+            glass_wave(ui, app);
             ui.add_space(theme::SPACE_S);
-            // macOS draws no glass, so its slider would move nothing.
-            if !cfg!(target_os = "macos") {
-                glass_wave(ui, app);
-                ui.add_space(theme::SPACE_S);
-            }
-            let mut tint = app.settings.tint_wallpaper;
-            let label = crate::i18n::gettext(app.locale, "Tint the wallpaper");
-            let mut changed = false;
-            widgets::setting_row(ui, &palette, &label, "", |ui| {
-                let response = widgets::switch(ui, &palette, &mut tint);
-                theme::reveal_focus(&response);
-                response.widget_info(|| {
-                    egui::WidgetInfo::selected(
-                        egui::WidgetType::Checkbox,
-                        ui.is_enabled(),
-                        tint,
-                        label.as_ref(),
-                    )
-                });
-                changed = response.changed();
+        }
+        let mut tint = app.settings.tint_wallpaper;
+        let label = crate::i18n::gettext(app.locale, "Tint the wallpaper");
+        let mut changed = false;
+        widgets::setting_row(ui, &palette, &label, "", |ui| {
+            let response = widgets::switch(ui, &palette, &mut tint);
+            theme::reveal_focus(&response);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    ui.is_enabled(),
+                    tint,
+                    label.as_ref(),
+                )
             });
-            if changed {
-                app.actions.push(Action::SetTintWallpaper(tint));
-            }
+            changed = response.changed();
         });
+        if changed {
+            app.actions.push(Action::SetTintWallpaper(tint));
+        }
+    });
     ui.add_space(theme::SPACE_S);
 }
 
@@ -380,9 +346,9 @@ fn current_place(app: &App) -> CustomAccent {
     )
 }
 
-/// Whether the theme's own accent is in use, so the swatch below shows as
-/// chosen and the wheel shows no knob. The wheel and the swatches are one
-/// choice or the other, never both.
+/// Whether the theme's own accent is in use, so its swatch shows as chosen
+/// and the wheel shows no knob. The accent is independent of the theme: it
+/// lies over any of them, theme files included.
 fn own_accent(app: &App) -> bool {
     app.settings.accent == Accent::Theme
         && app
@@ -490,21 +456,15 @@ fn draw_colour_wheel(
 /// accents catch the knob when it is let go near one.
 fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
-    let enabled = app.settings.custom_theme.is_none();
     let width = ui.available_width();
     let height = (width * 0.45).clamp(130.0, 190.0);
-    let sense = if enabled {
-        Sense::click_and_drag()
-    } else {
-        Sense::hover()
-    };
-    let (rect, response) = ui.allocate_exact_size(vec2(width, height), sense);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, height), Sense::click_and_drag());
     theme::reveal_focus(&response);
 
     // Where the knob stood before this frame's pick moved it, and whether
     // a press began on it: a tap there, not dragged away, takes the chosen
     // accent off again for the theme's own.
-    let shown = enabled && !own_accent(app);
+    let shown = !own_accent(app);
     let before = wheel_point(rect, current_place(app));
     let on_knob = |pointer: Pos2| shown && pointer.distance(before) <= KNOB_REACH;
     let grabbed_id = response.id.with("knob");
@@ -517,7 +477,7 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
         .ctx()
         .data(|data| data.get_temp::<bool>(grabbed_id))
         .unwrap_or(false);
-    let cleared = enabled && response.clicked() && grabbed;
+    let cleared = response.clicked() && grabbed;
     if cleared {
         ui.ctx().data_mut(|data| data.remove::<bool>(grabbed_id));
         app.actions.push(Action::SetAccent(Accent::Theme));
@@ -526,21 +486,21 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
     let pressed = response.dragged() || response.is_pointer_button_down_on() || response.clicked();
     let picked = response
         .interact_pointer_pos()
-        .filter(|_| enabled && pressed && !cleared)
+        .filter(|_| pressed && !cleared)
         .map(|pointer| wheel_at(rect, pointer));
     if let Some(place) = picked
         && app.settings.custom_accent != Some(place)
     {
         app.actions.push(Action::SetCustomAccent(Some(place)));
     }
-    if enabled && !cleared && (response.drag_stopped() || response.clicked()) {
+    if !cleared && (response.drag_stopped() || response.clicked()) {
         let place = picked.unwrap_or_else(|| current_place(app));
         app.actions.push(settle(place, rect));
     }
     let place = picked.unwrap_or_else(|| current_place(app));
     response.widget_info(|| {
         egui::WidgetInfo::slider(
-            enabled,
+            true,
             f64::from(place.hue),
             crate::i18n::gettext(app.locale, "Accent").as_ref(),
         )
@@ -551,7 +511,7 @@ fn colour_wheel(ui: &mut egui::Ui, app: &mut App) {
         rect,
         &response,
         &palette,
-        enabled,
+        true,
         place,
         picked.is_some() || !own_accent(app),
         palette.accent,
@@ -648,36 +608,44 @@ fn dot_colours(
     colours
 }
 
-/// One swatch in the theme row.
-enum Swatch {
+/// One tile in the theme row.
+#[derive(Clone)]
+enum Tile {
     Theme(ChatTheme),
     File(String),
     /// Opens the folder theme files are read from.
     Add,
 }
 
-/// How wide a theme swatch is.
-const SWATCH: f32 = 30.0;
-/// The space between swatches.
-const SWATCH_GAP: f32 = 10.0;
-/// How wide the paging arrows are.
-const CHEVRON: f32 = 24.0;
+/// How wide a theme tile is.
+const TILE_WIDTH: f32 = 76.0;
+/// How tall a theme tile's picture is.
+const TILE_PICTURE_HEIGHT: f32 = 54.0;
+/// How tall the name under a tile is.
+const TILE_NAME_HEIGHT: f32 = 22.0;
+/// The space between tiles.
+const TILE_GAP: f32 = 12.0;
 
-/// The themes as round swatches, each its own background with its accent at
-/// the centre, then the theme files of the reader's, then one to add more.
-/// Arrows page through them when they do not fit.
-fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
+/// The themes as a row of small chat pictures to scroll: two bubbles on the
+/// theme's background, in its colours and the accent in use, its name below.
+/// Then the theme files of the reader's, then one to add more. The accent is
+/// the reader's own choice below, so a tile is chosen whatever it is.
+fn theme_tiles(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     let custom = app.settings.custom_theme.clone();
-    // A colour from the wheel is the choice then; no swatch shows chosen.
-    let own = own_accent(app);
-    let mut items: Vec<(Swatch, Option<Palette>, bool, String)> = ChatTheme::ALL
+    let accent = app.settings.accent;
+    let wheel = app.settings.custom_accent;
+    let over = |base: Palette| match Accent::chosen_rgb(accent, wheel, base.dark) {
+        Some(rgb) => base.with_accent(rgb),
+        None => base,
+    };
+    let mut items: Vec<(Tile, Option<Palette>, bool, String)> = ChatTheme::ALL
         .into_iter()
         .map(|choice| {
             (
-                Swatch::Theme(choice),
-                Some(choice.palette(palette.dark, Accent::Theme)),
-                own && custom.is_none() && app.settings.chat_theme == choice,
+                Tile::Theme(choice),
+                Some(choice.palette_with(palette.dark, accent, wheel)),
+                custom.is_none() && app.settings.chat_theme == choice,
                 choice.label().to_owned(),
             )
         })
@@ -689,147 +657,354 @@ fn theme_swatches(ui: &mut egui::Ui, app: &mut App) {
             .unwrap_or(&file.filename)
             .to_owned();
         items.push((
-            Swatch::File(file.filename.clone()),
-            Some(file.palette),
-            own && custom.as_deref() == Some(file.filename.as_str()),
+            Tile::File(file.filename.clone()),
+            Some(over(file.palette)),
+            custom.as_deref() == Some(file.filename.as_str()),
             name,
         ));
     }
     items.push((
-        Swatch::Add,
+        Tile::Add,
         None,
         false,
         crate::i18n::gettext(app.locale, "Open themes folder").into_owned(),
     ));
 
-    let (row, _) =
-        ui.allocate_exact_size(vec2(ui.available_width(), SWATCH + 12.0), Sense::hover());
-    let middle = row.width() - 2.0 * (CHEVRON + SWATCH_GAP);
-    let fit = (((middle + SWATCH_GAP) / (SWATCH + SWATCH_GAP)).floor() as usize).max(1);
-    let pages = items.len().div_ceil(fit);
-    let page_id = ui.id().with("theme-swatch-page");
-    let chosen_page = items
+    // The row opens with the chosen tile in view, and again whenever the
+    // choice changes from elsewhere; a click on a tile leaves it where it is.
+    let seen_id = egui::Id::new("appearance-theme-tile-seen");
+    let chosen = items
         .iter()
         .position(|(_, _, selected, _)| *selected)
-        .map_or(0, |index| index / fit);
-    let mut page = ui
-        .data(|data| data.get_temp::<usize>(page_id))
-        .unwrap_or(chosen_page)
-        .min(pages.saturating_sub(1));
+        .map(|index| (index, items[index].3.clone()));
+    let seen: Option<String> = ui.data(|data| data.get_temp(seen_id));
+    let mut area = egui::ScrollArea::horizontal()
+        .id_salt("appearance-theme-tiles")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+    if let Some((index, name)) = &chosen
+        && seen.as_deref() != Some(name.as_str())
+    {
+        let middle = CARD_PAD + *index as f32 * (TILE_WIDTH + TILE_GAP) + TILE_WIDTH / 2.0;
+        area = area.horizontal_scroll_offset((middle - ui.available_width() / 2.0).max(0.0));
+        let name = name.clone();
+        ui.data_mut(|data| data.insert_temp(seen_id, name));
+    }
 
-    let arrows = [
-        (
-            Icon::ChevronLeft,
-            row.left() + CHEVRON / 2.0,
-            page > 0,
-            -1isize,
-        ),
-        (
-            Icon::ChevronRight,
-            row.right() - CHEVRON / 2.0,
-            page + 1 < pages,
-            1,
-        ),
-    ];
-    for (icon, x, live, step) in arrows {
-        if pages < 2 {
-            break;
-        }
-        let rect = Rect::from_center_size(pos2(x, row.center().y), Vec2::splat(CHEVRON));
-        let sense = if live { Sense::click() } else { Sense::hover() };
-        let response = ui.interact(rect, ui.id().with(("theme-swatch-arrow", step)), sense);
-        let color = if !live {
-            palette.dim
-        } else if response.hovered() {
-            palette.text
-        } else {
-            palette.secondary
-        };
-        theme::paint_icon(ui, icon, rect, 18.0, color);
-        if live
-            && response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked()
-        {
-            page = page.saturating_add_signed(step);
+    let mut clicked = None;
+    area.show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = TILE_GAP;
+            ui.add_space(CARD_PAD - TILE_GAP);
+            for (index, (tile, colours, selected, name)) in items.iter().enumerate() {
+                // Built-in themes by name, so the demo tour can point at them.
+                let id = match tile {
+                    Tile::Theme(choice) => {
+                        egui::Id::new(format!("settings-theme-{}", choice.label()))
+                    }
+                    _ => ui.id().with(("theme-tile", index)),
+                };
+                let (rect, response) = theme_tile(ui, &palette, id, *selected, name, colours);
+                if response.clicked() {
+                    let picture =
+                        Rect::from_min_size(rect.min, vec2(rect.width(), TILE_PICTURE_HEIGHT));
+                    clicked = Some((index, picture.center()));
+                }
+            }
+            ui.add_space(CARD_PAD - TILE_GAP);
+        });
+    });
+    if let Some((index, center)) = clicked {
+        match items.swap_remove(index).0 {
+            // A theme leaves the accent as it is.
+            Tile::Theme(choice) => {
+                app.actions.push(Action::RevealThemeFrom(center));
+                app.actions.push(Action::SetChatTheme(choice));
+            }
+            Tile::File(filename) => {
+                app.actions.push(Action::RevealThemeFrom(center));
+                app.actions.push(Action::SetCustomTheme(filename));
+            }
+            Tile::Add => app.actions.push(Action::OpenThemesFolder),
         }
     }
-    ui.data_mut(|data| data.insert_temp(page_id, page));
+}
 
-    let shown: Vec<_> = items.into_iter().skip(page * fit).take(fit).collect();
-    let span = shown.len() as f32 * (SWATCH + SWATCH_GAP) - SWATCH_GAP;
-    let mut x = row.center().x - span / 2.0 + SWATCH / 2.0;
-    for (index, (swatch, colours, selected, name)) in shown.into_iter().enumerate() {
-        let center = pos2(x, row.center().y);
-        x += SWATCH + SWATCH_GAP;
-        let rect = Rect::from_center_size(center, Vec2::splat(SWATCH + 6.0));
-        // Built-in themes by name, so the demo tour can point at them.
-        let id = match &swatch {
-            Swatch::Theme(choice) => egui::Id::new(format!("settings-theme-{}", choice.label())),
-            _ => ui.id().with(("theme-swatch", page, index)),
-        };
-        let response = ui.interact(rect, id, Sense::click());
-        theme::reveal_focus(&response);
-        theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
+/// One theme tile: a rounded chat picture (an incoming bubble top left, an
+/// outgoing one bottom right) with its name centred below. The chosen tile
+/// has a ring in the accent and its name in it. `colours` is `None` for the
+/// tile that adds a theme file.
+fn theme_tile(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    id: egui::Id,
+    chosen: bool,
+    name: &str,
+    colours: &Option<Palette>,
+) -> (Rect, egui::Response) {
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(TILE_WIDTH, TILE_PICTURE_HEIGHT + TILE_NAME_HEIGHT),
+        Sense::hover(),
+    );
+    let response = ui.interact(rect, id, Sense::click());
+    theme::reveal_focus(&response);
+    let picture = Rect::from_min_size(rect.min, vec2(rect.width(), TILE_PICTURE_HEIGHT));
+    let radius = 12.0;
+    theme::focus_outline(ui, response.id, picture.expand(3.0), radius + 3.0);
+    if ui.is_rect_visible(rect) {
+        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
         let painter = ui.painter();
-        let t = theme::animate(ui.ctx(), response.id, selected, theme::MOTION_QUICK);
-        if t > 0.0 {
-            painter.circle_stroke(
-                center,
-                SWATCH / 2.0 + 3.5,
-                Stroke::new(2.0, palette.text.gamma_multiply(t)),
-            );
-        } else if response.hovered() {
-            painter.circle_stroke(
-                center,
-                SWATCH / 2.0 + 3.5,
-                Stroke::new(1.0, palette.secondary),
-            );
-        }
         match colours {
             Some(own) => {
-                painter.circle_filled(center, SWATCH / 2.0, own.chat);
-                painter.circle_filled(center, SWATCH * 0.24, own.accent);
-                painter.circle_stroke(center, SWATCH / 2.0, Stroke::new(1.0, palette.outline));
+                painter.rect_filled(picture, radius, own.chat);
+                let bubble = vec2(36.0, 14.0);
+                let incoming = Rect::from_min_size(picture.min + vec2(8.0, 9.0), bubble);
+                let outgoing = Rect::from_min_size(
+                    pos2(
+                        picture.right() - 8.0 - bubble.x,
+                        picture.bottom() - 9.0 - bubble.y,
+                    ),
+                    bubble,
+                );
+                painter.rect_filled(incoming, 6.0, own.bubble_in);
+                painter.rect_filled(outgoing, 6.0, own.bubble_out);
+                painter.rect_stroke(
+                    picture,
+                    radius,
+                    Stroke::new(1.0, palette.outline),
+                    egui::StrokeKind::Inside,
+                );
             }
             None => {
-                painter.circle_stroke(
-                    center,
-                    SWATCH / 2.0 - 0.5,
-                    Stroke::new(1.0, palette.secondary),
-                );
+                painter.rect_filled(picture, radius, palette.surface);
                 theme::paint_icon(
                     ui,
                     Icon::Plus,
-                    Rect::from_center_size(center, Vec2::splat(16.0)),
-                    16.0,
+                    Rect::from_center_size(picture.center(), Vec2::splat(20.0)),
+                    20.0,
                     palette.secondary,
                 );
             }
         }
+        let painter = ui.painter();
+        if t > 0.0 {
+            painter.rect_stroke(
+                picture.expand(3.0),
+                radius + 3.0,
+                Stroke::new(2.0, palette.accent.gamma_multiply(t)),
+                egui::StrokeKind::Inside,
+            );
+        } else if response.hovered() {
+            painter.rect_stroke(
+                picture.expand(3.0),
+                radius + 3.0,
+                Stroke::new(1.0, palette.secondary),
+                egui::StrokeKind::Inside,
+            );
+        }
+        let color = if chosen {
+            palette.accent
+        } else {
+            palette.secondary
+        };
+        let label = widgets::line(
+            ui,
+            name,
+            theme::medium(theme::TEXT_CAPTION),
+            color,
+            rect.width(),
+            1,
+        );
+        label.paint(
+            ui,
+            pos2(
+                rect.center().x - label.size().x / 2.0,
+                picture.bottom() + TILE_NAME_HEIGHT / 2.0 - label.size().y / 2.0 + 1.0,
+            ),
+            color,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, name)
+    });
+    let response = response
+        .on_hover_text(name)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    (rect, response)
+}
+
+/// Whether a colour from the wheel is laid over the theme.
+fn wheel_in_use(app: &App) -> bool {
+    app.settings
+        .custom_accent
+        .is_some_and(|custom| custom.strength > CustomAccent::CENTRE)
+}
+
+/// The accents as a row of round swatches: first a cluster of dots that opens
+/// the colour wheel, then the theme's own and each named accent, a small
+/// light dot in each as in an outgoing bubble. The one in use wears a ring.
+fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    // The theme the swatches are drawn over, in its own accent.
+    let base = app
+        .settings
+        .custom_theme
+        .as_ref()
+        .and_then(|_| app.settings.custom_theme_cache.as_ref())
+        .map_or_else(
+            || app.settings.chat_theme.palette(palette.dark, Accent::Theme),
+            |theme| theme.palette,
+        );
+    let wheel_on = wheel_in_use(app);
+    let count = Accent::ALL.len() + 1;
+    let width = ui.available_width() - 2.0 * CARD_PAD;
+    let step = (width / count as f32).min(46.0);
+    let diameter = (step - 10.0).clamp(18.0, 30.0);
+    let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
+    let first = row.center().x - step * count as f32 / 2.0 + step / 2.0;
+    let ring = |ui: &egui::Ui,
+                response: &egui::Response,
+                center: Pos2,
+                chosen: bool,
+                ink: Color32| {
+        theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
+        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
+        if t > 0.0 {
+            ui.painter().circle_stroke(
+                center,
+                diameter / 2.0 + 4.0,
+                Stroke::new(2.0, ink.gamma_multiply(t)),
+            );
+        } else if response.hovered() {
+            ui.painter().circle_stroke(
+                center,
+                diameter / 2.0 + 4.0,
+                Stroke::new(1.0, palette.secondary),
+            );
+        }
+    };
+
+    // The cluster of dots that opens the wheel.
+    let center = pos2(first, row.center().y);
+    let rect = Rect::from_center_size(center, Vec2::splat(diameter + 10.0));
+    let response = ui.interact(rect, egui::Id::new("settings-accent-wheel"), Sense::click());
+    theme::reveal_focus(&response);
+    ring(ui, &response, center, wheel_on, palette.text);
+    if ui.is_rect_visible(rect) {
+        let dot = diameter * 0.12;
+        let reach = diameter * 0.33;
+        let colour = |hue: f32| {
+            let [r, g, b] = CustomAccent::wheel_rgb(hue, 1.0, palette.dark);
+            Color32::from_rgb(r, g, b)
+        };
+        let painter = ui.painter();
+        painter.circle_filled(center, dot * 1.15, colour(300.0));
+        for (index, hue) in [350.0, 40.0, 95.0, 160.0, 215.0, 265.0]
+            .into_iter()
+            .enumerate()
+        {
+            let angle = (index as f32 * 60.0 - 90.0).to_radians();
+            painter.circle_filled(
+                center + vec2(angle.cos(), angle.sin()) * reach,
+                dot,
+                colour(hue),
+            );
+        }
+    }
+    let title = crate::i18n::gettext(locale, "Accent colour");
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, true, wheel_on, title.as_ref())
+    });
+    if response
+        .on_hover_text(title.as_ref())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
+    {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(accent_modal_id(), true));
+    }
+
+    for (index, accent) in Accent::ALL.into_iter().enumerate() {
+        let center = pos2(first + step * (index + 1) as f32, row.center().y);
+        let rect = Rect::from_center_size(center, Vec2::splat(diameter + 10.0));
+        let response = ui.interact(
+            rect,
+            egui::Id::new(("settings-accent", accent.label())),
+            Sense::click(),
+        );
+        theme::reveal_focus(&response);
+        let shown = accent.rgb().map_or(base, |rgb| base.with_accent(rgb));
+        let chosen = !wheel_on && app.settings.accent == accent;
+        ring(ui, &response, center, chosen, shown.accent_fill);
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            painter.circle_filled(center, diameter / 2.0, shown.accent_fill);
+            painter.circle_filled(center, diameter * 0.2, shown.bubble_out);
+        }
+        let label = crate::i18n::gettext(locale, accent.label());
         response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, &name)
+            egui::WidgetInfo::selected(
+                egui::WidgetType::RadioButton,
+                true,
+                chosen,
+                label.as_ref(),
+            )
         });
         if response
-            .on_hover_text(name.as_str())
+            .on_hover_text(label.as_ref())
             .on_hover_cursor(egui::CursorIcon::PointingHand)
             .clicked()
         {
-            match swatch {
-                Swatch::Theme(choice) => {
-                    // A theme comes in its own accent, leaving the wheel's.
-                    app.actions.push(Action::SetAccent(Accent::Theme));
-                    app.actions.push(Action::RevealThemeFrom(center));
-                    app.actions.push(Action::SetChatTheme(choice));
-                }
-                Swatch::File(filename) => {
-                    app.actions.push(Action::SetAccent(Accent::Theme));
-                    app.actions.push(Action::RevealThemeFrom(center));
-                    app.actions.push(Action::SetCustomTheme(filename));
-                }
-                Swatch::Add => app.actions.push(Action::OpenThemesFolder),
-            }
+            app.actions.push(Action::SetAccent(accent));
         }
+    }
+}
+
+/// Where the open flag of the colour wheel's dialog is kept.
+fn accent_modal_id() -> egui::Id {
+    egui::Id::new("appearance-accent-modal-open")
+}
+
+/// The colour wheel in a dialog of its own, open while its flag is set.
+fn accent_modal(ctx: &egui::Context, app: &mut App) {
+    if !ctx
+        .data(|data| data.get_temp::<bool>(accent_modal_id()))
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let palette = app.palette;
+    let locale = app.locale;
+    let frame = egui::Frame::new()
+        .fill(palette.menu_glass())
+        .stroke(Stroke::new(1.0, palette.outline))
+        .corner_radius(CornerRadius::same(theme::RADIUS_DIALOG))
+        .inner_margin(egui::Margin::same(22))
+        .shadow(palette.modal_shadow());
+    let mut done = false;
+    let response = egui::Modal::new(egui::Id::new("appearance-accent-modal"))
+        .frame(frame)
+        .backdrop_color(palette.shadow)
+        .show(ctx, |ui| {
+            ui.set_width(320.0);
+            theme::text(
+                ui,
+                crate::i18n::gettext(locale, "Accent colour").into_owned(),
+                theme::semibold(theme::TEXT_TITLE),
+                palette.text,
+            );
+            ui.add_space(theme::SPACE_M);
+            colour_wheel(ui, app);
+            ui.add_space(theme::SPACE_M);
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = crate::i18n::gettext(locale, "Done");
+                    done = theme::pill_button(ui, &palette, &label, true).clicked();
+                });
+            });
+        });
+    if done || response.should_close() {
+        ctx.data_mut(|data| data.remove::<bool>(accent_modal_id()));
     }
 }
 

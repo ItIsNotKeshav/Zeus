@@ -243,14 +243,6 @@ impl Section {
             }));
     }
 
-    /// The section without the blocks found by `keyword` (by its English
-    /// source).
-    fn without(mut self, keyword: &str) -> Self {
-        self.entries
-            .retain(|(row, _)| !row.keywords.iter().any(|found| found.source == keyword));
-        self
-    }
-
     /// The rows the search leaves, in order.
     fn visible(self, filter: &Filter) -> (Text, Vec<(Row, Control)>) {
         let entries = filter_entries(self.entries, &self.title, filter);
@@ -532,38 +524,17 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let searching = !app.settings_search.trim().is_empty();
     let all = sections(app);
     let section = app.settings_section.min(all.len().saturating_sub(1));
-    // Appearance on a wide page keeps its preview in a column of its own on
-    // the right, still while the controls scroll, so every change shows
-    // without scrolling back up to it.
     let page = ui.available_rect_before_wrap();
-    // The whole page, Appearance's preview column too, takes the tint the
-    // cards stand on, rounded as the card the page sits in.
+    // The page takes the tint the cards stand on, rounded as the card the
+    // page sits in. Appearance's preview is inside the theme card, so it
+    // scrolls with the controls.
     let corners = if super::narrow(ui.ctx()) {
         CornerRadius::ZERO
     } else {
         super::chat_card_corners(super::card_at_window_right(ui.ctx(), page))
     };
     ui.painter().rect_filled(page, corners, page_tint(&palette));
-    let split = beside
-        && !searching
-        && all
-            .get(section)
-            .is_some_and(|one| one.title.source == "Appearance")
-        && page.width() >= SPLIT_WIDTH;
-    let (controls, preview) = if split {
-        let left = (page.width() * 0.55).clamp(SPLIT_CONTROLS.0, SPLIT_CONTROLS.1);
-        let preview = Rect::from_min_max(
-            pos2(page.left() + left + SPLIT_GAP, page.top() + TOP_MARGIN),
-            pos2(page.right() - SIDE_MARGIN, page.bottom() - TOP_MARGIN),
-        );
-        (
-            Rect::from_min_max(page.min, pos2(page.left() + left, page.bottom())),
-            Some(preview),
-        )
-    } else {
-        (page, None)
-    };
-    ui.scope_builder(egui::UiBuilder::new().max_rect(controls), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
         egui::ScrollArea::vertical()
             .id_salt("settings")
             .auto_shrink([false, false])
@@ -625,11 +596,6 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                             if one.is_some_and(|one| one != index) {
                                 continue;
                             }
-                            let section = if split {
-                                section.without("Preview")
-                            } else {
-                                section
-                            };
                             found |= section.show(ui, app, &filter, one.is_none());
                         }
                         if !found {
@@ -647,18 +613,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(TOP_MARGIN);
             });
     });
-    if let Some(rect) = preview {
-        appearance::preview(ui, app, rect);
-    }
 }
-
-/// The least page width that puts Appearance's preview beside its controls.
-const SPLIT_WIDTH: f32 = 860.0;
-/// How wide Appearance's controls column grows, least and most, beside the
-/// preview.
-const SPLIT_CONTROLS: (f32, f32) = (440.0, 600.0);
-/// The space between Appearance's controls and its preview.
-const SPLIT_GAP: f32 = 8.0;
 
 /// How tall a category row in the settings list is.
 const CATEGORY_ROW: f32 = 44.0;
@@ -859,29 +814,29 @@ fn sections(app: &App) -> Vec<Section> {
     let palette = app.palette;
 
     let mut appearance = Section::new(translated(locale, "Appearance"));
-    // Beside the controls on a wide page, the preview leaves this list for a
-    // column of its own (see `show`).
-    appearance.block(vec![translated(locale, "Preview")], |ui, app| {
-        let (rect, _) = ui.allocate_exact_size(
-            vec2(ui.available_width(), appearance::PREVIEW_HEIGHT),
-            Sense::hover(),
-        );
-        appearance::preview(ui, app, rect);
-        ui.add_space(crate::theme::SPACE_L);
-    });
+    // The preview sits at the top of the theme card, with the tiles and the
+    // accent swatches. Mode, Glass and the wallpaper tint are the card under
+    // it.
     appearance.block(
         vec![
+            translated(locale, "Preview"),
             translated(locale, "Theme"),
             translated(locale, "Themes"),
             translated(locale, "Accent"),
             translated(locale, "Colour"),
+        ],
+        appearance::theme_card,
+    );
+    appearance.block(
+        vec![
+            translated(locale, "Mode"),
             translated(locale, "Auto"),
             translated(locale, "Light"),
             translated(locale, "Dark"),
             translated(locale, "Glass"),
             translated(locale, "Tint the wallpaper"),
         ],
-        appearance::theme_card,
+        appearance::look_card,
     );
     appearance.block(
         vec![

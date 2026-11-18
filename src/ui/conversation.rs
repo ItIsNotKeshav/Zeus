@@ -7544,6 +7544,210 @@ pub(crate) fn list_menu(
     context_menu(ui, &view, message, &[], MenuOrigin::List, actions);
 }
 
+/// The chat in Settings > Appearance: `messages` of `chat`, a made-up group,
+/// drawn by the transcript's own rows (time line, bubbles, sender names and
+/// pictures, quotes, times and states) in the colours and bubble style on
+/// screen, as many as fit inside `rect` from the bottom up. `me` is the id
+/// our own messages are sent from. The newest row comes in at `arrival`
+/// (0 to 1), faded and a little low until it is 1. Nothing in it reacts: no
+/// hover controls, menus, swipes or clicks, and what the rows ask for is
+/// dropped.
+pub(crate) fn still_transcript(
+    ui: &mut egui::Ui,
+    app: &App,
+    rect: Rect,
+    chat: &Chat,
+    messages: &[Message],
+    me: &str,
+    arrival: f32,
+) {
+    let palette = app.palette;
+    let now = crate::util::now();
+    let names_or = |id: &str, hint: Option<&str>| hint.unwrap_or(id).to_owned();
+    let mention_names = |id: &str| id.to_owned();
+    let avatars = HashMap::new();
+    let keyboard_navigation = std::cell::Cell::new(false);
+    let said = status_rows(messages, chat.kind, app.account_receipts_off, now, false);
+    let view = View {
+        palette,
+        locale: app.locale,
+        chat,
+        messages,
+        me: Some(me),
+        auto_download: false,
+        connected: app.link.is_connected(),
+        account_receipts_off: app.account_receipts_off,
+        poll_voting: &app.poll_voting,
+        interactive_pending: &app.interactive_sending,
+        status_rows: Some(&said),
+        selecting: false,
+        selected: &[],
+        anchor: None,
+        open_menu: None,
+        starred: None,
+        pins: None,
+        pin_notices: &[],
+        reaction: None,
+        reaction_menu: false,
+        reaction_emoji: &app.settings.reaction_emoji,
+        keyboard_navigation: &keyboard_navigation,
+        names_or: &names_or,
+        mention_names: &mention_names,
+        avatars: &avatars,
+        contacts: &app.contacts,
+        now,
+        // A sample holds still: no arrival springs, no playing media.
+        animate: false,
+        motion_playing: None,
+        player: &app.player,
+        voice_speed: app.settings.voice_speed,
+        time_inside: app.settings.always_show_time,
+        video: &app.video,
+        copy_rows: None,
+        // Two fingers across it slide nothing.
+        swipes: crate::settings::Swipes {
+            list_left: crate::settings::SwipeAction::None,
+            list_right: crate::settings::SwipeAction::None,
+            chat_left: crate::settings::SwipeAction::None,
+            chat_right: crate::settings::SwipeAction::None,
+        },
+        rows: None,
+    };
+    let side = if palette.bubbles == theme::BubbleStyle::Messages {
+        MESSAGES_SIDE_MARGIN
+    } else {
+        WHATSAPP_SIDE_MARGIN
+    };
+    let inner = rect.shrink2(vec2(f32::from(side), 10.0));
+    let clip = rect.intersect(ui.clip_rect());
+    // Laid out from the top with room for every row, all of it visible so
+    // no bubble skips its paint, then moved down to sit on the bottom.
+    let room = Rect::from_min_size(inner.min, vec2(inner.width(), 4096.0));
+    let layer = ui.layer_id();
+    let next_shape = |ctx: &egui::Context| {
+        ctx.graphics(|graphics| {
+            graphics
+                .get(layer)
+                .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
+        })
+    };
+    // Hover controls, menus and a picked-up bubble read the pointer from the
+    // input itself; it is out of reach while the sample is drawn.
+    let pointer = ui
+        .ctx()
+        .input_mut(|input| std::mem::take(&mut input.pointer));
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt("still-transcript")
+            .max_rect(room)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    child.set_clip_rect(Rect::from_x_y_ranges(clip.x_range(), room.y_range()));
+    // Disabled, so nothing hovers, clicks, drags or takes focus, at full
+    // strength rather than faded as a disabled control would be.
+    child.visuals_mut().disabled_alpha = 1.0;
+    child.disable();
+    child.spacing_mut().item_spacing.y = if palette.bubbles == theme::BubbleStyle::Nothing {
+        2.0
+    } else {
+        3.0
+    };
+    let last_outgoing = messages.iter().rposition(|message| message.from_me);
+    let mut actions = Vec::new();
+    let mut previous: Option<&Message> = None;
+    // Where each row's shapes start, and its top.
+    let mut starts: Vec<(egui::layers::ShapeIdx, f32)> = Vec::new();
+    for (index, message) in messages.iter().enumerate() {
+        starts.push((next_shape(child.ctx()), child.cursor().top()));
+        let ui = &mut child;
+        // As the transcript places a row in its run (see `messages`).
+        let time_line = !view.time_inside
+            && time_line_above(
+                previous.map(|previous| previous.timestamp),
+                message.timestamp,
+            );
+        let show_sender = shows_sender_pictures(chat)
+            && !message.from_me
+            && previous
+                .is_none_or(|previous| previous.sender != message.sender || previous.from_me);
+        let first_in_run = previous.is_none_or(|previous| !same_run(previous, message));
+        let last_in_run = last_of_run(messages, index);
+        let show_avatar = if matches!(
+            palette.bubbles,
+            theme::BubbleStyle::Messages | theme::BubbleStyle::Nothing
+        ) {
+            shows_sender_pictures(chat) && !message.from_me && last_in_run
+        } else {
+            show_sender
+        };
+        let tailed = if palette.bubbles == theme::BubbleStyle::Messages {
+            last_bubble_of_run(&palette, messages, index)
+        } else {
+            first_in_run
+        };
+        if time_line {
+            time_line_row(ui, &palette, message.timestamp, false);
+        } else if first_in_run && previous.is_some() {
+            ui.add_space(if palette.bubbles == theme::BubbleStyle::Nothing {
+                12.0
+            } else {
+                RUN_GAP
+            });
+        }
+        let shows_time = message_says_time(
+            messages,
+            index,
+            1,
+            previous.map(|previous| previous.timestamp),
+        );
+        let place = RunPlace {
+            show_sender,
+            show_avatar,
+            tailed,
+            first_in_run,
+            last_in_run,
+            last_outgoing: last_outgoing == Some(index),
+            shows_time,
+        };
+        if index + 1 == messages.len() {
+            ui.scope(|ui| {
+                ui.multiply_opacity(arrival.clamp(0.0, 1.0));
+                let _ = bubble(ui, &view, message, None, place, true, &mut actions);
+            });
+        } else {
+            let _ = bubble(ui, &view, message, None, place, true, &mut actions);
+        }
+        previous = Some(message);
+    }
+    let bottom = child.min_rect().bottom();
+    drop(child);
+    ui.ctx().input_mut(|input| input.pointer = pointer);
+    // Down onto the bottom; rows that would rise past the top are dropped
+    // whole, the oldest first.
+    let shift = inner.bottom() - bottom;
+    let end = next_shape(ui.ctx());
+    let lift = (1.0 - arrival.clamp(0.0, 1.0)) * 18.0;
+    ui.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(layer);
+        for (row, (start, top)) in starts.iter().enumerate() {
+            let stop = starts.get(row + 1).map_or(end, |(next, _)| *next);
+            let hidden = top + shift < inner.top() - 0.5;
+            let by = shift + if row + 1 == starts.len() { lift } else { 0.0 };
+            for index in start.0..stop.0 {
+                let index = egui::layers::ShapeIdx(index);
+                if hidden {
+                    list.reset_shape(index);
+                } else {
+                    list.mutate_shape(index, |clipped| {
+                        clipped.shape.translate(vec2(0.0, by));
+                        clipped.clip_rect = clip;
+                    });
+                }
+            }
+        }
+    });
+}
+
 /// Quick reactions plus our current reaction when needed.
 fn quick_reactions<'a>(message: &'a Message, preferred: &'a [(String, u32)]) -> Vec<&'a str> {
     let mut list = Vec::new();
@@ -13304,6 +13508,81 @@ mod tests {
             pin_notices: &[],
         };
         check(&view);
+    }
+
+    /// Settings' sample chat draws through the transcript's rows in every
+    /// bubble style, inside its rect, and leaves the pointer as it found it.
+    #[test]
+    fn the_still_transcript_draws_inside_its_rect_in_every_bubble_style() {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut app, _events) = App::headless(
+            crate::paths::AppDirs::under(directory.path()),
+            crate::settings::Settings::default(),
+        );
+        let chat = Chat::new("appearance-preview@g.us".into(), String::new());
+        assert!(chat.is_group());
+        let now = crate::util::now();
+        let mut asked = crate::archive::tests::message(&chat.id, "asked", now - 600, false);
+        asked.sender = "ava@s.whatsapp.net".into();
+        asked.sender_name = Some("Ava".into());
+        let mut reply = crate::archive::tests::message(&chat.id, "reply", now - 560, true);
+        reply.sender = "me@s.whatsapp.net".into();
+        reply.status = Delivery::Read;
+        reply.quoted = Some(crate::model::Quoted {
+            chat: None,
+            id: asked.id.clone(),
+            sender: asked.sender.clone(),
+            sender_name: asked.sender_name.clone(),
+            summary: "Hello".into(),
+            labelled: Some(false),
+            mentions: Vec::new(),
+        });
+        let messages = [asked, reply];
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let area = Rect::from_min_size(pos2(20.0, 30.0), vec2(360.0, 260.0));
+        for style in [
+            theme::BubbleStyle::WhatsApp,
+            theme::BubbleStyle::Messages,
+            theme::BubbleStyle::Nothing,
+        ] {
+            app.palette.bubbles = style;
+            for _ in 0..2 {
+                let output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            vec2(400.0, 320.0),
+                        )),
+                        events: vec![egui::Event::PointerMoved(area.center())],
+                        ..Default::default()
+                    },
+                    |ui| {
+                        still_transcript(
+                            ui,
+                            &app,
+                            area,
+                            &chat,
+                            &messages,
+                            "me@s.whatsapp.net",
+                            1.0,
+                        );
+                        assert_eq!(
+                            ui.input(|input| input.pointer.latest_pos()),
+                            Some(area.center()),
+                            "the pointer comes back after the sample"
+                        );
+                    },
+                );
+                // Every row is clipped to the sample's rect.
+                assert!(
+                    output.shapes.iter().any(|clipped| {
+                        clipped.clip_rect == area && !matches!(clipped.shape, egui::Shape::Noop)
+                    }),
+                    "{style:?} draws the sample"
+                );
+            }
+        }
     }
 
     #[test]

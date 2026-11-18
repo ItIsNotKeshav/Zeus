@@ -3525,3 +3525,15 @@ msgstr ""
 #: src/ui/update.rs:154
 msgid "Download update"
 msgstr ""
+
+#: src/ui/settings/appearance.rs
+msgid "Mode"
+msgstr ""
+
+#: src/ui/settings/appearance.rs
+msgid "Accent colour"
+msgstr ""
+
+#: src/ui/settings/appearance.rs
+msgid "Done"
+msgstr ""

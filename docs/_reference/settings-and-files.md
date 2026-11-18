@@ -111,42 +111,40 @@ rows sits in its own white rounded card.
 
 **Appearance**
 
-- **Preview**: a small conversation at the top of the section, drawn in the
-  colours chosen below, so every change shows before you leave Settings.
-- **Colours**: **Custom** or **Themes**. Picking a card opens the new
-  colours from that card outwards. Each side remembers its last choice, so
-  switching back returns to it.
-  - **Custom** makes a look your own. **Look** is **Zeus** (monochrome
-    glass), **WhatsApp**, or **Messages**, which draws bubbles shaped, spaced
-    and coloured as Messages on the Mac draws them (yours in iMessage blue,
-    shading deeper down the window), the Mac's system blue for buttons and
-    highlights, and photos without a bubble. **Appearance** is **Auto**,
-    **Light** or **Dark**; Auto follows the operating system's appearance
-    (on Linux, the desktop portal's, and Omarchy's colours with the Zeus
-    look). **Accent** is the look's own, or red, orange, yellow, green, teal,
-    blue, purple or pink, for buttons, switches, links, ticks and your own
-    bubbles. In a light mode a bright accent is darkened until it reads on
-    white. Messages keeps the system blue. The colour wheel picks an accent
-    of your own: its centre is the theme's own accent, the angle is the hue
-    and the distance from the centre is the strength. **Tint the wallpaper**
-    washes the chat wallpaper with the accent.
-  - **Themes** are the twenty ready-made themes of
-    [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator)
-    (Orchestrate, Vercel, GitHub, One, Catppuccin, Tokyo Night, Dracula, Nord,
-    Gruvbox, Rosé Pine, Solarized, Kanagawa, VS Code, Monokai, Material, Ayu,
-    Night Owl, Everforest, Vitesse and Flexoki), each in light and dark with
-    its own accent. **Mode** picks between them here too.
-- **Blur**: every theme but WhatsApp draws glass: a frosted header that
-  messages scroll under, a frosted message field, and the desktop through
-  the sidebar and conversation where the platform offers a material:
-  AppKit's on macOS, Mica on Windows 11 22H2 and later, and Hyprland's blur
-  on Linux. Elsewhere, including other Linux desktops, the window is opaque
-  in the theme's colours. Turning Blur off makes every one of those surfaces
-  solid at once; turning it on again shows the desktop through a window
-  opened after the change. On macOS, which Zeus draws with Metal to hold
-  less memory, the header and message field are always solid, and Blur
-  decides only whether the desktop shows through the Messages theme's
-  window.
+- The first card is the theme. At the top is a small conversation, drawn in
+  the colours chosen in the card, so every change shows before you leave
+  Settings. Under it the themes are tiles that scroll sideways: **Zeus**
+  (monochrome glass), **WhatsApp**, and **Messages**, which draws bubbles
+  shaped, spaced and coloured as Messages on the Mac draws them (yours in
+  iMessage blue, shading deeper down the window), the Mac's system blue for
+  buttons and highlights, and photos without a bubble, then **Vercel**,
+  **Catppuccin**, **Dracula**, **Nord**, **Gruvbox** and **Solarized**,
+  palettes from
+  [Agent Orchestrator](https://github.com/OrchestratorInc/agent-orchestrator).
+  Each theme has a light and a dark version. Under the tiles is a row of
+  accent colours, and a multicolour button that opens the colour wheel. The
+  accent applies on top of any theme, so a theme and an accent are used
+  together. **Accent** is the theme's own, or red, orange, yellow, green,
+  teal, blue, purple or pink, for buttons, switches, links, ticks and your
+  own bubbles. In a light mode a bright accent is darkened until it reads on
+  white. The colour wheel picks an accent of your own: its centre is the
+  theme's own accent, the angle is the hue and the distance from the centre
+  is the strength.
+- The card below holds the mode, Glass and the wallpaper tint. **Mode** is
+  **Auto**, **Light** or **Dark**; Auto follows the operating system's
+  appearance (on Linux, the desktop portal's, and Omarchy's colours with the
+  Zeus look). **Glass**: every theme but WhatsApp draws glass: a frosted
+  header that messages scroll under, a frosted message field, and the
+  desktop through the sidebar and conversation where the platform offers a
+  material: AppKit's on macOS, Mica on Windows 11 22H2 and later, and
+  Hyprland's blur on Linux. Elsewhere, including other Linux desktops, the
+  window is opaque in the theme's colours. Turning Glass off makes every one
+  of those surfaces solid at once; turning it on again shows the desktop
+  through a window opened after the change. On macOS, which Zeus draws with
+  Metal to hold less memory, the header and message field are always solid,
+  and Glass decides only whether the desktop shows through the Messages
+  theme's window. **Tint the wallpaper** washes the chat wallpaper with the
+  accent.
 - **Always show time**: the time and ticks inside every message, as
   WhatsApp shows them. Off (the default), messages carry no time of their
   own: hovering a message shows when it was sent, and **Message info** has
