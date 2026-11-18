@@ -7573,6 +7573,26 @@ impl Worker {
                 });
             }
             Command::RemoveWallpaperImage => crate::wallpaper::remove(&self.dirs.state),
+            Command::PickChatWallpaper(chat) => {
+                let dirs = self.dirs.clone();
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose a wallpaper for this chat")
+                        .add_filter("Images", &["jpg", "jpeg", "png", "webp", "gif"])
+                        .pick_file()
+                    else {
+                        return;
+                    };
+                    let result = crate::wallpaper::import_for_chat(&path, &dirs.state, &chat);
+                    let _ = events.send(Event::ChatWallpaperPicked { chat, result });
+                    waker.wake();
+                });
+            }
+            Command::RemoveChatWallpaper(chat) => {
+                crate::wallpaper::remove_for_chat(&self.dirs.state, &chat);
+            }
             Command::SetProfile { name, about } => self.set_profile(name, about),
             Command::PickProfilePicture => {
                 let commands = self.commands.clone();

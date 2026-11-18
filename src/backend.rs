@@ -634,6 +634,11 @@ pub enum Command {
     PickWallpaperImage,
     /// Deletes the copied wallpaper image.
     RemoveWallpaperImage,
+    /// Asks for an image to use as one chat's own wallpaper and copies it
+    /// into the state directory.
+    PickChatWallpaper(ChatId),
+    /// Deletes a chat's own wallpaper image.
+    RemoveChatWallpaper(ChatId),
     /// Changes our display name and About text; `None` keeps the current one.
     SetProfile {
         name: Option<String>,
@@ -1440,6 +1445,12 @@ pub enum Event {
     DownloadFolderPicked(std::path::PathBuf),
     /// The copy of a chosen wallpaper image, or why it could not be used.
     WallpaperImagePicked(Result<std::path::PathBuf, String>),
+    /// The copy of an image chosen as a chat's own wallpaper, or why it
+    /// could not be used.
+    ChatWallpaperPicked {
+        chat: ChatId,
+        result: Result<std::path::PathBuf, String>,
+    },
     /// An audio file chosen as a notification sound.
     NotificationSoundPicked {
         mention: bool,

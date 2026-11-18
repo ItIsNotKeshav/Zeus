@@ -888,6 +888,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                     };
                     let export_label = crate::i18n::gettext(app.locale, "Export chat");
                     let clear_label = crate::i18n::gettext(app.locale, "Clear chat");
+                    // A picture of its own, over the account's wallpaper.
+                    let own_wallpaper = app
+                        .account()
+                        .settings
+                        .chat_wallpapers
+                        .contains_key(&chat.id);
+                    let wallpaper_label = if own_wallpaper {
+                        crate::i18n::gettext(app.locale, "Change chat wallpaper…")
+                    } else {
+                        crate::i18n::gettext(app.locale, "Set chat wallpaper…")
+                    };
+                    let remove_wallpaper_label =
+                        crate::i18n::gettext(app.locale, "Remove chat wallpaper");
                     let copy_number_label = crate::i18n::gettext(app.locale, "Copy number");
                     let close_label = crate::i18n::gettext(app.locale, "Close chat");
                     let pop_out_label = crate::i18n::gettext(app.locale, "Pop out chat");
@@ -904,6 +917,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             archive_label.as_ref(),
                             export_label.as_ref(),
                             clear_label.as_ref(),
+                            wallpaper_label.as_ref(),
+                            remove_wallpaper_label.as_ref(),
                             leave_label.as_ref(),
                             copy_number_label.as_ref(),
                             close_label.as_ref(),
@@ -996,6 +1011,18 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                     chat: chat.id.clone(),
                                     include_media: false,
                                 }));
+                            }
+                            if widgets::menu_item_inset(ui, &palette, wallpaper_label.as_ref()) {
+                                app.actions.push(Action::PickChatWallpaper(chat.id.clone()));
+                            }
+                            if own_wallpaper
+                                && widgets::menu_item_inset(
+                                    ui,
+                                    &palette,
+                                    remove_wallpaper_label.as_ref(),
+                                )
+                            {
+                                app.actions.push(Action::RemoveChatWallpaper(chat.id.clone()));
                             }
                             if app.settings.split_view
                                 && widgets::menu_item_inset(ui, &palette, pop_out_label.as_ref())

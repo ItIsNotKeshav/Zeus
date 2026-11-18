@@ -397,6 +397,8 @@ impl Account {
 }
 
 fn resolve_wallpaper_path(dirs: &AccountDirs, settings: &mut AccountSettings) {
+    // A chat's own picture whose file has gone falls back to the account's.
+    settings.chat_wallpapers.retain(|_, path| path.exists());
     if settings
         .wallpaper_image
         .as_ref()

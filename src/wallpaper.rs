@@ -700,6 +700,38 @@ fn bounded(image: image::DynamicImage) -> image::DynamicImage {
 /// stored as JPEG, or PNG when it has transparency; a smaller one is copied as
 /// it is. Earlier copies are removed once the new one is in place.
 pub fn import(source: &Path, state: &Path) -> Result<PathBuf, String> {
+    import_named(source, state, "wallpaper")
+}
+
+/// The folder in the state directory that holds each chat's own wallpaper.
+pub fn chat_folder(state: &Path) -> PathBuf {
+    state.join("chat-wallpapers")
+}
+
+/// The file name, without extension, of `chat`'s own wallpaper: a hash, so
+/// no chat id or phone number is written into a file name.
+pub fn chat_stem(chat: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    chat.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// Copies a chosen image as `chat`'s own wallpaper, as [`import`] does the
+/// account's.
+pub fn import_for_chat(source: &Path, state: &Path, chat: &str) -> Result<PathBuf, String> {
+    let folder = chat_folder(state);
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    import_named(source, &folder, &chat_stem(chat))
+}
+
+/// Deletes `chat`'s own wallpaper image, whatever its extension.
+pub fn remove_for_chat(state: &Path, chat: &str) {
+    remove_named(&chat_folder(state), &chat_stem(chat));
+}
+
+/// Copies `source` into `folder` as `stem.<ext>`, as [`import`] describes.
+fn import_named(source: &Path, folder: &Path, stem: &str) -> Result<PathBuf, String> {
     let bytes = std::fs::read(source).map_err(|error| error.to_string())?;
     let format = image::guess_format(&bytes).map_err(|_| "not an image".to_owned())?;
     let decoded =
@@ -716,10 +748,10 @@ pub fn import(source: &Path, state: &Path) -> Result<PathBuf, String> {
         };
         (bytes, extension)
     };
-    let target = state.join(format!("wallpaper.{extension}"));
+    let target = folder.join(format!("{stem}.{extension}"));
     fastframe_file::write(&target, contents).map_err(|error| error.to_string())?;
     for other in EXTENSIONS.into_iter().filter(|other| *other != extension) {
-        let _ = std::fs::remove_file(state.join(format!("wallpaper.{other}")));
+        let _ = std::fs::remove_file(folder.join(format!("{stem}.{other}")));
     }
     Ok(target)
 }
@@ -745,8 +777,12 @@ fn encode(image: &image::DynamicImage) -> Result<(Vec<u8>, &'static str), String
 
 /// Deletes ZapFast's copy of the wallpaper image, whatever its extension.
 pub fn remove(state: &Path) {
+    remove_named(state, "wallpaper");
+}
+
+fn remove_named(folder: &Path, stem: &str) {
     for extension in EXTENSIONS {
-        match std::fs::remove_file(state.join(format!("wallpaper.{extension}"))) {
+        match std::fs::remove_file(folder.join(format!("{stem}.{extension}"))) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => log::debug!("could not delete the wallpaper image: {error}"),
@@ -1123,6 +1159,28 @@ mod tests {
             "nothing is left behind"
         );
         remove(&dirs.state);
+    }
+
+    #[test]
+    fn a_chat_picture_is_kept_apart_from_the_accounts_and_removed_alone() {
+        let root = tempfile::tempdir().unwrap();
+        let dirs = AppDirs::under(&root.path().join("app"));
+        let chosen = root.path().join("beach.png");
+        write_image(&chosen, 40, 20);
+        let account = import(&chosen, &dirs.state).unwrap();
+        let chat = "15550001111@s.whatsapp.net";
+        let own = import_for_chat(&chosen, &dirs.state, chat).unwrap();
+        let other = import_for_chat(&chosen, &dirs.state, "group@g.us").unwrap();
+        assert_ne!(own, other);
+        assert_eq!(own.parent(), Some(chat_folder(&dirs.state).as_path()));
+        // The file name never carries the chat's id or number.
+        assert!(!own.to_string_lossy().contains("15550001111"));
+        assert_eq!(decode(&own).unwrap().size, [40, 20]);
+
+        remove_for_chat(&dirs.state, chat);
+        assert!(!own.exists());
+        assert!(other.exists(), "another chat keeps its picture");
+        assert!(account.exists(), "the account's picture stays");
     }
 
     #[test]

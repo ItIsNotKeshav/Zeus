@@ -3575,6 +3575,10 @@ pub enum Action {
     PickWallpaperImage,
     /// Goes back to the wallpaper colour and deletes the copied image.
     RemoveWallpaperImage,
+    /// Asks for an image to use as this chat's own wallpaper.
+    PickChatWallpaper(String),
+    /// Goes back to the account's wallpaper in this chat.
+    RemoveChatWallpaper(String),
     ReloadThemes,
     OpenThemesFolder,
     SettingsChanged,

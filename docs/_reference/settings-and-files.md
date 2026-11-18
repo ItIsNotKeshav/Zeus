@@ -16,9 +16,10 @@ On Linux:
 | Account list | `~/.config/zapfast/accounts.json` | Which numbers are linked here and which one is showing |
 | Session keys | `~/.local/state/zapfast/accounts/<id>/session.db` | Deleting it unlinks that number |
 | Message archive | `~/.local/state/zapfast/accounts/<id>/archive.db` | Encrypted; the only copy of history WhatsApp will not send again |
-| Per-number settings | `~/.local/state/zapfast/accounts/<id>/settings.json` | Notifications, receipts, typing, automatic downloads, background history, the last open chat, the chat-list chip or label, and the wallpaper |
+| Per-number settings | `~/.local/state/zapfast/accounts/<id>/settings.json` | Notifications, typing, automatic downloads, background history, the last open chat, the chat-list chip or label, and the wallpapers |
 | Stickers and packs | `~/.local/state/zapfast/accounts/<id>/stickers/` | Plain WebP files; each pack is a folder |
 | Wallpaper image | `~/.local/state/zapfast/accounts/<id>/wallpaper.jpg` | Copy of the chosen picture (or `.png`, `.webp`, `.gif`) |
+| Chat wallpapers | `~/.local/state/zapfast/accounts/<id>/chat-wallpapers/` | Copies of pictures chosen for single chats, named by a hash of the chat |
 | Attachments, avatars | `~/.cache/zapfast/accounts/<id>/` | Safe to delete; available files download again when viewed |
 | Last run's log | `~/.local/state/zapfast/zapfast.log` | `--verbose` for more |
 | The run before's log | `~/.local/state/zapfast/zapfast.previous.log` | Kept for one more start |
@@ -157,7 +158,9 @@ rows sits in its own white rounded card.
 - **Wallpaper**: WhatsApp's light and dark chat wallpaper colours, with or
   without doodles. **Doodle colour** is **Gray**, **Accent** (the app accent),
   or **Custom** (a colour from its own colour map, which does not change the
-  app accent; the colour wheel above still sets the app accent).
+  app accent; the colour wheel above still sets the app accent). A chat can
+  have a picture of its own instead: **Set chat wallpaper…** in the chat's
+  **⋯** menu picks it, and **Remove chat wallpaper** goes back to this one.
 - **App icon**: pick one of 14 tiles (all free). It changes the icon of the
   running app (the Dock tile, window, tray and taskbar), not the installed
   file Finder or your launcher shows, so a Dock or taskbar pin shows the

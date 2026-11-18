@@ -1602,6 +1602,9 @@ pub struct AccountSettings {
     /// The chip the Calls page last showed, as
     /// [`crate::model::CallFilter::key`] writes it; `None` shows every call.
     pub call_filter: Option<String>,
+    /// Chats with a picture of their own as wallpaper, by chat id, each
+    /// this account's copy of the image.
+    pub chat_wallpapers: std::collections::BTreeMap<String, std::path::PathBuf>,
 }
 
 impl Default for AccountSettings {
@@ -1617,6 +1620,7 @@ impl Default for AccountSettings {
             history_prefetch: false,
             list_filter: None,
             call_filter: None,
+            chat_wallpapers: Default::default(),
         }
     }
 }
@@ -1634,6 +1638,7 @@ impl AccountSettings {
             history_prefetch: false,
             list_filter: None,
             call_filter: None,
+            chat_wallpapers: Default::default(),
         }
     }
 

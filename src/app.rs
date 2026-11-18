@@ -2149,13 +2149,23 @@ impl App {
             ),
             whatsapp: self.palette.whatsapp,
             image: self
-                .account()
-                .settings
-                .wallpaper_image
+                .wallpaper_path()
                 .is_some()
                 .then(|| self.wallpaper_image.ready())
                 .flatten(),
         }
+    }
+
+    /// The wallpaper picture on screen: the open chat's own, else the
+    /// account's. One is decoded at a time, so a split's other pane shows
+    /// the open chat's too.
+    pub fn wallpaper_path(&self) -> Option<&std::path::Path> {
+        let settings = &self.account().settings;
+        self.open_chat
+            .as_deref()
+            .and_then(|chat| settings.chat_wallpapers.get(chat))
+            .or(settings.wallpaper_image.as_ref())
+            .map(std::path::PathBuf::as_path)
     }
 
     /// Whether window close keeps the app in the tray.
@@ -4472,6 +4482,28 @@ impl App {
             Event::WallpaperImagePicked(Err(error)) => {
                 let message = crate::i18n::gettext(self.locale, "Could not use this image");
                 self.toast_error(format!("{message}: {error}"));
+            }
+            Event::ChatWallpaperPicked {
+                chat,
+                result: Ok(path),
+            } => {
+                self.account_mut()
+                    .settings
+                    .chat_wallpapers
+                    .insert(chat, path);
+                self.account_mut().mark_settings_dirty();
+                if live {
+                    // The copy may keep the earlier one's name: decode it anew.
+                    self.wallpaper_image.reload();
+                }
+            }
+            Event::ChatWallpaperPicked {
+                result: Err(error), ..
+            } => {
+                if live {
+                    let message = crate::i18n::gettext(self.locale, "Could not use this image");
+                    self.toast_error(format!("{message}: {error}"));
+                }
             }
             Event::NotificationSoundPicked { mention, path } => {
                 if live {
@@ -9666,6 +9698,20 @@ impl App {
                 crate::wallpaper::forget_image(ctx);
                 self.backend.send(Command::RemoveWallpaperImage);
             }
+            Action::PickChatWallpaper(chat) => self.backend.send(Command::PickChatWallpaper(chat)),
+            Action::RemoveChatWallpaper(chat) => {
+                if self
+                    .account_mut()
+                    .settings
+                    .chat_wallpapers
+                    .remove(&chat)
+                    .is_some()
+                {
+                    self.account_mut().mark_settings_dirty();
+                }
+                crate::wallpaper::forget_image(ctx);
+                self.backend.send(Command::RemoveChatWallpaper(chat));
+            }
             Action::ReloadThemes => self.load_custom_themes(),
             Action::OpenThemesFolder => {
                 let directory = self.dirs.config.join("themes");
@@ -10482,7 +10528,7 @@ impl App {
         self.actions.extend(crate::macos::drain(self.window_hidden));
         self.handle_control_commands();
         self.poll_custom_themes();
-        let wallpaper = self.account().settings.wallpaper_image.clone();
+        let wallpaper = self.wallpaper_path().map(std::path::Path::to_path_buf);
         self.wallpaper_image.sync(wallpaper.as_deref(), &self.waker);
         self.handle_notification_opens();
         self.handle_events();
@@ -19384,6 +19430,26 @@ mod tests {
         assert!(app.search_hits.is_empty());
         // The chat itself stays open.
         assert_eq!(app.open_chat.as_deref(), Some(chat));
+    }
+
+    #[test]
+    fn a_chats_own_wallpaper_overrides_the_accounts_while_it_is_open() {
+        let mut app = app();
+        let global = std::path::PathBuf::from("wallpaper.png");
+        let own = std::path::PathBuf::from("chat-wallpapers/own.png");
+        app.account_mut().settings.wallpaper_image = Some(global.clone());
+        app.account_mut()
+            .settings
+            .chat_wallpapers
+            .insert("a@s.whatsapp.net".into(), own.clone());
+        app.open_chat = Some("a@s.whatsapp.net".into());
+        assert_eq!(app.wallpaper_path(), Some(own.as_path()));
+        app.open_chat = Some("b@s.whatsapp.net".into());
+        assert_eq!(app.wallpaper_path(), Some(global.as_path()));
+        app.account_mut().settings.wallpaper_image = None;
+        assert_eq!(app.wallpaper_path(), None);
+        app.open_chat = Some("a@s.whatsapp.net".into());
+        assert_eq!(app.wallpaper_path(), Some(own.as_path()));
     }
 
     #[test]
