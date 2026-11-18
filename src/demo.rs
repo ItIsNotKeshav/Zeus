@@ -3389,6 +3389,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     qr: Some(sample_qr()),
                     pair_code: None,
                     pairing_phone: None,
+                    expired: false,
                 };
             }
             "login" => {
@@ -3397,6 +3398,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     qr: Some(sample_qr()),
                     pair_code: None,
                     pairing_phone: None,
+                    expired: false,
                 };
             }
             "pair" => {
@@ -3405,6 +3407,16 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     qr: None,
                     pair_code: Some("FWAP1234".into()),
                     pairing_phone: Some("15550001111".into()),
+                    expired: false,
+                };
+            }
+            "link-expired" => {
+                unlink(app);
+                app.link = LinkStatus::Unlinked {
+                    qr: None,
+                    pair_code: None,
+                    pairing_phone: None,
+                    expired: true,
                 };
             }
             "phone" => {
@@ -3413,6 +3425,7 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     qr: Some(sample_qr()),
                     pair_code: None,
                     pairing_phone: None,
+                    expired: false,
                 };
                 app.dialog = Some(Dialog::PairWithPhone);
             }

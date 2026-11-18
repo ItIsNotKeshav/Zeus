@@ -14265,6 +14265,7 @@ mod tests {
             qr: None,
             pair_code: None,
             pairing_phone: None,
+            expired: false,
         };
         app.apply(Action::CancelAddAccount, &ctx);
         assert_eq!(app.account().id, AccountId::first());

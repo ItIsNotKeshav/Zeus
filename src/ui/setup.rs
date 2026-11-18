@@ -83,11 +83,11 @@ impl Step {
 /// Narrower than this, the choices stand alone, without the window beside
 /// them.
 const WIDE: f32 = 860.0;
-/// The card's largest size.
-const CARD_MAX: Vec2 = vec2(1060.0, 700.0);
-/// The room between the card's edge and the stage inside it. The stage's
-/// radius is the card's less this, so the two curves run together.
-const STAGE_INSET: f32 = 8.0;
+/// The choices column's tallest: a tall window centres it rather than
+/// spreading its footer away from its steps.
+const COLUMN_HEIGHT: f32 = 640.0;
+/// The room around the choices column, from the window's edges.
+const SPACE_COLUMN: f32 = 48.0;
 /// How far a step slides as it comes in.
 const SLIDE: f32 = 28.0;
 /// How tall the footer's buttons are.
@@ -106,7 +106,7 @@ const MORE_THEMES: [ChatTheme; 6] = [
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(palette.window))
+        .frame(Frame::new().fill(palette.panel))
         .show(ui, |ui| {
             let first_run = !app.settings.setup_done;
             let step = if first_run {
@@ -114,80 +114,43 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             } else {
                 Step::Link
             };
+            // Borderless: the setup is the window, with no card, frame or
+            // light around it. The choices sit on the left and the live
+            // preview fills the right, edge to edge.
             let area = ui.max_rect();
-            // Seconds since the setup opened: the light comes up, the card
-            // rises into place, and what is on it follows top to bottom.
+            // Seconds since the setup opened: what is on it comes up top to
+            // bottom.
             let opened = arrive::shown_for(ui.ctx(), Id::new("setup-entrance"));
-            let light = arrive::painted(ui);
-            backdrop(ui, &palette, area);
-            arrive::fade_since(
-                ui,
-                light,
-                theme::ease_out((opened / (theme::MOTION_SCREEN * 2.0)).clamp(0.0, 1.0)),
-            );
             keys(app, ui, step, first_run);
             let wide = area.width() >= WIDE;
-            let card = card_rect(area, wide);
             let start = arrive::painted(ui);
-            paint_card(ui, &palette, card);
             if wide {
-                let left = (card.width() * 0.46).clamp(400.0, 480.0);
-                let stage = Rect::from_min_max(
-                    pos2(card.left() + left, card.top() + STAGE_INSET),
-                    card.max - Vec2::splat(STAGE_INSET),
-                );
+                let left = (area.width() * 0.42).clamp(400.0, 520.0);
+                let stage = Rect::from_min_max(pos2(area.left() + left, area.top()), area.max);
                 self::stage(app, ui, stage, step, opened);
-                let column = Rect::from_min_max(card.min, pos2(card.left() + left, card.bottom()))
-                    .shrink2(vec2(40.0, 36.0));
+                let side = Rect::from_min_max(area.min, pos2(stage.left(), area.bottom()));
+                let column = Rect::from_center_size(
+                    side.center(),
+                    vec2(
+                        side.width() - SPACE_COLUMN * 2.0,
+                        (side.height() - SPACE_COLUMN * 2.0).min(COLUMN_HEIGHT),
+                    ),
+                );
                 self::column(app, ui, column, step, first_run, false, opened);
             } else {
-                self::column(app, ui, card.shrink(28.0), step, first_run, true, opened);
+                let column = Rect::from_center_size(
+                    area.center(),
+                    vec2(area.width().min(560.0), area.height().min(760.0)),
+                )
+                .shrink(28.0);
+                self::column(app, ui, column, step, first_run, true, opened);
             }
             let rise = theme::ease_out((opened / theme::MOTION_SCREEN).clamp(0.0, 1.0));
             if rise < 1.0 {
-                arrive::transform(
-                    ui,
-                    start,
-                    arrive::about(
-                        card.center(),
-                        0.965 + 0.035 * rise,
-                        vec2(0.0, 22.0 * (1.0 - rise)),
-                    ),
-                );
                 arrive::fade_since(ui, start, rise);
                 ui.ctx().request_repaint();
             }
         });
-}
-
-/// The card, centred: wide enough for the choices and the stage beside them,
-/// or for the choices alone.
-fn card_rect(area: Rect, wide: bool) -> Rect {
-    let size = if wide {
-        vec2(
-            (area.width() - 64.0).min(CARD_MAX.x),
-            (area.height() - 48.0).min(CARD_MAX.y),
-        )
-    } else {
-        vec2(
-            (area.width() - 24.0).min(560.0),
-            (area.height() - 24.0).min(760.0),
-        )
-    };
-    Rect::from_center_size(area.center(), size.max(Vec2::ZERO))
-}
-
-fn paint_card(ui: &egui::Ui, palette: &Palette, card: Rect) {
-    let radius = f32::from(theme::RADIUS_DIALOG);
-    ui.painter()
-        .add(palette.modal_shadow().as_shape(card, radius));
-    ui.painter().rect(
-        card,
-        radius,
-        palette.panel,
-        Stroke::new(1.0, palette.outline),
-        egui::StrokeKind::Inside,
-    );
 }
 
 /// The window behind the card: its own colour, with one still, neutral light
@@ -1477,6 +1440,8 @@ enum Linking {
     PairCode(String, Option<String>),
     /// Waiting, with what for.
     Busy(String),
+    /// Every code expired; a new one comes on a click.
+    Expired,
     /// Linking stopped with this message.
     Failed(String),
 }
@@ -1496,6 +1461,7 @@ fn linking(app: &App) -> Linking {
             gettext(locale, "Requesting a code for +{phone}…").replace("{phone}", &phone),
         ),
         LinkStatus::Unlinked { qr: Some(qr), .. } => Linking::Qr(qr),
+        LinkStatus::Unlinked { expired: true, .. } => Linking::Expired,
         LinkStatus::Unlinked { .. } => {
             Linking::Busy(gettext(locale, "Waiting for a code from WhatsApp…").into_owned())
         }
@@ -1582,7 +1548,7 @@ fn link(app: &mut App, ui: &mut egui::Ui, narrow: bool, first_run: bool) {
                 ],
             );
         }
-        Linking::Qr(_) | Linking::Busy(_) => {
+        Linking::Qr(_) | Linking::Busy(_) | Linking::Expired => {
             let again = matches!(app.link, LinkStatus::LoggedOut);
             let (heading, subtitle) = if again {
                 (
@@ -1613,6 +1579,7 @@ fn link(app: &mut App, ui: &mut egui::Ui, narrow: bool, first_run: bool) {
                         });
                     }
                     Linking::Busy(label) => super::login::busy(ui, palette.accent, label),
+                    Linking::Expired => expired_note(app, ui),
                     _ => {}
                 }
                 ui.add_space(24.0);
@@ -1790,24 +1757,15 @@ fn pair_code_tile(app: &mut App, ui: &mut egui::Ui, code: &str) {
 /// The right of the card: the small window, or on the link step the code.
 fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step, opened: f32) {
     let palette = app.palette;
-    let radius = f32::from(theme::RADIUS_DIALOG) - STAGE_INSET;
-    // A shade off the card, lit from above by the accent.
+    // A shade off the choices' side, square to the window's edges.
     ui.painter().rect_filled(
         stage,
-        radius,
+        0.0,
         theme::blend(
             palette.panel,
             palette.text,
             if palette.dark { 0.035 } else { 0.03 },
         ),
-    );
-    glow(
-        &ui.painter().with_clip_rect(stage.shrink(radius / 2.0)),
-        pos2(stage.center().x, stage.top() + stage.height() * 0.3),
-        stage.size() * vec2(0.55, 0.5),
-        palette
-            .accent
-            .gamma_multiply(if palette.dark { 0.08 } else { 0.06 }),
     );
     let link = theme::animate(
         ui.ctx(),
@@ -1819,11 +1777,8 @@ fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step, opened: f32)
         let mut layer = ui.new_child(UiBuilder::new().id_salt("setup-preview").max_rect(stage));
         layer.set_clip_rect(stage);
         layer.multiply_opacity(1.0 - link);
-        let margin = 36.0;
-        let width = stage.width() - margin * 2.0;
-        let height = (stage.height() - margin * 2.0).min(width * 0.8);
-        let window = Rect::from_center_size(stage.center(), vec2(width, height))
-            .translate(vec2(-24.0 * link, 0.0));
+        // The preview is the stage itself, with no window frame round it.
+        let window = stage.translate(vec2(-24.0 * link, 0.0));
         let start = arrive::painted(ui);
         preview(app, &mut layer, window, step);
         // Each choice redraws the window from the top down, so the change
@@ -1902,6 +1857,40 @@ fn changed_for(ctx: &egui::Context, app: &App) -> f32 {
 
 /// The stage of the link step: the code to scan or type, or what the link
 /// is waiting for.
+/// The code ran out: say so, and a button for a new one. Nothing new is
+/// asked of WhatsApp until it is pressed, so an unattended window does not
+/// keep cycling codes.
+fn expired_note(app: &mut App, ui: &mut egui::Ui) {
+    let palette = app.palette;
+    let locale = app.locale;
+    ui.vertical_centered(|ui| {
+        theme::text(
+            ui,
+            gettext(locale, "The code expired"),
+            theme::semibold(theme::TEXT_SECTION),
+            palette.text,
+        );
+        ui.add_space(theme::SPACE_XS);
+        theme::text(
+            ui,
+            gettext(locale, "Make a new one when your phone is ready."),
+            theme::regular(theme::TEXT_CAPTION),
+            palette.secondary,
+        );
+        ui.add_space(theme::SPACE_L);
+        if primary_button(
+            ui,
+            &palette,
+            &gettext(locale, "New code"),
+            Some(Icon::Refresh),
+        )
+        .clicked()
+        {
+            app.actions.push(Action::Reconnect);
+        }
+    });
+}
+
 fn link_stage(app: &mut App, ui: &mut egui::Ui, stage: Rect) {
     let palette = app.palette;
     let locale = app.locale;
@@ -1946,6 +1935,26 @@ fn link_stage(app: &mut App, ui: &mut egui::Ui, stage: Rect) {
                 palette.secondary,
             );
         }
+        Linking::Expired => {
+            // Where the code was: its frame, empty, and a way to a new one.
+            let side = (stage.width().min(stage.height()) * 0.56).clamp(200.0, 300.0);
+            let tile = Rect::from_center_size(stage.center() - vec2(0.0, 30.0), Vec2::splat(side));
+            ui.painter().rect(
+                tile,
+                f32::from(theme::RADIUS_CARD),
+                palette.surface.gamma_multiply(0.5),
+                Stroke::new(1.0, palette.outline),
+                egui::StrokeKind::Inside,
+            );
+            // The note is about 110 points tall: a title, a line, a button.
+            let note = Rect::from_center_size(tile.center(), vec2(tile.width() - 32.0, 110.0));
+            ui.scope_builder(
+                UiBuilder::new()
+                    .max_rect(note)
+                    .layout(Layout::top_down(Align::Center)),
+                |ui| expired_note(app, ui),
+            );
+        }
         Linking::Failed(_) => {
             let disc = stage.center() - vec2(0.0, 18.0);
             ui.painter()
@@ -1975,10 +1984,10 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
     let palette = app.palette;
     let locale = app.locale;
     let text = |source: &'static str| gettext(locale, source).into_owned();
-    let radius = 16.0;
-    let r = radius as u8;
+    // Square and unframed: the preview fills the stage to the window's edges.
+    let radius = 0.0;
+    let r = 0;
     let painter = ui.painter().clone();
-    painter.add(palette.float_shadow().as_shape(window, radius));
     painter.rect_filled(window, radius, palette.window);
 
     // The rail.
@@ -2280,7 +2289,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         (text("Did you see the new themes?"), false),
         (text("Trying them all right now"), true),
         (text("Which one are you keeping?"), false),
-        (text("Dark, for now"), true),
+        (text("This one, for now"), true),
     ];
     for (body, own) in messages {
         let colours = palette.on_bubble(own);
@@ -2356,13 +2365,6 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         15.0,
         palette.on_accent,
     );
-    painter.rect_stroke(
-        window,
-        radius,
-        Stroke::new(1.0, palette.outline),
-        egui::StrokeKind::Inside,
-    );
-
     // On the notifications step, a notification drops in over the corner,
     // saying what the choices let it say.
     let shown = theme::animate(
@@ -2383,9 +2385,11 @@ fn notification(app: &App, ui: &mut egui::Ui, window: Rect, shown: f32) {
     let locale = app.locale;
     let size = vec2(272.0, 68.0);
     let card = Rect::from_min_size(
+        // Inside the preview's top right corner, as a desktop notification
+        // lands, now that the preview runs to the window's edges.
         pos2(
-            window.right() - size.x + 18.0,
-            window.top() - 18.0 - 12.0 * (1.0 - shown),
+            window.right() - size.x - theme::SPACE_L,
+            window.top() + theme::SPACE_L - 12.0 * (1.0 - shown),
         ),
         size,
     );
