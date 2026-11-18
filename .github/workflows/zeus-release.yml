@@ -170,7 +170,6 @@ jobs:
         run: |
           mkdir -p dist/macos-input
           bash packaging/macos/bundle-zeus.sh universal/zeus dist/macos-input/Zeus.app "${TAG#v}"
-          cp README.md LICENSE THIRD-PARTY-NOTICES.md dist/macos-input/
           native-packages --config "$CONFIG" build --version "${TAG#v}" \
             --target macos-universal --defer-recipes --output "$RUNNER_TEMP/macos-packages"
           cp "$RUNNER_TEMP/macos-packages/packages/macos-universal/dmg/"*.dmg dist/

@@ -92,7 +92,7 @@ targets:
       kind: directory
       local: dist/macos-input
     native:
-      command: [ruby, packaging/macos/dmg.rb, '@PAYLOAD@', '@PACKAGE@']
+      command: [ruby, packaging/macos/dmg-zeus.rb, '@PAYLOAD@', '@PACKAGE@']
       output: 'zeus-@TAG@-macos-universal.dmg'
   linux-amd64:
     platform: linux

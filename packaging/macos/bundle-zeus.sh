@@ -35,6 +35,10 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/zeus.icns"
 cp "$here/../../assets/sounds/receive.wav" "$app/Contents/Resources/zapfast-receive.wav"
 cp "$here/../../assets/sounds/alert.wav" "$app/Contents/Resources/zapfast-alert.wav"
 
+# The licence and notices ship inside the app, so the DMG shows only the app
+# and the Applications link.
+cp "$here/../../LICENSE" "$here/../../THIRD-PARTY-NOTICES.md" "$app/Contents/Resources/"
+
 codesign --force --entitlements "$here/entitlements.plist" --sign - "$app"
 codesign --verify --strict "$app"
 echo "$app"
