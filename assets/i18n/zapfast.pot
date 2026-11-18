@@ -2895,6 +2895,10 @@ msgstr ""
 msgid "Account {id}"
 msgstr ""
 
+#: src/ui/settings/account_card.rs:33
+msgid "Profile"
+msgstr ""
+
 #: src/ui/accounts.rs:33
 msgid "Switch account"
 msgstr ""

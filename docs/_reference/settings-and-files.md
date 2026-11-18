@@ -97,9 +97,17 @@ attach the archive, keys, or full logs from older releases.
 
 ## Settings
 
-Changes on the Settings page are saved to `settings.json` immediately. The
-search field at the top (`Ctrl+F`, Command+F on macOS) finds a setting by its
-name or description, in the interface language or in English.
+Changes on the Settings page are saved to `settings.json` immediately.
+
+The column on the left lists the categories. At the top is a search field
+(`Ctrl+F`, Command+F on macOS). Under it is a card for the account on screen:
+your picture, your name, your phone number, and a chevron. Click the card to
+open the account switcher. The categories are listed under the card. Search
+finds a setting by its name or description, in the interface language or in
+English.
+
+The page beside that column has a slightly greyer background. Each group of
+rows sits in its own white rounded card.
 
 **Appearance**
 

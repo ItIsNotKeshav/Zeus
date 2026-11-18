@@ -18,6 +18,7 @@ use crate::wallpaper;
 
 use super::widgets;
 
+mod account_card;
 mod appearance;
 
 /// The settings search field, which Ctrl+F focuses on this page.
@@ -115,6 +116,10 @@ enum Control {
     Separator,
     /// A collapsible group of rows (see [`Section::accordion`]).
     Group(Group),
+    /// The name of a section folded into another (see [`Section::absorb`]).
+    /// On a card it heads the rows after it; alone on the page it sits on
+    /// the page between two cards.
+    Subheading(Text),
 }
 
 /// An accordion: a header with a chevron over rows that show when open.
@@ -225,17 +230,12 @@ impl Section {
     /// Another section's rows at the foot of this one, under its name as a
     /// subheading. A search for that name still finds all of them.
     fn absorb(&mut self, other: Section) {
-        let shown = other.title.shown.clone();
-        self.block(vec![other.title.clone()], move |ui, app| {
-            ui.add_space(crate::theme::SPACE_M);
-            theme::text(
-                ui,
-                shown.as_ref(),
-                theme::semibold(theme::TEXT_SECTION),
-                app.palette.text,
-            );
-            ui.add_space(crate::theme::SPACE_XS);
-        });
+        let row = Row {
+            keywords: vec![other.title.clone()],
+            ..Row::default()
+        };
+        self.entries
+            .push((row, Control::Subheading(other.title.clone())));
         self.entries
             .extend(other.entries.into_iter().map(|(mut row, control)| {
                 row.keywords.push(other.title.clone());
@@ -264,12 +264,28 @@ impl Section {
             return false;
         }
         let palette = app.palette;
-        let title = if titled { title.shown } else { "".into() };
-        // Room between settings, more on the open page than on a card.
-        let gap = if titled { ROW_GAP } else { PAGE_ROW_GAP };
-        section(ui, &palette, &title, |ui| {
-            draw_entries(ui, app, &palette, entries, gap);
-        });
+        if titled {
+            section(ui, &palette, &title.shown, |ui| {
+                draw_entries(ui, app, &palette, entries, ROW_GAP);
+            });
+            return true;
+        }
+        // Alone under its own name the section is a stack of cards, one for
+        // each topic group, with a folded-in section's name on the page
+        // between them.
+        ui.add_space(theme::SPACE_S);
+        let mut run: Vec<(Row, Control)> = Vec::new();
+        for (row, control) in entries {
+            match control {
+                Control::Separator => page_card(ui, app, &palette, std::mem::take(&mut run)),
+                Control::Subheading(name) => {
+                    page_card(ui, app, &palette, std::mem::take(&mut run));
+                    page_subheading(ui, &palette, &name.shown);
+                }
+                control => run.push((row, control)),
+            }
+        }
+        page_card(ui, app, &palette, run);
         true
     }
 }
@@ -357,8 +373,43 @@ fn draw_entries(
                 ui.add_space(theme::SPACE_M);
             }
             Control::Group(group) => accordion(ui, app, palette, &row.title, group, gap),
+            Control::Subheading(name) => {
+                ui.add_space(theme::SPACE_M);
+                theme::text(
+                    ui,
+                    name.shown.as_ref(),
+                    theme::semibold(theme::TEXT_SECTION),
+                    palette.text,
+                );
+                ui.add_space(theme::SPACE_XS);
+            }
         }
     }
+}
+
+/// One card of settings on the page beside the list of categories: the rows
+/// between two hairlines of the section, padded in from the card's edges.
+/// Nothing is drawn for no rows.
+fn page_card(ui: &mut egui::Ui, app: &mut App, palette: &Palette, entries: Vec<(Row, Control)>) {
+    if entries.is_empty() {
+        return;
+    }
+    card_frame(palette).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        draw_entries(ui, app, palette, entries, PAGE_ROW_GAP);
+    });
+    ui.add_space(CARD_GAP);
+}
+
+/// A folded-in section's name on the page, above its card and in line with
+/// the text inside it.
+fn page_subheading(ui: &mut egui::Ui, palette: &Palette, name: &str) {
+    ui.add_space(theme::SPACE_S);
+    ui.horizontal(|ui| {
+        ui.add_space(f32::from(CARD_PAD_X));
+        theme::text(ui, name, theme::semibold(theme::TEXT_SECTION), palette.text);
+    });
+    ui.add_space(theme::SPACE_S);
 }
 
 /// The one settings group left open, so opening another closes it.
@@ -485,6 +536,14 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     // the right, still while the controls scroll, so every change shows
     // without scrolling back up to it.
     let page = ui.available_rect_before_wrap();
+    // The whole page, Appearance's preview column too, takes the tint the
+    // cards stand on, rounded as the card the page sits in.
+    let corners = if super::narrow(ui.ctx()) {
+        CornerRadius::ZERO
+    } else {
+        super::chat_card_corners(super::card_at_window_right(ui.ctx(), page))
+    };
+    ui.painter().rect_filled(page, corners, page_tint(&palette));
     let split = beside
         && !searching
         && all
@@ -669,7 +728,8 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(crate::theme::SPACE_S);
                 search(app, ui);
             });
-        ui.add_space(crate::theme::SPACE_XS);
+        account_card::show(app, ui);
+        ui.add_space(crate::theme::SPACE_M);
         let titles: Vec<Text> = sections(app)
             .into_iter()
             .map(|section| section.title)
@@ -755,8 +815,9 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
 
 /// Extra room between settings on a card.
 const ROW_GAP: f32 = 8.0;
-/// Extra room between settings on the page beside the list of categories.
-const PAGE_ROW_GAP: f32 = 18.0;
+/// Extra room between settings on a card on the page beside the list of
+/// categories.
+const PAGE_ROW_GAP: f32 = 14.0;
 
 /// Widest the settings column grows.
 const COLUMN_WIDTH: f32 = 640.0;
@@ -2629,43 +2690,65 @@ fn storage_bar_row(
     ui.add_space(crate::theme::SPACE_S);
 }
 
-/// A titled group of settings on a rounded card, or untitled on the page.
+/// A titled group of settings on a rounded card, as a search or a narrow
+/// window shows them: the section's name on the page, its rows on the card.
 fn section(
     ui: &mut egui::Ui,
     palette: &Palette,
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) {
-    // A section alone under its own name, beside the list of them, needs
-    // no card to set it apart: its rows sit straight on the page.
-    let frame = if title.is_empty() {
-        Frame::new().inner_margin(Margin {
-            left: 0,
-            right: 0,
-            top: 8,
-            bottom: 6,
-        })
-    } else {
+    if !title.is_empty() {
         ui.add_space(12.0);
         theme::text(ui, title, theme::bold(theme::TEXT_SECTION), palette.text);
         ui.add_space(8.0);
-        Frame::new()
-            .fill(theme::blend(palette.panel, palette.surface, 0.5))
-            .stroke(Stroke::new(1.0, palette.outline))
-            .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-            // Every row ends with its own gap, so the bottom margin is smaller.
-            .inner_margin(Margin {
-                left: 20,
-                right: 20,
-                top: 16,
-                bottom: 6,
-            })
-    };
-    frame.show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        add_contents(ui);
-    });
+    }
+    card_frame(palette)
+        .stroke(Stroke::new(1.0, palette.outline))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add_contents(ui);
+        });
     ui.add_space(crate::theme::SPACE_S);
+}
+
+/// Room on either side of the rows inside a settings card.
+const CARD_PAD_X: i8 = 20;
+/// Space between two cards of settings on the page.
+const CARD_GAP: f32 = 16.0;
+
+/// A rounded card for settings, in the panel's lightest colour, with room
+/// around its rows. Every row ends with its own gap, so the bottom margin is
+/// smaller than the top.
+fn card_frame(palette: &Palette) -> Frame {
+    Frame::new()
+        .fill(card_fill(palette))
+        .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
+        .inner_margin(Margin {
+            left: CARD_PAD_X,
+            right: CARD_PAD_X,
+            top: 16,
+            bottom: 8,
+        })
+}
+
+/// What a settings card is filled with: halfway from the panel to the
+/// raised surface, which is white in the light looks and a step lighter
+/// than the page in the dark ones.
+fn card_fill(palette: &Palette) -> Color32 {
+    theme::blend(palette.panel, palette.surface, 0.5)
+}
+
+/// Laid over the pane's own colour behind the settings, so their cards
+/// stand out from it: a hair of the text colour in a light look (a touch
+/// greyer than the panel), a shade of black in a dark one. It is
+/// translucent, so a glass pane stays glass.
+fn page_tint(palette: &Palette) -> Color32 {
+    if palette.dark {
+        Color32::from_black_alpha(56)
+    } else {
+        palette.text.gamma_multiply(0.035)
+    }
 }
 
 /// Our WhatsApp profile, which can be edited in place, and unlinking.

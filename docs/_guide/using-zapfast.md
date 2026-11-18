@@ -849,7 +849,11 @@ A floating tab bar at the foot of the chat list holds **Chats**, **Calls**
 (`Ctrl+Shift+1` and `Ctrl+Shift+2`, Command on macOS), **Profile** (your own
 picture, which opens the account switcher upward) and **Settings**. The one on
 screen is lit. The same bar sits under Settings' categories and the Calls
-list, and under the list alone in a narrow window. The chat list's title is a
+list, and under the list alone in a narrow window. Under the search field in
+that column, a card shows your picture, name, and phone number, with a
+chevron. Click the card to open the account switcher. The page beside the
+categories is slightly greyer, and each group of rows sits in a white rounded
+card. The chat list's title is a
 menu: **Chats**, **Starred**, **Archived** (with its unread count) and **Locked
 chats** (while you have any). It names what the list shows, so there is no Back
 button. Next to it is **New chat**. To hide the list, drag its border to the
