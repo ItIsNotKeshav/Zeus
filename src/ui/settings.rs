@@ -683,13 +683,16 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 ui.add_space(crate::theme::SPACE_S);
                 search(app, ui);
             });
-        account_card::show(app, ui);
-        ui.add_space(crate::theme::SPACE_M);
         let titles: Vec<Text> = sections(app)
             .into_iter()
             .map(|section| section.title)
             .collect();
         let current = app.settings_section.min(titles.len().saturating_sub(1));
+        // The account card opens the Account page, so the list leaves its row
+        // out and the card is lit while that page is on screen.
+        let account = titles.iter().position(|title| title.source == "Account");
+        account_card::show(app, ui, account, account == Some(current));
+        ui.add_space(crate::theme::SPACE_M);
         egui::ScrollArea::vertical()
             .id_salt("settings-categories")
             .auto_shrink([false, false])
@@ -703,6 +706,9 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                 );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
                     for (index, title) in titles.iter().enumerate() {
+                        if Some(index) == account {
+                            continue;
+                        }
                         let selected = index == current;
                         let (rect, response) = ui.allocate_exact_size(
                             vec2(ui.available_width(), CATEGORY_ROW),

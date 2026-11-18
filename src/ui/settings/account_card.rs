@@ -17,9 +17,12 @@ const CARD_PAD: f32 = 8.0;
 
 /// The card: our picture, then our name over our number, then a chevron.
 /// Without a name the number stands alone; without either it reads
-/// "Profile". A click opens the switcher the tab bar's Profile tab opens.
-/// Spans the width the categories below it do.
-pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
+/// "Profile". A click opens the Account page (`account`, its index among
+/// the settings sections), whose row the list leaves out; `selected` lights
+/// the card as the list lights the page on screen. Without an Account page
+/// it opens the switcher the tab bar's Profile tab opens. Spans the width
+/// the categories below it do.
+pub(super) fn show(app: &mut App, ui: &mut egui::Ui, account: Option<usize>, selected: bool) {
     let palette = app.palette;
     let me = app.me.clone().unwrap_or_default();
     let name = app
@@ -48,11 +51,18 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
     theme::reveal_focus(&response);
     theme::focus_outline(ui, response.id, rect, 12.0);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), title.as_str())
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            title.as_str(),
+        )
     });
     if ui.is_rect_visible(rect) {
         let hover = super::super::chats::row_hover_amount(ui, response.id, response.hovered());
-        if hover > 0.0 {
+        if selected {
+            widgets::highlight_card(ui, &palette, rect, palette.surface_active);
+        } else if hover > 0.0 {
             ui.painter()
                 .rect_filled(rect, 12.0, palette.surface_hover.gamma_multiply(hover));
         }
@@ -105,6 +115,11 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
-        app.account_menu = true;
+        match account {
+            Some(index) => app
+                .actions
+                .push(crate::model::Action::OpenSettingsSection(index)),
+            None => app.account_menu = true,
+        }
     }
 }

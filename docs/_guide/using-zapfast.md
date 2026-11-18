@@ -851,7 +851,7 @@ picture, which opens the account switcher upward) and **Settings**. The one on
 screen is lit. The same bar sits under Settings' categories and the Calls
 list, and under the list alone in a narrow window. Under the search field in
 that column, a card shows your picture, name, and phone number, with a
-chevron. Click the card to open the account switcher. The page beside the
+chevron. Click the card to open the Account page, which has no row of its own in the list. The page beside the
 categories is slightly greyer, and each group of rows sits in a white rounded
 card. The chat list's title is a
 menu: **Chats**, **Starred**, **Archived** (with its unread count) and **Locked

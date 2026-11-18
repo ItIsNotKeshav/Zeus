@@ -102,7 +102,8 @@ Changes on the Settings page are saved to `settings.json` immediately.
 The column on the left lists the categories. At the top is a search field
 (`Ctrl+F`, Command+F on macOS). Under it is a card for the account on screen:
 your picture, your name, your phone number, and a chevron. Click the card to
-open the account switcher. The categories are listed under the card. Search
+open the Account page; Account has no row of its own in the list. The
+categories are listed under the card. Search
 finds a setting by its name or description, in the interface language or in
 English.
 
