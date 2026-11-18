@@ -1816,6 +1816,10 @@ fastframe_icons::icons! {
         Sun => lucide "sun",
         SunFill => "sun-fill",
         Tag => "tag",
+        // The tab bar's own icons, drawn at stroke 1.5 where the rest use 2.
+        TabCalls => "tab-phone",
+        TabChats => "tab-message-circle",
+        TabSettings => "tab-settings",
         Trash => lucide "trash-2",
         Undo => "undo-2",
         User => lucide "user",

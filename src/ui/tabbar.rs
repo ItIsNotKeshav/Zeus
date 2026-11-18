@@ -269,7 +269,7 @@ fn bar(app: &mut App, ui: &mut egui::Ui, pill: Rect, frosted: bool) {
             );
         }
         if tab != Tab::Profile && ui.is_rect_visible(cell) {
-            paint_tab(app, ui, tab, cell, &response, on_screen == tab, hover);
+            paint_tab(app, ui, tab, cell, &response);
         }
         let response = response.tab_stop(tab.stop());
         if tab != Tab::Profile && response.clicked() {
@@ -293,10 +293,112 @@ fn destination(tab: Tab) -> Destination {
 /// The icon a tab other than Profile shows.
 fn icon(tab: Tab) -> Icon {
     match tab {
-        Tab::Calls => Icon::Phone,
-        Tab::Settings => Icon::Settings,
-        Tab::Chats | Tab::Profile => Icon::MessageCircle,
+        Tab::Calls => Icon::TabCalls,
+        Tab::Settings => Icon::TabSettings,
+        Tab::Chats | Tab::Profile => Icon::TabChats,
     }
+}
+
+/// Seconds the chat bubble's tilt takes.
+const WOBBLE_SECONDS: f32 = 0.35;
+/// Seconds the phone's ringing shake takes.
+const RING_SECONDS: f32 = 0.42;
+/// Seconds the gear takes to turn, in either direction.
+const GEAR_SECONDS: f32 = 0.35;
+/// How far the gear turns while hovered.
+const GEAR_TURN: f32 = 60.0 * std::f32::consts::PI / 180.0;
+/// Seconds our avatar takes to grow, and to shrink back.
+const AVATAR_SECONDS: f32 = 0.15;
+/// How much larger our avatar is while hovered.
+const AVATAR_GROW: f32 = 0.06;
+/// The scale of a pressed tab.
+const PRESSED: f32 = 0.92;
+/// Where the bubble's tail is in its icon, as a share of its size: the
+/// tilt turns about it.
+const TAIL: egui::Vec2 = egui::vec2(0.08, 0.92);
+
+fn radians(degrees: f32) -> f32 {
+    degrees * std::f32::consts::PI / 180.0
+}
+
+/// The chat bubble's tilt in radians, `t` (0 to 1) through its play: a
+/// damped swing, first back about 10 degrees, then forward about 5, and
+/// at rest again (0) at the end. Never past 13 degrees.
+fn wobble(t: f32) -> f32 {
+    if t <= 0.0 || t >= 1.0 {
+        return 0.0;
+    }
+    -radians(13.0) * (std::f32::consts::TAU * t).sin() * (-1.1 * t).exp()
+}
+
+/// The phone's shake in radians, `t` (0 to 1) through its play: three
+/// swings dying away, about 12 degrees at first, at rest at the end. Never
+/// past 13 degrees.
+fn ring(t: f32) -> f32 {
+    if t <= 0.0 || t >= 1.0 {
+        return 0.0;
+    }
+    radians(13.0) * (3.0 * std::f32::consts::TAU * t).sin() * (1.0 - t)
+}
+
+/// The spring a tab follows to its pressed scale: quick, no bounce.
+const PRESS_DOWN: crate::motion::Spring = crate::motion::Spring::settling_in(0.1);
+/// The spring a released tab follows back to 1: it passes it by about 3%.
+const PRESS_UP: crate::motion::Spring = crate::motion::Spring::new(0.12, 0.7);
+
+/// A tab's scale while the pointer presses it: 0.92 on the way down, then
+/// back to 1 with a little overshoot. Only a pointer presses; a key's
+/// activation never reaches here.
+pub(super) fn press_scale(ctx: &egui::Context, id: egui::Id, down: bool) -> f32 {
+    let spring = if down { PRESS_DOWN } else { PRESS_UP };
+    let target = if down { PRESSED } else { 1.0 };
+    crate::motion::spring_to(ctx, id.with("tab-press"), target, spring)
+}
+
+/// What a hover's one-shot play remembers between frames.
+#[derive(Clone, Copy)]
+struct Play {
+    start: f64,
+    hovered: bool,
+}
+
+/// How far a one-shot play, begun when the pointer enters, has run: 0 to 1,
+/// and 1 at rest (also while motion is reduced). A play under way finishes
+/// before another starts. Asks for frames only while it runs.
+fn hover_play(ctx: &egui::Context, id: egui::Id, hovered: bool, seconds: f32) -> f32 {
+    let seconds = f64::from(theme::motion_time(ctx, seconds));
+    if seconds <= 0.0 {
+        return 1.0;
+    }
+    let now = ctx.input(|input| input.time);
+    let id = id.with("tab-play");
+    let mut play = ctx.data(|data| data.get_temp::<Play>(id)).unwrap_or(Play {
+        start: f64::NEG_INFINITY,
+        hovered: false,
+    });
+    let running = now - play.start < seconds;
+    if hovered && !play.hovered && !running {
+        play.start = now;
+    }
+    play.hovered = hovered;
+    ctx.data_mut(|data| data.insert_temp(id, play));
+    let progress = ((now - play.start) / seconds).clamp(0.0, 1.0) as f32;
+    if progress < 1.0 {
+        crate::motion::request_frame(ctx);
+    }
+    progress
+}
+
+/// The scale of our avatar's tab: grown while the pointer is over it, shrunk
+/// and sprung back as it is pressed.
+pub(super) fn avatar_scale(ctx: &egui::Context, response: &egui::Response) -> f32 {
+    let grow = ctx.animate_bool_with_time_and_easing(
+        response.id.with("tab-grow"),
+        response.hovered(),
+        theme::motion_time(ctx, AVATAR_SECONDS),
+        egui::emath::easing::cubic_out,
+    );
+    (1.0 + AVATAR_GROW * grow) * press_scale(ctx, response.id, response.is_pointer_button_down_on())
 }
 
 /// What a waiting release says on Settings, which shows it, while there is
@@ -351,31 +453,40 @@ fn tab_response(app: &App, ui: &egui::Ui, tab: Tab, cell: Rect, lit: bool) -> eg
     response.on_hover_text(label)
 }
 
-/// A tab's icon in its `cell`: in the text colour while lit or under the
-/// pointer, the secondary one otherwise, a little smaller while pressed. A
-/// dot on Settings says a release is waiting there.
-fn paint_tab(
-    app: &App,
-    ui: &egui::Ui,
-    tab: Tab,
-    cell: Rect,
-    response: &egui::Response,
-    lit: bool,
-    hover: f32,
-) {
+/// A tab's icon in its `cell`, in the text colour, thin. Under the pointer
+/// it plays its own motion (the bubble tilts, the phone rings, the gear
+/// turns), and pressed it shrinks and springs back. A dot on Settings says a
+/// release is waiting there.
+fn paint_tab(app: &App, ui: &egui::Ui, tab: Tab, cell: Rect, response: &egui::Response) {
     let palette = &app.palette;
     let ctx = ui.ctx();
-    let on = theme::animate(ctx, response.id.with("lit"), lit, theme::MOTION_QUICK);
-    let press = theme::animate(
-        ctx,
-        response.id.with("tab-press"),
-        response.is_pointer_button_down_on(),
-        theme::MOTION_QUICK,
-    );
-    let strength = on.max(hover);
-    let tint = palette.secondary.lerp_to_gamma(palette.text, strength);
-    let size = ICON * (1.0 - 0.08 * press);
-    theme::paint_icon(ui, icon(tab), cell, size, tint);
+    // The pointer only: a focused tab, or one a key activates, stays still.
+    let hovered = response.hovered();
+    let (angle, origin) = match tab {
+        Tab::Chats | Tab::Profile => (
+            wobble(hover_play(ctx, response.id, hovered, WOBBLE_SECONDS)),
+            TAIL,
+        ),
+        Tab::Calls => (
+            ring(hover_play(ctx, response.id, hovered, RING_SECONDS)),
+            egui::vec2(0.5, 0.5),
+        ),
+        Tab::Settings => {
+            let turn = ctx.animate_bool_with_time_and_easing(
+                response.id.with("tab-turn"),
+                hovered,
+                theme::motion_time(ctx, GEAR_SECONDS),
+                egui::emath::easing::cubic_out,
+            );
+            (GEAR_TURN * turn, egui::vec2(0.5, 0.5))
+        }
+    };
+    let size = ICON * press_scale(ctx, response.id, response.is_pointer_button_down_on());
+    let rect = Rect::from_center_size(cell.center(), vec2(size, size));
+    icon(tab)
+        .image(palette.text, size)
+        .rotate(angle, origin)
+        .paint_at(ui, rect);
     if tab == Tab::Settings && app.update.is_some() {
         // Ringed in the pill's colour, so it stands off the gear.
         let at = cell.center() + vec2(ICON / 2.0 - 1.0, -ICON / 2.0 + 1.0);
@@ -398,6 +509,61 @@ mod tests {
         )
         .0;
         (root, app)
+    }
+
+    fn samples() -> impl Iterator<Item = f32> {
+        (0..=200).map(|step| step as f32 / 200.0)
+    }
+
+    /// The bubble's tilt starts and ends at rest, goes back about 10 degrees
+    /// first and forward about 5 after, and never past 13.
+    #[test]
+    fn the_wobble_rests_at_both_ends_and_stays_bounded() {
+        assert_eq!(wobble(0.0), 0.0);
+        assert_eq!(wobble(1.0), 0.0);
+        assert_eq!(wobble(2.0), 0.0);
+        let low = samples().map(wobble).fold(0.0, f32::min);
+        let high = samples().map(wobble).fold(0.0, f32::max);
+        assert!((radians(9.0)..=radians(13.0)).contains(&-low), "{low}");
+        assert!((radians(4.0)..=radians(7.0)).contains(&high), "{high}");
+        assert!(wobble(0.1) < 0.0, "back first");
+    }
+
+    /// The phone's shake rests at both ends, swings both ways three times,
+    /// and stays within 13 degrees.
+    #[test]
+    fn the_ring_rests_at_both_ends_and_stays_bounded() {
+        assert_eq!(ring(0.0), 0.0);
+        assert_eq!(ring(1.0), 0.0);
+        let peak = samples().map(|t| ring(t).abs()).fold(0.0, f32::max);
+        assert!(
+            peak <= radians(13.0) + 1e-6 && peak >= radians(10.0),
+            "{peak}"
+        );
+        let crossings = samples()
+            .map(ring)
+            .collect::<Vec<_>>()
+            .windows(2)
+            .filter(|pair| pair[0] * pair[1] < 0.0)
+            .count();
+        assert!((4..=6).contains(&crossings), "{crossings}");
+    }
+
+    /// A press settles on 0.92, a release springs back past 1 by about
+    /// 3% and comes to rest on it.
+    #[test]
+    fn a_press_shrinks_and_a_release_springs_back_with_overshoot() {
+        let down = |t: f64| PRESSED + (1.0 - PRESSED) * (1.0 - PRESS_DOWN.value(t));
+        let up = |t: f64| PRESSED + (1.0 - PRESSED) * PRESS_UP.value(t);
+        assert!((down(0.0) - 1.0).abs() < 1e-6);
+        assert!((down(2.0) - PRESSED).abs() < 1e-3);
+        assert!(samples().all(|t| down(f64::from(t) * 0.3) >= PRESSED - 1e-3));
+        assert!((up(0.0) - PRESSED).abs() < 1e-6);
+        assert!((up(3.0) - 1.0).abs() < 1e-6, "at rest on 1");
+        let peak = samples()
+            .map(|t| up(f64::from(t) * 0.5))
+            .fold(0.0, f32::max);
+        assert!((1.01..=1.05).contains(&peak), "{peak}");
     }
 
     /// A list column `width` by `height` points at the window's top left.

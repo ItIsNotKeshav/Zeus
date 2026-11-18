@@ -81,12 +81,26 @@ pub fn tab_button(
         // Always the same size: a picture that shrank as it was pressed
         // would be fetched at every size it passed through.
         let avatar = Rect::from_center_size(cell.center(), Vec2::splat(TAB_AVATAR));
+        // Grown under the pointer and shrunk while pressed by scaling what is
+        // painted, picture and dot together, about the cell's centre.
+        let scale = super::tabbar::avatar_scale(ui.ctx(), &response);
+        let layer = ui.layer_id();
+        let first = ui.ctx().graphics_mut(|g| g.entry(layer).next_idx());
         widgets::paint_avatar(ui, &palette, avatar, &name, &me, picture.as_deref());
         if elsewhere > 0 {
             // Ringed in the bar's colour so it reads on any picture.
             let at = avatar.right_top() + vec2(-2.0, 2.0);
             ui.painter().circle_filled(at, 6.0, palette.overlay);
             ui.painter().circle_filled(at, 4.5, palette.accent_fill);
+        }
+        if (scale - 1.0).abs() > 1e-4 {
+            let about = cell.center().to_vec2();
+            let transform = egui::emath::TSTransform::new(about * (1.0 - scale), scale);
+            ui.ctx().graphics_mut(|g| {
+                let list = g.entry(layer);
+                let end = list.next_idx();
+                list.transform_range(first, end, transform);
+            });
         }
     }
     let response = response
