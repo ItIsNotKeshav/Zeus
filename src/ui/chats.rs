@@ -1782,6 +1782,47 @@ mod row_motion_tests {
     use super::*;
 
     #[test]
+    fn preview_glyph_follows_the_kind_of_message() {
+        use crate::model::{CallStatus, Content};
+        let call = |video, status| Content::Call {
+            video,
+            status,
+            duration: 0,
+            group: false,
+        };
+        assert_eq!(
+            preview_icon(&call(false, CallStatus::Missed)),
+            Some((Icon::PhoneMissed, true))
+        );
+        assert_eq!(
+            preview_icon(&call(true, CallStatus::Missed)),
+            Some((Icon::Video, true))
+        );
+        assert_eq!(
+            preview_icon(&call(false, CallStatus::Answered)),
+            Some((Icon::Phone, false))
+        );
+        assert_eq!(
+            preview_icon(&Content::Location {
+                latitude: 0.0,
+                longitude: 0.0,
+                name: None,
+                address: None,
+            }),
+            Some((Icon::MapPin, false))
+        );
+        assert_eq!(
+            preview_icon(&Content::Poll {
+                question: String::new(),
+                options: Vec::new(),
+                state: Default::default(),
+            }),
+            Some((Icon::ListChecks, false))
+        );
+        assert_eq!(preview_icon(&Content::Revoked), None);
+    }
+
+    #[test]
     fn glide_runs_from_the_old_place_to_none() {
         assert_eq!(row_flip_shift(80.0, 0.0), 80.0);
         let middle = row_flip_shift(80.0, 0.1);
@@ -2892,6 +2933,22 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
                 sender.paint(ui, pos2(x, line_y), preview_color);
                 x += width;
             }
+            // A small glyph for the kind of message leads the words, after
+            // the ticks and the sender, as WhatsApp draws it. A missed call's
+            // glyph is red; the words stay grey.
+            if let Some((icon, missed)) = preview_icon(&last.content) {
+                let color = if missed {
+                    palette.danger
+                } else {
+                    preview_color
+                };
+                let icon_rect = Rect::from_center_size(
+                    pos2(x + PREVIEW_ICON / 2.0, line_y + 8.0),
+                    Vec2::splat(PREVIEW_ICON),
+                );
+                icon.image(color, PREVIEW_ICON).paint_at(ui, icon_rect);
+                x += PREVIEW_ICON + PREVIEW_ICON_GAP;
+            }
             let words = widgets::line(
                 ui,
                 &crate::markup::plain(
@@ -3075,6 +3132,46 @@ const FULL_PREVIEW_ROWS: usize = 12;
 /// Characters of a message the tooltip lays out: far more than its rows
 /// hold, so a very long message costs no more than a long one.
 const FULL_PREVIEW_CHARS: usize = 2_000;
+
+/// Size of the kind glyph that leads a chat row's preview, in points.
+const PREVIEW_ICON: f32 = 14.0;
+/// Space between that glyph and the preview words.
+const PREVIEW_ICON_GAP: f32 = 4.0;
+
+/// The glyph that leads a chat row's preview for a kind of message, and
+/// whether it is drawn in the danger colour (a missed call). Plain text and
+/// the other notices have none.
+pub fn preview_icon(content: &crate::model::Content) -> Option<(Icon, bool)> {
+    use crate::model::{CallStatus, Content};
+    Some(match content {
+        Content::Image { .. } => (Icon::Image, false),
+        Content::Video { gif: true, .. } => (Icon::Gif, false),
+        Content::Video { .. } => (Icon::Video, false),
+        Content::Audio {
+            voice_note: true, ..
+        } => (Icon::Mic, false),
+        Content::Audio { .. } => (Icon::Music, false),
+        Content::Document { .. } => (Icon::FileText, false),
+        Content::Sticker { .. } | Content::StickerPack { .. } => (Icon::Sticker, false),
+        Content::Location { .. } | Content::LiveLocation { .. } => (Icon::MapPin, false),
+        Content::Contact { .. } => (Icon::Contact, false),
+        Content::Poll { .. } => (Icon::ListChecks, false),
+        Content::Call {
+            video,
+            status: CallStatus::Missed,
+            ..
+        } => (
+            if *video {
+                Icon::Video
+            } else {
+                Icon::PhoneMissed
+            },
+            true,
+        ),
+        Content::Call { video, .. } => (if *video { Icon::Video } else { Icon::Phone }, false),
+        _ => return None,
+    })
+}
 
 /// Where a chat row's latest-message preview sits, for hover tests.
 pub fn preview_id(chat: &str) -> egui::Id {
