@@ -74,6 +74,7 @@ pub(super) fn growable(ctx: &egui::Context) -> f32 {
 }
 
 /// Whether the window grew by what `id` asked for.
+#[cfg(test)]
 pub(super) fn grown(ctx: &egui::Context, id: egui::Id) -> bool {
     widened(ctx, id).is_some_and(|widened| inner_width(ctx) >= widened.to - 1.0)
 }

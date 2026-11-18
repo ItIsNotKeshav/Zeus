@@ -10364,19 +10364,29 @@ mod tests {
             initial
         );
         assert!(app.image_preview.as_ref().unwrap().is_fit());
-        preview_frame(
-            &mut app,
-            &ctx,
-            vec![egui::Event::PointerMoved(picture.center())],
-        );
-        let shown = frame_sized(&mut app, &ctx, 780.0, vec![]);
-        // The new photo as drawn in the same frame as its arrows.
-        let other = picture_rect(&shown);
-        let buttons = controls(&shown);
+        // The next photo decodes in the background at the viewer's size;
+        // until it arrives a smaller copy stands in. Measure it, and its
+        // arrows, in the same frame once it is there.
+        let mut other = egui::Rect::NOTHING;
+        let mut buttons = Vec::new();
+        for _ in 0..200 {
+            let shown = frame_sized(
+                &mut app,
+                &ctx,
+                780.0,
+                vec![egui::Event::PointerMoved(picture.center())],
+            );
+            other = picture_rect(&shown);
+            buttons = controls(&shown);
+            if buttons.len() == 2 && buttons.iter().all(|button| other.contains_rect(*button)) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert_eq!(buttons.len(), 2);
         assert!(
             buttons.iter().all(|button| other.contains_rect(*button)),
-            "the arrows follow the photo on screen"
+            "the arrows follow the photo on screen: {buttons:?} on {other:?}"
         );
         let previous = buttons[0].center();
         frame_sized(

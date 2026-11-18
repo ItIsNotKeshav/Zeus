@@ -1260,9 +1260,7 @@ pub(super) fn status_wake(
     if typing || !status_rows(messages, chat_kind, account_receipts_off, now, false).is_empty() {
         return None;
     }
-    let Some(newest_at) = messages.iter().rposition(outgoing_bubble) else {
-        return None;
-    };
+    let newest_at = messages.iter().rposition(outgoing_bubble)?;
     if messages[newest_at + 1..].iter().any(incoming_reply) {
         return None;
     }
@@ -1411,10 +1409,10 @@ fn sync_status_word(
 ) -> f32 {
     let id = status_leave_id(chat, message);
     let frame = ctx.cumulative_frame_nr();
-    if let Some((seen, value)) = ctx.data(|data| data.get_temp::<(u64, f32)>(id.with("frame"))) {
-        if seen == frame {
-            return value;
-        }
+    if let Some((seen, value)) = ctx.data(|data| data.get_temp::<(u64, f32)>(id.with("frame")))
+        && seen == frame
+    {
+        return value;
     }
     if let Some(text) = live {
         ctx.data_mut(|data| {
@@ -1461,10 +1459,10 @@ fn held_status(ctx: &egui::Context, chat: &str, message: &str) -> Option<(String
 fn sync_under_time(ctx: &egui::Context, chat: &str, message: &str, live: bool) -> f32 {
     let id = egui::Id::new(("under-time", chat, message));
     let frame = ctx.cumulative_frame_nr();
-    if let Some((seen, value)) = ctx.data(|data| data.get_temp::<(u64, f32)>(id.with("frame"))) {
-        if seen == frame {
-            return value;
-        }
+    if let Some((seen, value)) = ctx.data(|data| data.get_temp::<(u64, f32)>(id.with("frame")))
+        && seen == frame
+    {
+        return value;
     }
     if live {
         ctx.data_mut(|data| data.insert_temp(id.with("armed"), true));

@@ -358,6 +358,7 @@ fn settle(place: CustomAccent, rect: Rect) -> Action {
 }
 
 /// Dots and knob for a colour wheel already allocated in `rect`.
+#[allow(clippy::too_many_arguments)]
 fn draw_colour_wheel(
     ui: &mut egui::Ui,
     rect: Rect,
@@ -1750,10 +1751,7 @@ pub(super) fn more(ui: &mut egui::Ui, app: &mut App) {
         keywords: Vec::new(),
     };
     let interface = vec![
-        (
-            row("Language", ""),
-            Control::Row(Box::new(|ui, app| language_picker(ui, app))),
-        ),
+        (row("Language", ""), Control::Row(Box::new(language_picker))),
         (
             row("Always show time", ""),
             Control::Toggle(|settings| &mut settings.always_show_time),
@@ -1795,7 +1793,7 @@ pub(super) fn more(ui: &mut egui::Ui, app: &mut App) {
                 "Motion speed",
                 "Fast runs the chat's springs and animations in 70% of their time.",
             ),
-            Control::Row(Box::new(|ui, app| super::motion_picker(ui, app))),
+            Control::Row(Box::new(super::motion_picker)),
         ),
     ];
     let group = |title: &'static str, children| {
