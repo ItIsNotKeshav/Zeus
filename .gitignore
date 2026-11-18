@@ -2,7 +2,8 @@
 **/target/
 .idea/
 .vscode/
-.claude/
+.claude/*
+!.claude/skills/
 .direnv/
 
 /.cache/
