@@ -921,7 +921,7 @@ pub struct Settings {
     /// The colour of those doodles.
     pub doodle_color: DoodleColor,
     /// Where on the doodle colour map those doodles are inked when
-    /// [`doodle_color`] is [`DoodleColor::Custom`].
+    /// [`doodle_color`](Self::doodle_color) is [`DoodleColor::Custom`].
     pub doodle_custom: Option<crate::chat_themes::CustomAccent>,
     /// How strongly they show, as a multiple of the default (1.0).
     pub doodle_intensity: f32,

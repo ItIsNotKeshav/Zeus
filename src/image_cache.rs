@@ -323,7 +323,7 @@ pub fn fit_uri_within(ctx: &egui::Context, path: &Path, bounds: egui::Vec2) -> S
 /// Like [`fit_uri_within`], for a picture a viewer draws at an exact pixel
 /// size (already stepped by the caller): wholly within `width` by `height`
 /// pixels, decoded up to [`VIEWER_LONGEST`] on its longer edge instead of
-/// [`LONGEST`]. The photo viewer asks for the window's size and, once zoomed,
+/// `LONGEST`. The photo viewer asks for the window's size and, once zoomed,
 /// for more, so it never holds a texture bigger than what it paints.
 pub fn fit_uri_pixels(ctx: &egui::Context, path: &Path, width: u32, height: u32) -> String {
     let (width, height) = (
