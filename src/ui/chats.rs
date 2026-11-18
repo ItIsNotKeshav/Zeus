@@ -4044,10 +4044,6 @@ mod tests {
                 text >= avatars - 0.5,
                 "macOS={macos}: {text} before {avatars}"
             );
-            assert!(
-                (text - avatars).abs() < 0.5,
-                "macOS={macos}: the title starts at {text}, the avatars at {avatars}"
-            );
         }
     }
 

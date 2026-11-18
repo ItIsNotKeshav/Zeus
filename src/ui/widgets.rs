@@ -2946,9 +2946,10 @@ mod tests {
         ] {
             let knob = switch_knob(&palette);
             let track = palette.accent_fill;
-            // WhatsApp light's track is #51a768. A white knob on it is
-            // about 2.97:1, which is how the macOS app draws the switch.
-            if palette.whatsapp && !palette.dark {
+            // The WhatsApp palettes' track is #51a768 in both modes. A white
+            // knob on it is about 2.97:1, which is how the macOS app draws
+            // the switch.
+            if palette.whatsapp {
                 assert_eq!(knob, Color32::WHITE);
                 assert!(theme::contrast(knob, track) > 2.5, "{knob:?} on {track:?}");
                 continue;

@@ -10364,12 +10364,14 @@ mod tests {
             initial
         );
         assert!(app.image_preview.as_ref().unwrap().is_fit());
-        let other = preview_frame(
+        preview_frame(
             &mut app,
             &ctx,
             vec![egui::Event::PointerMoved(picture.center())],
         );
         let shown = frame_sized(&mut app, &ctx, 780.0, vec![]);
+        // The new photo as drawn in the same frame as its arrows.
+        let other = picture_rect(&shown);
         let buttons = controls(&shown);
         assert_eq!(buttons.len(), 2);
         assert!(
@@ -16417,7 +16419,9 @@ mod tests {
     #[test]
     fn a_quote_bar_takes_the_quoted_senders_colour() {
         let mut app = app();
-        apply_flags(&mut app, Some("quotes"));
+        // The WhatsApp look draws every quote bar in its one blue, so the
+        // sender's colour shows in the other looks.
+        apply_flags(&mut app, Some("quotes,nothing"));
         let ctx = egui::Context::default();
         app.attach(&ctx);
         let mut shapes = Vec::new();
@@ -19580,17 +19584,27 @@ mod bubble_detail_tests {
             apply_flags(&mut app, Some(page));
             let shapes = frames(&mut app, &ctx, SIZE);
             let chat = SAMPLES[0].id;
-            let meshes: Vec<egui::Rect> = shapes
-                .iter()
-                .filter_map(|clipped| match &clipped.shape {
+            // A balloon now comes inside its relief, a shape list with the
+            // shadow under it, so look inside lists too.
+            fn untextured(shape: &egui::Shape, into: &mut Vec<egui::Rect>) {
+                match shape {
                     egui::Shape::Mesh(mesh) if mesh.texture_id == egui::TextureId::default() => {
-                        Some(egui::Rect::from_points(
+                        into.push(egui::Rect::from_points(
                             &mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>(),
-                        ))
+                        ));
                     }
-                    _ => None,
-                })
-                .collect();
+                    egui::Shape::Vec(shapes) => {
+                        for shape in shapes {
+                            untextured(shape, into);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let mut meshes: Vec<egui::Rect> = Vec::new();
+            for clipped in &shapes {
+                untextured(&clipped.shape, &mut meshes);
+            }
             let out_past = |id: &str, own: bool| {
                 let bubble = rect(
                     &ctx,
@@ -20771,15 +20785,8 @@ mod rail_tests {
                 recorded(&ctx, crate::ui::chats::compact_chat_id(&first)).is_none(),
                 "{macos}: no avatars beside the full list"
             );
-            // The lights reach over the list header, whose title starts
-            // right of them.
-            if crate::theme::macos_chrome(&ctx) {
-                let title = ctx
-                    .read_response(crate::ui::chats::title_menu_id())
-                    .expect("the title menu is drawn")
-                    .rect;
-                assert!(title.left() + 8.0 >= crate::theme::traffic_light_inset(&ctx));
-            }
+            // The lights have a row of their own above the list header, so
+            // its title starts on the avatars' line rather than after them.
 
             let (app, ctx) = open("rail", macos);
             let rail = rail_rect(&ctx).expect("the rail is drawn with the list hidden");
@@ -20899,7 +20906,10 @@ mod rail_tests {
                         let response = ctx.read_response(id).unwrap();
                         let mut viewport = rail_rect(&ctx).unwrap();
                         if crate::theme::traffic_light_inset(&ctx) > 0.0 {
-                            viewport.min.y += crate::theme::TOP_BAR_HEIGHT / 2.0 + 12.0;
+                            // The lights' strip plus the rail's own top margin.
+                            viewport.min.y += crate::theme::TOP_BAR_HEIGHT / 2.0
+                                + crate::ui::chats::BASE_DROP
+                                - 4.0;
                         }
                         assert_eq!(
                             response.interact_rect, response.rect,

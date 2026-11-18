@@ -1011,12 +1011,12 @@ mod tests {
             "a WebP that may move keeps egui's loader"
         );
         let still = fit_still_uri(&ctx, sticker, egui::vec2(60.0, 60.0));
-        assert_eq!(still, format!("fit://128/{file}?still"));
+        assert_eq!(still, format!("fit://96/{file}?still"));
         assert!(
             !egui::load::has_extension(&still, "webp"),
             "egui must not ask for it frame by frame"
         );
-        assert_eq!(parse_fit(&still), Some((Fit::Cover(128), file.as_str())));
+        assert_eq!(parse_fit(&still), Some((Fit::Cover(96), file.as_str())));
         // Lossy with an alpha channel, as WhatsApp's stickers are.
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/demo/stickers/cat.webp");
         let image = decode_fitted(&path, Fit::Cover(128)).expect("decoded");

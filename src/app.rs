@@ -17995,6 +17995,9 @@ mod tests {
             palette: Palette::dark(),
         };
         first.palette.accent = egui::Color32::RED;
+        // A theme file never carries the WhatsApp look, so neither does its
+        // cached copy.
+        first.palette.whatsapp = false;
         app.custom_themes = Catalog::preview(vec![first.clone()], false);
         app.apply(Action::SetCustomTheme(first.filename.clone()), &ctx);
         assert_eq!(app.palette.accent, egui::Color32::RED);
