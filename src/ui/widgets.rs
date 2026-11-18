@@ -1111,7 +1111,7 @@ pub trait FrostedPopup {
     ) -> Option<egui::InnerResponse<R>>;
 
     /// [`FrostedPopup::show_frosted`] under the floating tab bar's tight
-    /// shadow ([`super::tabbar::shadow_layers`]).
+    /// shadow (`tabbar::shadow_layers`).
     fn show_tight<R>(
         self,
         ctx: &egui::Context,
