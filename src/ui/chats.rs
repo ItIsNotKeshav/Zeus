@@ -1783,43 +1783,42 @@ mod row_motion_tests {
 
     #[test]
     fn preview_glyph_follows_the_kind_of_message() {
-        use crate::model::{CallStatus, Content};
-        let call = |video, status| Content::Call {
-            video,
-            status,
-            duration: 0,
-            group: false,
+        let last = |summary: &str, labelled| crate::model::LastMessage {
+            from_me: false,
+            sender: String::new(),
+            sender_name: None,
+            summary: summary.to_owned(),
+            full: summary.to_owned(),
+            labelled,
+            status: Default::default(),
         };
         assert_eq!(
-            preview_icon(&call(false, CallStatus::Missed)),
+            preview_icon(&last("Missed voice call", true)),
             Some((Icon::PhoneMissed, true))
         );
         assert_eq!(
-            preview_icon(&call(true, CallStatus::Missed)),
+            preview_icon(&last("Missed video call", true)),
             Some((Icon::Video, true))
         );
         assert_eq!(
-            preview_icon(&call(false, CallStatus::Answered)),
+            preview_icon(&last("Voice call (1:02)", true)),
             Some((Icon::Phone, false))
         );
         assert_eq!(
-            preview_icon(&Content::Location {
-                latitude: 0.0,
-                longitude: 0.0,
-                name: None,
-                address: None,
-            }),
-            Some((Icon::MapPin, false))
+            preview_icon(&last("Video message", true)),
+            Some((Icon::Video, false))
         );
         assert_eq!(
-            preview_icon(&Content::Poll {
-                question: String::new(),
-                options: Vec::new(),
-                state: Default::default(),
-            }),
-            Some((Icon::ListChecks, false))
+            preview_icon(&last("Voice message (0:12)", true)),
+            Some((Icon::Mic, false))
         );
-        assert_eq!(preview_icon(&Content::Revoked), None);
+        assert_eq!(
+            preview_icon(&last("Location: home", true)),
+            Some((Icon::MapPin, false))
+        );
+        // A message whose own words read like a label gets no glyph.
+        assert_eq!(preview_icon(&last("Location: home", false)), None);
+        assert_eq!(preview_icon(&last("This message was deleted", true)), None);
     }
 
     #[test]
@@ -2936,7 +2935,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             // A small glyph for the kind of message leads the words, after
             // the ticks and the sender, as WhatsApp draws it. A missed call's
             // glyph is red; the words stay grey.
-            if let Some((icon, missed)) = preview_icon(&last.content) {
+            if let Some((icon, missed)) = preview_icon(last) {
                 let color = if missed {
                     palette.danger
                 } else {
@@ -3141,34 +3140,27 @@ const PREVIEW_ICON_GAP: f32 = 4.0;
 /// The glyph that leads a chat row's preview for a kind of message, and
 /// whether it is drawn in the danger colour (a missed call). Plain text and
 /// the other notices have none.
-pub fn preview_icon(content: &crate::model::Content) -> Option<(Icon, bool)> {
-    use crate::model::{CallStatus, Content};
-    Some(match content {
-        Content::Image { .. } => (Icon::Image, false),
-        Content::Video { gif: true, .. } => (Icon::Gif, false),
-        Content::Video { .. } => (Icon::Video, false),
-        Content::Audio {
-            voice_note: true, ..
-        } => (Icon::Mic, false),
-        Content::Audio { .. } => (Icon::Music, false),
-        Content::Document { .. } => (Icon::FileText, false),
-        Content::Sticker { .. } | Content::StickerPack { .. } => (Icon::Sticker, false),
-        Content::Location { .. } | Content::LiveLocation { .. } => (Icon::MapPin, false),
-        Content::Contact { .. } => (Icon::Contact, false),
-        Content::Poll { .. } => (Icon::ListChecks, false),
-        Content::Call {
-            video,
-            status: CallStatus::Missed,
-            ..
-        } => (
-            if *video {
-                Icon::Video
-            } else {
-                Icon::PhoneMissed
-            },
-            true,
-        ),
-        Content::Call { video, .. } => (if *video { Icon::Video } else { Icon::Phone }, false),
+pub fn preview_icon(last: &crate::model::LastMessage) -> Option<(Icon, bool)> {
+    if !last.labelled {
+        return None;
+    }
+    // The English label the summary starts with names the kind; the row only
+    // keeps the summary, not the message.
+    Some(match crate::model::summary_label_of(&last.summary)? {
+        "Photo" | "View once photo" => (Icon::Image, false),
+        "GIF" => (Icon::Gif, false),
+        "Video" | "Video message" | "View once video" => (Icon::Video, false),
+        "Voice message" | "View once voice message" => (Icon::Mic, false),
+        "Audio" | "View once audio" => (Icon::Music, false),
+        "Document" => (Icon::FileText, false),
+        "Sticker" | "Sticker pack" => (Icon::Sticker, false),
+        "Location" | "Live location" | "Live location ended" => (Icon::MapPin, false),
+        "Contact" => (Icon::Contact, false),
+        "Poll" => (Icon::ListChecks, false),
+        "Missed voice call" => (Icon::PhoneMissed, true),
+        "Missed video call" => (Icon::Video, true),
+        "Voice call" => (Icon::Phone, false),
+        "Video call" => (Icon::Video, false),
         _ => return None,
     })
 }

@@ -1806,21 +1806,25 @@ fn summary_label(
     }
 }
 
-/// `summary` with the content label it starts with, such as "Photo" or
-/// "Voice message", in `locale`. What follows the label (a caption, a file
-/// name, a length) stays as it is. A summary of text must not come here: a
-/// message that reads "Location: home" is the sender's words.
-pub fn localized_summary(locale: crate::i18n::Locale, summary: &str) -> std::borrow::Cow<'_, str> {
-    // The longest label that fits, so "Video message" is not read as "Video".
-    let label = SUMMARY_LABELS
+/// The content label, in English, that a labelled `summary` starts with:
+/// the longest that fits, so "Video message" is not read as "Video".
+pub fn summary_label_of(summary: &str) -> Option<&'static str> {
+    SUMMARY_LABELS
         .into_iter()
         .filter(|label| {
             summary.strip_prefix(label).is_some_and(|rest| {
                 rest.is_empty() || rest.starts_with(": ") || rest.starts_with(" (")
             })
         })
-        .max_by_key(|label| label.len());
-    let Some(label) = label else {
+        .max_by_key(|label| label.len())
+}
+
+/// `summary` with the content label it starts with, such as "Photo" or
+/// "Voice message", in `locale`. What follows the label (a caption, a file
+/// name, a length) stays as it is. A summary of text must not come here: a
+/// message that reads "Location: home" is the sender's words.
+pub fn localized_summary(locale: crate::i18n::Locale, summary: &str) -> std::borrow::Cow<'_, str> {
+    let Some(label) = summary_label_of(summary) else {
         return std::borrow::Cow::Borrowed(summary);
     };
     let translated = summary_label(locale, label);
