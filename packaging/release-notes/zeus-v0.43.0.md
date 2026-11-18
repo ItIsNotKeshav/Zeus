@@ -28,5 +28,3 @@ Zeus 0.43.0 gives the chat list its own way around, moves Settings into a cleane
 ## Thanks
 
 All 51 changes in this release are by Pratyaksh Mehrotra ([@pratyakshm](https://github.com/pratyakshm)).
-
-Not tried by us: the Linux and macOS builds.
