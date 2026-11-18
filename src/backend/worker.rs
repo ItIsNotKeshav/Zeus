@@ -18469,17 +18469,14 @@ mod tests {
             push_name: push.map(Into::into),
         };
         // The contact name wins over the profile name.
-        worker.contacts.insert(
-            "4915700000001@s.whatsapp.net".into(),
-            contact(
-                "4915700000001@s.whatsapp.net",
-                Some("Ada Lovelace"),
-                Some("Ada"),
-            ),
-        );
+        worker.contacts.insert(contact(
+            "4915700000001@s.whatsapp.net",
+            Some("Ada Lovelace"),
+            Some("Ada"),
+        ));
         worker
             .contacts
-            .insert(profile.clone(), contact(&profile, None, Some("Grace")));
+            .insert(contact(&profile, None, Some("Grace")));
 
         let text = format!(
             "@100000000001 @4915700000002 @4915700000003 @100000000009 @{me_user}, see @all"
@@ -18500,7 +18497,7 @@ mod tests {
             "@Ada Lovelace @Grace @{} @100000000009 @Carmine, see @all",
             crate::util::phone("4915700000003")
         );
-        let (mut forward, _) = outgoing_forward(&original, None, false);
+        let (mut forward, _) = outgoing_forward(&original, None);
         spell_out_body(&mut forward, &names);
         assert_eq!(forward.text_content(), Some(spelled.as_str()));
         let context = context_of(&forward).expect("forward context");

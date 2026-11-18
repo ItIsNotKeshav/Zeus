@@ -2961,12 +2961,6 @@ pub(crate) mod tests {
         assert!(archive.chat("2@s.whatsapp.net").unwrap().is_some());
     }
 
-    pub(crate) fn reject_archive_updates(archive: &super::Archive) {
-        archive.connection.execute_batch(
-            "CREATE TRIGGER reject_archive_update BEFORE UPDATE OF archived ON chats BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
-        ).unwrap();
-    }
-
     pub(crate) fn set_derived_update_failure(archive: &super::Archive, fail: bool) {
         archive.connection.execute_batch(if fail {
             "CREATE TRIGGER reject_derived_update BEFORE UPDATE OF content ON messages BEGIN SELECT RAISE(ABORT, 'fixture failure'); END;"
