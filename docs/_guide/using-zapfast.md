@@ -852,13 +852,13 @@ screen is lit. The same bar sits under Settings' categories and the Calls
 list, and under the list alone in a narrow window. The chat list's title is a
 menu: **Chats**, **Starred**, **Archived** (with its unread count) and **Locked
 chats** (while you have any). It names what the list shows, so there is no Back
-button. Next to it are **New chat** and the button (`Ctrl+B`) that hides the
-list. With the list hidden (or crowded out by a second pane), a thin rail
+button. Next to it is **New chat**. To hide the list, drag its border to the
+left past its narrowest width, or press `Ctrl+B`. With the list hidden (or crowded out by a second pane), a thin rail
 takes its place on the left: **Chats** and **Calls** at the top, the chats'
 avatars between, and **Starred**, **Archived**, **Locked**, **Settings** and
 your picture at the bottom. Unread chats show their badge, hovering names a
-chat, clicking opens it, and `Ctrl+B` or the button under **Calls** brings the
-full list back. In a short window, scroll the rail to reach its lower buttons.
+chat, clicking opens it, and dragging the rail's edge to the right, `Ctrl+B` or
+the button under **Calls** brings the full list back. In a short window, scroll the rail to reach its lower buttons.
 Tab and Shift+Tab bring the focused button into view, too.
 
 ## Notifications and the tray

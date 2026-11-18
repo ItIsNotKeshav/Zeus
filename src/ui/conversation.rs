@@ -923,7 +923,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                     egui::Popup::menu(&more)
                         .width(width)
                         .frame(widgets::menu_frame(&palette))
-                        .show_frosted(ui.ctx(), |ui| {
+                        .show_compact(ui.ctx(), &palette, |ui| {
                             if widgets::menu_item(
                                 ui,
                                 &palette,
@@ -958,56 +958,6 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                 app.actions
                                     .push(Action::SetArchived(chat.id.clone(), !chat.archived));
                             }
-                            if widgets::menu_item_enabled(
-                                ui,
-                                &palette,
-                                Some(Icon::Download),
-                                export_label.as_ref(),
-                                !chat.locked && app.chat_export.is_none(),
-                            ) {
-                                app.actions.push(Action::ShowDialog(Dialog::ExportChat {
-                                    chat: chat.id.clone(),
-                                    include_media: false,
-                                }));
-                            }
-                            // Clearing reaches the phone, so it waits for a
-                            // connection, as deleting does in the chat list.
-                            if widgets::menu_item_enabled(
-                                ui,
-                                &palette,
-                                Some(Icon::Eraser),
-                                clear_label.as_ref(),
-                                app.is_connected(),
-                            ) {
-                                app.actions
-                                    .push(Action::ShowDialog(Dialog::ConfirmClearChat(
-                                        chat.id.clone(),
-                                    )));
-                            }
-                            widgets::menu_separator(ui, &palette);
-                            if chat.can_leave(&app.our_ids())
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::LogOut),
-                                    leave_label.as_ref(),
-                                )
-                            {
-                                app.actions
-                                    .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
-                                        chat.id.clone(),
-                                    )));
-                            }
-                            if let Some(phone) = chat.phone()
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::Copy),
-                                    copy_number_label.as_ref(),
-                                )
-                            {
-                                app.actions.push(Action::CopyText(format!("+{phone}")));
-                            }
                             if compact && can_call {
                                 if widgets::menu_item(
                                     ui,
@@ -1026,43 +976,72 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                     app.actions.push(Action::StartVideoCall(chat.id.clone()));
                                 }
                             }
-                            if app.settings.split_view || app.settings.chat_bubbles {
-                                widgets::menu_separator(ui, &palette);
-                            }
-                            if app.settings.split_view
-                                && widgets::menu_item(
+                            widgets::menu_separator(ui, &palette);
+                            if let Some(phone) = chat.phone()
+                                && widgets::menu_item_inset(
                                     ui,
                                     &palette,
-                                    Some(Icon::PictureInPicture),
-                                    pop_out_label.as_ref(),
+                                    copy_number_label.as_ref(),
                                 )
+                            {
+                                app.actions.push(Action::CopyText(format!("+{phone}")));
+                            }
+                            if widgets::menu_item_enabled_inset(
+                                ui,
+                                &palette,
+                                export_label.as_ref(),
+                                !chat.locked && app.chat_export.is_none(),
+                            ) {
+                                app.actions.push(Action::ShowDialog(Dialog::ExportChat {
+                                    chat: chat.id.clone(),
+                                    include_media: false,
+                                }));
+                            }
+                            if app.settings.split_view
+                                && widgets::menu_item_inset(ui, &palette, pop_out_label.as_ref())
                             {
                                 app.actions.push(Action::PopOut(chat.id.clone()));
                             }
                             if app.settings.chat_bubbles
                                 && !chat.locked
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::MessageCircle),
-                                    bubble_label.as_ref(),
-                                )
+                                && widgets::menu_item_inset(ui, &palette, bubble_label.as_ref())
                             {
                                 app.actions.push(Action::Bubble(chat.id.clone()));
                             }
                             if pane != Pane::Solo
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::ArrowLeftRight),
-                                    swap_label.as_ref(),
-                                )
+                                && widgets::menu_item_inset(ui, &palette, swap_label.as_ref())
                             {
                                 app.actions.push(Action::SwapSplit);
                             }
-                            if widgets::menu_item(ui, &palette, Some(Icon::X), close_label.as_ref())
-                            {
+                            if widgets::menu_item_inset(ui, &palette, close_label.as_ref()) {
                                 app.actions.push(Action::CloseChat);
+                            }
+                            widgets::menu_separator(ui, &palette);
+                            if chat.can_leave(&app.our_ids())
+                                && widgets::menu_item_danger(
+                                    ui,
+                                    &palette,
+                                    leave_label.as_ref(),
+                                    true,
+                                )
+                            {
+                                app.actions
+                                    .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
+                                        chat.id.clone(),
+                                    )));
+                            }
+                            // Clearing reaches the phone, so it waits for a
+                            // connection, as deleting does in the chat list.
+                            if widgets::menu_item_danger(
+                                ui,
+                                &palette,
+                                clear_label.as_ref(),
+                                app.is_connected(),
+                            ) {
+                                app.actions
+                                    .push(Action::ShowDialog(Dialog::ConfirmClearChat(
+                                        chat.id.clone(),
+                                    )));
                             }
                         });
                     // A person's chat calls them and a group's starts a call

@@ -32,7 +32,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let panel = egui::Panel::left("chats")
         .resizable(true)
         .default_size(app.settings.sidebar_width)
-        .size_range(260.0..=520.0)
+        .size_range(LIST_MIN_WIDTH..=520.0)
         .show_separator_line(false)
         .frame(
             Frame::new()
@@ -40,6 +40,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
                 .inner_margin(LIST_MARGIN),
         );
     let response = panel.show(ui, |ui| column(app, ui));
+    fold_by_drag(app, ui.ctx(), response.response.rect.left());
     // The tab bar floats at the foot of the whole column, as it does beside
     // Settings' categories, so it stays put going from one to the other.
     super::tabbar::show(app, ui, response.response.rect);
@@ -49,6 +50,59 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     if (width - app.settings.sidebar_width).abs() > 1.0 {
         app.settings.sidebar_width = width;
         app.actions.push(Action::SettingsChanged);
+    }
+}
+
+/// The list's narrowest width while it stands beside a chat.
+pub(crate) const LIST_MIN_WIDTH: f32 = 260.0;
+/// How far past the list's narrowest width its border is dragged before the
+/// list folds into the rail, and how far out of the rail it is pulled before
+/// the list comes back. The list has no button for this: its border is it.
+pub(crate) const FOLD_PULL: f32 = 60.0;
+
+/// Whether a border dragged to `pointer_x` folds a list whose left edge is
+/// `left`: well past its narrowest width.
+pub(crate) fn folds_at(left: f32, pointer_x: f32) -> bool {
+    pointer_x < left + LIST_MIN_WIDTH - FOLD_PULL
+}
+
+/// Whether the rail's edge at `edge`, pulled to `pointer_x`, brings the list
+/// back.
+pub(crate) fn unfolds_at(edge: f32, pointer_x: f32) -> bool {
+    pointer_x > edge + FOLD_PULL
+}
+
+/// Folds the chat list into the rail when its border, being resized, is
+/// dragged well past the list's narrowest width. The drag ends there, so
+/// the same press cannot bring the list straight back.
+fn fold_by_drag(app: &mut App, ctx: &egui::Context, left: f32) {
+    // egui's resizable panel names its border's handle this way.
+    let handle = egui::Id::new("chats").with("__resize");
+    if !ctx.is_being_dragged(handle) {
+        return;
+    }
+    if let Some(pointer) = ctx.input(|input| input.pointer.latest_pos())
+        && folds_at(left, pointer.x)
+    {
+        ctx.stop_dragging();
+        app.actions.push(Action::ToggleSidebar);
+    }
+}
+
+/// The rail's right edge as a handle: pulled out far enough, it brings the
+/// folded list back, as the list's border folded it.
+pub(crate) fn unfold_by_drag(app: &mut App, ui: &mut egui::Ui) {
+    let edge = ui.available_rect_before_wrap().left();
+    let rect = Rect::from_x_y_ranges(edge - 3.0..=edge + 5.0, ui.max_rect().y_range());
+    let response = ui
+        .interact(rect, ui.id().with("rail-unfold"), Sense::drag())
+        .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+    if response.dragged()
+        && let Some(pointer) = response.interact_pointer_pos()
+        && unfolds_at(edge, pointer.x)
+    {
+        ui.ctx().stop_dragging();
+        app.actions.push(Action::ToggleSidebar);
     }
 }
 
@@ -93,10 +147,11 @@ pub(crate) const BASE_DROP: f32 = 12.0;
 pub const LIGHTS_BAR: f32 = 30.0;
 #[cfg(not(target_os = "macos"))]
 pub const LIGHTS_BAR: f32 = crate::theme::TOP_BAR_HEIGHT;
-/// How far the headers sit lower for the lights' row: the bar over the
-/// 12-point drop that already clears the top.
+/// How far the headers sit lower for the lights' row: just enough over the
+/// 12-point drop that the title clears the lights, so the top of the window
+/// is not left empty.
 #[cfg(target_os = "macos")]
-const LIGHTS_DROP: f32 = 16.0;
+const LIGHTS_DROP: f32 = 6.0;
 #[cfg(not(target_os = "macos"))]
 const LIGHTS_DROP: f32 = 0.0;
 /// Where a list row's avatar starts, from the row's edge: a little right of
@@ -428,7 +483,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) -> Rect {
             ui.ctx()
                 .data_mut(|data| data.insert_temp(header_row_id(), row.response.rect));
 
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             search_and_filters(app, ui);
         })
         .response
@@ -441,7 +496,7 @@ fn header(app: &mut App, ui: &mut egui::Ui) -> Rect {
 /// `macos`.
 fn header_row(app: &mut App, ui: &mut egui::Ui, macos: bool) {
     let palette = app.palette;
-    let buttons = list_header_buttons(app, ui.ctx());
+    let buttons = list_header_buttons(app);
     // The title measures its room from the buttons after it.
     let buttons_width = header_buttons_width(ui, &buttons);
     let lead = title_lead(ui);
@@ -812,7 +867,6 @@ fn search_and_filters(app: &mut App, ui: &mut egui::Ui) {
 enum HeaderButton {
     NewChat,
     NewCall,
-    HideList,
     /// A release is waiting: the accent arrow the rail carried.
     Update,
 }
@@ -821,22 +875,20 @@ enum HeaderButton {
 const HEADER_ICON: f32 = 18.0;
 
 /// The buttons on the right of the chat list header, rightmost first, as
-/// `header_button_row` draws them: New chat, and Hide the chat list unless
-/// the window is narrow. Calls, our account and Settings are in the tab bar
+/// `header_button_row` draws them: New chat. The list is hidden by dragging
+/// its border past its narrowest width (or ⌘B / Ctrl+B), so it has no
+/// button for it. Calls, our account and Settings are in the tab bar
 /// at the column's foot, and Starred, Archived and Locked chats in the
 /// title's menu. The title before them measures its room from the same list.
 ///
 /// On the Calls tab, as in WhatsApp's Calls pane, New call takes New chat's
-/// place and Hide the chat list leaves: the call history needs the list.
-fn header_buttons(ctx: &egui::Context, calls: bool) -> Vec<HeaderButton> {
+/// place.
+fn header_buttons(calls: bool) -> Vec<HeaderButton> {
     if calls {
-        return vec![HeaderButton::NewCall];
+        vec![HeaderButton::NewCall]
+    } else {
+        vec![HeaderButton::NewChat]
     }
-    let mut buttons = vec![HeaderButton::NewChat];
-    if !super::narrow(ctx) {
-        buttons.push(HeaderButton::HideList);
-    }
-    buttons
 }
 
 /// The buttons the list header draws for what it shows: none of its own over
@@ -844,12 +896,12 @@ fn header_buttons(ctx: &egui::Context, calls: bool) -> Vec<HeaderButton> {
 /// whose title's menu does. On the Chats tab a waiting release adds the
 /// update arrow, leftmost, which the rail carried before the list stood
 /// alone in its column.
-fn list_header_buttons(app: &App, ctx: &egui::Context) -> Vec<HeaderButton> {
+fn list_header_buttons(app: &App) -> Vec<HeaderButton> {
     let calls = app.page == Page::Calls;
     let mut buttons = if (calls && app.new_call) || (!calls && app.show_starred) {
         Vec::new()
     } else {
-        header_buttons(ctx, calls)
+        header_buttons(calls)
     };
     if !calls && app.update.is_some() {
         buttons.push(HeaderButton::Update);
@@ -891,25 +943,6 @@ fn header_button_row(app: &mut App, ui: &mut egui::Ui, buttons: &[HeaderButton],
                 .clicked()
                 {
                     app.actions.push(Action::ShowNewCall(true));
-                }
-            }
-            HeaderButton::HideList => {
-                if theme::icon_button(
-                    ui,
-                    Icon::PanelLeft,
-                    HEADER_ICON,
-                    palette.secondary,
-                    palette.text,
-                    if macos {
-                        "Hide the chat list (⌘B)"
-                    } else {
-                        "Hide the chat list (Ctrl+B)"
-                    },
-                )
-                .tab_stop(Stop::Sidebar)
-                .clicked()
-                {
-                    app.actions.push(Action::ToggleSidebar);
                 }
             }
             HeaderButton::Update => update_button(app, ui),
@@ -2539,6 +2572,32 @@ pub(crate) fn row_hover_amount(ui: &egui::Ui, id: egui::Id, on: bool) -> f32 {
     amount
 }
 
+/// Width of the chat row's menu caret, in points.
+const ROW_CARET: f32 = 20.0;
+/// Room between the time and the caret once the caret has arrived.
+const ROW_CARET_GAP: f32 = 4.0;
+/// How far to the right the caret starts, before it glides into place.
+const ROW_CARET_SLIDE: f32 = 8.0;
+/// Seconds the caret takes to arrive. Leaving uses the same curve.
+const ROW_CARET_SECONDS: f32 = 0.15;
+
+/// How far the time moves left as the row caret comes in.
+/// `progress` is 0 hidden and 1 in place: the caret's width plus [`ROW_CARET_GAP`].
+fn row_caret_time_shift(progress: f32) -> f32 {
+    progress.clamp(0.0, 1.0) * (ROW_CARET + ROW_CARET_GAP)
+}
+
+/// 0 to 1 for the row caret over [`ROW_CARET_SECONDS`], at once when motion
+/// is reduced.
+fn row_caret_progress(ctx: &egui::Context, id: egui::Id, on: bool) -> f32 {
+    ctx.animate_bool_with_time_and_easing(
+        id,
+        on,
+        theme::motion_time(ctx, ROW_CARET_SECONDS),
+        egui::emath::easing::cubic_out,
+    )
+}
+
 fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     let palette = app.palette;
     let title = app.chat_title(chat);
@@ -2560,6 +2619,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     theme::reveal_focus(&response);
     // The preview area and the whole last message, when the row cuts it short.
     let mut full_preview: Option<(Rect, String, String)> = None;
+    let mut caret_clicked = false;
+    let mut caret_held = false;
+    let mut caret_at: Option<egui::Pos2> = None;
+    let mut drew_caret = false;
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::SelectableLabel,
@@ -2568,7 +2631,19 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             unread_announcement(&title, chat),
         )
     });
-    let hover = row_hover_amount(ui, response.id, response.hovered() && !selected);
+    // The caret sits on the row, so the pointer over it still counts as the
+    // row: otherwise the highlight would drop while the button is under it.
+    let over_caret = ui
+        .data(|data| data.get_temp::<Rect>(response.id.with("row-caret-rect")))
+        .is_some_and(|caret| ui.rect_contains_pointer(caret));
+    // While this row's menu is open, from the caret or a right-click, the
+    // row keeps its highlight, so the menu's target stays plain to see.
+    let menu_open = egui::Popup::is_id_open(ui.ctx(), response.id.with("popup"));
+    let hover = row_hover_amount(
+        ui,
+        response.id,
+        !selected && (response.hovered() || over_caret || menu_open),
+    );
     if ui.is_rect_visible(rect) {
         if selected {
             widgets::row_highlight(ui, &palette, rect, palette.surface_active);
@@ -2614,12 +2689,15 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             ui.painter()
                 .layout_no_wrap(stamp, theme::regular(theme::TEXT_CAPTION), stamp_color);
         let name_top = rect.top() + 14.0;
+        let caret_on = ui.rect_contains_pointer(rect) || menu_open;
+        let caret_t = row_caret_progress(ui.ctx(), response.id.with("row-caret"), caret_on);
+        let time_shift = row_caret_time_shift(caret_t);
         ui.painter().galley(
-            pos2(right - stamp_galley.size().x, name_top + 1.0),
+            pos2(right - stamp_galley.size().x - time_shift, name_top + 1.0),
             stamp_galley.clone(),
             stamp_color,
         );
-        let name_width = (right - stamp_galley.size().x - 8.0 - left).max(0.0);
+        let name_width = (right - stamp_galley.size().x - 8.0 - time_shift - left).max(0.0);
         let name_font = if unread {
             theme::semibold(theme::TEXT_BODY)
         } else {
@@ -2627,6 +2705,66 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         };
         let name = widgets::line(ui, &title, name_font, palette.text, name_width, 1);
         name.paint(ui, pos2(left, name_top), palette.text);
+        if caret_t > 0.0 {
+            drew_caret = true;
+            let slide = (1.0 - caret_t) * ROW_CARET_SLIDE;
+            let caret_rect = Rect::from_center_size(
+                pos2(
+                    right - ROW_CARET * 0.5 + slide,
+                    name_top + 1.0 + stamp_galley.size().y * 0.5,
+                ),
+                Vec2::splat(ROW_CARET),
+            );
+            ui.data_mut(|data| data.insert_temp(response.id.with("row-caret-rect"), caret_rect));
+            let caret = ui
+                .interact(
+                    caret_rect,
+                    response.id.with("row-caret-btn"),
+                    Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            theme::reveal_focus(&caret);
+            caret.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Chat menu")
+            });
+            ui.scope(|ui| {
+                ui.multiply_opacity(caret_t);
+                ui.painter()
+                    .rect_filled(caret_rect, ROW_CARET * 0.5, palette.surface);
+                ui.painter().rect_stroke(
+                    caret_rect,
+                    ROW_CARET * 0.5,
+                    egui::Stroke::new(theme::OUTLINE_STROKE, palette.outline),
+                    egui::StrokeKind::Inside,
+                );
+                Icon::ChevronDown.image(palette.secondary, 14.0).paint_at(
+                    ui,
+                    Rect::from_center_size(caret_rect.center(), Vec2::splat(14.0)),
+                );
+            });
+            // Hit-testing uses last frame's widgets, so the first hover frame
+            // still belongs to the row. A press inside the circle is the caret.
+            let pointer_in_caret = ui
+                .input(|input| input.pointer.interact_pos())
+                .is_some_and(|pos| caret_rect.contains(pos));
+            let hit = caret.clicked() || (response.clicked() && pointer_in_caret);
+            caret_held = caret.is_pointer_button_down_on()
+                || (response.is_pointer_button_down_on() && pointer_in_caret);
+            if hit && !menu_open {
+                caret_clicked = true;
+                let at = caret_rect.left_bottom();
+                caret_at = Some(at);
+                ui.ctx().data_mut(|data| {
+                    data.insert_temp(response.id.with("row-caret-menu"), true);
+                    data.insert_temp(response.id.with("row-caret-anchor"), at);
+                });
+            } else if hit {
+                caret_clicked = true;
+                ui.ctx().data_mut(|data| {
+                    data.remove::<bool>(response.id.with("row-caret-menu"));
+                });
+            }
+        }
 
         // Leave room for badges beside the latest-message preview.
         let mut badge_right = right;
@@ -2787,6 +2925,9 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
         };
         preview.paint(ui, pos2(x, line_y), preview_color);
     }
+    if !drew_caret {
+        ui.data_mut(|data| data.remove::<Rect>(response.id.with("row-caret-rect")));
+    }
     if super::carry::carrying(ui.ctx()) {
         super::carry::target(
             ui,
@@ -2800,9 +2941,10 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     if let Some((area, prefix, full)) = full_preview {
         full_preview_tooltip(app, ui, &chat.id, area, &prefix, &full);
     }
-    if response.clicked() {
+    if response.clicked() && !caret_clicked {
         app.actions.push(Action::OpenChat(chat.id.clone()));
     } else if response.is_pointer_button_down_on()
+        && !caret_held
         && app
             .conversations
             .get(&chat.id)
@@ -2831,8 +2973,8 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             "Unarchive",
             &crate::i18n::gettext(app.locale, "Leave group"),
             &crate::i18n::gettext(app.locale, "Leave channel"),
+            &crate::i18n::gettext(app.locale, "Delete chat"),
             "Unlock chat",
-            "Copy number",
         ],
         true,
     )
@@ -2842,8 +2984,7 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
             ui,
             &[
                 "Mute",
-                "Notification sound",
-                "Voice message speed",
+                &crate::i18n::gettext(app.locale, "More"),
                 &crate::i18n::gettext(app.locale, "Labels"),
             ],
             true,
@@ -2864,7 +3005,48 @@ fn row(app: &mut App, ui: &mut egui::Ui, chat: &Chat) -> egui::Response {
     } else {
         popup
     };
-    popup.show_frosted(ui.ctx(), |ui| context_menu(app, ui, chat, &menu_palette));
+    // Right-click still opens where the pointer is. A caret click opens the
+    // same menu under the button, and keeps that anchor while it stays open.
+    if response.secondary_clicked() {
+        ui.ctx().data_mut(|data| {
+            data.remove::<bool>(response.id.with("row-caret-menu"));
+        });
+    }
+    let from_caret = !response.secondary_clicked()
+        && ui.ctx().data(|data| {
+            data.get_temp::<bool>(response.id.with("row-caret-menu"))
+                .unwrap_or(false)
+        });
+    let caret_anchor = if from_caret {
+        caret_at.or_else(|| {
+            ui.ctx()
+                .data(|data| data.get_temp(response.id.with("row-caret-anchor")))
+        })
+    } else {
+        None
+    };
+    let menu_already = egui::Popup::is_id_open(ui.ctx(), response.id.with("popup"));
+    let popup = if let Some(at) = caret_anchor {
+        let set = if caret_clicked && !menu_already {
+            Some(egui::SetOpenCommand::Bool(true))
+        } else if response.clicked() {
+            Some(egui::SetOpenCommand::Bool(false))
+        } else {
+            None
+        };
+        popup.open_memory(set).at_position(at)
+    } else {
+        popup
+    };
+    popup.show_compact(ui.ctx(), &menu_palette, |ui| {
+        context_menu(app, ui, chat, &menu_palette)
+    });
+    if !egui::Popup::is_id_open(ui.ctx(), response.id.with("popup")) {
+        ui.ctx().data_mut(|data| {
+            data.remove::<bool>(response.id.with("row-caret-menu"));
+            data.remove::<egui::Pos2>(response.id.with("row-caret-anchor"));
+        });
+    }
     response
 }
 
@@ -3264,42 +3446,6 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions
             .push(Action::SetPinned(chat.id.clone(), !chat.pinned));
     }
-    // Channels cannot be favorites, as on the phone.
-    if !chat.is_channel() {
-        // Bound before the call so the translated text outlives the borrow.
-        let favorite_label = if chat.favorite {
-            crate::i18n::gettext(locale, "Remove from favorites")
-        } else {
-            crate::i18n::gettext(locale, "Add to favorites")
-        };
-        if widgets::menu_item(ui, palette, Some(Icon::Heart), favorite_label.as_ref()) {
-            app.actions
-                .push(Action::SetFavorite(chat.id.clone(), !chat.favorite));
-        }
-    }
-    let archive_label = if chat.archived {
-        crate::i18n::gettext(locale, "Unarchive")
-    } else {
-        crate::i18n::gettext(locale, "Archive")
-    };
-    if widgets::menu_item(ui, palette, Some(Icon::Archive), archive_label.as_ref()) {
-        app.actions
-            .push(Action::SetArchived(chat.id.clone(), !chat.archived));
-    }
-    // Bound before the call so the translated text outlives the borrow.
-    let leave_label = if chat.is_channel() {
-        crate::i18n::gettext(locale, "Leave channel")
-    } else {
-        crate::i18n::gettext(locale, "Leave group")
-    };
-    if chat.can_leave(&app.our_ids())
-        && widgets::menu_item(ui, palette, Some(Icon::LogOut), leave_label.as_ref())
-    {
-        app.actions
-            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
-                chat.id.clone(),
-            )));
-    }
     let now = crate::util::now();
     if chat.muted(now) {
         if widgets::menu_item(
@@ -3337,91 +3483,68 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
             },
         );
     }
-    sound_menu(app, ui, palette, chat);
-    voice_speed_menu(app, ui, palette, chat);
+    let archive_label = if chat.archived {
+        crate::i18n::gettext(locale, "Unarchive")
+    } else {
+        crate::i18n::gettext(locale, "Archive")
+    };
+    if widgets::menu_item(ui, palette, Some(Icon::Archive), archive_label.as_ref()) {
+        app.actions
+            .push(Action::SetArchived(chat.id.clone(), !chat.archived));
+    }
+    widgets::menu_separator(ui, palette);
+    // Channels cannot be favorites, as on the phone.
+    if !chat.is_channel() {
+        // Bound before the call so the translated text outlives the borrow.
+        let favorite_label = if chat.favorite {
+            crate::i18n::gettext(locale, "Remove from favorites")
+        } else {
+            crate::i18n::gettext(locale, "Add to favorites")
+        };
+        if widgets::menu_item_inset(ui, palette, favorite_label.as_ref()) {
+            app.actions
+                .push(Action::SetFavorite(chat.id.clone(), !chat.favorite));
+        }
+    }
     labels::chat_menu(app, ui, chat, palette);
     let lock_label = if chat.locked {
         crate::i18n::gettext(locale, "Unlock chat")
     } else {
         crate::i18n::gettext(locale, "Lock chat")
     };
-    if widgets::menu_item(
-        ui,
-        palette,
-        Some(if chat.locked {
-            Icon::LockOpen
-        } else {
-            Icon::Lock
-        }),
-        lock_label.as_ref(),
-    ) {
+    if widgets::menu_item_inset(ui, palette, lock_label.as_ref()) {
         app.actions.push(if chat.locked {
             Action::SetLocked(chat.id.clone(), false)
         } else {
             Action::ShowDialog(Dialog::ConfirmLockChat(chat.id.clone()))
         });
     }
-    super::blocking::menu(app, ui, &chat.id);
-    widgets::menu_separator(ui, palette);
-    if let Some(phone) = chat.phone()
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::Copy),
-            &crate::i18n::gettext(locale, "Copy number"),
-        )
-    {
-        app.actions.push(Action::CopyText(format!("+{phone}")));
-    }
-    let beside = app.settings.split_view
-        && app.current_chat().is_some_and(|open| open.id != chat.id)
-        && !super::narrow(ui.ctx());
-    let beside_label = crate::i18n::gettext(app.locale, "Open beside");
-    if beside && widgets::menu_item(ui, palette, Some(Icon::Columns), beside_label.as_ref()) {
-        app.actions.push(Action::OpenSplit {
-            chat: chat.id.clone(),
-            side: crate::app::Side::Right,
-        });
-    }
-    let pop_label = crate::i18n::gettext(app.locale, "Pop out chat");
-    if app.settings.split_view
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::PictureInPicture),
-            pop_label.as_ref(),
-        )
-    {
-        app.actions.push(Action::PopOut(chat.id.clone()));
-    }
-    let bubble_label = crate::i18n::gettext(app.locale, "Open as bubble");
-    if app.settings.chat_bubbles
-        && !chat.locked
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::MessageCircle),
-            bubble_label.as_ref(),
-        )
-    {
-        app.actions.push(Action::Bubble(chat.id.clone()));
-    }
-    if widgets::menu_item(
-        ui,
-        palette,
-        Some(Icon::Info),
-        &crate::i18n::gettext(locale, "Info"),
-    ) {
+    if widgets::menu_item_inset(ui, palette, &crate::i18n::gettext(locale, "Info")) {
         // The panel sits beside the conversation, so the chat opens first.
         app.actions.push(Action::OpenChat(chat.id.clone()));
         app.actions.push(Action::OpenInfo(chat.id.clone()));
     }
+    more_menu(app, ui, palette, chat);
+    // Leaving and deleting come last, apart and in red.
+    let can_leave = chat.can_leave(&app.our_ids());
     // Deleting reaches the phone, so it waits for a connection.
     let connected = matches!(app.link, LinkStatus::Connected);
-    if widgets::menu_item_enabled(
+    widgets::menu_separator(ui, palette);
+    // Bound before the call so the translated text outlives the borrow.
+    let leave_label = if chat.is_channel() {
+        crate::i18n::gettext(locale, "Leave channel")
+    } else {
+        crate::i18n::gettext(locale, "Leave group")
+    };
+    if can_leave && widgets::menu_item_danger(ui, palette, leave_label.as_ref(), true) {
+        app.actions
+            .push(Action::ShowDialog(Dialog::ConfirmLeaveGroup(
+                chat.id.clone(),
+            )));
+    }
+    if widgets::menu_item_danger(
         ui,
         palette,
-        Some(Icon::Trash),
         &crate::i18n::gettext(locale, "Delete chat"),
         connected,
     ) {
@@ -3430,6 +3553,60 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
                 chat.id.clone(),
             )));
     }
+}
+
+/// The chat menu's "More" submenu: the entries used less often, without icons.
+fn more_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
+    let more = crate::i18n::gettext(app.locale, "More");
+    // Wide enough for the longest of its rows, a submenu's chevron included.
+    let rows = [
+        crate::i18n::gettext(app.locale, "Notification sound"),
+        "Voice message speed".into(),
+        crate::i18n::gettext(app.locale, "Copy number"),
+        crate::i18n::gettext(app.locale, "Open beside"),
+        crate::i18n::gettext(app.locale, "Pop out chat"),
+        crate::i18n::gettext(app.locale, "Open as bubble"),
+        crate::i18n::gettext(app.locale, "Block contact"),
+        crate::i18n::gettext(app.locale, "Unblock contact"),
+    ];
+    let items: Vec<&str> = rows.iter().map(AsRef::as_ref).collect();
+    widgets::submenu_inset(ui, palette, more.as_ref(), &items, |ui| {
+        let locale = app.locale;
+        sound_menu(app, ui, palette, chat);
+        voice_speed_menu(app, ui, palette, chat);
+        if let Some(phone) = chat.phone()
+            && widgets::menu_item(
+                ui,
+                palette,
+                None,
+                &crate::i18n::gettext(locale, "Copy number"),
+            )
+        {
+            app.actions.push(Action::CopyText(format!("+{phone}")));
+        }
+        let beside = app.settings.split_view
+            && app.current_chat().is_some_and(|open| open.id != chat.id)
+            && !super::narrow(ui.ctx());
+        let beside_label = crate::i18n::gettext(locale, "Open beside");
+        if beside && widgets::menu_item(ui, palette, None, beside_label.as_ref()) {
+            app.actions.push(Action::OpenSplit {
+                chat: chat.id.clone(),
+                side: crate::app::Side::Right,
+            });
+        }
+        let pop_label = crate::i18n::gettext(locale, "Pop out chat");
+        if app.settings.split_view && widgets::menu_item(ui, palette, None, pop_label.as_ref()) {
+            app.actions.push(Action::PopOut(chat.id.clone()));
+        }
+        let bubble_label = crate::i18n::gettext(locale, "Open as bubble");
+        if app.settings.chat_bubbles
+            && !chat.locked
+            && widgets::menu_item(ui, palette, None, bubble_label.as_ref())
+        {
+            app.actions.push(Action::Bubble(chat.id.clone()));
+        }
+        super::blocking::menu(app, ui, &chat.id);
+    });
 }
 
 /// What a screen reader reads out for a chat's unread state. A chat marked
@@ -3474,7 +3651,7 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
         .chain([choose.as_ref()])
         .collect();
     let menu_label = crate::i18n::gettext(locale, "Notification sound");
-    widgets::submenu(ui, palette, Icon::Volume2, &menu_label, &items, |ui| {
+    widgets::submenu_plain(ui, palette, &menu_label, &items, |ui| {
         for (sound, label) in &sounds {
             let checked = current == *sound;
             if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label.as_ref()) {
@@ -3511,31 +3688,36 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
     )
     .collect();
     let items: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
-    widgets::submenu(
-        ui,
-        palette,
-        Icon::Play,
-        "Voice message speed",
-        &items,
-        |ui| {
-            for (speed, label) in &options {
-                let speed = *speed;
-                let checked = chat.voice_speed == speed;
-                if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
-                    app.actions.push(Action::SetChatVoiceSpeed {
-                        chat: chat.id.clone(),
-                        speed,
-                    });
-                    ui.close();
-                }
+    widgets::submenu_plain(ui, palette, "Voice message speed", &items, |ui| {
+        for (speed, label) in &options {
+            let speed = *speed;
+            let checked = chat.voice_speed == speed;
+            if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
+                app.actions.push(Action::SetChatVoiceSpeed {
+                    chat: chat.id.clone(),
+                    speed,
+                });
+                ui.close();
             }
-        },
-    );
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The time slides left by the caret's width and gap as it arrives,
+    /// and no further.
+    #[test]
+    fn time_shift_follows_the_caret() {
+        assert_eq!(row_caret_time_shift(0.0), 0.0);
+        assert_eq!(row_caret_time_shift(1.0), ROW_CARET + ROW_CARET_GAP);
+        let half = (ROW_CARET + ROW_CARET_GAP) / 2.0;
+        assert!((row_caret_time_shift(0.5) - half).abs() < 1e-4);
+        assert_eq!(row_caret_time_shift(-1.0), 0.0);
+        assert_eq!(row_caret_time_shift(2.0), ROW_CARET + ROW_CARET_GAP);
+    }
 
     #[test]
     fn hover_fill_arrives_quickly_and_leaves_a_trail() {
@@ -3585,31 +3767,28 @@ mod tests {
         assert_eq!(row_width(0, 30.0, spacing), 0.0);
     }
 
-    /// The title measures its room from the list the header draws: New chat,
-    /// and Hide the chat list only when the window is wide enough to show the
-    /// list beside a chat. Calls and Settings are in the tab bar, Starred in
-    /// the title's menu.
+    /// The list header offers New chat (New call on the Calls tab) and no
+    /// button to hide the list: dragging its border past its narrowest width
+    /// does that. Calls and Settings are in the tab bar, Starred in the
+    /// title's menu.
+    /// The list folds only once its border is dragged well past its
+    /// narrowest width, and comes back only once the rail's edge is pulled
+    /// as far out.
     #[test]
-    fn header_buttons_follow_the_width() {
-        use HeaderButton::{HideList, NewChat};
-        let buttons = |width: f32| {
-            let ctx = egui::Context::default();
-            let mut buttons = Vec::new();
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        vec2(width, 600.0),
-                    )),
-                    ..Default::default()
-                },
-                |ui| buttons = header_buttons(ui.ctx(), false),
-            );
-            output.textures_delta.clear();
-            buttons
-        };
-        assert_eq!(buttons(1000.0), [NewChat, HideList]);
-        assert_eq!(buttons(400.0), [NewChat]);
+    fn the_border_folds_and_unfolds_the_list_past_a_pull() {
+        assert!(!folds_at(0.0, LIST_MIN_WIDTH));
+        assert!(!folds_at(0.0, LIST_MIN_WIDTH - FOLD_PULL + 1.0));
+        assert!(folds_at(0.0, LIST_MIN_WIDTH - FOLD_PULL - 1.0));
+        assert!(folds_at(20.0, 100.0));
+        assert!(!unfolds_at(52.0, 52.0 + FOLD_PULL - 1.0));
+        assert!(unfolds_at(52.0, 52.0 + FOLD_PULL + 1.0));
+    }
+
+    #[test]
+    fn header_buttons_have_no_hide_list() {
+        use HeaderButton::{NewCall, NewChat};
+        assert_eq!(header_buttons(false), [NewChat]);
+        assert_eq!(header_buttons(true), [NewCall]);
     }
 
     /// The Calls tab's header carries New call, as WhatsApp's Calls pane
@@ -3623,13 +3802,12 @@ mod tests {
             crate::settings::Settings::default(),
         );
         app.page = Page::Calls;
-        let ctx = egui::Context::default();
-        assert_eq!(list_header_buttons(&app, &ctx), [NewCall]);
+        assert_eq!(list_header_buttons(&app), [NewCall]);
         app.new_call = true;
-        assert!(list_header_buttons(&app, &ctx).is_empty());
+        assert!(list_header_buttons(&app).is_empty());
         app.page = Page::Chats;
         app.show_starred = true;
-        assert!(list_header_buttons(&app, &ctx).is_empty());
+        assert!(list_header_buttons(&app).is_empty());
     }
 
     /// With the rail gone from beside the list, a waiting release is the
@@ -3643,20 +3821,19 @@ mod tests {
             crate::paths::AppDirs::under(root.path()),
             crate::settings::Settings::default(),
         );
-        let ctx = egui::Context::default();
-        assert!(!list_header_buttons(&app, &ctx).contains(&Update));
+        assert!(!list_header_buttons(&app).contains(&Update));
         app.update = Some(crate::updates::Release {
             version: "99.0.0".into(),
             url: "https://example.invalid/release".into(),
         });
-        let buttons = list_header_buttons(&app, &ctx);
+        let buttons = list_header_buttons(&app);
         assert_eq!(buttons.first(), Some(&NewChat), "New chat is rightmost");
         assert_eq!(buttons.last(), Some(&Update), "the arrow is leftmost");
         app.show_starred = true;
-        assert_eq!(list_header_buttons(&app, &ctx), [Update]);
+        assert_eq!(list_header_buttons(&app), [Update]);
         app.show_starred = false;
         app.page = Page::Calls;
-        assert_eq!(list_header_buttons(&app, &ctx), [NewCall]);
+        assert_eq!(list_header_buttons(&app), [NewCall]);
     }
 
     /// The title's menu lists Chats, Starred and Archived, and Locked chats

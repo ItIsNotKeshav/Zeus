@@ -211,6 +211,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
             .data_mut(|data| data.insert_temp(side_columns_id(), full_list));
         if !full_list {
             rail::show(app, ui, true);
+            chats::unfold_by_drag(app, ui);
         } else if app.page == Page::Settings {
             // Settings puts its categories where the chats were.
             settings::sidebar(app, ui);
@@ -282,7 +283,7 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
 
 /// List-facing corner, and any corner where two cards meet, on macOS.
 #[cfg(target_os = "macos")]
-const MAC_INNER_CORNER: u8 = 14;
+const MAC_INNER_CORNER: u8 = 22;
 /// Corner that sits on the window's right edge on macOS.
 #[cfg(target_os = "macos")]
 const MAC_EDGE_CORNER: u8 = 4;
@@ -296,7 +297,7 @@ pub(crate) fn card_at_window_right(ctx: &egui::Context, rect: egui::Rect) -> boo
 /// Per-corner radius of a floating card.
 ///
 /// On macOS the corners on the window's right edge are 4 and the corners
-/// toward the chat list, or between this card and the one beside it, are 14.
+/// toward the chat list, or between this card and the one beside it, are 22.
 /// `at_window_right` is that right edge. Elsewhere every corner stays as
 /// round as the composer ([`chats::CARD_RADIUS`]).
 pub(crate) fn chat_card_corners(at_window_right: bool) -> egui::CornerRadius {
@@ -1082,13 +1083,13 @@ mod card_corner_tests {
             assert_eq!(
                 edge,
                 egui::CornerRadius {
-                    nw: 14,
+                    nw: 22,
                     ne: 4,
-                    sw: 14,
+                    sw: 22,
                     se: 4,
                 }
             );
-            assert_eq!(inner, egui::CornerRadius::same(14));
+            assert_eq!(inner, egui::CornerRadius::same(22));
         }
         #[cfg(not(target_os = "macos"))]
         {

@@ -17997,7 +17997,6 @@ mod tests {
                 Stop::Profile,
                 Stop::Back,
                 Stop::NewChat,
-                Stop::Sidebar,
                 Stop::Search,
                 Stop::All,
                 Stop::Unread,
@@ -18088,13 +18087,13 @@ mod tests {
                 controls.iter().any(|(stop, _)| *stop == Stop::Composer),
                 !matches!(page, "empty" | "channel")
             );
-            assert_eq!(
+            assert!(
                 controls
                     .iter()
                     .filter(|(stop, _)| *stop == Stop::Sidebar)
-                    .count(),
-                1,
-                "{page}: one button hides or shows the list"
+                    .count()
+                    <= 1,
+                "{page}: at most one button shows the list (the rail's); the list's border hides it"
             );
             if page == "nosidebar" {
                 assert_eq!(
@@ -21129,11 +21128,7 @@ mod rail_tests {
         };
         for macos in [false, true] {
             let (_app, ctx) = open("chat", macos);
-            assert_eq!(
-                in_header(&ctx),
-                [Stop::Back, Stop::NewChat, Stop::Sidebar],
-                "{macos}"
-            );
+            assert_eq!(in_header(&ctx), [Stop::Back, Stop::NewChat], "{macos}");
             let (_app, ctx) = open("starred", macos);
             assert_eq!(in_header(&ctx), [Stop::Back], "{macos}: title menu only");
             let (_app, ctx) = open("calls", macos);

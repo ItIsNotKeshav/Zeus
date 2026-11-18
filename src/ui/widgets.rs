@@ -844,6 +844,41 @@ pub fn submenu<R>(
     items: &[&str],
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> Option<egui::InnerResponse<R>> {
+    submenu_with(ui, palette, Some(icon), true, label, items, add_contents)
+}
+
+/// [`submenu`] without an icon whose text still lines up with the entries
+/// around it that have one.
+pub fn submenu_inset<R>(
+    ui: &mut Ui,
+    palette: &Palette,
+    label: &str,
+    items: &[&str],
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    submenu_with(ui, palette, None, true, label, items, add_contents)
+}
+
+/// [`submenu`] with no icon and no room kept for one.
+pub fn submenu_plain<R>(
+    ui: &mut Ui,
+    palette: &Palette,
+    label: &str,
+    items: &[&str],
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    submenu_with(ui, palette, None, false, label, items, add_contents)
+}
+
+fn submenu_with<R>(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Option<Icon>,
+    inset: bool,
+    label: &str,
+    items: &[&str],
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
     theme::reveal_focus(&response);
@@ -862,9 +897,13 @@ pub fn submenu<R>(
                 palette.surface_hover,
             );
         }
-        let icon_rect =
-            Rect::from_center_size(pos2(rect.left() + 18.0, rect.center().y), Vec2::splat(16.0));
-        icon.image(palette.secondary, 16.0).paint_at(ui, icon_rect);
+        if let Some(icon) = icon {
+            let icon_rect = Rect::from_center_size(
+                pos2(rect.left() + 18.0, rect.center().y),
+                Vec2::splat(16.0),
+            );
+            icon.image(palette.secondary, 16.0).paint_at(ui, icon_rect);
+        }
         let chevron = Rect::from_center_size(
             pos2(rect.right() - 16.0, rect.center().y),
             Vec2::splat(14.0),
@@ -872,7 +911,7 @@ pub fn submenu<R>(
         Icon::ChevronRight
             .image(palette.secondary, 14.0)
             .paint_at(ui, chevron);
-        let x = rect.left() + 36.0;
+        let x = rect.left() + if inset { 36.0 } else { 10.0 };
         let mut job = egui::text::LayoutJob::simple_singleline(
             label.to_string(),
             theme::regular(theme::TEXT_BODY),
@@ -910,13 +949,24 @@ pub fn menu_item_enabled(
     enabled: bool,
 ) -> bool {
     let inset = icon.is_some();
-    menu_row(ui, palette, icon, inset, label, enabled)
+    menu_row(ui, palette, icon, inset, label, enabled, false)
+}
+
+/// A destructive entry: no icon, text inset to line up with the icons above
+/// it, in the palette's danger colour. `enabled` greys it out.
+pub fn menu_item_danger(ui: &mut Ui, palette: &Palette, label: &str, enabled: bool) -> bool {
+    menu_row(ui, palette, None, true, label, enabled, true)
+}
+
+/// [`menu_item_inset`] that can be greyed out.
+pub fn menu_item_enabled_inset(ui: &mut Ui, palette: &Palette, label: &str, enabled: bool) -> bool {
+    menu_row(ui, palette, None, true, label, enabled, false)
 }
 
 /// A menu entry without an icon whose text still lines up with the entries
 /// around it that have one: the icon's place before it is left blank.
 pub fn menu_item_inset(ui: &mut Ui, palette: &Palette, label: &str) -> bool {
-    menu_row(ui, palette, None, true, label, true)
+    menu_row(ui, palette, None, true, label, true, false)
 }
 
 /// Draws one menu entry and reports a click on it. `inset` keeps the
@@ -928,6 +978,7 @@ fn menu_row(
     inset: bool,
     label: &str,
     enabled: bool,
+    danger: bool,
 ) -> bool {
     let width = ui.available_width();
     let (rect, response) = ui.allocate_exact_size(
@@ -950,7 +1001,13 @@ fn menu_row(
                 palette.surface_hover,
             );
         }
-        let color = if enabled { palette.text } else { palette.dim };
+        let color = if !enabled {
+            palette.dim
+        } else if danger {
+            palette.danger
+        } else {
+            palette.text
+        };
         let mut x = rect.left() + 10.0;
         if let Some(icon) = icon {
             let icon_rect =
@@ -997,7 +1054,7 @@ fn menu_row(
 }
 
 pub fn menu_separator(ui: &mut Ui, palette: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 9.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 7.0), Sense::hover());
     ui.painter().hline(
         rect.x_range().shrink(6.0),
         rect.center().y,
@@ -1090,6 +1147,9 @@ const POPUP_FROM_SCALE: f32 = 0.92;
 /// [`theme::RADIUS_MENU`].
 const TIGHT_MENU_RADIUS: u8 = 16;
 
+/// Inner margin of [`FrostedPopup::show_compact`]'s frame.
+const COMPACT_MENU_MARGIN: i8 = 5;
+
 pub trait FrostedPopup {
     /// [`egui::Popup::show`] over frosted glass. Its first frame only
     /// measures the menu, unseen, so it is frosted from the second.
@@ -1118,6 +1178,15 @@ pub trait FrostedPopup {
         palette: &Palette,
         add: impl FnOnce(&mut Ui) -> R,
     ) -> Option<egui::InnerResponse<R>>;
+
+    /// [`FrostedPopup::show_tight`] with a 5-point margin and rows that touch
+    /// (no spacing between them), for a long menu such as a chat's.
+    fn show_compact<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>>;
 }
 
 impl FrostedPopup for egui::Popup<'_> {
@@ -1141,6 +1210,24 @@ impl FrostedPopup for egui::Popup<'_> {
                 .corner_radius(CornerRadius::same(TIGHT_MENU_RADIUS)),
         );
         show_over_glass(popup, ctx, Some((palette, true)), add)
+    }
+
+    fn show_compact<R>(
+        self,
+        ctx: &egui::Context,
+        palette: &Palette,
+        add: impl FnOnce(&mut Ui) -> R,
+    ) -> Option<egui::InnerResponse<R>> {
+        let popup = self.frame(
+            menu_frame(palette)
+                .shadow(egui::epaint::Shadow::NONE)
+                .inner_margin(egui::Margin::same(COMPACT_MENU_MARGIN))
+                .corner_radius(CornerRadius::same(TIGHT_MENU_RADIUS)),
+        );
+        show_over_glass(popup, ctx, Some((palette, true)), |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            add(ui)
+        })
     }
 
     fn show_lifted<R>(
@@ -2623,6 +2710,40 @@ pub fn filter_chip(
     dotted_chip(ui, palette, None, label, count, selected)
 }
 
+/// Colours of a chat-list filter chip as the official WhatsApp app draws it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct WhatsappChip {
+    pub fill: Color32,
+    pub edge: Color32,
+    pub text: Color32,
+}
+
+/// The built-in WhatsApp themes' chip colours, `None` for every other palette.
+pub(crate) fn whatsapp_chip(palette: &Palette, selected: bool) -> Option<WhatsappChip> {
+    if !palette.whatsapp {
+        return None;
+    }
+    let look = match (palette.dark, selected) {
+        (false, true) => WhatsappChip {
+            fill: Color32::from_rgb(0xD9, 0xFD, 0xD3),
+            edge: Color32::from_rgb(0xAC, 0xD9, 0xA4),
+            text: Color32::from_rgb(0x15, 0x60, 0x3E),
+        },
+        (false, false) => WhatsappChip {
+            fill: Color32::WHITE,
+            edge: Color32::from_rgb(0xE9, 0xED, 0xEF),
+            text: Color32::from_rgb(0x54, 0x65, 0x6F),
+        },
+        (true, true) => WhatsappChip {
+            fill: Color32::from_rgb(0x10, 0x35, 0x29),
+            edge: Color32::from_rgb(0x1F, 0x5C, 0x45),
+            text: Color32::from_rgb(0xD9, 0xFD, 0xD3),
+        },
+        (true, false) => return None,
+    };
+    Some(look)
+}
+
 /// A filter chip led by a coloured dot, for filters the user named and
 /// coloured, such as labels.
 pub fn dotted_chip(
@@ -2633,10 +2754,11 @@ pub fn dotted_chip(
     count: usize,
     selected: bool,
 ) -> egui::Response {
-    let color = if selected {
-        palette.accent
-    } else {
-        palette.secondary
+    let official = whatsapp_chip(palette, selected);
+    let color = match official {
+        Some(look) => look.text,
+        None if selected => palette.accent,
+        None => palette.secondary,
     };
     let painter = ui.painter();
     let text = painter.layout_no_wrap(label.to_owned(), theme::medium(theme::TEXT_CAPTION), color);
@@ -2656,11 +2778,21 @@ pub fn dotted_chip(
     theme::focus_outline(ui, response.id, rect, rect.height() / 2.0);
     if ui.is_rect_visible(rect) {
         let radius = rect.height() / 2.0;
-        if selected {
+        if let Some(look) = official.filter(|_| selected) {
+            ui.painter().rect_filled(rect, radius, look.fill);
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                Stroke::new(theme::OUTLINE_STROKE, look.edge),
+                egui::StrokeKind::Inside,
+            );
+        } else if selected {
             ui.painter()
                 .rect_filled(rect, radius, palette.accent.gamma_multiply(0.18));
         } else {
-            let (hover, edge) = if palette.vibrant() {
+            let (hover, edge) = if let Some(look) = official {
+                (palette.surface, look.edge)
+            } else if palette.vibrant() {
                 (
                     palette.tint(theme::TINT_HOVER),
                     palette.tint(theme::TINT_SELECTED + theme::TINT_HOVER),
@@ -2773,6 +2905,20 @@ pub fn card_corners(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// WhatsApp's chips take the official greens; other palettes keep the
+    /// accent tint.
+    #[test]
+    fn whatsapp_chips_use_the_official_greens() {
+        use crate::theme::Palette;
+        let light = whatsapp_chip(&Palette::light(), true).expect("light");
+        assert_eq!(light.fill, Color32::from_rgb(0xD9, 0xFD, 0xD3));
+        let dark = whatsapp_chip(&Palette::dark(), true).expect("dark");
+        assert_eq!(dark.text, Color32::from_rgb(0xD9, 0xFD, 0xD3));
+        let mut other = Palette::light();
+        other.whatsapp = false;
+        assert!(whatsapp_chip(&other, true).is_none());
+    }
 
     /// A switch that is on keeps a knob that stands out from its track in
     /// every built-in palette: white on the green accents, dark on Nothing
