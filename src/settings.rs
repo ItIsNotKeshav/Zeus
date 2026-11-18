@@ -1317,7 +1317,18 @@ impl Settings {
         } else {
             None
         };
-        theme.map(|theme| theme.palette)
+        // The accent lies over a theme file as over a ready-made theme.
+        theme.map(|theme| {
+            let palette = theme.palette;
+            match crate::chat_themes::Accent::chosen_rgb(
+                self.accent,
+                self.custom_accent,
+                palette.dark,
+            ) {
+                Some(rgb) => palette.with_accent(rgb),
+                None => palette,
+            }
+        })
     }
 
     /// The push to talk key, or the default one when the saved name is not a

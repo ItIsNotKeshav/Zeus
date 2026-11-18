@@ -134,10 +134,7 @@ impl ChatTheme {
                 source.palette(dark)
             }
         };
-        let own = custom
-            .filter(|custom| custom.strength > CustomAccent::CENTRE)
-            .map(|custom| custom.rgb(dark));
-        let Some(rgb) = own.or_else(|| accent.rgb()) else {
+        let Some(rgb) = Accent::chosen_rgb(accent, custom, dark) else {
             return base;
         };
         let mut palette = base.with_accent(rgb);
@@ -219,6 +216,20 @@ impl Accent {
             Self::Purple => "Purple",
             Self::Pink => "Pink",
         }
+    }
+
+    /// The colour laid over a theme: the reader's own from the wheel unless
+    /// it sits at the centre, else the named accent's; `None` keeps the
+    /// theme's own accent.
+    pub fn chosen_rgb(
+        accent: Accent,
+        custom: Option<CustomAccent>,
+        dark: bool,
+    ) -> Option<[u8; 3]> {
+        custom
+            .filter(|custom| custom.strength > CustomAccent::CENTRE)
+            .map(|custom| custom.rgb(dark))
+            .or_else(|| accent.rgb())
     }
 
     /// The accent as RGB, the system colours of macOS in Dark Aqua; `None`

@@ -2066,12 +2066,13 @@ mod tests {
             app.palette.accent,
             egui::Color32::from_rgb(0xff, 0x45, 0x3a)
         );
-        // A theme comes in its own accent: the wheel's and a swatch's are
-        // one choice or the other.
-        click_widget(&mut app, &mut tour, &ctx, "settings-theme-Nord");
+        // The accent lies over any theme: picking one leaves the other alone.
+        app.actions
+            .push(crate::model::Action::SetChatTheme(ChatTheme::Nord));
+        frame(&mut app, &mut tour, &ctx, Vec::new());
         assert_eq!(app.settings.chat_theme, ChatTheme::Nord);
-        assert_eq!(app.settings.accent, Accent::Theme);
-        assert_eq!(app.palette, ChatTheme::Nord.palette(false, Accent::Theme));
+        assert_eq!(app.settings.accent, Accent::Red);
+        assert_eq!(app.palette, ChatTheme::Nord.palette(false, Accent::Red));
     }
 
     #[test]
