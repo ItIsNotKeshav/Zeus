@@ -1955,7 +1955,20 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .or_else(|| ui.ctx().read_response(id).map(|previous| previous.rect.height()))
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
-            let row_height = (text_height + 2.0 * field_margin).max(line);
+            // The field eases to its new height as lines wrap or go, as the
+            // strips over it do, and the messages follow it. Emptied (sent or
+            // cleared) it is one line again at once.
+            let field_height_id = id.with(("eased-height", chat.id.as_str()));
+            if calm || app.composer.is_empty() {
+                crate::motion::forget(ui.ctx(), field_height_id);
+            }
+            let shown_height = crate::motion::spring_to(
+                ui.ctx(),
+                field_height_id,
+                text_height,
+                crate::motion::Spring::settling_in(f64::from(theme::MOTION_QUICK)),
+            );
+            let row_height = (shown_height + 2.0 * field_margin).max(line);
             let ready = !app.composer.trim().is_empty()
                 || !app.pending.is_empty()
                 || (unsent_voice.is_some() && app.editing.is_none());
@@ -2064,11 +2077,11 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 // centre in it. Measured at this scale, snapped to a pixel.
                 let ink_middle = ink_middle(ui, line_height);
                 let top = fastframe_text::snap_to_pixels(
-                    row_height - line / 2.0 - (text_height - line_height) - ink_middle,
+                    row_height - line / 2.0 - (shown_height - line_height) - ink_middle,
                     ui.ctx().pixels_per_point(),
                 )
                 .max(0.0);
-                let bottom = (row_height - text_height - top).max(0.0);
+                let bottom = (row_height - shown_height - top).max(0.0);
                 Frame::new()
                     .fill(Color32::TRANSPARENT)
                     .inner_margin(Margin {
@@ -2087,8 +2100,8 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         // the scroll area's memory of the last frame.
                         egui::ScrollArea::vertical()
                             .id_salt("composer-scroll")
-                            .max_height(text_height)
-                            .min_scrolled_height(text_height)
+                            .max_height(shown_height)
+                            .min_scrolled_height(shown_height)
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 // Keep emoji in the buffer so character offsets match, then
