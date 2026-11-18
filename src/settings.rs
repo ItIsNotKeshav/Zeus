@@ -516,7 +516,7 @@ impl WallpaperColor {
     pub fn rgb(self) -> Option<[u8; 3]> {
         Some(match self {
             Self::Theme => return None,
-            Self::Beige => [245, 241, 235],
+            Self::Beige => [245, 240, 234],
             Self::Cruise => [187, 228, 229],
             Self::Scandal => [174, 216, 199],
             Self::MonteCarlo => [122, 203, 165],
@@ -2185,7 +2185,7 @@ mod tests {
         assert_eq!(WallpaperColor::DARK.len(), 22);
         assert_eq!(WallpaperColor::LIGHT[0], WallpaperColor::Theme);
         assert_eq!(WallpaperColor::DARK[0], WallpaperColor::Theme);
-        assert_eq!(WallpaperColor::Beige.rgb(), Some([245, 241, 235]));
+        assert_eq!(WallpaperColor::Beige.rgb(), Some([245, 240, 234]));
         assert_eq!(WallpaperColor::Black.rgb(), Some([22, 23, 23]));
         assert_eq!(WallpaperColor::WillowBrook.label(), "Willow Brook");
     }
