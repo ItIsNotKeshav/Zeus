@@ -78,6 +78,8 @@ use crate::privacy::{self, PrivacyChoice, PrivacyKind};
 
 /// Delay after the last history chunk before sync is complete.
 const SYNC_QUIET: Duration = Duration::from_secs(20);
+/// How long a phone-code request waits for a freshly started client's socket.
+const PAIR_SOCKET_WAIT: Duration = Duration::from_secs(20);
 /// History chunks inflating past this many bytes are filed a chat at a time
 /// as they are parsed, rather than parsed whole first.
 const HISTORY_STREAM_ABOVE: usize = 2 * 1024 * 1024;
@@ -838,6 +840,7 @@ pub async fn run(
         pairing_phone: None,
         pair_code: None,
         qr: None,
+        qr_expired: false,
         syncing: false,
         sync_deadline: None,
         last_busy: Instant::now(),
@@ -1334,6 +1337,10 @@ struct Worker {
     pairing_phone: Option<String>,
     pair_code: Option<String>,
     qr: Option<String>,
+    /// Every QR code of the link session expired and the library shut its
+    /// client down. Nothing links until the reader asks for a new code
+    /// (`Command::Reconnect`) or a phone number, which start a fresh client.
+    qr_expired: bool,
     syncing: bool,
     sync_deadline: Option<Instant>,
     /// The last turn that was not the periodic tick.
@@ -2370,7 +2377,20 @@ impl Worker {
             qr: self.qr.clone(),
             pair_code: self.pair_code.clone(),
             pairing_phone: self.pairing_phone.clone(),
+            expired: self.qr_expired && self.qr.is_none() && self.pair_code.is_none(),
         }
+    }
+
+    /// Starts linking over with a new client: the library shuts its client
+    /// down once every QR code has expired, and a shut-down client neither
+    /// reconnects nor asks for a phone code ("client is not connected").
+    async fn restart_link(&mut self) {
+        self.qr_expired = false;
+        self.qr = None;
+        self.pair_code = None;
+        self.pairing_phone = None;
+        self.stop_bot().await;
+        self.start_bot().await;
     }
 
     /// Canonical id used for our account.
@@ -3962,6 +3982,7 @@ impl Worker {
             E::PairingQrCode(qr) => {
                 // The prefix lets the phone camera open WhatsApp at Linked devices.
                 self.qr = Some(format!("{NATIVE_CAMERA_DEEP_LINK_PREFIX}{}", qr.code));
+                self.qr_expired = false;
                 let status = self.unlinked();
                 self.set_status(status);
             }
@@ -3982,16 +4003,20 @@ impl Worker {
             }
             E::PairingQrCodesExhausted(exhausted) => {
                 self.qr = None;
+                // With no phone code outstanding the library shuts the client
+                // down. The window then offers a new code on a click rather
+                // than cycling codes nobody is looking at; asking the dead
+                // client to reconnect used to leave it on "Waiting for a code"
+                // for good.
+                if exhausted.disconnected {
+                    self.qr_expired = true;
+                }
                 let status = self.unlinked();
                 self.set_status(status);
-                if exhausted.disconnected
-                    && let Some(client) = self.client.clone()
-                {
-                    tokio::spawn(async move { client.reconnect_immediately().await });
-                }
             }
             E::PairSuccess(pair) => {
                 self.qr = None;
+                self.qr_expired = false;
                 self.pair_code = None;
                 self.pairing_phone = None;
                 self.remember_identity(Some(pair.id.clone()), Some(pair.lid.clone()), None);
@@ -4594,6 +4619,7 @@ impl Worker {
         self.me_name = None;
         self.me_about = None;
         self.qr = None;
+        self.qr_expired = false;
         self.pair_code = None;
         self.pairing_phone = None;
         self.set_syncing(false);
@@ -8619,6 +8645,11 @@ impl Worker {
                 });
             }
             Command::PairWithPhone(phone) => {
+                // After the QR codes ran out the client is gone; a phone code
+                // needs a live socket, so linking starts over first.
+                if self.qr_expired || self.client.is_none() {
+                    self.restart_link().await;
+                }
                 let Some(client) = self.client.clone() else {
                     self.emit(Event::Error("Not connected to WhatsApp yet".to_owned()));
                     return;
@@ -8629,13 +8660,21 @@ impl Worker {
                 self.set_status(status);
                 let commands = self.commands.clone();
                 tokio::spawn(async move {
-                    let result = client
-                        .pair_with_code(PairCodeOptions {
-                            phone_number: phone,
-                            ..Default::default()
-                        })
-                        .await
-                        .map_err(|error| error.to_string());
+                    // A client that has just started has no socket yet; the
+                    // code request would fail with "client is not connected".
+                    let result = match client.wait_for_socket_ready(PAIR_SOCKET_WAIT).await {
+                        Ok(()) => client
+                            .pair_with_code(PairCodeOptions {
+                                phone_number: phone,
+                                ..Default::default()
+                            })
+                            .await
+                            .map_err(|error| error.to_string()),
+                        Err(_) => Err(
+                            "WhatsApp did not answer. Check the connection and try again."
+                                .to_owned(),
+                        ),
+                    };
                     let _ = commands.send(Command::PairCode { result });
                 });
             }
@@ -8682,7 +8721,9 @@ impl Worker {
                 self.emit(Event::AccountRemoved);
             }
             Command::Reconnect => {
-                if let Some(client) = self.client.clone() {
+                if self.qr_expired {
+                    self.restart_link().await;
+                } else if let Some(client) = self.client.clone() {
                     tokio::spawn(async move { client.reconnect_immediately().await });
                 } else {
                     self.start_bot().await;
@@ -19864,6 +19905,7 @@ mod receipt_tests {
             pairing_phone: None,
             pair_code: None,
             qr: None,
+            qr_expired: false,
             syncing: false,
             sync_deadline: None,
             last_busy: Instant::now(),

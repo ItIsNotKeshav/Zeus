@@ -41,6 +41,8 @@ pub enum LinkStatus {
         qr: Option<String>,
         pair_code: Option<String>,
         pairing_phone: Option<String>,
+        /// The codes ran out and the window offers a new one on a click.
+        expired: bool,
     },
     Connecting,
     Connected,
@@ -99,6 +101,7 @@ mod tests {
             qr: Some(qr.into()),
             pair_code: Some(code.into()),
             pairing_phone: Some(phone.into()),
+            expired: false,
         };
 
         // The previous Debug formatting leaked every field into zapfast.log.
