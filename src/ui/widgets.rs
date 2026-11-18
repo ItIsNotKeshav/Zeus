@@ -1811,9 +1811,22 @@ pub fn setting_row(
     description: &str,
     control: impl FnOnce(&mut Ui),
 ) {
+    // A label alone sits on the control's centre line. The row lays out the
+    // text before the control, so it centres by last frame's heights.
+    let memory = ui.id().with(("setting-row", label));
+    let (control_height, text_height) = ui
+        .data(|data| data.get_temp::<(f32, f32)>(memory))
+        .unwrap_or_default();
+    let pad = if description.is_empty() {
+        ((control_height - text_height) / 2.0).max(0.0)
+    } else {
+        0.0
+    };
+    let mut heights = (control_height, text_height);
     ui.horizontal(|ui| {
-        ui.vertical(|ui| {
+        let text = ui.vertical(|ui| {
             ui.set_width((ui.available_width() - super::controls::WIDTH - 52.0).max(120.0));
+            ui.add_space(pad);
             rich_text(ui, label, theme::medium(theme::TEXT_BODY), palette.text);
             if !description.is_empty() {
                 let description = line(
@@ -1830,8 +1843,16 @@ pub fn setting_row(
                 }
             }
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), control);
+        let control = ui.with_layout(Layout::right_to_left(Align::Center), control);
+        heights = (
+            control.response.rect.height(),
+            text.response.rect.height() - pad,
+        );
     });
+    if (heights.0 - control_height).abs() > 0.5 || (heights.1 - text_height).abs() > 0.5 {
+        ui.data_mut(|data| data.insert_temp(memory, heights));
+        ui.ctx().request_repaint();
+    }
     ui.add_space(8.0);
 }
 
