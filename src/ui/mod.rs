@@ -511,7 +511,7 @@ fn wallpaper_edge(palette: &crate::theme::Palette) -> egui::Color32 {
 
 fn central_frame(app: &App) -> Frame {
     let stroke = if app.page == Page::Wallpaper {
-        Stroke::new(1.0, wallpaper_edge(&app.palette))
+        Stroke::new(0.5, wallpaper_edge(&app.palette))
     } else {
         Stroke::NONE
     };
@@ -1127,7 +1127,7 @@ mod idle_tests {
         app.page = Page::Wallpaper;
         assert_eq!(
             central_frame(&app).stroke,
-            Stroke::new(1.0, wallpaper_edge(&app.palette))
+            Stroke::new(0.5, wallpaper_edge(&app.palette))
         );
     }
 
