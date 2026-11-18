@@ -81,11 +81,16 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png",
 # 0.21.1 (#1847). It also fits two pulled offline batches in one chat's
 # receive queue (#1814, #1823): before that, a chat with more than 64 waiting
 # messages overflowed the queue on every connection, so a long catch-up loaded
-# a little, dropped the connection and waited out a growing backoff. Back to
+# a little, dropped the connection and waited out a growing backoff. It also
+# carries the recovery for companion identity checks that #1836 made fail
+# closed: a stale stored primary identity is recovered (#1864, #1866, #1868),
+# kept across PN/LID migration (#1869), and an unverifiable companion message
+# asks for a retry instead of being dropped (#1870, #1880, #1883), so chats no
+# longer stick on "Waiting for this message" (ZapFast #1052). Back to
 # crates.io once released. `voip` is the call stack:
 # signaling, the sans-IO media engine with MLOW and libopus codecs, and the
 # native UDP relay transport.
-whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "e634d245f71d66e2ae55f79ef714c4ca01615ed8", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
+whatsapp-rust = { git = "https://github.com/oxidezap/whatsapp-rust", rev = "719f29498124acaede51c555c8f1c7a1c423fb3d", default-features = false, features = ["sqlite-storage", "tokio-transport", "tokio-runtime", "ureq-client", "tokio-native", "voip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "macros", "fs", "net", "io-util"] }
 # Queue between the call's audio streams and the engine.
 async-channel = "2.5"
@@ -270,7 +275,7 @@ epaint_default_fonts = { git = "https://github.com/pratyakshm/egui", rev = "dcd3
 # window opens after the headless AppKit loop has already launched (#4770).
 # Wayland clipboard MIME bytes are read on that one data device (crmne/winit#7),
 # and macOS's accent picker replaces the typed character (crmne/winit#5).
-winit = { git = "https://github.com/crmne/winit", rev = "59ebfb727b8c83fcd28f8ca59c3733e32b4b4e9b" }
+winit = { git = "https://github.com/crmne/winit", rev = "dc09323e032a405a8a165aeda9ceb48b3251cebd" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["rt-tokio-crypto-rust"] }
