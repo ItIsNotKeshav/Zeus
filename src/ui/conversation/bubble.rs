@@ -794,6 +794,19 @@ pub(super) fn reference_timestamp(
     actions: &mut Vec<Action>,
 ) {
     let own = message.from_me;
+    // Whether this row was on screen the frame before: a word that appears
+    // beside it arrives, one that comes with the row does not arrive twice.
+    let row_seen = {
+        let frame = ui.ctx().cumulative_frame_nr();
+        let row_id = id.with("row-last");
+        let seen = seen_last_frame(
+            ui.ctx().data(|data| data.get_temp::<(u64, ())>(row_id)),
+            frame,
+        )
+        .is_some();
+        ui.ctx().data_mut(|data| data.insert_temp(row_id, (frame, ())));
+        seen
+    };
     // The line used to start four points under the bubble, then sit in the
     // middle of a 16 point row. Two points, on the text's own line, is about
     // half that gap and stays clear of the bubble.
@@ -939,10 +952,31 @@ pub(super) fn reference_timestamp(
     if let Some(text) = &status {
         // The word in bold, with the time it was reached beside it in the
         // regular weight when that came well after the message.
-        let colour = status_colour(view, shown, plain);
+        // The word is never the read blue, whatever the state: only the ticks
+        // and Message info carry that colour.
+        let colour = plain;
         let width = status_span(&row_ui, text, status_font.size);
         let (rect, _) = row_ui.allocate_exact_size(vec2(width, line_height), Sense::hover());
-        paint_status_label(
+        // The word arrives as the time does: its opacity and a clip that grows
+        // down over it follow the same curve and time as the row's reveal. It
+        // does so when it first appears beside a row already on screen, and
+        // again whenever its state moves on.
+        let arrive = word_arrival(&row_ui, id, shown, row_seen);
+        // The word it replaces leaves outside that fade and clip, or it would
+        // vanish the moment the new one starts.
+        let steady = row_ui.painter().clone();
+        let (was_opacity, was_clip) = (row_ui.opacity(), row_ui.clip_rect());
+        if arrive < 1.0 - 1.0e-3 {
+            row_ui.multiply_opacity(arrive);
+            row_ui.set_clip_rect(Rect::from_min_max(
+                was_clip.min,
+                pos2(
+                    was_clip.max.x,
+                    was_clip.max.y.min(slot_top + full_height * arrive),
+                ),
+            ));
+        }
+        paint_status_label_with(
             &row_ui,
             view,
             message,
@@ -952,7 +986,10 @@ pub(super) fn reference_timestamp(
             &status_font,
             colour,
             presence,
+            Some(&steady),
         );
+        row_ui.set_opacity(was_opacity);
+        row_ui.set_clip_rect(was_clip);
     } else if own {
         // Noted while it is still sending, so the word that follows eases in.
         let _ = status_motion(&row_ui, view, message, shown);
@@ -974,6 +1011,48 @@ pub(super) fn widen_to(span: egui::Rangef, needed: f32, bounds: egui::Rangef) ->
     }
     let left = (span.max - needed).max(bounds.min);
     egui::Rangef::new(left, (left + needed).max(span.max))
+}
+
+/// How far our status word has arrived, 0 to 1, on the curve and over the
+/// time the row's reveal takes ([`SEND_RISE`], eased out), so the word comes
+/// in like the time beside it. It starts when the word is drawn under a row
+/// that was already there without it, or when its state moves on from the one
+/// drawn the frame before; a bubble scrolled into view shows it whole.
+/// Reduced motion shows it at once.
+fn word_arrival(ui: &egui::Ui, id: egui::Id, shown: Delivery, row_seen: bool) -> f32 {
+    let ctx = ui.ctx();
+    let frame = ctx.cumulative_frame_nr();
+    let now = ctx.input(|input| input.time);
+    let last_id = id.with("word-last");
+    let start_id = id.with("word-start");
+    let previous = seen_last_frame(
+        ctx.data(|data| data.get_temp::<(u64, Delivery)>(last_id)),
+        frame,
+    );
+    ctx.data_mut(|data| {
+        data.insert_temp(last_id, (frame, shown));
+        if row_seen && previous != Some(shown) {
+            data.insert_temp(start_id, now);
+        }
+    });
+    // As the row's reveal takes it: the spring's settle time already follows
+    // Settings' Motion, so it is not scaled again.
+    let seconds = if crate::motion::reduced(ctx) {
+        0.0
+    } else {
+        SEND_RISE.settle_time()
+    };
+    let Some(start) = ctx.data(|data| data.get_temp::<f64>(start_id)) else {
+        return 1.0;
+    };
+    if seconds <= 0.0 {
+        return 1.0;
+    }
+    let linear = ((now - start) / seconds).clamp(0.0, 1.0) as f32;
+    if linear < 1.0 {
+        ctx.request_repaint();
+    }
+    theme::ease_out(linear)
 }
 
 /// How long a delivery tick's change runs.
@@ -1304,15 +1383,6 @@ pub(super) fn status_span(ui: &egui::Ui, text: &str, size: f32) -> f32 {
     }
 }
 
-/// The colour of a status word: the read colour once it is read, `plain`
-/// otherwise.
-pub(super) fn status_colour(view: &View<'_>, shown: Delivery, plain: Color32) -> Color32 {
-    match shown {
-        Delivery::Read | Delivery::Played => view.palette.read,
-        _ => plain,
-    }
-}
-
 /// How far a leaving status word rises, in points.
 const STATUS_LEAVE_RISE: f32 = 8.0;
 /// The size a leaving status word shrinks to.
@@ -1456,8 +1526,28 @@ pub(super) fn paint_status_label(
     colour: Color32,
     presence: f32,
 ) {
+    paint_status_label_with(ui, view, message, shown, text, anchor, font, colour, presence, None);
+}
+
+/// [`paint_status_label`]. With `arrives` the caller fades and reveals the new
+/// word itself (as the time under a bubble arrives), so it is drawn steady;
+/// the word it replaces still slides away, painted with `arrives`, the
+/// painter from before that fade.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn paint_status_label_with(
+    ui: &egui::Ui,
+    view: &View<'_>,
+    message: &Message,
+    shown: Delivery,
+    text: &str,
+    anchor: (f32, f32),
+    font: &egui::FontId,
+    colour: Color32,
+    presence: f32,
+    arrives: Option<&egui::Painter>,
+) {
     if presence >= 1.0 - 1.0e-3 {
-        paint_status_word(ui, view, message, shown, text, anchor, font, colour);
+        paint_status_word(ui, view, message, shown, text, anchor, font, colour, arrives);
         return;
     }
     paint_leaving_status(ui, text, anchor, font, colour, presence);
@@ -1475,40 +1565,45 @@ fn paint_status_word(
     (right, y): (f32, f32),
     font: &egui::FontId,
     colour: Color32,
+    arrives: Option<&egui::Painter>,
 ) {
-    let paint = |text: &str, colour: Color32, y: f32| {
+    let paint = |painter: &egui::Painter, text: &str, colour: Color32, y: f32| {
         let (word, stamp) = split_status(text);
-        let word_galley =
-            ui.painter()
-                .layout_no_wrap(word.to_owned(), theme::bold(font.size), colour);
+        let word_galley = painter.layout_no_wrap(word.to_owned(), theme::bold(font.size), colour);
         let stamp_galley = stamp.map(|stamp| {
-            ui.painter()
-                .layout_no_wrap(stamp.to_owned(), theme::regular(font.size), colour)
+            painter.layout_no_wrap(stamp.to_owned(), theme::regular(font.size), colour)
         });
         let word_size = word_galley.size();
         let extra = stamp_galley
             .as_ref()
             .map_or(0.0, |galley| STATUS_TIME_GAP + galley.size().x);
         let mut x = right - word_size.x - extra;
-        ui.painter()
-            .galley(pos2(x, y - word_size.y / 2.0), word_galley, colour);
+        painter.galley(pos2(x, y - word_size.y / 2.0), word_galley, colour);
         if let Some(galley) = stamp_galley {
             x += word_size.x + STATUS_TIME_GAP;
-            ui.painter()
-                .galley(pos2(x, y - galley.size().y / 2.0), galley, colour);
+            painter.galley(pos2(x, y - galley.size().y / 2.0), galley, colour);
         }
     };
     let Some((progress, before)) = status_motion(ui, view, message, shown) else {
-        paint(text, colour, y);
+        paint(ui.painter(), text, colour, y);
         return;
     };
     let t = theme::ease_out(progress);
-    paint(text, colour.gamma_multiply(t), y + STATUS_SLIDE * (1.0 - t));
-    if let Some(old) = status_word(view.locale, before) {
-        let old_colour = status_colour(view, before, colour);
+    if arrives.is_some() {
+        paint(ui.painter(), text, colour, y);
+    } else {
         paint(
+            ui.painter(),
+            text,
+            colour.gamma_multiply(t),
+            y + STATUS_SLIDE * (1.0 - t),
+        );
+    }
+    if let Some(old) = status_word(view.locale, before) {
+        paint(
+            arrives.unwrap_or(ui.painter()),
             &old,
-            old_colour.gamma_multiply(1.0 - t),
+            colour.gamma_multiply(1.0 - t),
             y - STATUS_SLIDE * t,
         );
     }

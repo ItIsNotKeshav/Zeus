@@ -1923,7 +1923,6 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
             let line = (line_height + COMPOSER_PADDING)
                 .round()
                 .max(COMPOSER_CONTROL);
-            let button_width = line;
             let view_once = app.editing.is_none()
                 && (app.pending_supports_view_once() || app.pending_view_once);
             // The view-once toggle grows into the row as a single photo is
@@ -1957,31 +1956,65 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 .unwrap_or(line_height)
                 .clamp(line_height, line_height * 6.0);
             let row_height = (text_height + 2.0 * field_margin).max(line);
-            let pill = composer_glass(ui, &palette, |ui| {
-            ui.allocate_ui_with_layout(
-                vec2(ui.available_width(), row_height),
-                Layout::left_to_right(Align::Max),
-                |ui| {
-                // The plus sits in the field's rounded left end, centred as
-                // the send button is in the right one.
-                ui.add_space((line / 2.0 - PLUS_EDGE / 2.0).max(0.0));
+            let ready = !app.composer.trim().is_empty()
+                || !app.pending.is_empty()
+                || (unsent_voice.is_some() && app.editing.is_none());
+            let outer = line;
+            let send_reserve = outer + COMPOSER_OUTER_GAP;
+            let plus_reserve = if app.editing.is_none() {
+                outer + COMPOSER_OUTER_GAP
+            } else {
+                0.0
+            };
+            // The pill's inset and edge: the row is as tall as the pill, and
+            // the circles beside it centre on its last-line band, which sits
+            // this far above the pill's foot.
+            let pill_margin = composer_pill(&palette).total_margin();
+            let band = line + 2.0 * pill_margin.bottom;
+            let pill_w = (ui.available_width() - send_reserve - plus_reserve - pill_margin.sum().x)
+                .max(0.0);
+            let pill = ui
+                .allocate_ui_with_layout(
+                    vec2(ui.available_width(), row_height + pill_margin.sum().y),
+                    Layout::left_to_right(Align::Max),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = COMPOSER_OUTER_GAP;
+                        if app.editing.is_none() {
+                            let plus_icon = if app.composer_tools_open {
+                                palette.accent
+                            } else {
+                                palette.secondary
+                            };
+                            let (plus_fill, plus_hover) = if palette.vibrant() {
+                                (
+                                    palette.text.gamma_multiply(0.12),
+                                    palette.text.gamma_multiply(0.2),
+                                )
+                            } else {
+                                (palette.surface, palette.surface_hover)
+                            };
+                            let tools = last_line(ui, band, |ui| {
+                                theme::circle_button(
+                                    ui,
+                                    Icon::Plus,
+                                    outer,
+                                    plus_fill,
+                                    plus_hover,
+                                    plus_icon,
+                                    &crate::i18n::gettext(app.locale, "Attach"),
+                                )
+                            })
+                            .tab_stop(Stop::Attach);
+                            composer_tools_menu(app, chat, &tools);
+                        }
+                        let pill = composer_glass(ui, &palette, |ui| {
+                            ui.set_min_width(pill_w);
+                            ui.set_width(pill_w);
+                            ui.allocate_ui_with_layout(
+                                vec2(pill_w, row_height),
+                                Layout::left_to_right(Align::Max),
+                                |ui| {
                 if app.editing.is_none() {
-                    let tools = last_line(ui, line, |ui| theme::icon_button(
-                        ui,
-                        Icon::Plus,
-                        22.0,
-                        if app.composer_tools_open {
-                            palette.accent
-                        } else {
-                            palette.secondary
-                        },
-                        palette.text,
-                        &crate::i18n::gettext(app.locale, "Attach"),
-                    ))
-                    .tab_stop(Stop::Attach);
-                    composer_tools_menu(app, chat, &tools);
-                    // Plus and emoji sit close together, as a pair.
-                    ui.add_space(COMPOSER_PAIR_GAP - ui.spacing().item_spacing.x);
                     // The button shows the picker's tab used last.
                     let (mode_icon, mode_label) = match app.settings.picker_mode {
                         PickerTab::Emoji => (Icon::Smile, "Emoji, GIFs, and stickers"),
@@ -2015,13 +2048,14 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         }
                         app.actions.push(Action::TogglePicker(app.settings.picker_mode));
                     }
-                    // The text follows the pair as closely as the emoji
-                    // follows the plus (the field's own left margin included).
                     ui.add_space(COMPOSER_TEXT_GAP - ui.spacing().item_spacing.x - 8.0);
                 }
-                // The send button closes the row, flush with the field's end.
-                let field_width =
-                    (ui.available_width() - button_width - view_once_width - ui.spacing().item_spacing.x).max(0.0);
+                // The send circle sits outside the pill: only view-once may
+                // follow the text inside it.
+                let field_width = (ui.available_width()
+                    - view_once_width
+                    - ui.spacing().item_spacing.x)
+                .max(0.0);
                 // The ink is centred on the controls, not the line box: the
                 // span from a capital's top to a descender's bottom sits as far
                 // from the field's top as from its bottom. Inter's box leaves
@@ -2298,67 +2332,53 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                 {
                     app.actions.push(Action::SetPendingViewOnce(!app.pending_view_once));
                 }
-                let ready = !app.composer.trim().is_empty()
-                    || !app.pending.is_empty()
-                    || (unsent_voice.is_some() && app.editing.is_none());
-                let (fill, hover, icon) = if ready {
-                    (palette.accent_fill, palette.accent_hover, palette.on_accent)
-                } else {
-                    // On the glass field the plain surface colour nearly
-                    // vanishes, so the idle circle takes a text-tinted fill.
-                    if palette.vibrant() {
-                        (
-                            palette.text.gamma_multiply(0.12),
-                            palette.text.gamma_multiply(0.2),
-                            palette.dim,
-                        )
-                    } else {
-                        (palette.surface, palette.surface_hover, palette.dim)
-                    }
-                };
-                last_line(ui, line, |ui| {
-                    // An empty composer changes the send button to record.
-                    let recording = !ready && app.editing.is_none();
-                    let (icon_kind, tint, tip) = if recording {
-                        (Icon::Mic, palette.secondary, "Record a voice message")
-                    } else if app.editing.is_some() {
-                        (Icon::Check, icon, "Send")
-                    } else {
-                        (Icon::Send, icon, "Send")
-                    };
-                    // Smaller than the band it sits in, so it clears the
-                    // field's rounded corner without making the field taller.
-                    let breathing = SEND_CLEARANCE;
-                    // The band keeps its full width, so the button sits as
-                    // far from the field's end as from its top and bottom.
-                    ui.set_min_width(button_width);
-                    ui.add_space(breathing);
-                    let send = theme::circle_button_morph(
-                        ui,
-                        "composer-send",
-                        icon_kind,
-                        button_width - 2.0 * breathing,
-                        fill,
-                        hover,
-                        tint,
-                        tip,
-                    )
-                    .tab_stop(Stop::Send);
-                    if recording {
-                        if send.clicked() {
-                            app.actions.push(Action::StartRecording);
-                        }
-                    } else {
-                    ui.ctx()
-                        .data_mut(|data| data.insert_temp(send_flight_id().with("button"), send.rect));
-                    if send.clicked() {
-                        send_click = true;
-                    }
-                    }
-                });
-            },
-                    );
-                });
+                                },
+                            )
+                            .inner
+                        });
+                        let (fill, hover, tint) = (
+                            palette.accent_fill,
+                            palette.accent_hover,
+                            palette.on_accent,
+                        );
+                        last_line(ui, band, |ui| {
+                            let recording = !ready && app.editing.is_none();
+                            let (icon_kind, tip) = if recording {
+                                (Icon::Mic, "Record a voice message")
+                            } else if app.editing.is_some() {
+                                (Icon::Check, "Send")
+                            } else {
+                                (Icon::Send, "Send")
+                            };
+                            ui.set_min_width(outer);
+                            let send = theme::circle_button_morph(
+                                ui,
+                                "composer-send",
+                                icon_kind,
+                                outer,
+                                fill,
+                                hover,
+                                tint,
+                                tip,
+                            )
+                            .tab_stop(Stop::Send);
+                            if recording {
+                                if send.clicked() {
+                                    app.actions.push(Action::StartRecording);
+                                }
+                            } else {
+                                ui.ctx().data_mut(|data| {
+                                    data.insert_temp(send_flight_id().with("button"), send.rect);
+                                });
+                                if send.clicked() {
+                                    send_click = true;
+                                }
+                            }
+                        });
+                        pill
+                    },
+                )
+                .inner;
             // Clicking into the field draws no accent ring around it: the caret
             // shows where typing goes. Tabbing to it still outlines the field.
             if ui.ctx().data(|data| {
@@ -2464,22 +2484,15 @@ pub(crate) const COMPOSER_RADIUS: u8 = 24;
 /// and record button, are one text line plus this; the controls are centred
 /// on it.
 const COMPOSER_PADDING: f32 = 14.0;
-/// Height of the plus and emoji buttons: a row is never shorter, or they
-/// would stretch it and pull the text off its centre.
+/// Height of the emoji button: a row is never shorter, or it would stretch
+/// the pill and pull the text off its centre.
 const COMPOSER_CONTROL: f32 = 36.0;
-/// Space between the composer's rounded field and the buttons at its ends.
+/// Space inside the pill beside the emoji button and the text.
 const COMPOSER_INSET: i8 = 2;
-/// Space between the plus and emoji buttons' hit areas. Each area pads its
-/// 22-point icon by six points a side, so this leaves eight between the
-/// icons, a pair.
-const COMPOSER_PAIR_GAP: f32 = -4.0;
-/// From the emoji button's edge to the text. The plus's glyph leaves more of
-/// its box empty than the round emoji's, so this is wider than the pair's
-/// gap: at it, the text starts as far from the emoji's ink as the emoji
-/// starts from the plus's.
+/// Gap between the pill and the attach and send circles beside it.
+pub(crate) const COMPOSER_OUTER_GAP: f32 = 8.0;
+/// From the emoji button's edge to the text.
 pub(crate) const COMPOSER_TEXT_GAP: f32 = 10.0;
-/// Width of the plus button: its 22-point icon and `icon_button`'s padding.
-const PLUS_EDGE: f32 = 34.0;
 
 /// Where the composer's text was painted in the frame's last pass, for
 /// layout tests.
@@ -2523,14 +2536,15 @@ fn composer_pill(palette: &Palette) -> Frame {
             Stroke::new(theme::OUTLINE_STROKE, palette.text.gamma_multiply(0.16)),
         )
     } else {
-        (palette.bubble_in, Stroke::NONE)
+        (
+            palette.bubble_in,
+            Stroke::new(theme::OUTLINE_STROKE, palette.outline),
+        )
     };
     Frame::new()
         .fill(fill)
         .stroke(edge)
         .corner_radius(CornerRadius::same(COMPOSER_RADIUS))
-        // The end buttons are inset by as much at the sides as above and
-        // below, so they sit evenly in the rounded ends.
         .inner_margin(Margin {
             left: COMPOSER_INSET,
             right: COMPOSER_INSET,
@@ -5515,7 +5529,8 @@ pub fn speed_button_id(chat: &str, message: &str, speed: f32) -> egui::Id {
 }
 
 /// Draws a playback speed pill labelled with `speed`, highlighted when
-/// `active` and faded while that speed is still `preparing`.
+/// `active` and faded while that speed is still `preparing`. `solid` draws
+/// the voice player's chip: a grey fill with a white label at rest.
 fn speed_pill(
     ui: &mut egui::Ui,
     view: &View<'_>,
@@ -5523,6 +5538,7 @@ fn speed_pill(
     speed: f32,
     active: bool,
     preparing: bool,
+    solid: bool,
 ) -> egui::Response {
     let palette = view.palette;
     let label = crate::audio::speed_label(speed);
@@ -5545,6 +5561,8 @@ fn speed_pill(
             palette
                 .accent
                 .gamma_multiply(if hovered { 0.42 } else { 0.30 })
+        } else if solid {
+            voice_chip_fill(&palette, hovered)
         } else if hovered {
             palette.surface_active
         } else {
@@ -5553,6 +5571,8 @@ fn speed_pill(
         ui.painter().rect_filled(rect, rect.height() / 2.0, fill);
         let colour = if active {
             palette.accent
+        } else if solid {
+            Color32::WHITE
         } else {
             palette.secondary
         };
@@ -5561,13 +5581,31 @@ fn speed_pill(
         } else {
             colour
         };
-        let galley = ui
-            .painter()
-            .layout_no_wrap(label, theme::medium(theme::TEXT_MICRO), colour);
+        let galley = ui.painter().layout_no_wrap(
+            label,
+            if solid {
+                theme::semibold(theme::TEXT_MICRO)
+            } else {
+                theme::medium(theme::TEXT_MICRO)
+            },
+            colour,
+        );
         ui.painter()
             .galley(rect.center() - galley.size() / 2.0, galley, colour);
     }
     response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// The grey fill of the voice player's speed chip: a mid grey behind its white
+/// label, read from the text colour where the text is dark, and a dark wash
+/// where it is light (a dark look, or white on your own saturated bubble in
+/// light Messages), so the label reads in every look.
+fn voice_chip_fill(palette: &Palette, hovered: bool) -> Color32 {
+    if palette.text.intensity() > 0.5 {
+        Color32::from_black_alpha(if hovered { 110 } else { 80 })
+    } else {
+        palette.text.gamma_multiply(if hovered { 0.7 } else { 0.55 })
+    }
 }
 
 /// The message menu's row of every playback speed for a playable voice
@@ -5609,6 +5647,7 @@ fn speed_menu_row(
                     option,
                     selected,
                     preparing && selected,
+                    false,
                 );
                 ui.ctx().data_mut(|data| {
                     data.insert_temp(
@@ -7158,7 +7197,8 @@ fn footer(
         .map(|(_, delivery, _)| *delivery)
         .unwrap_or_else(|| shown_delivery(view, message));
     let status = line.map(|(text, _, _)| text);
-    let time_colour = status_colour(view, shown, palette.secondary);
+    // The word and time are never the read blue; only the ticks are.
+    let time_colour = palette.secondary;
     let time = ui.painter().layout_no_wrap(
         crate::util::clock(message.timestamp),
         font.clone(),
@@ -11521,6 +11561,76 @@ fn bottom_filler(viewport: f32, natural: Option<f32>, spacing: f32) -> f32 {
     natural.map_or(0.0, |natural| (viewport - natural - spacing).max(0.0))
 }
 
+/// Pitch of a voice message's waveform bars and the least height of one, in
+/// points: a silent clip still shows a row of short bars.
+const VOICE_BAR_PITCH: f32 = 4.0;
+const VOICE_BAR_MIN: f32 = 4.0;
+/// Radius of the voice message's seek knob.
+const VOICE_KNOB: f32 = 6.0;
+
+/// Where along a bar `width` wide from `left` a pointer at `x` seeks to, from
+/// 0 at the start to 1 at the end.
+fn seek_fraction(x: f32, left: f32, width: f32) -> f32 {
+    if width > 0.0 {
+        ((x - left) / width).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+
+/// The voice player's play or pause: a bare filled glyph in a soft grey that
+/// darkens under the pointer, in a `size` square click target.
+fn voice_play_button(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    size: f32,
+    playing: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    theme::reveal_focus(&response);
+    theme::focus_outline(ui, response.id, rect, size / 2.0);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), tooltip)
+    });
+    if ui.is_rect_visible(rect) {
+        let colour = if response.hovered() {
+            palette.text
+        } else {
+            palette.text.gamma_multiply(0.65)
+        };
+        let middle = rect.center();
+        if playing {
+            for side in [-1.0, 1.0] {
+                ui.painter().rect_filled(
+                    Rect::from_center_size(
+                        pos2(middle.x + side * 4.5, middle.y),
+                        vec2(5.0, 17.0),
+                    ),
+                    1.5,
+                    colour,
+                );
+            }
+        } else {
+            // Nudged right: a triangle's weight sits left of its box.
+            let tip = pos2(middle.x + 9.0, middle.y);
+            let top = pos2(middle.x - 7.0, middle.y - 9.0);
+            let bottom = pos2(middle.x - 7.0, middle.y + 9.0);
+            ui.painter().add(egui::Shape::convex_polygon(
+                vec![top, tip, bottom],
+                colour,
+                Stroke::NONE,
+            ));
+        }
+    }
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if tooltip.is_empty() {
+        response
+    } else {
+        response.on_hover_text(tooltip)
+    }
+}
+
 /// Draws the in-chat player with a waveform for voice notes or a track and music badge
 /// for audio files. Playback, seeking and speed controls remain shared between both types.
 #[allow(clippy::too_many_arguments)]
@@ -11613,17 +11723,26 @@ fn voice_player(
                         } else {
                             (Icon::Play, "Play")
                         };
-                        if theme::circle_button(
-                            ui,
-                            icon,
-                            button,
-                            fill,
-                            hover,
-                            palette.accent,
-                            tooltip,
-                        )
-                        .clicked()
-                        {
+                        let played = if voice_note {
+                            voice_play_button(
+                                ui,
+                                &palette,
+                                button,
+                                status.state == State::Playing,
+                                tooltip,
+                            )
+                        } else {
+                            theme::circle_button(
+                                ui,
+                                icon,
+                                button,
+                                fill,
+                                hover,
+                                palette.accent,
+                                tooltip,
+                            )
+                        };
+                        if played.clicked() {
                             actions.push(Action::PlayVoice {
                                 message: message.id.clone(),
                                 path: path.clone(),
@@ -11635,30 +11754,64 @@ fn voice_player(
             let mut wave_middle = None;
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
+                let sense = if media.path.is_some() {
+                    Sense::click_and_drag()
+                } else {
+                    Sense::click()
+                };
                 let (rect, response) =
-                    ui.allocate_exact_size(vec2(wave_width, bar_height), Sense::click());
+                    ui.allocate_exact_size(vec2(wave_width, bar_height), sense);
                 wave_middle = Some(rect.center().y);
-                let pitch = 3.0;
+                let pitch = if voice_note { VOICE_BAR_PITCH } else { 3.0 };
                 let count = (rect.width() / pitch).floor() as usize;
                 let fraction = if status.total > Duration::ZERO {
                     status.position.as_secs_f32() / status.total.as_secs_f32()
                 } else {
                     0.0
                 };
-                let played_until = rect.left() + fraction * rect.width();
-                let quiet = palette.secondary.gamma_multiply(0.7);
+                let id = bubble_id(&view.chat.id, &message.id);
+                // A drag on the bar seeks once, where it ends; until then the
+                // knob, the played bars and the time follow the pointer. The
+                // bar takes the press before the strip around the bubble, so
+                // the drag never sweeps or lifts the message.
+                let drag_id = id.with("voice-drag");
+                let pointed = response
+                    .interact_pointer_pos()
+                    .map(|pointer| seek_fraction(pointer.x, rect.left(), rect.width()));
+                if media.path.is_some() && response.is_pointer_button_down_on() {
+                    super::carry::release_press(ui.ctx(), &view.chat.id, &message.id);
+                }
+                if let Some(pointed) = pointed.filter(|_| response.dragged()) {
+                    ui.ctx().data_mut(|data| data.insert_temp(drag_id, pointed));
+                }
+                let dragged = media
+                    .path
+                    .is_some()
+                    .then(|| {
+                        (response.dragged() || response.drag_stopped())
+                            .then(|| ui.ctx().data(|data| data.get_temp::<f32>(drag_id)))
+                            .flatten()
+                    })
+                    .flatten();
+                let progress = dragged.unwrap_or(if status.state == State::Idle && voice_note {
+                    0.0
+                } else {
+                    fraction
+                });
+                let played_until = rect.left() + progress * rect.width();
                 let kind = if voice_note {
                     "voice-waveform"
                 } else {
                     "audio-track"
                 };
                 ui.ctx().data_mut(|data| {
-                    data.insert_temp(bubble_id(&view.chat.id, &message.id).with(kind), rect);
+                    data.insert_temp(id.with(kind), rect);
                 });
                 if !voice_note {
+                    let quiet = palette.secondary.gamma_multiply(0.7);
                     let track = Rect::from_center_size(rect.center(), vec2(rect.width(), 4.0));
                     ui.painter().rect_filled(track, 2.0, quiet);
-                    if fraction > 0.0 {
+                    if progress > 0.0 {
                         ui.painter().rect_filled(
                             Rect::from_min_max(track.min, pos2(played_until, track.bottom())),
                             2.0,
@@ -11666,15 +11819,14 @@ fn voice_player(
                         );
                     }
                 } else if count > 0 {
+                    let quiet = palette.secondary.gamma_multiply(0.45);
+                    let played = palette.text.gamma_multiply(0.85);
                     for index in 0..count {
                         let level = f32::from(bars[index * bars.len() / count]) / 100.0;
-                        let height = (2.0 + level * (bar_height - 4.0)).max(2.0);
+                        let height = (VOICE_BAR_MIN + level * (bar_height - VOICE_BAR_MIN))
+                            .clamp(VOICE_BAR_MIN, bar_height);
                         let x = rect.left() + index as f32 * pitch + 1.0;
-                        let colour = if status.state != State::Idle && x <= played_until {
-                            palette.accent
-                        } else {
-                            quiet
-                        };
+                        let colour = if x <= played_until { played } else { quiet };
                         ui.painter().rect_filled(
                             Rect::from_center_size(
                                 egui::pos2(x, rect.center().y),
@@ -11685,7 +11837,17 @@ fn voice_player(
                         );
                     }
                 }
-                if (!voice_note || matches!(status.state, State::Playing | State::Paused))
+                if voice_note && rect.width() >= 2.0 * VOICE_KNOB {
+                    // Always drawn, at the start while idle, over the bars.
+                    let knob =
+                        played_until.clamp(rect.left() + VOICE_KNOB, rect.right() - VOICE_KNOB);
+                    ui.painter().circle_filled(
+                        egui::pos2(knob, rect.center().y),
+                        VOICE_KNOB,
+                        palette.accent,
+                    );
+                } else if !voice_note
+                    && matches!(status.state, State::Playing | State::Paused)
                     && rect.width() >= 10.0
                 {
                     let knob = played_until.clamp(rect.left() + 5.0, rect.right() - 5.0);
@@ -11697,14 +11859,13 @@ fn voice_player(
                 }
                 if let Some(path) = &media.path {
                     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-                    if response.clicked()
-                        && let Some(pointer) = response.interact_pointer_pos()
+                    if response.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                    }
+                    if (response.clicked() || response.drag_stopped())
+                        && let Some(fraction) = dragged.or(pointed)
                     {
-                        let fraction = if rect.width() > 0.0 {
-                            ((pointer.x - rect.left()) / rect.width()).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
+                        ui.ctx().data_mut(|data| data.remove::<f32>(drag_id));
                         actions.push(Action::SeekVoice {
                             message: message.id.clone(),
                             path: path.clone(),
@@ -11714,6 +11875,14 @@ fn voice_player(
                 }
                 // Show playback position while active, otherwise total duration.
                 let shown = match status.state {
+                    _ if dragged.is_some() => {
+                        let total = if status.total > Duration::ZERO {
+                            status.total.as_secs_f32()
+                        } else {
+                            seconds.unwrap_or(0) as f32
+                        };
+                        crate::util::duration((progress * total) as u32)
+                    }
                     State::Playing | State::Paused => {
                         crate::util::duration(status.position.as_secs() as u32)
                     }
@@ -11769,7 +11938,7 @@ fn voice_player(
                 );
                 let response = ui
                     .scope_builder(egui::UiBuilder::new().max_rect(at), |ui| {
-                        speed_pill(ui, view, size, speed, speed > 1.0, preparing)
+                        speed_pill(ui, view, size, speed, speed > 1.0, preparing, true)
                     })
                     .inner;
                 ui.ctx().data_mut(|data| {
@@ -12112,6 +12281,16 @@ fn cover_uv(natural: Vec2, frame: Vec2) -> Rect {
 
 #[cfg(test)]
 mod tests {
+    /// A pointer along the voice bar seeks to its place, held inside the bar.
+    #[test]
+    fn a_voice_bar_seeks_where_the_pointer_is() {
+        assert_eq!(super::seek_fraction(50.0, 50.0, 200.0), 0.0);
+        assert_eq!(super::seek_fraction(150.0, 50.0, 200.0), 0.5);
+        assert_eq!(super::seek_fraction(10.0, 50.0, 200.0), 0.0);
+        assert_eq!(super::seek_fraction(900.0, 50.0, 200.0), 1.0);
+        assert_eq!(super::seek_fraction(60.0, 50.0, 0.0), 0.0);
+    }
+
     /// A strip over the composer is in place at once in a calm window,
     /// opens out of nothing over the frames after it is asked for, and
     /// sinks back once it is not; the messages get its room all the way.

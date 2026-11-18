@@ -124,9 +124,6 @@ pub(in crate::ui) fn pop_out_composer(app: &mut App, ui: &mut egui::Ui, chat: &C
 /// the two curves run parallel (see `chats::CARD_RADIUS`). On macOS the card
 /// follows the window corner instead.
 pub(crate) const COMPOSER_MARGIN: i8 = 12;
-/// Space the send button keeps on every side inside its band, so it sits
-/// clear of the field's corner while the field stays one line thick.
-pub(super) const SEND_CLEARANCE: f32 = 4.0;
 /// The composer's field over blurred glass: what scrolls on under it is
 /// frosted within its rounded ends, under its see-through fill.
 pub(super) fn composer_glass<R>(

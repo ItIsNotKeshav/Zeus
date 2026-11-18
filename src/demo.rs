@@ -9284,8 +9284,9 @@ mod tests {
                     .unwrap();
                 assert!(caption.right() <= toggle.left(), "{page} {width}");
                 assert!(toggle.right() <= send.left(), "{page} {width}");
+                // The toggle stays in the field; send sits outside its end.
                 assert!(
-                    pill.contains_rect(toggle) && pill.contains_rect(send),
+                    pill.contains_rect(toggle) && send.left() >= pill.right(),
                     "{page} {width}"
                 );
                 assert!((toggle.center().y - send.center().y).abs() < 1.0);
@@ -17470,10 +17471,22 @@ mod tests {
                 (gap - crate::ui::conversation::STRIP_GAP).abs() < 0.5,
                 "{page}: the list ends {gap} above the composer"
             );
+            // The composer's row runs from the attach circle to the send
+            // circle, outside the field on either side.
+            let control = |stop| {
+                crate::ui::focus::stops(&ctx)
+                    .into_iter()
+                    .find(|(found, _)| *found == stop)
+                    .and_then(|(_, id)| ctx.read_response(id))
+                    .unwrap_or_else(|| panic!("{page}: {stop:?} is drawn"))
+                    .rect
+            };
+            let attach = control(crate::ui::focus::Stop::Attach);
+            let send = control(crate::ui::focus::Stop::Send);
             assert!(
-                (list.left() - pill.left()).abs() < 0.5
-                    && (list.right() - pill.right()).abs() < 0.5,
-                "{page}: the list {list:?} spans the composer {pill:?}"
+                (list.left() - attach.left()).abs() < 0.5
+                    && (list.right() - send.right()).abs() < 0.5,
+                "{page}: the list {list:?} spans the composer from {attach:?} to {send:?}"
             );
         }
     }
@@ -17516,8 +17529,7 @@ mod tests {
         }
     }
 
-    /// The text starts right after the plus and emoji pair, as close to the
-    /// emoji as the emoji is to the plus, not a field's width away.
+    /// The text starts right after the emoji button, not a field's width away.
     #[test]
     fn the_composers_text_follows_the_emoji_button_closely() {
         use crate::ui::focus::Stop;
@@ -17695,8 +17707,8 @@ mod tests {
         }
     }
 
-    /// The send button sits evenly in the field's rounded end: as far from
-    /// its right edge as from its top and bottom.
+    /// Attach and send sit outside the pill with even gaps, centred on its
+    /// last-line band.
     #[test]
     fn the_send_button_is_inset_evenly_in_the_field() {
         let mut app = app();
@@ -17716,13 +17728,11 @@ mod tests {
             .map(|(_, id)| id)
             .expect("send is drawn");
         let send = ctx.read_response(id).unwrap().rect;
-        let right = pill.right() - send.right();
-        let bottom = pill.bottom() - send.bottom();
+        let gap = send.left() - pill.right();
         assert!(
-            (right - bottom).abs() <= 1.0,
-            "send is {right} from the right and {bottom} from the bottom"
+            (gap - crate::ui::conversation::COMPOSER_OUTER_GAP).abs() <= 1.0,
+            "send is {gap} from the pill's right edge"
         );
-        // The plus mirrors it in the left end, and emoji stays close by.
         let rect = |stop| {
             let id = crate::ui::focus::stops(&ctx)
                 .into_iter()
@@ -17733,14 +17743,20 @@ mod tests {
         };
         let plus = rect(crate::ui::focus::Stop::Attach);
         let emoji = rect(crate::ui::focus::Stop::Emoji);
-        let left = plus.center().x - pill.left();
-        let right = pill.right() - send.center().x;
+        let left_gap = pill.left() - plus.right();
         assert!(
-            (left - right).abs() <= 1.0,
-            "plus centre is {left} from the left, send's {right} from the right"
+            (left_gap - crate::ui::conversation::COMPOSER_OUTER_GAP).abs() <= 1.0,
+            "attach is {left_gap} from the pill's left edge"
+        );
+        assert!(
+            (plus.center().y - send.center().y).abs() <= 1.0,
+            "attach and send share a vertical centre"
         );
         let apart = emoji.center().x - plus.center().x;
-        assert!(apart <= 32.0, "plus and emoji are {apart} apart");
+        assert!(
+            apart > plus.width(),
+            "emoji sits inside the pill, not beside attach ({apart})"
+        );
     }
 
     /// The recorder runs discard, time, waveform and send from left to right,

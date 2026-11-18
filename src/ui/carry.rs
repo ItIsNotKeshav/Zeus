@@ -531,6 +531,16 @@ pub fn lift_on_drag(ctx: &egui::Context, chat: &str, message: &str) -> bool {
     true
 }
 
+/// A press that a control inside the bubble holds, such as a voice message's
+/// seek bar, is not a grab: the held press stops waiting to lift the bubble.
+pub fn release_press(ctx: &egui::Context, chat: &str, message: &str) {
+    if load(ctx).is_some_and(|carry| {
+        carry.phase == Phase::Pressed && carry.chat == chat && carry.anchor == message
+    }) {
+        store(ctx, None);
+    }
+}
+
 fn lift(ctx: &egui::Context, carry: &mut Carry) {
     let now = ctx.input(|input| input.time);
     carry.phase = Phase::Lifted { at: now };
