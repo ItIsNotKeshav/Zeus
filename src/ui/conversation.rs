@@ -12783,7 +12783,7 @@ mod tests {
     }
 
     /// Builds synthetic attachment metadata for media-state and album regression tests.
-    fn media(w: Option<u32>, h: Option<u32>) -> Media {
+    pub(super) fn media(w: Option<u32>, h: Option<u32>) -> Media {
         Media {
             mime: "image/jpeg".into(),
             size: 1,
@@ -13270,7 +13270,7 @@ mod tests {
 
     /// Runs `check` with a still view of one plain chat, as a footer test
     /// needs one to paint into.
-    fn with_still_view(check: impl FnOnce(&View<'_>)) {
+    pub(super) fn with_still_view(check: impl FnOnce(&View<'_>)) {
         let directory = tempfile::tempdir().unwrap();
         let (app, _events) = App::headless(
             crate::paths::AppDirs::under(directory.path()),
@@ -13865,6 +13865,7 @@ mod tests {
 
 #[cfg(test)]
 mod reaction_tests {
+    use super::tests::{media, with_still_view};
     use super::*;
 
     #[test]
