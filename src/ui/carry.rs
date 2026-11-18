@@ -1010,11 +1010,13 @@ fn paint(
     }
     painter.add(
         egui::epaint::Shadow {
-            offset: [0, (10.0 * lifting) as i8],
-            blur: (28.0 * lifting) as u8,
+            // Close and short, as the app's other lifted surfaces are: a
+            // wide, dense one read as a grey cloud around the card.
+            offset: [0, (6.0 * lifting) as i8],
+            blur: (16.0 * lifting) as u8,
             spread: 0,
             color: Color32::from_black_alpha(
-                (if palette.dark { 150.0 } else { 70.0 } * lifting) as u8,
+                (if palette.dark { 110.0 } else { 40.0 } * lifting) as u8,
             ),
         }
         .as_shape(card, radius),

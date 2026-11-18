@@ -718,13 +718,16 @@ impl Palette {
     }
 
     /// The shadow under a surface that floats over the window for a moment:
-    /// menus, toasts, the emoji picker, and egui's own popups.
+    /// menus, toasts, the emoji picker, and egui's own popups. Close and
+    /// short: two points down, ten wide, at half the palette's shadow, so
+    /// the surface reads as just above the window rather than ringed by a
+    /// grey haze. The outline draws the edge; the shadow only lifts it.
     pub fn float_shadow(&self) -> egui::epaint::Shadow {
         egui::epaint::Shadow {
-            offset: [0, 6],
-            blur: 20,
+            offset: [0, 2],
+            blur: 10,
             spread: 0,
-            color: self.shadow,
+            color: self.shadow.gamma_multiply(FLOAT_SHADOW_STRENGTH),
         }
     }
 
@@ -756,12 +759,15 @@ impl Palette {
     pub fn menu_shadows(&self) -> [egui::epaint::Shadow; 5] {
         // Offset down, blur and spread in points, and the alpha in a light
         // palette.
+        // Kept tight: the farthest layer reaches 24 points, not 32, and the
+        // ambient ones are faint, so the menu sits on the window instead of
+        // floating in a grey cloud.
         const LAYERS: [(i8, u8, u8, f32); 5] = [
-            (1, 2, 0, 28.0),
-            (2, 5, 0, 22.0),
-            (4, 10, 0, 16.0),
-            (8, 20, 1, 10.0),
-            (14, 32, 2, 5.0),
+            (1, 2, 0, 24.0),
+            (2, 4, 0, 16.0),
+            (3, 8, 0, 10.0),
+            (6, 16, 0, 6.0),
+            (10, 24, 0, 3.0),
         ];
         let [r, g, b, _] = self.shadow.to_srgba_unmultiplied();
         let strength = if self.dark { DARK_MENU_SHADOW } else { 1.0 };
@@ -792,10 +798,10 @@ impl Palette {
     /// it closes: dialogs, the update dialog, and the image preview.
     pub fn modal_shadow(&self) -> egui::epaint::Shadow {
         egui::epaint::Shadow {
-            offset: [0, 12],
-            blur: 40,
+            offset: [0, 8],
+            blur: 24,
             spread: 0,
-            color: self.shadow,
+            color: self.shadow.gamma_multiply(MODAL_SHADOW_STRENGTH),
         }
     }
 
@@ -1077,6 +1083,10 @@ const RAIL_SHADE: f32 = 0.05;
 const DARK_RAIL_SHADE: f32 = 0.22;
 /// How much denser than the palette's shadow colour a bubble's shadow is.
 const SHADOW_DENSITY: f32 = 1.04;
+/// How much of the palette's shadow colour a floating surface casts.
+const FLOAT_SHADOW_STRENGTH: f32 = 0.5;
+/// How much of the palette's shadow colour a modal surface casts.
+const MODAL_SHADOW_STRENGTH: f32 = 0.7;
 /// How much stronger a message menu's shadow is in a dark palette than in a
 /// light one.
 const DARK_MENU_SHADOW: f32 = 1.6;
