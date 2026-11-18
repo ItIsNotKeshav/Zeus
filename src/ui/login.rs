@@ -46,7 +46,7 @@ pub(super) fn card(
         .frame(Frame::new().fill(palette.window))
         .show(ui, |ui| {
             let rect = ui.max_rect();
-            super::setup::backdrop(ui, &palette, rect, false);
+            super::setup::backdrop(ui, &palette, rect);
             let appearance_id = ui.id().with((salt, "card-appearance"));
             let shown = appearance(ui.ctx(), appearance_id);
             let opened = super::arrive::shown_for(ui.ctx(), appearance_id);

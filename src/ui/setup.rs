@@ -119,7 +119,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
             // rises into place, and what is on it follows top to bottom.
             let opened = arrive::shown_for(ui.ctx(), Id::new("setup-entrance"));
             let light = arrive::painted(ui);
-            backdrop(ui, &palette, area, true);
+            backdrop(ui, &palette, area);
             arrive::fade_since(
                 ui,
                 light,
@@ -190,72 +190,28 @@ fn paint_card(ui: &egui::Ui, palette: &Palette, card: Rect) {
     );
 }
 
-/// The window behind the card: its own colour, lit softly from above by the
-/// accent, and from the far corner by the link colour.
-pub(super) fn backdrop(ui: &egui::Ui, palette: &Palette, area: Rect, drift: bool) {
-    let still = !drift || crate::motion::reduced(ui.ctx());
-    let time = if still {
-        0.0
-    } else {
-        // Slow enough that a frame every 50 ms is smooth.
-        crate::motion::request_frame_after(ui.ctx(), std::time::Duration::from_millis(50));
-        ui.input(|input| input.time) as f32
-    };
-    // Each light sways on its own slow period, so they never line up.
-    let sway = |period: f32, phase: f32| (time * std::f32::consts::TAU / period + phase).sin();
-    let (w, h) = (area.width(), area.height());
-    // Light from above: the accent's own in the dark, and white in the
-    // light, where a dark accent would read as a smudge rather than light.
-    let top = if palette.dark {
-        palette.accent.gamma_multiply(0.13)
-    } else {
-        Color32::WHITE.gamma_multiply(0.9)
-    };
+/// The window behind the card: its own colour, with one still, neutral light
+/// from above so the card does not sit on a flat field. No colour and no
+/// movement: the card and what is on it carry the screen.
+pub(super) fn backdrop(ui: &egui::Ui, palette: &Palette, area: Rect) {
+    if !palette.dark {
+        // A white card on a white window would only have its shadow to stand
+        // on: the light mode's window goes a shade grey behind it.
+        ui.painter()
+            .rect_filled(area, 0.0, theme::blend(palette.window, palette.text, 0.04));
+    }
     glow(
         ui.painter(),
-        pos2(area.center().x + w * 0.06 * sway(31.0, 0.0), area.top()),
-        vec2(w * 0.75, h * 0.7),
-        top,
-    );
-    // Two colours drifting round the corners behind the card: the accent's
-    // and its neighbour when it has a hue, and a blue and a violet when it
-    // is a grey.
-    let (first, second) = if colourful(palette.accent) {
-        (
-            palette.accent,
-            theme::blend(palette.accent, palette.link, 0.6),
-        )
-    } else {
-        (
-            Color32::from_rgb(86, 132, 255),
-            Color32::from_rgb(168, 112, 255),
-        )
-    };
-    let strength = if palette.dark { 0.11 } else { 0.13 };
-    glow(
-        ui.painter(),
-        pos2(
-            area.left() + w * (0.16 + 0.06 * sway(23.0, 1.0)),
-            area.bottom() - h * (0.14 + 0.08 * sway(29.0, 2.0)),
-        ),
-        vec2(w * 0.42, h * 0.55),
-        first.gamma_multiply(strength),
-    );
-    glow(
-        ui.painter(),
-        pos2(
-            area.right() - w * (0.14 + 0.06 * sway(27.0, 3.0)),
-            area.top() + h * (0.36 + 0.1 * sway(19.0, 0.5)),
-        ),
-        vec2(w * 0.38, h * 0.55),
-        second.gamma_multiply(strength * 0.85),
+        area.center_top(),
+        vec2(area.width() * 0.7, area.height() * 0.6),
+        backdrop_light(palette),
     );
 }
 
-/// Whether a colour has a hue to speak of, rather than being a grey.
-fn colourful(color: Color32) -> bool {
-    let [r, g, b, _] = color.to_array();
-    r.max(g).max(b) - r.min(g).min(b) > 48
+/// The backdrop's light: a breath of white in the dark, where any colour
+/// would read as a glow, and a soft white in the light.
+fn backdrop_light(palette: &Palette) -> Color32 {
+    Color32::WHITE.gamma_multiply(if palette.dark { 0.035 } else { 0.6 })
 }
 
 /// A soft elliptical glow: `color` at `center`, fading out by `radius`.
@@ -471,7 +427,13 @@ fn progress(app: &mut App, ui: &mut egui::Ui, row: Rect, step: Step) {
                 .layout(Layout::right_to_left(Align::Center)),
             |ui| {
                 let skip = gettext(locale, "Skip to linking");
-                if theme::link(ui, skip.as_ref(), theme::medium(13.0), palette.secondary).clicked()
+                if theme::link(
+                    ui,
+                    skip.as_ref(),
+                    theme::medium(theme::TEXT_CONTROL),
+                    palette.secondary,
+                )
+                .clicked()
                 {
                     app.setup_step = Step::Link;
                 }
@@ -538,9 +500,11 @@ pub(super) fn sized_primary_button(
     icon: Option<Icon>,
     width: f32,
 ) -> egui::Response {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), theme::semibold(14.0), palette.on_accent);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        theme::semibold(theme::TEXT_BODY),
+        palette.on_accent,
+    );
     let icon_width = if icon.is_some() { 16.0 + 6.0 } else { 0.0 };
     let pad = 22.0;
     let content = galley.size().x + icon_width;
@@ -592,9 +556,11 @@ pub(super) fn sized_primary_button(
 
 /// Back: a quiet arrow and word that fill in softly under the pointer.
 fn back_button(ui: &mut egui::Ui, palette: &Palette, label: &str) -> egui::Response {
-    let galley =
-        ui.painter()
-            .layout_no_wrap(label.to_owned(), theme::medium(14.0), palette.secondary);
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        theme::medium(theme::TEXT_BODY),
+        palette.secondary,
+    );
     let size = vec2(14.0 + 16.0 + 4.0 + galley.size().x + 18.0, FOOTER);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     theme::reveal_focus(&response);
@@ -650,17 +616,32 @@ fn title(ui: &mut egui::Ui, palette: &Palette, title: &str, subtitle: &str) {
     );
     ui.add_space(8.0);
     if !subtitle.is_empty() {
-        theme::paragraph(ui, subtitle, theme::regular(14.5), palette.secondary);
+        theme::paragraph(
+            ui,
+            subtitle,
+            theme::regular(theme::TEXT_BODY),
+            palette.secondary,
+        );
     }
     ui.add_space(22.0);
 }
 
 /// A group of choices' name, and a note under it when there is one.
 fn heading(ui: &mut egui::Ui, palette: &Palette, label: &str, note: Option<&str>) {
-    theme::text(ui, label, theme::semibold(13.5), palette.text);
+    theme::text(
+        ui,
+        label,
+        theme::semibold(theme::TEXT_CONTROL),
+        palette.text,
+    );
     if let Some(note) = note {
         ui.add_space(2.0);
-        theme::paragraph(ui, note, theme::regular(12.5), palette.secondary);
+        theme::paragraph(
+            ui,
+            note,
+            theme::regular(theme::TEXT_CAPTION),
+            palette.secondary,
+        );
     }
     ui.add_space(10.0);
 }
@@ -672,27 +653,6 @@ fn tint(palette: &Palette) -> Color32 {
         .gamma_multiply(if palette.dark { 0.18 } else { 0.12 })
 }
 
-/// An icon in the accent on a rounded square of its tint.
-fn icon_tile(ui: &mut egui::Ui, palette: &Palette, icon: Icon, side: f32) -> Rect {
-    let (rect, _) = ui.allocate_exact_size(Vec2::splat(side), Sense::hover());
-    paint_icon_tile(ui, palette, icon, rect);
-    rect
-}
-
-/// [`icon_tile`] painted into `rect`, which the caller has made room for.
-fn paint_icon_tile(ui: &egui::Ui, palette: &Palette, icon: Icon, rect: Rect) {
-    let side = rect.width();
-    ui.painter()
-        .rect_filled(rect, (side * 0.3).round(), tint(palette));
-    theme::paint_icon(
-        ui,
-        icon,
-        Rect::from_center_size(rect.center(), Vec2::splat(side * 0.5)),
-        side * 0.5,
-        palette.accent,
-    );
-}
-
 fn disclaimer(ui: &mut egui::Ui, palette: &Palette, locale: crate::i18n::Locale) {
     theme::paragraph(
         ui,
@@ -700,7 +660,7 @@ fn disclaimer(ui: &mut egui::Ui, palette: &Palette, locale: crate::i18n::Locale)
             locale,
             "Unofficial client. Using it may be against WhatsApp's terms of service.",
         ),
-        theme::regular(11.5),
+        theme::regular(theme::TEXT_CAPTION),
         palette.dim,
     );
 }
@@ -708,58 +668,27 @@ fn disclaimer(ui: &mut egui::Ui, palette: &Palette, locale: crate::i18n::Locale)
 fn welcome(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
-    let (mark, _) = ui.allocate_exact_size(Vec2::splat(64.0), Sense::hover());
-    theme::mark(ui, mark.center(), 64.0);
-    ui.add_space(22.0);
+    let (mark, _) = ui.allocate_exact_size(Vec2::splat(56.0), Sense::hover());
+    theme::mark(ui, mark.center(), 56.0);
+    ui.add_space(theme::SPACE_XXL);
     title(
         ui,
         &palette,
         &gettext(locale, "Welcome to Zeus"),
         &gettext(
             locale,
-            "WhatsApp on your desktop: quick, private, and made to look the way you like.",
+            "WhatsApp for your desktop. Choose how it looks and how it notifies you, then link your phone.",
         ),
     );
-    let features = [
-        (
-            Icon::Zap,
-            "Native and quick",
-            "Built in Rust with no browser inside, so it opens at once and stays light.",
+    theme::paragraph(
+        ui,
+        gettext(
+            locale,
+            "Zeus is written in Rust with no browser inside, so it starts quickly and uses little memory. Setup takes about a minute.",
         ),
-        (
-            Icon::ShieldCheck,
-            "Private on this computer",
-            "Your chats are kept here, encrypted, and go nowhere but WhatsApp.",
-        ),
-        (
-            Icon::Palette,
-            "Yours to shape",
-            "The next steps pick a look, an accent, a font and the doodles behind your chats.",
-        ),
-    ];
-    for (icon, heading, body) in features {
-        ui.horizontal_top(|ui| {
-            icon_tile(ui, &palette, icon, 40.0);
-            ui.add_space(14.0);
-            ui.vertical(|ui| {
-                ui.add_space(1.0);
-                theme::text(
-                    ui,
-                    gettext(locale, heading),
-                    theme::semibold(14.5),
-                    palette.text,
-                );
-                ui.add_space(2.0);
-                theme::paragraph(
-                    ui,
-                    gettext(locale, body),
-                    theme::regular(13.0),
-                    palette.secondary,
-                );
-            });
-        });
-        ui.add_space(18.0);
-    }
+        theme::regular(theme::TEXT_CONTROL),
+        palette.dim,
+    );
 }
 
 fn look(app: &mut App, ui: &mut egui::Ui) {
@@ -768,26 +697,19 @@ fn look(app: &mut App, ui: &mut egui::Ui) {
     title(
         ui,
         &palette,
-        &gettext(locale, "Choose your look"),
-        &gettext(locale, "Light or dark, and a theme to wear it in."),
+        &gettext(locale, "Appearance"),
+        &gettext(
+            locale,
+            "Light or dark, and a theme. You can change both later in Settings.",
+        ),
     );
-    heading(ui, &palette, &gettext(locale, "Appearance"), None);
+    heading(ui, &palette, &gettext(locale, "Mode"), None);
     mode_tiles(ui, app);
     ui.add_space(20.0);
     heading(ui, &palette, &gettext(locale, "Theme"), None);
     look_cards(ui, app);
     ui.add_space(12.0);
     theme_chips(ui, app);
-    ui.add_space(10.0);
-    theme::paragraph(
-        ui,
-        gettext(
-            locale,
-            "Change either any time. More themes are in Settings.",
-        ),
-        theme::regular(12.0),
-        palette.dim,
-    );
 }
 
 /// Light, dark and the system's, each as a small window in the theme on
@@ -853,7 +775,11 @@ fn mode_tiles(ui: &mut egui::Ui, app: &mut App) {
                 }
             }
             let color = if chosen { palette.accent } else { palette.text };
-            let galley = painter.layout_no_wrap(label.to_string(), theme::medium(12.5), color);
+            let galley = painter.layout_no_wrap(
+                label.to_string(),
+                theme::medium(theme::TEXT_CAPTION),
+                color,
+            );
             let total = 14.0 + 6.0 + galley.size().x;
             let left = footer.center().x - total / 2.0;
             theme::paint_icon(
@@ -1045,9 +971,9 @@ fn theme_chip(
     } else {
         palette.text
     };
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), theme::medium(12.5), color);
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), theme::medium(theme::TEXT_CAPTION), color);
     let size = vec2(10.0 + 18.0 + 8.0 + galley.size().x + 14.0, 32.0);
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     theme::reveal_focus(&response);
@@ -1109,8 +1035,11 @@ fn personal(app: &mut App, ui: &mut egui::Ui) {
     title(
         ui,
         &palette,
-        &gettext(locale, "Make it yours"),
-        &gettext(locale, "An accent, a typeface, and doodles for your chats."),
+        &gettext(locale, "Accent and font"),
+        &gettext(
+            locale,
+            "The colour of buttons and your own messages, the typeface, and the pattern behind chats.",
+        ),
     );
     let chat_theme = app.settings.chat_theme;
     let takes = app.settings.custom_theme.is_none();
@@ -1238,7 +1167,7 @@ fn doodle_tiles(ui: &mut egui::Ui, app: &mut App) {
             let name = widgets::line(
                 ui,
                 &label,
-                theme::medium(12.0),
+                theme::medium(theme::TEXT_CAPTION),
                 color,
                 footer.width() - 12.0,
                 1,
@@ -1324,10 +1253,15 @@ fn switch_row(
                 ui.vertical(|ui| {
                     ui.set_width((ui.available_width() - 40.0 - 28.0).max(100.0));
                     ui.add_space(11.0);
-                    widgets::rich_text(ui, label, theme::medium(14.0), palette.text);
+                    widgets::rich_text(ui, label, theme::medium(theme::TEXT_BODY), palette.text);
                     if !description.is_empty() {
                         ui.add_space(2.0);
-                        theme::paragraph(ui, description, theme::regular(12.5), palette.secondary);
+                        theme::paragraph(
+                            ui,
+                            description,
+                            theme::regular(theme::TEXT_CAPTION),
+                            palette.secondary,
+                        );
                     }
                     ui.add_space(11.0);
                 });
@@ -1349,11 +1283,17 @@ fn switch_row(
             })
             .response
             .rect;
-        let tile = Rect::from_min_size(
-            pos2(row.left() + 14.0, row.center().y - 16.0),
-            Vec2::splat(32.0),
+        // The icon alone, quiet, centred on the row as the switch is.
+        theme::paint_icon(
+            ui,
+            icon,
+            Rect::from_center_size(
+                pos2(row.left() + 14.0 + 16.0, row.center().y),
+                Vec2::splat(18.0),
+            ),
+            18.0,
+            palette.secondary,
         );
-        paint_icon_tile(ui, palette, icon, tile);
     });
     changed
 }
@@ -1364,10 +1304,10 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
     title(
         ui,
         &palette,
-        &gettext(locale, "Stay in the loop"),
+        &gettext(locale, "Notifications"),
         &gettext(
             locale,
-            "How Zeus tells you about new messages, and whether it keeps them coming while the window is closed.",
+            "How Zeus tells you about new messages, and whether it keeps running when the window is closed.",
         ),
     );
     group(ui, &palette, |ui| {
@@ -1459,7 +1399,7 @@ fn privacy(app: &mut App, ui: &mut egui::Ui) {
     title(
         ui,
         &palette,
-        &gettext(locale, "Private by default"),
+        &gettext(locale, "Privacy"),
         &gettext(
             locale,
             "Decide what other people see. Everything else stays on this computer.",
@@ -1511,37 +1451,22 @@ fn privacy(app: &mut App, ui: &mut egui::Ui) {
             app.account_mut().mark_settings_dirty();
         }
     });
-    ui.add_space(16.0);
-    Frame::new()
-        .fill(tint(&palette).gamma_multiply(0.6))
-        .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
-        .inner_margin(Margin::same(14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_top(|ui| {
-                icon_tile(ui, &palette, Icon::ShieldCheck, 32.0);
-                ui.add_space(12.0);
-                ui.vertical(|ui| {
-                    ui.add_space(1.0);
-                    theme::text(
-                        ui,
-                        gettext(locale, "Encrypted on this computer"),
-                        theme::medium(14.0),
-                        palette.text,
-                    );
-                    ui.add_space(2.0);
-                    theme::paragraph(
-                        ui,
-                        gettext(
-                            locale,
-                            "Your message archive is encrypted, with its key in your system's keyring. No telemetry, and no Zeus servers.",
-                        ),
-                        theme::regular(12.5),
-                        palette.secondary,
-                    );
-                });
-            });
-        });
+    ui.add_space(theme::SPACE_L);
+    // A plain note under the switches, not a card: one lock, one sentence.
+    ui.horizontal_top(|ui| {
+        ui.add_space(theme::SPACE_L);
+        theme::icon(ui, Icon::Lock, 14.0, palette.dim);
+        ui.add_space(theme::SPACE_S);
+        theme::paragraph(
+            ui,
+            gettext(
+                locale,
+                "Your message archive is encrypted, with its key in your system's keyring. No telemetry, and no Zeus servers.",
+            ),
+            theme::regular(theme::TEXT_CAPTION),
+            palette.dim,
+        );
+    });
 }
 
 /// What the link step's stage shows, from the link's state.
@@ -1603,7 +1528,7 @@ fn link(app: &mut App, ui: &mut egui::Ui, narrow: bool, first_run: bool) {
             ui.add(
                 egui::Label::new(
                     egui::RichText::new(message)
-                        .font(theme::regular(13.5))
+                        .font(theme::regular(theme::TEXT_CONTROL))
                         .color(palette.danger),
                 )
                 .wrap(),
@@ -1716,7 +1641,7 @@ fn link(app: &mut App, ui: &mut egui::Ui, narrow: bool, first_run: bool) {
                     if theme::link(
                         ui,
                         gettext(locale, "Link with phone number instead"),
-                        theme::medium(13.5),
+                        theme::medium(theme::TEXT_CONTROL),
                         palette.link,
                     )
                     .clicked()
@@ -1748,7 +1673,7 @@ fn steps(
                 badge.center(),
                 Align2::CENTER_CENTER,
                 (index + 1).to_string(),
-                theme::semibold(12.5),
+                theme::semibold(theme::TEXT_CAPTION),
                 palette.accent,
             );
             ui.add_space(12.0);
@@ -1757,7 +1682,7 @@ fn steps(
                 theme::paragraph(
                     ui,
                     gettext(locale, step),
-                    theme::regular(14.0),
+                    theme::regular(theme::TEXT_BODY),
                     palette.text,
                 );
             });
@@ -1989,14 +1914,14 @@ fn link_stage(app: &mut App, ui: &mut egui::Ui, stage: Rect) {
                 pos2(stage.center().x, tile.bottom() + 40.0),
                 Align2::CENTER_CENTER,
                 gettext(locale, "Scan with WhatsApp"),
-                theme::semibold(16.0),
+                theme::semibold(theme::TEXT_SECTION),
                 palette.text,
             );
             ui.painter().text(
                 pos2(stage.center().x, tile.bottom() + 62.0),
                 Align2::CENTER_CENTER,
                 gettext(locale, "Linked devices, then Link a device"),
-                theme::regular(12.5),
+                theme::regular(theme::TEXT_CAPTION),
                 palette.secondary,
             );
         }
@@ -2017,7 +1942,7 @@ fn link_stage(app: &mut App, ui: &mut egui::Ui, stage: Rect) {
                 pos2(stage.center().x, spinner.bottom() + 24.0),
                 Align2::CENTER_CENTER,
                 label,
-                theme::medium(14.0),
+                theme::medium(theme::TEXT_BODY),
                 palette.secondary,
             );
         }
@@ -2036,7 +1961,7 @@ fn link_stage(app: &mut App, ui: &mut egui::Ui, stage: Rect) {
                 pos2(stage.center().x, disc.y + 70.0),
                 Align2::CENTER_CENTER,
                 gettext(locale, "Zeus could not reach WhatsApp"),
-                theme::medium(14.0),
+                theme::medium(theme::TEXT_BODY),
                 palette.secondary,
             );
         }
@@ -2354,8 +2279,8 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
     let messages = [
         (text("Did you see the new themes?"), false),
         (text("Trying them all right now"), true),
-        (text("This one looks so clean"), false),
-        (text("And it opens in a blink"), true),
+        (text("Which one are you keeping?"), false),
+        (text("Dark, for now"), true),
     ];
     for (body, own) in messages {
         let colours = palette.on_bubble(own);
@@ -2557,12 +2482,18 @@ mod tests {
         assert_eq!(Step::named("login"), None);
     }
 
-    /// The background lights stay quiet: a grey accent leaves the corner
-    /// lights to their own blue and violet, and a coloured one leads them.
+    /// The backdrop never takes on the accent: a still, faint white in
+    /// both modes, so the card is the only thing with colour behind it.
     #[test]
-    fn only_a_coloured_accent_tints_the_corner_lights() {
-        assert!(!colourful(Color32::WHITE));
-        assert!(!colourful(Color32::from_rgb(20, 20, 22)));
-        assert!(colourful(Color32::from_rgb(10, 132, 255)));
+    fn the_backdrop_light_is_neutral() {
+        for dark in [true, false] {
+            let palette = if dark {
+                Palette::dark()
+            } else {
+                Palette::light()
+            };
+            let [r, g, b, _] = backdrop_light(&palette).to_array();
+            assert!(r == g && g == b, "{dark}");
+        }
     }
 }

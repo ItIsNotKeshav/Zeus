@@ -1648,12 +1648,12 @@ pub const ZAPFAST_URL: &str = "https://github.com/crmne/zapfast";
 /// ZapFast's author's website.
 pub const AUTHOR_URL: &str = "https://paolino.me";
 
-/// "Built with love by Keshav", then "Forked from ZapFast by Carmine
+/// "Made by Keshav", then "Forked from ZapFast by Carmine
 /// Paolino", each name a link. Returns the address of a clicked link.
 pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Option<&'static str> {
     let mut clicked = None;
     // Translators: {name} is replaced by the author's name, shown as a link.
-    let built = crate::i18n::gettext(locale, "Built with love by {name}");
+    let built = crate::i18n::gettext(locale, "Made by {name}");
     // Translators: {app} and {name} are replaced by ZapFast and its author's
     // name, each shown as a link.
     let forked = crate::i18n::gettext(locale, "Forked from {app} by {name}");
@@ -1695,16 +1695,7 @@ pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Op
             }
         });
     };
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        theme::text(
-            ui,
-            "\u{2665}  ",
-            theme::regular(theme::TEXT_CONTROL),
-            palette.danger,
-        );
-        sentence(ui, &built, &[("{name}", "Keshav", BUILDER_URL)]);
-    });
+    sentence(ui, &built, &[("{name}", "Keshav", BUILDER_URL)]);
     sentence(
         ui,
         &forked,
@@ -1724,9 +1715,21 @@ pub fn setting_row(
     description: &str,
     control: impl FnOnce(&mut Ui),
 ) {
-    ui.horizontal(|ui| {
+    // egui lays a row out left to right and cannot centre the text once a
+    // taller control has grown the row, so the text is lowered by half of
+    // what the row had over it last frame: a lone label sits on the
+    // dropdown's or switch's middle instead of its top.
+    let key = ui.id().with(("setting-row", label));
+    let (row_height, text_height) = ui
+        .ctx()
+        .data(|data| data.get_temp::<(f32, f32)>(key))
+        .unwrap_or((0.0, 0.0));
+    let mut measured = text_height;
+    let row = ui.horizontal(|ui| {
         ui.vertical(|ui| {
             ui.set_width((ui.available_width() - super::controls::WIDTH - 52.0).max(120.0));
+            ui.add_space(((row_height - text_height) / 2.0).max(0.0).round());
+            let top = ui.cursor().top();
             rich_text(ui, label, theme::medium(theme::TEXT_BODY), palette.text);
             if !description.is_empty() {
                 let description = line(
@@ -1742,10 +1745,20 @@ pub fn setting_row(
                     description.paint(ui, rect.min, palette.secondary);
                 }
             }
+            measured = ui.min_rect().bottom() - top;
         });
-        ui.with_layout(Layout::right_to_left(Align::Center), control);
+        let controls = ui.with_layout(Layout::right_to_left(Align::Center), control);
+        controls.response.rect.height()
     });
-    ui.add_space(8.0);
+    // The row as it would stand with no lowering: the text or the control,
+    // whichever is taller.
+    let row_now = row.inner.max(measured);
+    if (row_now - row_height).abs() > 0.5 || (measured - text_height).abs() > 0.5 {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(key, (row_now, measured)));
+        ui.ctx().request_discard("setting row centred its label");
+    }
+    ui.add_space(theme::SPACE_S);
 }
 
 pub fn paint_vertical_gradient(ui: &Ui, rect: Rect, top: Color32, bottom: Color32) {
