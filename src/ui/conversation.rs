@@ -6527,6 +6527,13 @@ const CALL_BADGE_GAP: f32 = 10.0;
 const CALL_LINE_GAP: f32 = 2.0;
 /// Height of the time's line, as [`footer`] draws it.
 const FOOTER_HEIGHT: f32 = 15.0;
+/// A call entry's title, a point under the body text, so it does not
+/// tower over the detail beneath it.
+const CALL_TITLE: f32 = 13.0;
+/// A call entry's detail ("Answered on another device"), half a point over
+/// the caption size, so the two lines read as one pair.
+const CALL_DETAIL: f32 = 12.5;
+
 /// Draws a call entry: the glyph and the words in a chip, the time on the
 /// detail's line when there is one and on the title's line when there is
 /// not. A tap calls back the same way, with video when the call carried it.
@@ -6551,11 +6558,11 @@ fn call_entry(
     let detail = entry.detail(locale);
     let title_galley =
         ui.painter()
-            .layout_no_wrap(title.clone(), theme::medium(theme::TEXT_BODY), palette.text);
+            .layout_no_wrap(title.clone(), theme::medium(CALL_TITLE), palette.text);
     let detail_galley = detail.as_ref().map(|detail| {
         ui.painter().layout_no_wrap(
             detail.clone(),
-            theme::regular(theme::TEXT_CAPTION),
+            theme::regular(CALL_DETAIL),
             palette.secondary,
         )
     });
