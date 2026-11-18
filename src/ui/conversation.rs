@@ -425,35 +425,30 @@ fn empty(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     super::split::publish_area(ui.ctx(), ui.max_rect(), app);
     let rect = ui.max_rect();
+    // A quiet mark and one line saying what to do. The window already says
+    // which app this is, so the brand is not repeated in words.
     let center = rect.center() - vec2(0.0, 30.0);
     theme::logo(
         ui,
-        center - vec2(0.0, 60.0),
-        72.0,
+        center - vec2(0.0, 48.0),
+        56.0,
         palette.surface,
         palette.dim,
     );
     ui.painter().text(
-        center,
-        Align2::CENTER_CENTER,
-        "Zeus",
-        theme::bold(theme::TEXT_DISPLAY),
-        palette.text,
-    );
-    ui.painter().text(
-        center + vec2(0.0, 30.0),
+        center + vec2(0.0, theme::SPACE_S),
         Align2::CENTER_CENTER,
         if app.chats.is_empty() {
             crate::i18n::gettext(app.locale, "Your chats appear on the left as they load.")
         } else {
             crate::i18n::gettext(app.locale, "Select a chat on the left.")
         },
-        theme::regular(theme::TEXT_BODY),
+        theme::medium(theme::TEXT_BODY),
         palette.secondary,
     );
     if app.settings.show_shortcut_hints {
         ui.painter().text(
-            center + vec2(0.0, 56.0),
+            center + vec2(0.0, theme::SPACE_S + 26.0),
             Align2::CENTER_CENTER,
             super::keys::label(
                 crate::i18n::gettext(app.locale, "Ctrl+K to search · ? for keyboard shortcuts")

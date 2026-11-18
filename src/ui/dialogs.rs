@@ -1230,6 +1230,7 @@ fn about(app: &mut App, ui: &mut egui::Ui) {
         theme::regular(theme::TEXT_CONTROL),
         palette.text,
     );
+    ui.add_space(theme::SPACE_S);
     theme::paragraph(
         ui,
         crate::i18n::gettext(

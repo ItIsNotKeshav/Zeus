@@ -1735,12 +1735,12 @@ pub const ZAPFAST_URL: &str = "https://github.com/crmne/zapfast";
 /// ZapFast's author's website.
 pub const AUTHOR_URL: &str = "https://paolino.me";
 
-/// "Built with love by Keshav", then "Forked from ZapFast by Carmine
+/// "Made by Keshav", then "Forked from ZapFast by Carmine
 /// Paolino", each name a link. Returns the address of a clicked link.
 pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Option<&'static str> {
     let mut clicked = None;
     // Translators: {name} is replaced by the author's name, shown as a link.
-    let built = crate::i18n::gettext(locale, "Built with love by {name}");
+    let built = crate::i18n::gettext(locale, "Made by {name}");
     // Translators: {app} and {name} are replaced by ZapFast and its author's
     // name, each shown as a link.
     let forked = crate::i18n::gettext(locale, "Forked from {app} by {name}");
@@ -1782,16 +1782,7 @@ pub fn credit(ui: &mut Ui, palette: &Palette, locale: crate::i18n::Locale) -> Op
             }
         });
     };
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        theme::text(
-            ui,
-            "\u{2665}  ",
-            theme::regular(theme::TEXT_CONTROL),
-            palette.danger,
-        );
-        sentence(ui, &built, &[("{name}", "Keshav", BUILDER_URL)]);
-    });
+    sentence(ui, &built, &[("{name}", "Keshav", BUILDER_URL)]);
     sentence(
         ui,
         &forked,

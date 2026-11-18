@@ -705,7 +705,7 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
         let response = theme::circle_button(
             ui,
             Icon::PhonePlus,
-            72.0,
+            56.0,
             palette.accent_fill,
             palette.accent_hover,
             palette.on_accent,
@@ -714,14 +714,14 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
         if response.clicked() {
             app.actions.push(Action::ShowNewCall(true));
         }
-        ui.add_space(8.0);
+        ui.add_space(theme::SPACE_M);
         theme::text(
             ui,
             label.as_ref(),
             theme::semibold(theme::TEXT_SECTION),
             palette.text,
         );
-        ui.add_space(16.0);
+        ui.add_space(theme::SPACE_XS);
         ui.set_max_width(360.0);
         ui.add(
             egui::Label::new(
@@ -729,7 +729,7 @@ fn start(app: &mut App, ui: &mut egui::Ui) {
                     locale,
                     "Call one person by voice or video, or choose a call in the list to see it.",
                 ))
-                .font(theme::regular(theme::TEXT_BODY))
+                .font(theme::regular(theme::TEXT_CONTROL))
                 .color(palette.secondary),
             )
             .wrap()
