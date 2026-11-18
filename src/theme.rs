@@ -267,7 +267,7 @@ impl Palette {
         Self {
             dark: false,
             window: Color32::WHITE,
-            panel: Color32::from_rgb(0xf5, 0xf5, 0xf7),
+            panel: Color32::from_rgb(0xfc, 0xfc, 0xfd),
             surface: Color32::from_rgb(0xec, 0xec, 0xee),
             surface_hover: Color32::from_rgb(0xe3, 0xe3, 0xe5),
             surface_active: Color32::from_rgb(0xd6, 0xd6, 0xdb),
@@ -1078,7 +1078,7 @@ const CHAT_TINT: f32 = 0.82;
 const SIDEBAR_TINT: f32 = 0.35;
 /// How much black the rail lays over the chat list's colour in a light
 /// palette.
-const RAIL_SHADE: f32 = 0.05;
+const RAIL_SHADE: f32 = 0.025;
 /// The same in a dark palette, whose panel is already near black.
 const DARK_RAIL_SHADE: f32 = 0.22;
 /// How much denser than the palette's shadow colour a bubble's shadow is.

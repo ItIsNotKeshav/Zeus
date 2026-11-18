@@ -401,13 +401,15 @@ impl Source {
             p.overlay = panel;
             p.bubble_in = element;
         } else {
-            p.window = bg;
-            p.panel = panel;
-            p.chat = blend(bg, element, 0.4);
-            p.overlay = panel;
-            // Halfway from its card to white, so a theme whose card is its
-            // canvas still sets others' bubbles off the conversation.
-            p.bubble_in = blend(panel, Color32::WHITE, 0.5);
+            // Shell and conversation lifted toward white, so every light
+            // theme reads as bright as WhatsApp's; the hue stays as a tint.
+            p.window = blend(bg, Color32::WHITE, 0.5);
+            p.panel = blend(panel, Color32::WHITE, 0.6);
+            p.chat = blend(blend(bg, element, 0.4), Color32::WHITE, 0.5);
+            p.overlay = p.panel;
+            // White, so a theme whose card is its canvas still sets others'
+            // bubbles off the (now tinted, never pure white) conversation.
+            p.bubble_in = Color32::WHITE;
         }
         let [r, g, b, _] = rgb(self.accent).to_array();
         p.with_accent([r, g, b])

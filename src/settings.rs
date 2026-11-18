@@ -1189,6 +1189,34 @@ pub const BUILT_IN_GIPHY_KEY: Option<&str> = match option_env!("ZAPFAST_GIPHY_KE
     _ => option_env!("FASTSAPP_GIPHY_KEY"),
 };
 
+/// Tints `base` toward `accent` without dimming it: light chats lean toward
+/// a pale wash of the accent (a plain blend with the full accent turned a
+/// beige page into a dull blue-grey), dark chats toward the accent itself,
+/// then the result is shifted so its perceived brightness is the base's.
+fn tint_keeping_lightness(
+    base: egui::Color32,
+    accent: egui::Color32,
+    dark: bool,
+) -> egui::Color32 {
+    let luma = |c: egui::Color32| {
+        0.299 * f32::from(c.r()) + 0.587 * f32::from(c.g()) + 0.114 * f32::from(c.b())
+    };
+    let target = if dark {
+        accent
+    } else {
+        crate::theme::blend(accent, egui::Color32::WHITE, 0.8)
+    };
+    let mixed = crate::theme::blend(base, target, if dark { 0.16 } else { 0.45 });
+    let shift = luma(base) - luma(mixed);
+    let move_by = |c: u8| (f32::from(c) + shift).round().clamp(0.0, 255.0) as u8;
+    egui::Color32::from_rgba_unmultiplied(
+        move_by(mixed.r()),
+        move_by(mixed.g()),
+        move_by(mixed.b()),
+        mixed.a(),
+    )
+}
+
 impl Settings {
     pub fn wallpaper_color_for(&self, dark: bool) -> WallpaperColor {
         if dark {
@@ -1202,7 +1230,7 @@ impl Settings {
     pub fn wallpaper_background(&self, palette: &crate::theme::Palette) -> egui::Color32 {
         let base = self.wallpaper_color_for(palette.dark).color32(palette);
         if self.tint_wallpaper {
-            crate::theme::blend(base, palette.accent, if palette.dark { 0.16 } else { 0.12 })
+            tint_keeping_lightness(base, palette.accent, palette.dark)
         } else {
             base
         }
@@ -1708,14 +1736,32 @@ mod tests {
         let plain = settings.wallpaper_background(&palette);
         settings.tint_wallpaper = true;
         let tinted = settings.wallpaper_background(&palette);
-        let d = |a: egui::Color32, b: egui::Color32| {
-            (i32::from(a.r()) - i32::from(b.r())).abs()
-                + (i32::from(a.g()) - i32::from(b.g())).abs()
-                + (i32::from(a.b()) - i32::from(b.b())).abs()
-        };
-        assert!(d(tinted, palette.accent) < d(plain, palette.accent));
+        let spread = |c: egui::Color32| c.r().max(c.g()).max(c.b()) - c.r().min(c.g()).min(c.b());
+        assert_ne!(tinted, plain);
+        assert!(spread(tinted) > spread(plain));
         settings.tint_wallpaper = false;
         assert_eq!(settings.wallpaper_background(&palette), plain);
+    }
+
+    #[test]
+    fn tint_wallpaper_keeps_the_base_lightness() {
+        let luma = |c: egui::Color32| {
+            0.299 * f32::from(c.r()) + 0.587 * f32::from(c.g()) + 0.114 * f32::from(c.b())
+        };
+        let mut settings = Settings::default();
+        for dark in [false, true] {
+            let palette = settings.palette(dark);
+            settings.tint_wallpaper = false;
+            let plain = settings.wallpaper_background(&palette);
+            settings.tint_wallpaper = true;
+            let tinted = settings.wallpaper_background(&palette);
+            assert!(luma(tinted) >= luma(plain) * 0.98, "{plain:?} -> {tinted:?}");
+        }
+        let beige = egui::Color32::from_rgb(0xF5, 0xF0, 0xE8);
+        let blue = egui::Color32::from_rgb(0x00, 0x7A, 0xFF);
+        let tinted = tint_keeping_lightness(beige, blue, false);
+        assert!(luma(tinted) >= luma(beige) * 0.98);
+        assert!(tinted.b() > tinted.r());
     }
 
     #[test]
