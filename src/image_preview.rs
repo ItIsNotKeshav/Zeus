@@ -103,7 +103,7 @@ pub fn fit_size(width: f32, height: f32, canvas_width: f32, canvas_height: f32) 
 }
 
 /// The viewer's fitted texture size in pixels: the canvas in points times the
-/// display's scale, stepped up to a multiple of [`PIXEL_STEP`] so a resizing
+/// display's scale, stepped up to a multiple of `PIXEL_STEP` so a resizing
 /// window does not decode a new texture every frame, at most
 /// [`crate::image_cache::VIEWER_LONGEST`] across.
 pub fn fitted_pixels(canvas: Vec2, pixels_per_point: f32) -> (u32, u32) {
@@ -118,7 +118,7 @@ pub fn fitted_pixels(canvas: Vec2, pixels_per_point: f32) -> (u32, u32) {
 /// fitted texture (`fitted` pixels, across and down) already holds as many
 /// pixels as are drawn. `original` is the picture's own size and `drawn` the
 /// size painted, both in points as `display_size` gives them. The answer
-/// keeps the picture's shape, steps up to [`PIXEL_STEP`], and is never larger
+/// keeps the picture's shape, steps up to `PIXEL_STEP`, and is never larger
 /// than the picture's own pixels nor [`crate::image_cache::VIEWER_LONGEST`]
 /// on the longer edge.
 pub fn zoom_pixels(
