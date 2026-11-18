@@ -434,12 +434,20 @@ fn draw_colour_wheel(
             (columns - 1) as f32 * DOT_GAP / 2.0,
             (rows - 1) as f32 * DOT_GAP / 2.0,
         );
+    // The lens follows the knob: with no colour picked from the wheel there
+    // is no knob, and the dots lie flat, easing out as it goes.
+    let lens = theme::animate(
+        ui.ctx(),
+        response.id.with("lens"),
+        enabled && show_knob,
+        theme::MOTION_QUICK,
+    );
     let painter = ui.painter();
     for row in 0..rows {
         for column in 0..columns {
             let at = origin + vec2(column as f32 * DOT_GAP, row as f32 * DOT_GAP);
             // Dots swell near the knob, as under a lens.
-            let near = (1.0 - at.distance(knob) / (DOT_GAP * 3.0)).max(0.0);
+            let near = lens * (1.0 - at.distance(knob) / (DOT_GAP * 3.0)).max(0.0);
             let color = colours[row * columns + column];
             let color = if enabled {
                 color
