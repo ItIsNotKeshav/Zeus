@@ -3323,6 +3323,27 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
     // the `Ui`'s id, so the salt must go through the same `IdSalt::new` here
     // to land on the same id.
     let scroll_id = ui.make_persistent_id(egui::IdSalt::new(("messages", &chat.id)));
+    // The composer's foot covers the list's end from below: a reply, edit or
+    // link strip opening over the field, or the field growing. The offset
+    // follows it by what it grew or shrank since the last pass, so the rows
+    // above it rise and sink with it wherever the reader is, instead of
+    // being covered. Only between consecutive passes: a chat shown again
+    // starts from where it is.
+    let over_id = scroll_id.with("composer-over");
+    let pass = ui.ctx().cumulative_pass_nr();
+    let over_before = ui.ctx().data_mut(|data| {
+        let before = data.get_temp::<(f32, u64)>(over_id);
+        data.insert_temp(over_id, (over, pass));
+        before
+    });
+    if let Some((before, seen)) = over_before
+        && seen + 1 >= pass
+        && (over - before).abs() >= 0.01
+        && let Some(mut state) = egui::scroll_area::State::load(ui.ctx(), scroll_id)
+    {
+        state.offset.y = (state.offset.y + over - before).max(0.0);
+        state.store(ui.ctx(), scroll_id);
+    }
     let scroll_state = egui::scroll_area::State::load(ui.ctx(), scroll_id);
     // The list has not been shown before, or showed no rows yet while its
     // messages were on their way: it starts at the top.
