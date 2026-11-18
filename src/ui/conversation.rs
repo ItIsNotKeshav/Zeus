@@ -3427,10 +3427,16 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
             .get(layer)
             .map_or(egui::layers::ShapeIdx(0), |list| list.next_idx())
     });
-    let newest = conversation
-        .messages
-        .last()
-        .map(|message| message.id.clone());
+    // The typing bubble counts as a newest row of its own: when it appears
+    // the list rises for it as for a message, instead of jumping by its
+    // height. Its leaving lifts nothing, since the list only grows a lift.
+    let newest = conversation.messages.last().map(|message| {
+        if typing.is_empty() {
+            message.id.clone()
+        } else {
+            format!("{}\u{0}typing", message.id)
+        }
+    });
     // The messages scroll on under the frosted header and composer; the
     // scroll bar keeps to the clear stretch between them.
     let clear = ui.available_rect_before_wrap();
