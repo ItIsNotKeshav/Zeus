@@ -260,17 +260,15 @@ swipes does.
 The account block edits your WhatsApp name, About, and picture, and
 unlinks this computer. Below it, **Privacy**:
 
-- **Send read receipts**: the blue ticks others see, subject to **Read
-  receipts** under **Who can see my info**. When account read receipts are
-  off, read ticks are also hidden on outgoing direct messages in the
-  conversation, chat list, and Message info, as on the phone. Group receipts
-  and voice-message played receipts are unaffected.
 - **Show when you are typing**: send typing and recording state.
 - **App lock**: hide Zeus behind a password. See [App lock](#app-lock).
 - **Who can see my info** holds **Last seen**, **Online**, **Profile photo**,
   **About**, **Groups**, **Read receipts**, and **Calls**: your WhatsApp
   account privacy, stored on WhatsApp's servers and shared with your phone.
-  They can be changed while connected.
+  They can be changed while connected. With **Read receipts** off, read
+  ticks are also hidden on outgoing direct messages in the conversation,
+  chat list, and Message info, as on the phone. Group receipts and
+  voice-message played receipts are unaffected.
 
 **Storage** (called Files before) shows the archive, the downloads folder
 (which you can change; earlier downloads stay where they are), the storage

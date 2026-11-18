@@ -1081,16 +1081,6 @@ fn sections(app: &App) -> Vec<Section> {
     let voice = voice_section(app);
 
     let mut privacy = Section::new(translated(locale, "Privacy"));
-    let receipts_note = if app.account_receipts_off {
-        translated(locale, "Off for your account, so only groups get them.")
-    } else {
-        Text::default()
-    };
-    privacy.account_toggle(
-        translated(locale, "Send read receipts"),
-        receipts_note,
-        |settings| &mut settings.send_read_receipts,
-    );
     privacy.account_toggle(
         translated(locale, "Show when you are typing"),
         "",

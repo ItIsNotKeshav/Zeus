@@ -1582,7 +1582,6 @@ impl Settings {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AccountSettings {
-    pub send_read_receipts: bool,
     pub send_typing: bool,
     #[serde(alias = "auto_download_images")]
     pub auto_download: bool,
@@ -1608,7 +1607,6 @@ pub struct AccountSettings {
 impl Default for AccountSettings {
     fn default() -> Self {
         Self {
-            send_read_receipts: true,
             send_typing: true,
             auto_download: true,
             last_chat: None,
@@ -1626,7 +1624,6 @@ impl Default for AccountSettings {
 impl AccountSettings {
     pub fn from_legacy(settings: &Settings) -> Self {
         Self {
-            send_read_receipts: settings.send_read_receipts,
             send_typing: settings.send_typing,
             auto_download: settings.auto_download,
             last_chat: settings.last_chat.clone(),

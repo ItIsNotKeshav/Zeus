@@ -5884,7 +5884,7 @@ impl App {
         // Clear local unread state regardless of receipt settings.
         self.backend.send(Command::MarkRead {
             chat: chat.to_owned(),
-            receipts: self.account().settings.send_read_receipts,
+            receipts: true,
         });
     }
 
@@ -11241,7 +11241,7 @@ impl App {
             chat,
             message,
             sender,
-            receipts: self.account().settings.send_read_receipts,
+            receipts: true,
         });
     }
 
@@ -19384,43 +19384,6 @@ mod tests {
         assert!(app.search_hits.is_empty());
         // The chat itself stays open.
         assert_eq!(app.open_chat.as_deref(), Some(chat));
-    }
-
-    #[test]
-    fn read_receipt_preference_applies_to_both_reading_and_voice_playback() {
-        let mut app = app();
-        let (backend, mut commands) = Backend::recording();
-        app.backend = backend;
-        let chat = "peer@s.whatsapp.net";
-        app.open_chat = Some(chat.into());
-        app.conversations
-            .entry(chat.into())
-            .or_default()
-            .merge(vec![message(chat, "voice", 100)], false);
-        app.account_mut().settings.send_read_receipts = false;
-        app.mark_read(chat);
-        assert!(matches!(
-            commands.try_recv().unwrap(),
-            Command::MarkRead {
-                receipts: false,
-                ..
-            }
-        ));
-        app.tell_played("voice".into());
-        assert!(matches!(
-            commands.try_recv().unwrap(),
-            Command::MarkPlayed {
-                receipts: false,
-                ..
-            }
-        ));
-        app.account_mut().settings.send_read_receipts = true;
-        app.played_told.clear();
-        app.tell_played("voice".into());
-        assert!(matches!(
-            commands.try_recv().unwrap(),
-            Command::MarkPlayed { receipts: true, .. }
-        ));
     }
 
     #[test]

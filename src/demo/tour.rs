@@ -1963,11 +1963,11 @@ mod tests {
             frame(&mut app, &mut tour, &ctx, Vec::new());
         }
         assert!(tour.labels.contains_key("Last seen"));
-        assert!(tour.labels.contains_key("Send read receipts"));
+        assert!(tour.labels.contains_key("Show when you are typing"));
     }
 
     #[test]
-    fn receipts_and_typing_sit_in_settings_privacy() {
+    fn typing_sits_in_settings_privacy() {
         let mut app = super::super::tests::app();
         app.page = Page::Settings;
         // The section headings are translated, so pin the interface language
@@ -1998,13 +1998,12 @@ mod tests {
                 },
             ]
         };
-        // The heading, both switches, and the fold that holds the account
+        // The heading, the typing switch, and the fold that holds the account
         // categories have to share one frame for the order to mean anything.
         // Last seen stays inside that fold until it opens.
         let on_screen = |tour: &Tour| {
             [
                 "Privacy",
-                "Send read receipts",
                 "Show when you are typing",
                 "Who can see my info",
             ]
@@ -2025,17 +2024,9 @@ mod tests {
             .labels
             .get("Who can see my info")
             .expect("privacy fold");
-        let receipts = *tour
-            .labels
-            .get("Send read receipts")
-            .expect("read receipts");
         let typing = *tour.labels.get("Show when you are typing").expect("typing");
-        // Both switches belong to the account, so they sit inside the Privacy
-        // section, between its heading and the fold of categories it writes.
-        assert!(
-            privacy.y < receipts.y && receipts.y < who.y,
-            "receipts at {receipts:?} should sit between Privacy {privacy:?} and Who can see my info {who:?}"
-        );
+        // The typing switch belongs to the account, so it sits inside the
+        // Privacy section, between its heading and the fold of categories it writes.
         assert!(
             privacy.y < typing.y && typing.y < who.y,
             "typing at {typing:?} should sit between Privacy {privacy:?} and Who can see my info {who:?}"

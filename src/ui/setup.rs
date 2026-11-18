@@ -1466,20 +1466,6 @@ fn privacy(app: &mut App, ui: &mut egui::Ui) {
         ),
     );
     group(ui, &palette, |ui| {
-        let mut receipts = app.account().settings.send_read_receipts;
-        if switch_row(
-            ui,
-            &palette,
-            Icon::CheckCheck,
-            &gettext(locale, "Send read receipts"),
-            &gettext(locale, "Let people see when you read their messages."),
-            &mut receipts,
-            true,
-        ) {
-            app.account_mut().settings.send_read_receipts = receipts;
-            app.account_mut().mark_settings_dirty();
-        }
-        separator(ui, &palette);
         let mut typing = app.account().settings.send_typing;
         if switch_row(
             ui,
@@ -1944,13 +1930,13 @@ fn stage(app: &mut App, ui: &mut egui::Ui, stage: Rect, step: Step, opened: f32)
 }
 
 /// Seconds since a choice the preview draws last changed: the mode, the
-/// theme, the accent, the font, the doodles or read receipts.
+/// theme, the accent, the font or the doodles.
 fn changed_for(ctx: &egui::Context, app: &App) -> f32 {
     use std::hash::{Hash, Hasher};
     let settings = &app.settings;
     let mut hasher = std::hash::DefaultHasher::new();
     format!(
-        "{} {:?} {:?} {:?} {:?} {} {} {}",
+        "{} {:?} {:?} {:?} {:?} {} {}",
         app.palette.dark,
         settings.chat_theme,
         settings.accent,
@@ -1958,7 +1944,6 @@ fn changed_for(ctx: &egui::Context, app: &App) -> f32 {
         settings.doodle_style,
         settings.show_wallpaper,
         settings.custom_theme.is_some(),
-        app.account().settings.send_read_receipts,
     )
     .hash(&mut hasher);
     let look = hasher.finish();
@@ -2344,13 +2329,12 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         top += 36.0 * notice;
     }
 
-    // The messages, ours ticked as read receipts would show them.
+    // The messages, ours ticked as read.
     let composer_top = chat.bottom() - 12.0 - 34.0;
     let bubble_radius = match palette.bubbles {
         BubbleStyle::WhatsApp => 8.0,
         BubbleStyle::Messages | BubbleStyle::Nothing => 16.0,
     };
-    let receipts = app.account().settings.send_read_receipts;
     let messages = [
         (text("Did you see the new themes?"), false),
         (text("Trying them all right now"), true),
@@ -2394,12 +2378,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
                 pos2(shape.right() - 17.0, shape.bottom() - 11.0),
                 Vec2::splat(13.0),
             );
-            let status = if receipts {
-                Delivery::Read
-            } else {
-                Delivery::Delivered
-            };
-            widgets::ticks_in(ui, &colours, ticks, status, colours.secondary);
+            widgets::ticks_in(ui, &colours, ticks, Delivery::Read, colours.secondary);
         }
         top = shape.bottom() + 6.0;
     }
