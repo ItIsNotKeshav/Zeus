@@ -58,6 +58,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     glass::new_sheet();
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
+    settings::release_unseen(ctx);
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
     // no toasts, and no shortcut reaches them.
     if app.app_lock.is_locked() {

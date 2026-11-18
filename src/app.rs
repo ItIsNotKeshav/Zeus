@@ -7027,6 +7027,29 @@ impl App {
         }
     }
 
+    /// Dresses every icon surface in the chosen icon: the Dock tile on macOS,
+    /// the window's icon elsewhere, and the tray item. The Windows taskbar
+    /// button (`TaskbarBadge` in `main`) redraws on the next frame, since it
+    /// remembers the icon it drew. The bundle's own icon is left alone.
+    pub fn apply_app_icon(&mut self, ctx: &egui::Context) {
+        let icon = self.settings.app_icon;
+        crate::app_icons::set_current(icon);
+        #[cfg(target_os = "macos")]
+        {
+            let _ = ctx;
+            crate::app_icons::apply_dock(icon);
+        }
+        #[cfg(not(target_os = "macos"))]
+        ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
+            crate::app_icons::window_icon(icon),
+        ))));
+        let count = self.unread_chat_count_everywhere();
+        if let Some(tray) = &mut self.tray {
+            let (icon, template) = crate::util::tray_icons(count);
+            tray.set_icon(icon, Some(template));
+        }
+    }
+
     pub fn mark_settings_dirty(&mut self) {
         self.settings_dirty = true;
     }
@@ -9629,6 +9652,11 @@ impl App {
                     *crate::settings::DOODLE_DENSITY.end(),
                 );
                 self.mark_settings_dirty();
+            }
+            Action::SetAppIcon(icon) => {
+                self.settings.app_icon = icon;
+                self.mark_settings_dirty();
+                self.apply_app_icon(ctx);
             }
             Action::PickWallpaperImage => self.backend.send(Command::PickWallpaperImage),
             Action::RemoveWallpaperImage => {

@@ -2088,7 +2088,9 @@ pub fn mark(ui: &egui::Ui, center: egui::Pos2, diameter: f32) {
 pub fn paint_mark(painter: &egui::Painter, center: egui::Pos2, diameter: f32, size: f32) {
     let ctx = painter.ctx();
     let pixels = (size * ctx.pixels_per_point()).round().max(1.0) as usize;
-    let id = egui::Id::new(("zapfast-mark", pixels));
+    // Keyed by the app icon too, so About and the linking screens show the
+    // one chosen in Settings rather than the picture cached before.
+    let id = egui::Id::new(("zapfast-mark", pixels, crate::app_icons::current()));
     let texture = match ctx.data_mut(|data| data.get_temp::<egui::TextureHandle>(id)) {
         Some(texture) => texture,
         None => {

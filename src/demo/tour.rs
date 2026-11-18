@@ -415,8 +415,10 @@ fn script() -> Vec<Cue> {
     );
     add(33.0, Move(Widget("settings-theme-Zeus")));
     add(33.35, Click(left));
-    add(33.65, Move(Widget("settings-mode-light")));
-    add(34.05, Click(left));
+    add(33.5, Move(Widget("settings-mode")));
+    add(33.65, Click(left));
+    add(33.85, Move(Widget("settings-mode-light")));
+    add(34.15, Click(left));
     add(
         34.5,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
@@ -433,8 +435,10 @@ fn script() -> Vec<Cue> {
         37.5,
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
-    add(38.0, Move(Widget("settings-mode-dark")));
-    add(38.35, Click(left));
+    add(37.9, Move(Widget("settings-mode")));
+    add(38.0, Click(left));
+    add(38.2, Move(Widget("settings-mode-dark")));
+    add(38.5, Click(left));
     add(
         39.2,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
@@ -2055,6 +2059,7 @@ mod tests {
         }
         click_widget(&mut app, &mut tour, &ctx, "settings-theme-Zeus");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
+        click_widget(&mut app, &mut tour, &ctx, "settings-mode");
         click_widget(&mut app, &mut tour, &ctx, "settings-mode-light");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingLight);
         assert_eq!(app.palette, crate::theme::Palette::nothing_light());

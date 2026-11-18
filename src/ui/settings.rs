@@ -111,6 +111,9 @@ enum Control {
     AccountToggle(fn(&mut crate::settings::AccountSettings) -> &mut bool),
     /// Something that lays itself out, like the account card.
     Block(Draw),
+    /// Something that lays out a whole card of its own, with no page card
+    /// (and no padding) around it, like the Appearance theme card.
+    Bare(Draw),
     /// A faint hairline between topic groups. Drawn only between two shown
     /// rows, never first, last or twice in a row, and not while searching.
     Separator,
@@ -227,6 +230,16 @@ impl Section {
         self.entries.push((row, Control::Block(Box::new(draw))));
     }
 
+    /// Like [`Section::block`], but drawn as a card of its own: alone on the
+    /// page the block gets no page card around it.
+    fn bare(&mut self, keywords: Vec<Text>, draw: impl FnOnce(&mut egui::Ui, &mut App) + 'static) {
+        let row = Row {
+            keywords,
+            ..Row::default()
+        };
+        self.entries.push((row, Control::Bare(Box::new(draw))));
+    }
+
     /// Another section's rows at the foot of this one, under its name as a
     /// subheading. A search for that name still finds all of them.
     fn absorb(&mut self, other: Section) {
@@ -273,6 +286,12 @@ impl Section {
                 Control::Subheading(name) => {
                     page_card(ui, app, &palette, std::mem::take(&mut run));
                     page_subheading(ui, &palette, &name.shown);
+                }
+                Control::Bare(draw) => {
+                    page_card(ui, app, &palette, std::mem::take(&mut run));
+                    draw(ui, app);
+                    // The gap a page card leaves under itself.
+                    ui.add_space(CARD_GAP);
                 }
                 control => run.push((row, control)),
             }
@@ -353,7 +372,7 @@ fn draw_entries(
             Control::AccountToggle(field) => {
                 account_toggle(ui, app, &row.title.shown, &row.description.shown, field);
             }
-            Control::Block(draw) => draw(ui, app),
+            Control::Block(draw) | Control::Bare(draw) => draw(ui, app),
             Control::Separator => {
                 ui.add_space(theme::SPACE_XS);
                 let (rect, _) =
@@ -512,6 +531,12 @@ fn accordion(
             });
         });
     });
+}
+
+/// Frees what Settings drew and no longer shows, such as the App icon
+/// previews. Called on every frame, whatever page is open.
+pub fn release_unseen(ctx: &egui::Context) {
+    appearance::release_app_icon_previews(ctx);
 }
 
 pub fn show(app: &mut App, ui: &mut egui::Ui) {
@@ -820,10 +845,12 @@ fn sections(app: &App) -> Vec<Section> {
     let palette = app.palette;
 
     let mut appearance = Section::new(translated(locale, "Appearance"));
-    // The preview sits at the top of the theme card, with the tiles and the
-    // accent swatches. Mode, Glass and the wallpaper tint are the card under
-    // it.
-    appearance.block(
+    // Each topic is a page card of its own, as under Chats: the theme card
+    // (the preview flush at the top, the tiles and the accent swatches,
+    // drawn bare), then Mode, Glass and the wallpaper tint, the Doodles
+    // accordion alone, Font and Zoom, and the Interface and Motion
+    // accordions.
+    appearance.bare(
         vec![
             translated(locale, "Preview"),
             translated(locale, "Theme"),
@@ -833,6 +860,7 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         appearance::theme_card,
     );
+    appearance.separator();
     appearance.block(
         vec![
             translated(locale, "Mode"),
@@ -844,6 +872,7 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         appearance::look_card,
     );
+    appearance.separator();
     appearance.block(
         vec![
             translated(locale, "Doodles"),
@@ -856,8 +885,21 @@ fn sections(app: &App) -> Vec<Section> {
         ],
         appearance::doodles,
     );
-    appearance.block(vec![translated(locale, "Font")], appearance::fonts);
-    appearance.block(vec![translated(locale, "Zoom")], appearance::zoom);
+    appearance.separator();
+    appearance.block(
+        vec![
+            translated(locale, "App icon"),
+            translated(locale, "Icon"),
+            translated(locale, "Dock"),
+        ],
+        appearance::app_icon,
+    );
+    appearance.separator();
+    appearance.block(
+        vec![translated(locale, "Font"), translated(locale, "Zoom")],
+        appearance::font_and_zoom,
+    );
+    appearance.separator();
     appearance.block(
         vec![
             translated(locale, "Interface"),

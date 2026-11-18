@@ -1,8 +1,9 @@
-//! Settings > Appearance: a theme card (the live preview of a chat, a row of
-//! theme tiles to scroll, the accent swatches and the colour wheel's dialog),
-//! a card for the mode, Glass and the wallpaper's tint, then the doodles, the
-//! font, zoom and two folded groups (Interface, Motion). The theme and the
-//! accent are two choices, one over the other.
+//! Settings > Appearance, a stack of unoutlined cards as under Chats: a theme
+//! card (the live preview of a chat, a row of theme tiles to scroll, the
+//! accent swatches and the colour wheel's dialog), a card for the mode (a
+//! dropdown), Glass and the wallpaper's tint, the Doodles accordion alone,
+//! a card for the font and zoom, and one for two folded groups (Interface,
+//! Motion). The theme and the accent are two choices, one over the other.
 
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
@@ -123,12 +124,11 @@ pub(super) fn preview(ui: &mut egui::Ui, app: &App, rect: Rect) {
     crate::ui::conversation::still_transcript(ui, app, rect, &chat, &messages, ME, arrival);
 }
 
-/// A settings card's frame: the shared fill and hairline, with `margin` of
-/// room inside it.
+/// A settings card's frame: the shared fill, with `margin` of room inside
+/// it. Cards carry no outline, as on the other settings pages.
 fn card_frame(palette: &Palette, margin: egui::Margin) -> egui::Frame {
     egui::Frame::new()
         .fill(theme::blend(palette.panel, palette.surface, 0.5))
-        .stroke(Stroke::new(1.0, palette.outline))
         .corner_radius(CornerRadius::same(theme::RADIUS_CARD))
         .inner_margin(margin)
 }
@@ -136,9 +136,22 @@ fn card_frame(palette: &Palette, margin: egui::Margin) -> egui::Frame {
 /// The room between a card's edge and its controls.
 const CARD_PAD: f32 = 16.0;
 
+/// A faint hairline between two rows of one card, in the style of the
+/// settings page's separators.
+fn hairline(ui: &mut egui::Ui, palette: &Palette) {
+    ui.add_space(theme::SPACE_XS);
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().line_segment(
+        [rect.left_center(), rect.right_center()],
+        Stroke::new(theme::OUTLINE_STROKE, palette.text.gamma_multiply(0.07)),
+    );
+    ui.add_space(theme::SPACE_M);
+}
+
 /// The theme card, Telegram's way: the preview flush at the top, a row of
 /// theme tiles to scroll, then the accent swatches. A theme and an accent
-/// are two choices, one over the other.
+/// are two choices, one over the other. It is a card of its own on the
+/// page (drawn bare, so the preview meets the card's rounded top corners).
 pub(super) fn theme_card(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
     card_frame(&palette, egui::Margin::ZERO).show(ui, |ui| {
@@ -153,139 +166,107 @@ pub(super) fn theme_card(ui: &mut egui::Ui, app: &mut App) {
         ui.painter().hline(
             line.x_range().shrink(CARD_PAD),
             line.center().y,
-            Stroke::new(1.0, palette.outline),
+            Stroke::new(theme::OUTLINE_STROKE, palette.text.gamma_multiply(0.07)),
         );
         ui.add_space(theme::SPACE_S);
         accent_swatches(ui, app);
         ui.add_space(theme::SPACE_S);
     });
-    ui.add_space(theme::SPACE_S);
     accent_modal(ui.ctx(), app);
 }
 
-/// The card under the theme card: the mode, Glass and the wallpaper's tint.
+/// The card under the theme card: the mode, Glass and the wallpaper's tint,
+/// a hairline between each.
 pub(super) fn look_card(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
-    card_frame(&palette, egui::Margin::same(CARD_PAD as i8)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let label = crate::i18n::gettext(app.locale, "Mode");
-        widgets::setting_row(ui, &palette, &label, "", |ui| mode_icons(ui, app));
+    let label = crate::i18n::gettext(app.locale, "Mode");
+    widgets::setting_row(ui, &palette, &label, "", |ui| mode_menu(ui, app));
+    // macOS draws no glass, so its slider would move nothing.
+    if !cfg!(target_os = "macos") {
+        hairline(ui, &palette);
+        glass_wave(ui, app);
+        // The room a setting row leaves under itself.
         ui.add_space(theme::SPACE_S);
-        // macOS draws no glass, so its slider would move nothing.
-        if !cfg!(target_os = "macos") {
-            glass_wave(ui, app);
-            ui.add_space(theme::SPACE_S);
-        }
-        let mut tint = app.settings.tint_wallpaper;
-        let label = crate::i18n::gettext(app.locale, "Tint the wallpaper");
-        let mut changed = false;
-        widgets::setting_row(ui, &palette, &label, "", |ui| {
-            let response = widgets::switch(ui, &palette, &mut tint);
-            theme::reveal_focus(&response);
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::Checkbox,
-                    ui.is_enabled(),
-                    tint,
-                    label.as_ref(),
-                )
-            });
-            changed = response.changed();
-        });
-        if changed {
-            app.actions.push(Action::SetTintWallpaper(tint));
-        }
-    });
-    ui.add_space(theme::SPACE_S);
-}
-
-/// Auto, light and dark as three filled icons, the chosen one on a brighter
-/// rounded square and drawn in the text colour.
-fn mode_icons(ui: &mut egui::Ui, app: &mut App) {
-    let palette = app.palette;
-    let custom = app.settings.custom_theme.is_some();
-    let selected = (!custom).then_some(app.settings.mode);
-    let segment = vec2(48.0, 40.0);
-    let gap = 8.0;
-    let (outer, _) = ui.allocate_exact_size(
-        vec2(
-            segment.x * Mode::ALL.len() as f32 + gap * (Mode::ALL.len() - 1) as f32,
-            segment.y,
-        ),
-        Sense::hover(),
-    );
-    let lit = if palette.dark {
-        Color32::from_white_alpha(28)
-    } else {
-        palette.surface_active
-    };
-    for (index, mode) in Mode::ALL.into_iter().enumerate() {
-        let rect = Rect::from_min_size(
-            outer.min + vec2((segment.x + gap) * index as f32, 0.0),
-            segment,
-        );
-        // Fixed ids, so the demo tour can point at them.
-        let id = match mode {
-            Mode::System => "settings-mode-auto",
-            Mode::Light => "settings-mode-light",
-            Mode::Dark => "settings-mode-dark",
-        };
-        let response = ui.interact(rect, egui::Id::new(id), Sense::click());
+    }
+    hairline(ui, &palette);
+    let mut tint = app.settings.tint_wallpaper;
+    let label = crate::i18n::gettext(app.locale, "Tint the wallpaper");
+    let mut changed = false;
+    widgets::setting_row(ui, &palette, &label, "", |ui| {
+        let response = widgets::switch(ui, &palette, &mut tint);
         theme::reveal_focus(&response);
-        theme::focus_outline(ui, response.id, rect, 10.0);
-        let on = selected == Some(mode);
-        let t = theme::animate(ui.ctx(), response.id, on, theme::MOTION_QUICK);
-        if t > 0.0 {
-            ui.painter().rect_filled(rect, 10.0, lit.gamma_multiply(t));
-        } else if response.hovered() {
-            ui.painter()
-                .rect_filled(rect, 10.0, lit.gamma_multiply(0.5));
-        }
-        let icon = match mode {
-            Mode::System => Icon::SparklesFill,
-            Mode::Light => Icon::SunFill,
-            Mode::Dark => Icon::MoonFill,
-        };
-        let color = if on || response.hovered() {
-            palette.text
-        } else {
-            palette.secondary
-        };
-        theme::paint_icon(
-            ui,
-            icon,
-            Rect::from_center_size(rect.center(), Vec2::splat(20.0)),
-            20.0,
-            color,
-        );
-        let label = crate::i18n::gettext(app.locale, mode.label());
         response.widget_info(|| {
             egui::WidgetInfo::selected(
-                egui::WidgetType::RadioButton,
+                egui::WidgetType::Checkbox,
                 ui.is_enabled(),
-                on,
+                tint,
                 label.as_ref(),
             )
         });
-        if response
-            .on_hover_text(label.as_ref())
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
-        {
-            app.actions.push(Action::SetMode(mode));
-            if custom {
-                // A theme file has one mode of its own: leave it for the
-                // ready-made theme last used, in the mode asked for.
-                let theme = app.settings.chat_theme;
-                let theme = if theme.is_look() {
-                    app.settings.last_theme
-                } else {
-                    theme
-                };
-                app.actions.push(Action::SetChatTheme(theme));
-            }
-        }
+        changed = response.changed();
+    });
+    if changed {
+        app.actions.push(Action::SetTintWallpaper(tint));
     }
+}
+
+/// Auto, light and dark as a dropdown, the closed button naming the current
+/// mode (none is ticked while a theme file is in use).
+fn mode_menu(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let custom = app.settings.custom_theme.is_some();
+    let current = app.settings.mode;
+    let selected = (!custom).then_some(current);
+    let label = crate::i18n::gettext(locale, "Mode");
+    let closed = crate::i18n::gettext(locale, current.label());
+    let response = controls::dropdown(
+        ui,
+        &palette,
+        "appearance_mode",
+        &label,
+        closed.as_ref(),
+        controls::WIDTH,
+        |ui| {
+            for mode in Mode::ALL {
+                // Fixed ids, so the demo tour can point at the options.
+                let id = match mode {
+                    Mode::System => "settings-mode-auto",
+                    Mode::Light => "settings-mode-light",
+                    Mode::Dark => "settings-mode-dark",
+                };
+                let option = ui.scope(|ui| {
+                    controls::option_in(
+                        ui,
+                        &palette,
+                        &crate::i18n::gettext(locale, mode.label()),
+                        selected == Some(mode),
+                        theme::regular(theme::TEXT_BODY),
+                    )
+                });
+                // Hover only: the option underneath keeps the click (and
+                // closes the list), the tour only reads where it is.
+                ui.interact(option.response.rect, egui::Id::new(id), Sense::hover());
+                if option.inner {
+                    app.actions.push(Action::SetMode(mode));
+                    if custom {
+                        // A theme file has one mode of its own: leave it for
+                        // the ready-made theme last used, in the mode asked
+                        // for.
+                        let theme = app.settings.chat_theme;
+                        let theme = if theme.is_look() {
+                            app.settings.last_theme
+                        } else {
+                            theme
+                        };
+                        app.actions.push(Action::SetChatTheme(theme));
+                    }
+                }
+            }
+        },
+    );
+    // A fixed id on the closed button, so the demo tour can open it.
+    ui.interact(response.rect, egui::Id::new("settings-mode"), Sense::hover());
 }
 
 /// The space between the colour wheel's dots.
@@ -1102,6 +1083,132 @@ fn glass_wave(ui: &mut egui::Ui, app: &mut App) {
     response.on_hover_text(label);
 }
 
+/// The App icon block: a wrapped grid of rounded-square previews, the one in
+/// use ringed in the accent, a click switching at once. The choice dresses
+/// the Dock tile, window, tray and taskbar of the running app only; the
+/// installed bundle's icon (Finder, launchers) is not modified. Tiles carry
+/// no caption: the name is the hover text and the accessible label.
+pub(super) fn app_icon(ui: &mut egui::Ui, app: &mut App) {
+    let palette = app.palette;
+    let locale = app.locale;
+    let title = crate::i18n::gettext(locale, "App icon");
+    widgets::rich_text(ui, &title, theme::medium(theme::TEXT_BODY), palette.text);
+    ui.add_space(theme::SPACE_S);
+    let textures = app_icon_textures(ui.ctx());
+    let current = app.settings.app_icon;
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+        for (icon, texture) in crate::app_icons::AppIcon::ALL.into_iter().zip(&textures) {
+            let label = crate::i18n::gettext(locale, icon.label()).into_owned();
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::splat(APP_ICON_TILE), Sense::click());
+            theme::reveal_focus(&response);
+            theme::focus_outline(ui, response.id, rect, APP_ICON_RING);
+            if ui.is_rect_visible(rect) {
+                let chosen = icon == current;
+                let picture = rect.shrink(4.0);
+                egui::Image::new((texture.id(), picture.size())).paint_at(ui, picture);
+                let painter = ui.painter();
+                if chosen {
+                    painter.rect_stroke(
+                        rect,
+                        APP_ICON_RING,
+                        Stroke::new(2.0, palette.accent),
+                        egui::StrokeKind::Inside,
+                    );
+                } else if response.hovered() {
+                    painter.rect_stroke(
+                        rect,
+                        APP_ICON_RING,
+                        Stroke::new(1.0, palette.secondary),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::RadioButton,
+                    true,
+                    icon == current,
+                    &label,
+                )
+            });
+            if response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text(&label)
+                .clicked()
+            {
+                clicked = Some(icon);
+            }
+        }
+    });
+    if let Some(icon) = clicked
+        && icon != current
+    {
+        app.actions.push(Action::SetAppIcon(icon));
+    }
+}
+
+/// An app icon tile's side, ring included.
+const APP_ICON_TILE: f32 = 64.0;
+/// The ring's corner radius, a little outside the squircle's.
+const APP_ICON_RING: f32 = 18.0;
+/// Pixels each preview is rasterized at, for tiles drawn at 56 points.
+const APP_ICON_PREVIEW_PX: usize = 112;
+
+/// Where the previews are kept, with the frame that last drew them.
+fn app_icon_previews_id() -> egui::Id {
+    egui::Id::new("app-icon-previews")
+}
+
+/// The frame number [`release_app_icon_previews`] compares against: the
+/// root window's, which is where Settings draws.
+fn root_frame(ctx: &egui::Context) -> u64 {
+    ctx.cumulative_frame_nr_for(egui::ViewportId::ROOT)
+}
+
+/// Frees the previews (about 700 KB of textures) once a whole frame has
+/// passed without the block drawing them: Settings closed, another category
+/// open, or a search that leaves the block out. Called every frame.
+pub(super) fn release_app_icon_previews(ctx: &egui::Context) {
+    let id = app_icon_previews_id();
+    let stale = ctx
+        .data(|data| data.get_temp::<(u64, Vec<egui::TextureHandle>)>(id))
+        .is_some_and(|(drawn, _)| drawn + 1 < root_frame(ctx));
+    if stale {
+        ctx.data_mut(|data| data.remove::<(u64, Vec<egui::TextureHandle>)>(id));
+    }
+}
+
+/// The previews of every icon, rasterized the first time the block draws and
+/// kept in the context while it keeps drawing, so no frame decodes an SVG.
+fn app_icon_textures(ctx: &egui::Context) -> Vec<egui::TextureHandle> {
+    let id = app_icon_previews_id();
+    let frame = root_frame(ctx);
+    let held = ctx.data(|data| data.get_temp::<(u64, Vec<egui::TextureHandle>)>(id));
+    if let Some((_, textures)) = held {
+        ctx.data_mut(|data| data.insert_temp(id, (frame, textures.clone())));
+        return textures;
+    }
+    let textures: Vec<_> = crate::app_icons::AppIcon::ALL
+        .into_iter()
+        .map(|icon| {
+            let side = APP_ICON_PREVIEW_PX;
+            let rgba =
+                crate::app_icons::rgba(icon, side).unwrap_or_else(|| vec![0; side * side * 4]);
+            let image = egui::ColorImage::from_rgba_unmultiplied([side, side], &rgba);
+            ctx.load_texture(
+                format!("app-icon-{icon:?}"),
+                image,
+                egui::TextureOptions::LINEAR,
+            )
+        })
+        .collect();
+    ctx.data_mut(|data| data.insert_temp(id, (frame, textures.clone())));
+    textures
+}
+
 /// A doodle tile's size.
 const TILE: Vec2 = vec2(96.0, 92.0);
 /// How tall the pictured part of a tile is.
@@ -1479,6 +1586,14 @@ pub(super) fn fonts(ui: &mut egui::Ui, app: &mut App) {
             );
         },
     );
+}
+
+/// Font and Zoom, one card with a hairline between them.
+pub(super) fn font_and_zoom(ui: &mut egui::Ui, app: &mut App) {
+    fonts(ui, app);
+    let palette = app.palette;
+    hairline(ui, &palette);
+    zoom(ui, app);
 }
 
 /// The zoom steps the slider stops at.

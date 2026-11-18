@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+<defs><linearGradient id="bg" x1="0.3" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#1a1038"/><stop offset="1" stop-color="#08051a"/></linearGradient><linearGradient id="hi" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.12"/><stop offset="0.5" stop-color="#fff" stop-opacity="0"/></linearGradient><linearGradient id="lo" x1="0" y1="0" x2="0" y2="1"><stop offset="0.55" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.2"/></linearGradient><radialGradient id="ig" cx="0.5" cy="0.5" r="0.6"><stop offset="0.55" stop-color="#7a5cff" stop-opacity="0"/><stop offset="1" stop-color="#9f7bff" stop-opacity="0.55"/></radialGradient><filter id="blur" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter><clipPath id="tile"><rect x="4" y="4" width="120" height="120" rx="30"/></clipPath></defs>
+<rect x="4" y="4" width="120" height="120" rx="30" fill="url(#bg)"/>
+<rect x="4" y="4" width="120" height="120" rx="30" fill="url(#lo)"/>
+<rect x="4" y="4" width="120" height="120" rx="30" fill="url(#hi)"/>
+<rect x="4" y="4" width="120" height="120" rx="30" fill="url(#ig)"/><path d="M40 37 H88 L54 64 H75 L40 91 H88" fill="none" stroke="#a98bff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round" filter="url(#blur)"/><path d="M40 37 H88 L54 64 H75 L40 91 H88" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="5" y="5" width="118" height="118" rx="29" fill="none" stroke="#ffffff" stroke-opacity="0.16" stroke-width="2"/>
+</svg>

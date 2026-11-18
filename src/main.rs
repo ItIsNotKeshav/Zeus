@@ -366,10 +366,16 @@ fn run() -> eframe::Result<()> {
         icon: Some(zeus::brand::ID.into()),
     });
     let settings = settings::Settings::load(&dirs.settings_file());
+    // The chosen icon, before the window, tray or Dock draw anything.
+    zeus::app_icons::set_current(settings.app_icon);
     // A Cargo build has no application bundle to supply its Dock icon.
     #[cfg(target_os = "macos")]
     if let Err(error) = fastframe_dock::set_icon(DOCK_ICON) {
         log::warn!("could not set the Dock icon: {error}");
+    }
+    #[cfg(target_os = "macos")]
+    if settings.app_icon != zeus::app_icons::AppIcon::Default {
+        zeus::app_icons::apply_dock(settings.app_icon);
     }
     let demo_persistence = demo.then(|| dirs.state.join("window.ron"));
     // A copy on a profile of its own names it, apart from the installed one.
@@ -903,16 +909,18 @@ impl eframe::App for Shell {
 /// pixel-font overlay, which Windows draws far smaller.
 #[cfg(target_os = "windows")]
 #[derive(Default)]
-struct TaskbarBadge(Option<u32>);
+struct TaskbarBadge(Option<(u32, zeus::app_icons::AppIcon)>);
 
 #[cfg(target_os = "windows")]
 impl TaskbarBadge {
     fn show(&mut self, window: &winit::window::Window, count: u32) {
         use winit::platform::windows::WindowExtWindows;
-        if self.0 == Some(count) {
+        // A new app icon redraws it too: the taskbar button wears the icon.
+        let shown = (count, zeus::app_icons::current());
+        if self.0 == Some(shown) {
             return;
         }
-        self.0 = Some(count);
+        self.0 = Some(shown);
         const SIZE: u32 = 64;
         let rgba = zeus::util::badged_icon_rgba(SIZE as usize, count);
         window.set_taskbar_icon(winit::window::Icon::from_rgba(rgba, SIZE, SIZE).ok());

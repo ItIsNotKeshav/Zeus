@@ -441,3 +441,29 @@ pub fn vibrancy(frame: &eframe::Frame, palette: &crate::theme::Palette, on: bool
         }
     });
 }
+
+/// Sets the application's Dock icon from an encoded image, or, with `None`,
+/// gives it back to the bundle's own. Main thread only; returns whether it
+/// was applied.
+pub fn set_dock_icon(encoded: Option<&[u8]>) -> bool {
+    use objc2::AnyThread;
+    use objc2_app_kit::NSImage;
+    use objc2_foundation::NSData;
+
+    let Some(main) = objc2::MainThreadMarker::new() else {
+        return false;
+    };
+    let app = NSApplication::sharedApplication(main);
+    let Some(bytes) = encoded else {
+        // SAFETY: main thread; nil restores the bundle's icon.
+        unsafe { app.setApplicationIconImage(None) };
+        return true;
+    };
+    let data = NSData::with_bytes(bytes);
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        return false;
+    };
+    // SAFETY: main thread; the application retains the image.
+    unsafe { app.setApplicationIconImage(Some(&image)) };
+    true
+}

@@ -927,6 +927,9 @@ pub struct Settings {
     pub doodle_intensity: f32,
     /// How many of them there are, as a multiple of the default (1.0).
     pub doodle_density: f32,
+    /// The icon the Dock, window, tray and taskbar wear; never the installed
+    /// bundle's own file.
+    pub app_icon: crate::app_icons::AppIcon,
     /// Colour selected in the wallpaper picker.
     pub wallpaper_color: WallpaperColor,
     /// Colour selected for the dark wallpaper picker.
@@ -1107,6 +1110,7 @@ impl Default for Settings {
             doodle_custom: None,
             doodle_intensity: 1.0,
             doodle_density: 1.0,
+            app_icon: crate::app_icons::AppIcon::Default,
             wallpaper_color: WallpaperColor::Theme,
             dark_wallpaper_color: WallpaperColor::Theme,
             wallpaper_image: None,

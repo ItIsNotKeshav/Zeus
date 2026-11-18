@@ -158,6 +158,11 @@ rows sits in its own white rounded card.
   without doodles. **Doodle colour** is **Gray**, **Accent** (the app accent),
   or **Custom** (a colour from its own colour map, which does not change the
   app accent; the colour wheel above still sets the app accent).
+- **App icon**: pick one of 14 tiles (all free). It changes the icon of the
+  running app (the Dock tile, window, tray and taskbar), not the installed
+  file Finder or your launcher shows, so a Dock or taskbar pin shows the
+  installed icon again while Zeus is not running. The macOS menu-bar item
+  keeps its monochrome shape.
 - **Motion**: how much the interface moves. **Auto** (the default) follows
   the system's reduce-motion setting (Reduce motion on macOS, Animation
   effects on Windows, Animations on GNOME or the desktop portal's reduced

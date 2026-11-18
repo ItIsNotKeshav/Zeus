@@ -286,9 +286,11 @@ pub(super) fn script() -> Vec<Cue> {
     add(80.4, esc("Esc · Clear the search"));
     add(81.0, Move(Widget("settings-theme-Zeus")));
     add(81.4, Click(left));
-    add(81.9, Move(Widget("settings-mode-light")));
-    add(82.3, Click(left));
-    add(83.2, esc("Esc · Back to chats"));
+    add(81.8, Move(Widget("settings-mode")));
+    add(82.0, Click(left));
+    add(82.3, Move(Widget("settings-mode-light")));
+    add(82.6, Click(left));
+    add(83.4, esc("Esc · Back to chats"));
 
     for (start, text) in [
         (6.1, "rocket"),

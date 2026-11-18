@@ -797,15 +797,24 @@ const SMALL_BELOW: usize = 40;
 
 /// Rasterizes the logo to straight-alpha RGBA.
 pub fn app_icon_rgba(size: usize) -> Vec<u8> {
-    let mark = if size < SMALL_BELOW { SMALL_MARK } else { MARK };
-    match render_mark(mark, size) {
+    match render_mark(current_mark(size), size) {
         Some(rgba) => rgba,
         // Fall back to an accent disc if the embedded SVG cannot render.
         None => plain_disc(size),
     }
 }
 
-fn render_mark(mark: &[u8], size: usize) -> Option<Vec<u8>> {
+/// The artwork of the icon the app wears, the flat small mark only for the
+/// default one.
+fn current_mark(size: usize) -> &'static [u8] {
+    match crate::app_icons::current() {
+        crate::app_icons::AppIcon::Default if size < SMALL_BELOW => SMALL_MARK,
+        crate::app_icons::AppIcon::Default => MARK,
+        icon => icon.svg(),
+    }
+}
+
+pub(crate) fn render_mark(mark: &[u8], size: usize) -> Option<Vec<u8>> {
     let side = size.max(1) as u32;
     let tree = resvg::usvg::Tree::from_data(mark, &resvg::usvg::Options::default()).ok()?;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(side, side)?;
@@ -879,7 +888,8 @@ pub fn badged_icon_rgba(size: usize, count: u32) -> Vec<u8> {
         tx = left + (width - text) / 2.0,
         ty = 3.0 + (height - 10.0 * scale) / 2.0,
     );
-    let svg = String::from_utf8_lossy(MARK).replace("</svg>", &format!("{badge}</svg>"));
+    let svg = String::from_utf8_lossy(current_mark(size.max(SMALL_BELOW)))
+        .replace("</svg>", &format!("{badge}</svg>"));
     render_mark(svg.as_bytes(), size).unwrap_or_else(|| app_icon_rgba(size))
 }
 

@@ -3569,6 +3569,8 @@ pub enum Action {
     SetDoodleCustom(crate::chat_themes::CustomAccent),
     SetDoodleIntensity(f32),
     SetDoodleDensity(f32),
+    /// Switches the app's icon (Dock, window, tray, taskbar).
+    SetAppIcon(crate::app_icons::AppIcon),
     /// Asks for an image to use as the chat wallpaper.
     PickWallpaperImage,
     /// Goes back to the wallpaper colour and deletes the copied image.
