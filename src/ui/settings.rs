@@ -2673,8 +2673,10 @@ const CARD_PAD_X: i8 = 20;
 const CARD_GAP: f32 = 16.0;
 
 /// A rounded card for settings, in the panel's lightest colour, with room
-/// around its rows. Every row ends with its own gap, so the bottom margin is
-/// smaller than the top.
+/// around its rows. Every row ends with its own gap (8 points, after the
+/// item spacing egui leaves under each widget), so the bottom margin keeps
+/// only what brings the room under the last row level with the room above
+/// the first.
 fn card_frame(palette: &Palette) -> Frame {
     Frame::new()
         .fill(card_fill(palette))
@@ -2682,10 +2684,16 @@ fn card_frame(palette: &Palette) -> Frame {
         .inner_margin(Margin {
             left: CARD_PAD_X,
             right: CARD_PAD_X,
-            top: 16,
-            bottom: 8,
+            top: CARD_PAD_TOP,
+            bottom: CARD_PAD_TOP - ROW_TAIL,
         })
 }
+
+/// Room above the first row of a settings card.
+const CARD_PAD_TOP: i8 = 16;
+/// What every row leaves under itself: egui's item spacing (6) and the row's
+/// own trailing gap (8).
+const ROW_TAIL: i8 = 14;
 
 /// What a settings card is filled with: halfway from the panel to the
 /// raised surface, which is white in the light looks and a step lighter
@@ -2789,7 +2797,13 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                 theme::regular(theme::TEXT_CONTROL),
                 palette.secondary,
             );
-            if let Some(about) = &app.me_about {
+            // An empty About would still take a line under the number and
+            // leave a gap at the foot of the card.
+            if let Some(about) = app
+                .me_about
+                .as_deref()
+                .filter(|about| !about.trim().is_empty())
+            {
                 theme::paragraph(
                     ui,
                     about,
@@ -2802,12 +2816,11 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
             // With other numbers here, unlinking this one also takes it off
             // the switcher; the last one stays, waiting to be linked again.
             if app.has_several_accounts() {
-                if theme::soft_button(
+                if theme::outline_button(
                     ui,
                     &palette,
-                    Some(Icon::LogOut),
+                    Icon::LogOut,
                     &crate::i18n::gettext(app.locale, "Remove this account"),
-                    false,
                 )
                 .clicked()
                 {
@@ -2815,23 +2828,21 @@ fn account(app: &mut App, ui: &mut egui::Ui) {
                     app.actions
                         .push(Action::ShowDialog(Dialog::ConfirmRemoveAccount(id)));
                 }
-            } else if theme::soft_button(
+            } else if theme::outline_button(
                 ui,
                 &palette,
-                Some(Icon::LogOut),
+                Icon::LogOut,
                 &crate::i18n::gettext(app.locale, "Unlink this computer"),
-                false,
             )
             .clicked()
             {
                 app.actions.push(Action::ShowDialog(Dialog::ConfirmUnlink));
             }
-            if theme::soft_button(
+            if theme::outline_button(
                 ui,
                 &palette,
-                Some(Icon::Plus),
+                Icon::Plus,
                 &crate::i18n::gettext(app.locale, "Add account"),
-                false,
             )
             .clicked()
             {

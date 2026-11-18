@@ -2172,6 +2172,58 @@ pub fn pill_button(ui: &mut egui::Ui, palette: &Palette, label: &str, primary: b
     }
 }
 
+/// An outlined pill with an icon before its label, drawn as [`pill_button`]'s
+/// secondary look, for an action that must read as a button on a card the
+/// colour of [`soft_button`]'s fill.
+pub fn outline_button(ui: &mut egui::Ui, palette: &Palette, icon: Icon, label: &str) -> Response {
+    let font = semibold(13.0);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_string(), font, palette.text);
+    let icon_size = 15.0;
+    let icon_width = icon_size + 6.0;
+    let padding = Vec2::new(16.0, 8.0);
+    let size = Vec2::new(galley.size().x + icon_width, galley.size().y) + padding * 2.0;
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    reveal_focus(&response);
+    focus_outline(ui, response.id, rect, rect.height() / 2.0);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), label)
+    });
+    // A disabled Ui already fades the painter; it must not react to hover.
+    let enabled = ui.is_enabled();
+    if ui.is_rect_visible(rect) {
+        let hovered = enabled && response.hovered();
+        let radius = rect.height() / 2.0;
+        if hovered {
+            ui.painter()
+                .rect_filled(rect, radius, palette.surface_hover);
+        }
+        ui.painter().rect_stroke(
+            rect,
+            radius,
+            Stroke::new(
+                OUTLINE_STROKE,
+                if hovered { palette.text } else { palette.dim },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        let x = rect.left() + padding.x;
+        let icon_rect = egui::Rect::from_center_size(
+            egui::pos2(x + icon_size / 2.0, rect.center().y),
+            Vec2::splat(icon_size),
+        );
+        icon.image(palette.text, icon_size).paint_at(ui, icon_rect);
+        let pos = egui::pos2(x + icon_width, rect.center().y - galley.size().y / 2.0);
+        ui.painter().galley(pos, galley, palette.text);
+    }
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
 /// Subtle button with an optional icon and label.
 pub fn soft_button(
     ui: &mut egui::Ui,

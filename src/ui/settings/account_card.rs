@@ -38,7 +38,8 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
         (None, None) => (profile, None),
     };
     let width = (ui.available_width() - 2.0 * widgets::ROW_CARD_X).max(0.0);
-    let (outer, _) = ui.allocate_exact_size(vec2(ui.available_width(), CARD_HEIGHT), Sense::hover());
+    let (outer, _) =
+        ui.allocate_exact_size(vec2(ui.available_width(), CARD_HEIGHT), Sense::hover());
     let rect = Rect::from_min_size(
         pos2(outer.left() + widgets::ROW_CARD_X, outer.top()),
         vec2(width, CARD_HEIGHT),
@@ -56,10 +57,7 @@ pub(super) fn show(app: &mut App, ui: &mut egui::Ui) {
                 .rect_filled(rect, 12.0, palette.surface_hover.gamma_multiply(hover));
         }
         let avatar = Rect::from_min_size(
-            pos2(
-                rect.left() + CARD_PAD,
-                rect.center().y - CARD_AVATAR / 2.0,
-            ),
+            pos2(rect.left() + CARD_PAD, rect.center().y - CARD_AVATAR / 2.0),
             vec2(CARD_AVATAR, CARD_AVATAR),
         );
         widgets::paint_avatar(ui, &palette, avatar, &title, &me, picture.as_deref());
