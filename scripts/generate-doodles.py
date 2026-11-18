@@ -16,7 +16,7 @@ themed sets named in `THEMES` again instead (needs network access).
 import math, random, re, sys, urllib.request
 
 W, H = 374, 666
-LINE = 1.15  # stroke width as drawn, whatever an icon's scale
+LINE = 0.85  # stroke width as drawn, whatever an icon's scale
 SEED = 20261118
 
 RAW = "https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/{}.svg"
