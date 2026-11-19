@@ -71,9 +71,9 @@ step has a live preview beside it.
 2. **Choose your look.** Light or dark, and one of the built-in themes.
 3. **Make it yours.** An accent colour, a typeface and the doodles behind your
    chats. You can change all of these later in **Settings > Appearance**.
-4. **Stay in the loop.** Desktop notifications, whether to show message
-   previews, whether to play a sound, and whether Zeus keeps running in the
-   tray when you close the window.
+4. **Stay in the loop.** Notifications, whether to show message previews,
+   whether to play a sound, and whether Zeus keeps running in the tray when
+   you close the window.
 5. **Private by default.** Read receipts and typing indicators. Both are
    yours to choose, and you can change them later.
 

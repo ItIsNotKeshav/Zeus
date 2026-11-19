@@ -1196,7 +1196,8 @@ fn separator(ui: &mut egui::Ui, palette: &Palette) {
 }
 
 /// One row of a group: its icon, its name and what it does, and a switch.
-/// Returns whether the switch was flipped.
+/// Returns whether the switch was flipped. `boxed` keeps the reserved square
+/// the icon used to sit in; without it the icon sits inline, and larger.
 fn switch_row(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -1205,14 +1206,21 @@ fn switch_row(
     description: &str,
     value: &mut bool,
     enabled: bool,
+    boxed: bool,
 ) -> bool {
     let mut changed = false;
     ui.add_enabled_ui(enabled, |ui| {
         let row = ui
             .horizontal(|ui| {
-                // The icon's place: it is drawn once the row's height is
-                // known, centred on it as the switch is.
-                ui.add_space(14.0 + 32.0 + 12.0);
+                if boxed {
+                    // The icon's place: it is drawn once the row's height is
+                    // known, centred on it as the switch is.
+                    ui.add_space(14.0 + 32.0 + 12.0);
+                } else {
+                    ui.add_space(14.0);
+                    theme::icon(ui, icon, 24.0, palette.secondary);
+                    ui.add_space(12.0);
+                }
                 ui.vertical(|ui| {
                     ui.set_width((ui.available_width() - 40.0 - 28.0).max(100.0));
                     ui.add_space(11.0);
@@ -1246,17 +1254,19 @@ fn switch_row(
             })
             .response
             .rect;
-        // The icon alone, quiet, centred on the row as the switch is.
-        theme::paint_icon(
-            ui,
-            icon,
-            Rect::from_center_size(
-                pos2(row.left() + 14.0 + 16.0, row.center().y),
-                Vec2::splat(18.0),
-            ),
-            18.0,
-            palette.secondary,
-        );
+        if boxed {
+            // The icon alone, quiet, centred on the row as the switch is.
+            theme::paint_icon(
+                ui,
+                icon,
+                Rect::from_center_size(
+                    pos2(row.left() + 14.0 + 16.0, row.center().y),
+                    Vec2::splat(18.0),
+                ),
+                18.0,
+                palette.secondary,
+            );
+        }
     });
     changed
 }
@@ -1264,28 +1274,18 @@ fn switch_row(
 fn notifications(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
-    title(
-        ui,
-        &palette,
-        &gettext(locale, "Notifications"),
-        &gettext(
-            locale,
-            "How Zeus tells you about new messages, and whether it keeps running when the window is closed.",
-        ),
-    );
+    title(ui, &palette, &gettext(locale, "Notifications"), "");
     group(ui, &palette, |ui| {
         let mut on = app.account().settings.notifications;
         if switch_row(
             ui,
             &palette,
             Icon::Bell,
-            &gettext(locale, "Desktop notifications"),
-            &gettext(
-                locale,
-                "For chats you are not looking at. Muted chats stay quiet.",
-            ),
+            &gettext(locale, "Notifications"),
+            "",
             &mut on,
             true,
+            false,
         ) {
             app.account_mut().settings.notifications = on;
             app.account_mut().mark_settings_dirty();
@@ -1297,9 +1297,10 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
             &palette,
             Icon::Eye,
             &gettext(locale, "Show message previews"),
-            &gettext(locale, "When off, they say only “New message”."),
+            "",
             &mut content,
             on,
+            false,
         ) {
             app.settings.notification_content = content;
             app.actions.push(Action::SettingsChanged);
@@ -1311,12 +1312,10 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
             &palette,
             Icon::Volume2,
             &gettext(locale, "Play a sound"),
-            &gettext(
-                locale,
-                "A soft chime for new messages, and another when someone mentions you.",
-            ),
+            "",
             &mut sound,
             on,
+            false,
         ) {
             (app.settings.message_sound, app.settings.mention_sound) = if sound {
                 (NotificationSound::Receive, NotificationSound::Alert)
@@ -1332,12 +1331,10 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
             &palette,
             Icon::Monitor,
             &gettext(locale, "Keep running when the window closes"),
-            &gettext(
-                locale,
-                "Zeus stays in the tray after you close the window or quit, so messages keep arriving."
-            ),
+            "",
             &mut keep,
             true,
+            false,
         ) {
             app.settings.keep_running_in_background = keep;
             app.actions.push(Action::SettingsChanged);
@@ -1349,9 +1346,10 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
                 &palette,
                 Icon::Clock,
                 &gettext(locale, "Start at login"),
-                &gettext(locale, "Starts in the tray, without a window."),
+                "",
                 &mut start,
                 true,
+                false,
             ) {
                 app.actions.push(Action::SetStartWithSystem(start));
             }
@@ -1381,6 +1379,7 @@ fn privacy(app: &mut App, ui: &mut egui::Ui) {
             &gettext(locale, "Let people see when you are writing to them."),
             &mut typing,
             true,
+            true,
         ) {
             app.account_mut().settings.send_typing = typing;
             app.account_mut().mark_settings_dirty();
@@ -1397,6 +1396,7 @@ fn privacy(app: &mut App, ui: &mut egui::Ui) {
                 "Files up to 64 MiB download as they come into view.",
             ),
             &mut download,
+            true,
             true,
         ) {
             app.account_mut().settings.auto_download = download;
