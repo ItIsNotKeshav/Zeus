@@ -29,8 +29,8 @@ pub enum AppIcon {
     Glow,
     LongShadow,
     Starfield,
-    /// A green tile in the colour of WhatsApp's, with Zeus's own mark: never
-    /// WhatsApp's logo.
+    /// A flat #24D366 tile in the colour of WhatsApp's, with Zeus's own mark:
+    /// never WhatsApp's logo.
     Green,
 }
 
