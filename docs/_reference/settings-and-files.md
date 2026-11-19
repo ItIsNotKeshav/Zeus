@@ -283,8 +283,9 @@ used, and the cache size limit.
   the tray when you close the window or choose **Quit**. Messages keep arriving.
   Choose **Quit completely** in the tray menu or the macOS app menu to end the
   process.
-- **Start at login**: start in the tray without a window, where the platform
-  supports it. If the desktop's tray is not up yet, Zeus waits up to 30
+- **Start at login**: on by default in the first-run setup. Start in the tray
+  without a window, where the platform supports it. If the desktop's tray is
+  not up yet, Zeus waits up to 30
   seconds for it, then opens the window, since a desktop without a tray could
   not bring it back. On macOS this is a login item under System Settings >
   General > Login Items, which macOS may ask you to allow there; inside a

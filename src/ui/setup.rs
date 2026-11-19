@@ -1340,6 +1340,23 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
             app.actions.push(Action::SettingsChanged);
         }
         if let Some(mut start) = app.start_with_system {
+            // A fresh install starts at login unless the person turns it off.
+            // Apply that once, when the step is first shown: setting the value
+            // here as well as queuing the change keeps the switch from flicker-
+            // ing back while the platform confirms the login item.
+            let defaulted = Id::new("setup-start-at-login-default");
+            if !ui
+                .ctx()
+                .data(|data| data.get_temp::<bool>(defaulted).unwrap_or(false))
+            {
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(defaulted, true));
+                if !start {
+                    start = true;
+                    app.start_with_system = Some(true);
+                    app.actions.push(Action::SetStartWithSystem(true));
+                }
+            }
             separator(ui, &palette);
             if switch_row(
                 ui,
