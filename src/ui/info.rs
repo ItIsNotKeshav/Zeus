@@ -227,9 +227,17 @@ fn side_card(app: &mut App, ui: &mut egui::Ui, region: Rect, open: f32) {
                     pos2(region.right().max(card.right()), region.bottom()),
                 );
                 ui.set_clip_rect(card.intersect(travel).intersect(ui.clip_rect()));
+                // Frost the conversation under the card, the way a dialog
+                // frosts the window under it. The card's see-through fill then
+                // reads as glass. Without it the chat shows sharp through the
+                // card on Windows and Linux, where `blur` is available; on
+                // macOS the fill is solid and this frost is a no-op.
+                let frost = ui.painter().add(egui::Shape::Noop);
                 // Behind the card's own controls, so a click on the card does
                 // not fall through to the conversation.
                 let _ = ui.interact(card, layer.id.with("hit"), Sense::click());
+                ui.painter()
+                    .set(frost, super::glass::rounded(card, super::corner_span(radius)));
                 ui.painter().rect(
                     card,
                     radius,
@@ -258,8 +266,8 @@ fn side_card(app: &mut App, ui: &mut egui::Ui, region: Rect, open: f32) {
     );
 }
 
-/// The card's own colour: the Settings page's, which shares the chat card's
-/// frosted glass on a vibrant window.
+/// The card's own colour: the Settings page's, see-through over the frost
+/// [`side_card`] lays under it on a vibrant window.
 fn card_fill(palette: &Palette) -> Color32 {
     if palette.vibrant() {
         palette.vibrant_chat(palette.panel)
