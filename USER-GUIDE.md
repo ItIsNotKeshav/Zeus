@@ -73,7 +73,8 @@ step has a live preview beside it.
    chats. You can change all of these later in **Settings > Appearance**.
 4. **Stay in the loop.** Notifications, whether to show message previews,
    whether to play a sound, and whether Zeus keeps running in the tray when
-   you close the window.
+   you close the window. On macOS notifications start off; turning them on
+   opens System Settings to allow them for Zeus.
 5. **Private by default.** Read receipts and typing indicators. Both are
    yours to choose, and you can change them later.
 

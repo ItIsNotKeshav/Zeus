@@ -518,6 +518,27 @@ fn notification_app_id() -> &'static str {
     }
 }
 
+/// The System Settings extension that holds notification settings.
+#[cfg(target_os = "macos")]
+const MACOS_NOTIFICATION_PANE: &str = "com.apple.Notifications-Settings.extension";
+
+/// macOS selects the app in the Notifications list with `?id=`.
+#[cfg(target_os = "macos")]
+fn notification_settings_url() -> String {
+    format!("x-apple.systempreferences:{MACOS_NOTIFICATION_PANE}?id={MACOS_BUNDLE_ID}")
+}
+
+/// Opens System Settings at Zeus's notification settings, so the person can
+/// allow notifications there. Does nothing on other platforms.
+pub fn open_notification_settings() {
+    #[cfg(target_os = "macos")]
+    {
+        if let Err(error) = open::that_detached(notification_settings_url()) {
+            log::warn!("could not open notification settings: {error}");
+        }
+    }
+}
+
 /// Fastframe owns the platform adapters and one bounded native worker. This
 /// thread only keeps ZapFast's account-scoped cancellation and click routing.
 #[expect(clippy::too_many_arguments)]
@@ -614,6 +635,15 @@ fn deliver(
 mod tests {
     use super::{Burst, BurstGuard};
     use std::time::{Duration, Instant};
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn notification_settings_link_selects_zeus() {
+        assert_eq!(
+            super::notification_settings_url(),
+            "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=app.zeus.Zeus"
+        );
+    }
 
     fn quiet_guard(start: Instant) -> (BurstGuard, Instant) {
         let mut guard = BurstGuard::default();

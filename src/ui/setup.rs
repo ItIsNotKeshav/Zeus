@@ -1274,6 +1274,22 @@ fn switch_row(
 fn notifications(app: &mut App, ui: &mut egui::Ui) {
     let palette = app.palette;
     let locale = app.locale;
+    // On macOS permission is granted in System Settings. Start the switch off
+    // on the first visit, so the person chooses to go there rather than the
+    // app asking before it has been explained.
+    let macos_default = Id::new("setup-notifications-default");
+    if cfg!(target_os = "macos")
+        && !ui
+            .ctx()
+            .data(|data| data.get_temp::<bool>(macos_default).unwrap_or(false))
+    {
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(macos_default, true));
+        if app.account().settings.notifications {
+            app.account_mut().settings.notifications = false;
+            app.account_mut().mark_settings_dirty();
+        }
+    }
     title(ui, &palette, &gettext(locale, "Notifications"), "");
     group(ui, &palette, |ui| {
         let mut on = app.account().settings.notifications;
@@ -1289,6 +1305,9 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
         ) {
             app.account_mut().settings.notifications = on;
             app.account_mut().mark_settings_dirty();
+            if cfg!(target_os = "macos") && on {
+                crate::notify::open_notification_settings();
+            }
         }
         separator(ui, &palette);
         let mut content = app.settings.notification_content;
