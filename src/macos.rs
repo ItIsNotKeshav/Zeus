@@ -61,6 +61,7 @@ fn build_menu() -> tray_icon::menu::Result<Menu> {
         &Native::show_all(None),
         &Native::separator(),
         &item("quit", "Quit Zeus", Some("Super+KeyQ")),
+        &item("quit-completely", "Quit completely", None),
     ])?;
     let file = Submenu::new("File", true);
     file.append_items(&[
@@ -257,6 +258,7 @@ fn action(id: &str) -> Option<Action> {
         "new" => Action::ShowDialog(Dialog::NewChat),
         "close" => Action::CloseWindow,
         "quit" => Action::Quit,
+        "quit-completely" => Action::QuitCompletely,
         "search" => Action::FocusSearch,
         "sidebar" => Action::ToggleSidebar,
         "zoom-in" => Action::ZoomBy(0.1),
@@ -334,6 +336,7 @@ mod tests {
     fn menu_uses_the_apps_close_quit_and_edit_paths() {
         assert!(matches!(action("close"), Some(Action::CloseWindow)));
         assert!(matches!(action("quit"), Some(Action::Quit)));
+        assert!(matches!(action("quit-completely"), Some(Action::QuitCompletely)));
         assert!(matches!(action("show-window"), Some(Action::ShowWindow)));
         assert!(matches!(edit_event("copy"), Some(egui::Event::Copy)));
         assert!(

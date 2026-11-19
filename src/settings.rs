@@ -956,7 +956,8 @@ pub struct Settings {
     pub reaction_emoji: Vec<(String, u32)>,
     /// User GIPHY API key. Empty uses the optional built-in key.
     pub giphy_key: String,
-    /// Keep the app linked in the tray when the window closes.
+    /// Keep the app linked in the tray when the window closes or quit is
+    /// requested. Notifications keep arriving until Quit completely.
     pub keep_running_in_background: bool,
     /// Desktop notifications while away from the chat.
     pub notifications: bool,

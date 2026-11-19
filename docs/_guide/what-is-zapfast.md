@@ -43,9 +43,10 @@ RAM, compared with 1.13 GB for WhatsApp Web and its Chromium processes.
   a quote, web links open in your browser, and copy-code buttons use the clipboard. [See examples and limitations](/using-zapfast/#interactive-messages).
 - **Uses consistent names.** Address-book names take priority over public
   WhatsApp profile names for chats, mentions, replies, and notifications.
-- **Runs in the background.** Closing the window keeps Zeus in the system
-  tray. Notifications can show the chat picture and open the chat at the
-  message they announced. Supported desktops show the unread count on the app
+- **Runs in the background.** Closing the window or choosing **Quit** keeps
+  Zeus in the system tray, with messages still arriving. Choose **Quit
+  completely** to end the process. Notifications can show the chat picture and
+  open the chat at the message they announced. Supported desktops show the unread count on the app
   icon in the taskbar or the macOS Dock; on Windows, the count appears while the window
   has a taskbar button. Muting a chat also mutes it on your phone.
 - **Keeps several numbers.** Link more than one WhatsApp number and switch

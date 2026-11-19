@@ -870,14 +870,18 @@ Tab and Shift+Tab bring the focused button into view, too.
 Closing the window keeps Zeus linked in the tray. On macOS, click the menu
 bar icon to open its menu, then choose **Show or hide Zeus** to reopen the
 window. On Linux and Windows, click the tray icon to reopen it. Launching the
-app again reopens the window on every platform. Quitting and opening Zeus
-again starts on the chat list, with no chat open. **Open the last chat** in
-Settings, under Chats, brings back the chat that was open. To quit, use **Quit** in the
-tray menu, or **Quit** in the Dock icon's menu on macOS, or on Linux **Quit Zeus** in the
-launcher's right-click menu (KDE Plasma's task manager and application menu,
-GNOME's Dash). On every platform, `zapfast quit` in a terminal or a script quits
-the running copy the same way, and does nothing when none runs. A copy from
-before this command is left running, and the command says so and fails.
+app again reopens the window on every platform. With **Keep running when the
+window closes** on, the setting by default, **Quit** in the tray or macOS app
+menu also keeps Zeus linked and hides the window. Messages and notifications
+keep arriving. The macOS Dock icon goes away with the window and comes back
+when the window opens. To end the process, use **Quit completely** in the tray
+menu or the macOS app menu. On Linux, use **Quit Zeus** in the launcher's right-click
+menu (KDE Plasma's task manager and application menu, GNOME's Dash). Opening
+Zeus again starts on the chat list, with no chat open. **Open the last chat** in
+Settings, under Chats, brings back the chat that was open. On every platform,
+`zeus quit` in a terminal or a script ends the running copy the same way, and
+does nothing when none runs. A copy from before this command is left running,
+and the command says so and fails.
 Launchers that support the Unity Launcher API
 show the unread count as a badge on the app icon: KDE Plasma's taskbar, with
 **Show badges** enabled in the Task Manager settings, and GNOME's Dash to Dock

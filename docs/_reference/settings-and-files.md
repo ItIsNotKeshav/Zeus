@@ -182,8 +182,8 @@ rows sits in its own white rounded card.
 
 **Chats**
 
-- **Open the last chat**: off by default. When on, quitting and opening Zeus
-  again reopens the chat that was open, for each number on its own. When off,
+- **Open the last chat**: off by default. When on, quitting completely and
+  opening Zeus again reopens the chat that was open, for each number on its own. When off,
   Zeus starts on the chat list with no chat open. Hiding the window still
   shows the chat that was already open.
 - **Shortcut to send message**: **Enter to send**, or **Ctrl+Enter to send**
@@ -279,7 +279,10 @@ used, and the cache size limit.
 
 **General**
 
-- **Keep running when the window closes**: keep Zeus linked in the tray.
+- **Keep running when the window closes** (on by default): keep Zeus linked in
+  the tray when you close the window or choose **Quit**. Messages keep arriving.
+  Choose **Quit completely** in the tray menu or the macOS app menu to end the
+  process.
 - **Start at login**: start in the tray without a window, where the platform
   supports it. If the desktop's tray is not up yet, Zeus waits up to 30
   seconds for it, then opens the window, since a desktop without a tray could

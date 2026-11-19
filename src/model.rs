@@ -3691,7 +3691,10 @@ pub enum Action {
     Reconnect,
     /// Sets aside an archive whose key is gone and links again.
     StartOverArchive,
+    /// Quits to the tray when configured to keep running in the background.
     Quit,
+    /// Ends the process even when the app keeps running in the background.
+    QuitCompletely,
     /// Shows the window, creating it when running headless.
     ShowWindow,
     /// Closes the window while keeping the app in the tray.

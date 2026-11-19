@@ -1429,7 +1429,10 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
             &palette,
             Icon::Monitor,
             &gettext(locale, "Keep running when the window closes"),
-            &gettext(locale, "Zeus stays in the tray, so messages keep arriving."),
+            &gettext(
+                locale,
+                "Zeus stays in the tray after you close the window or quit, so messages keep arriving."
+            ),
             &mut keep,
             true,
         ) {

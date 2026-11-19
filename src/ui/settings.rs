@@ -1175,7 +1175,10 @@ fn sections(app: &App) -> Vec<Section> {
     let mut system = Section::new(translated(locale, "General"));
     system.toggle(
         translated(locale, "Keep running when the window closes"),
-        "",
+        translated(
+            locale,
+            "Messages keep arriving after you quit. Use Quit completely to end the process."
+        ),
         |settings| &mut settings.keep_running_in_background,
     );
     if app.start_with_system.is_some() {

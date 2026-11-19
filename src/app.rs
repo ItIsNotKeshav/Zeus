@@ -1291,6 +1291,7 @@ const TRAY_WAIT: Duration = Duration::from_secs(30);
 const TRAY_SHOW: &str = "show";
 const TRAY_LOCK: &str = "lock";
 const TRAY_QUIT: &str = "quit";
+const TRAY_QUIT_COMPLETELY: &str = "quit-completely";
 
 /// What a tray click asks for: a left click on Linux, or the menu's first
 /// entry, toggles the window; a left click on Windows and a Dock click on
@@ -1303,13 +1304,15 @@ fn tray_action(event: fastframe_tray::Event, window_hidden: bool) -> Option<Acti
         Event::Toggle | Event::Menu(TRAY_SHOW) => Action::HideWindow,
         Event::Menu(TRAY_LOCK) => Action::LockApp,
         Event::Menu(TRAY_QUIT) => Action::Quit,
+        Event::Menu(TRAY_QUIT_COMPLETELY) => Action::QuitCompletely,
         Event::Menu(_) => return None,
     })
 }
 
 /// The tray item: ZapFast's icon, and a menu to show or hide the window,
-/// to lock it while an app lock password is set, and to quit. The title and
-/// the menu never name a chat, so they are safe while locked.
+/// to lock it while an app lock password is set, to quit to the tray, and to
+/// quit completely. The title and the menu never name a chat, so they are safe
+/// while locked.
 ///
 /// "Lock Zeus" is always in the menu, hidden without a password;
 /// `App::sync_tray` shows or hides it as the password is set or removed.
@@ -1328,6 +1331,7 @@ fn tray_config(lockable: bool) -> fastframe_tray::Config {
             MenuItem::action(TRAY_LOCK, "Lock Zeus").visible(lockable),
             MenuItem::Separator,
             MenuItem::action(TRAY_QUIT, "Quit"),
+            MenuItem::action(TRAY_QUIT_COMPLETELY, "Quit completely"),
         ],
     }
 }
@@ -2119,8 +2123,14 @@ impl App {
         self.trim_open_conversations();
         self.window_hidden = true;
         self.window_focused = false;
+        let hiding = self.hide_intent;
         self.hide_intent = false;
         self.wants_show = false;
+        // Quit and Close Window with background mode on leave the Dock on
+        // macOS. The process stays linked in the menu-bar tray instead.
+        if hiding {
+            fastframe_dock::set_dock_icon_visible(false);
+        }
         // The window is gone with the full screen it was in; a new one starts
         // at its normal size.
         self.call_fullscreen = false;
@@ -2266,7 +2276,7 @@ impl App {
             match command {
                 ControlCommand::Show => self.actions.push(Action::ShowWindow),
                 ControlCommand::ReloadThemes => self.actions.push(Action::ReloadThemes),
-                ControlCommand::Quit => self.actions.push(Action::Quit),
+                ControlCommand::Quit => self.actions.push(Action::QuitCompletely),
                 ControlCommand::Ping => {}
                 ControlCommand::OpenInvite(code) => {
                     self.actions.push(Action::ShowWindow);
@@ -2510,6 +2520,9 @@ impl App {
 
     /// Initializes a newly created window.
     pub fn attach(&mut self, ctx: &egui::Context) {
+        // The Dock icon belongs to a window on macOS. A hidden app lives in
+        // the menu-bar tray only.
+        fastframe_dock::set_dock_icon_visible(true);
         // A window is here, so a hidden start's wait for a panel is over.
         self.tray_wait = None;
         // Each window starts with a graphics device of its own.
@@ -4755,7 +4768,7 @@ impl App {
                 };
             }
             Event::UpdateInstalling(result) => match result {
-                Ok(()) => self.actions.push(Action::Quit),
+                Ok(()) => self.actions.push(Action::QuitCompletely),
                 Err(error) => self.update_download = crate::updates::DownloadState::Failed(error),
             },
             Event::SendRefused {
@@ -10110,6 +10123,14 @@ impl App {
                 self.backend.send(Command::StartOverArchive);
             }
             Action::Quit => {
+                if self.hides_to_tray() && !self.window_hidden {
+                    self.hide_intent = true;
+                } else {
+                    self.quit_requested = true;
+                }
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            Action::QuitCompletely => {
                 self.quit_requested = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -12277,6 +12298,7 @@ fn allowed_while_locked(action: &Action) -> bool {
             | Action::HideWindow
             | Action::CloseWindow
             | Action::Quit
+            | Action::QuitCompletely
             | Action::ReloadThemes
             | Action::ZoomBy(_)
             | Action::ResetZoom
@@ -14593,7 +14615,35 @@ mod tests {
         assert!(!app.push_to_talk.key_held);
     }
 
-    /// `zapfast quit` takes the tray's Quit path, and does even behind the
+    /// Quit hides to the tray when the setting and tray allow it.
+    /// Quit completely always ends the process.
+    #[test]
+    fn quitting_can_hide_to_the_tray_or_end_the_process() {
+        use fastframe_shell::{Closed, Resident};
+        let ctx = egui::Context::default();
+
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        app.apply(Action::Quit, &ctx);
+        assert!(app.hide_intent);
+        assert!(!app.quit_requested);
+        assert_eq!(app.closed(), Closed::Hide);
+
+        let mut app = app();
+        app.test_tray_shown = Some(false);
+        app.apply(Action::Quit, &ctx);
+        assert!(app.quit_requested);
+        assert_eq!(app.closed(), Closed::Quit);
+
+        let mut app = app();
+        app.test_tray_shown = Some(true);
+        app.apply(Action::QuitCompletely, &ctx);
+        assert!(app.quit_requested);
+        assert!(!app.hide_intent);
+        assert_eq!(app.closed(), Closed::Quit);
+    }
+
+    /// `zeus quit` always ends the process, and does even behind the
     /// app lock, since quitting reveals nothing.
     #[test]
     fn a_quit_request_quits_even_behind_the_lock() {
@@ -17893,6 +17943,10 @@ mod tests {
             super::tray_action(Event::Menu(super::TRAY_QUIT), false),
             Some(Action::Quit)
         ));
+        assert!(matches!(
+            super::tray_action(Event::Menu(super::TRAY_QUIT_COMPLETELY), false),
+            Some(Action::QuitCompletely)
+        ));
         assert!(super::tray_action(Event::Menu("other"), false).is_none());
         assert!(matches!(
             super::tray_action(Event::Menu(super::TRAY_LOCK), false),
@@ -17907,6 +17961,10 @@ mod tests {
                         .visible(lockable),
                     fastframe_tray::MenuItem::Separator,
                     fastframe_tray::MenuItem::action(super::TRAY_QUIT, "Quit"),
+                    fastframe_tray::MenuItem::action(
+                        super::TRAY_QUIT_COMPLETELY,
+                        "Quit completely"
+                    ),
                 ]
             );
         }
