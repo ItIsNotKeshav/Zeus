@@ -1240,7 +1240,6 @@ pub(super) fn doodles(ui: &mut egui::Ui, app: &mut App) {
         Control::Group(group),
     )];
     accordion_entries(ui, app, entries);
-    ui.add_space(theme::SPACE_XS);
 }
 
 /// A row of tiles (none, each pattern, a photo of your own), then how many
@@ -1815,7 +1814,6 @@ pub(super) fn more(ui: &mut egui::Ui, app: &mut App) {
         group("Motion", motion),
     ];
     accordion_entries(ui, app, entries);
-    ui.add_space(theme::SPACE_XS);
 }
 
 #[cfg(test)]

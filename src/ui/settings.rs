@@ -521,6 +521,13 @@ fn accordion(
     if group.searching {
         state.set_open(true);
     }
+    // A folded header leaves the same gap under itself as a normal settings
+    // row does (`setting_row` adds 8), so a card that ends here keeps the
+    // room at its foot level with the room above its first row. When open,
+    // the children supply that gap instead.
+    if !state.is_open() {
+        ui.add_space(8.0);
+    }
     state.show_body_unindented(ui, |ui| {
         ui.add_space(theme::SPACE_S);
         let inset = theme::SPACE_M;
