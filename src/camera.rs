@@ -762,6 +762,52 @@ mod backend {
         Ok(())
     }
 
+    /// nokhwa's AVFoundation backend locks the device for configuration when it sets a
+    /// camera's format, but its `unlock` never matches that lock: its `lock` takes `&self`
+    /// and so cannot set the flag `unlock` checks. The device stays locked after the call
+    /// ends, and other apps that need to configure the camera, such as WhatsApp's WebRTC,
+    /// get a blank picture until Zeus exits. Release the lock ourselves once nokhwa has
+    /// finished setting the format. One unlock is enough however many times nokhwa locked
+    /// it. Drop this when nokhwa fixes its `lock`/`unlock` pair upstream.
+    #[cfg(target_os = "macos")]
+    fn release_configuration_lock(unique_id: &str) {
+        use objc2_av_foundation::AVCaptureDevice;
+        use objc2_foundation::NSString;
+
+        let id = NSString::from_str(unique_id);
+        let Some(device) = unsafe { AVCaptureDevice::deviceWithUniqueID(&id) } else {
+            log::debug!("[CALL] could not find the camera to unlock");
+            return;
+        };
+        unsafe { device.unlockForConfiguration() };
+        log::debug!("[CALL] released the camera's configuration lock");
+    }
+
+    /// The platform's own device id for the id [`super::cameras`] listed, which is what
+    /// nokhwa's backend uses to look the device up.
+    #[cfg(target_os = "macos")]
+    fn unique_id(id: &str) -> Option<String> {
+        nokhwa::query(ApiBackend::Auto)
+            .ok()?
+            .into_iter()
+            .find(|info| info.index().to_string() == id)
+            .map(|info| info.misc())
+    }
+
+    /// Releases a camera nokhwa locked on every way out of `Camera::open`, including
+    /// when opening or starting the stream fails.
+    #[cfg(target_os = "macos")]
+    struct UnlockOnDrop(Option<String>);
+
+    #[cfg(target_os = "macos")]
+    impl Drop for UnlockOnDrop {
+        fn drop(&mut self) {
+            if let Some(unique_id) = self.0.take() {
+                release_configuration_lock(&unique_id);
+            }
+        }
+    }
+
     /// The mode a camera is first opened in, before its modes can be read.
     ///
     /// On macOS nokhwa lists each of a format's frame-rate ranges as two modes, its lowest
@@ -785,6 +831,10 @@ mod backend {
     impl Camera {
         pub fn open(id: &str, budget: (usize, usize), fps: u32) -> Result<Self, String> {
             authorize()?;
+            // nokhwa locks the device while setting its format and never unlocks it: release
+            // the lock on every way out so another app can configure the camera after us.
+            #[cfg(target_os = "macos")]
+            let _unlock = UnlockOnDrop(unique_id(id));
             // The id is what `list` wrote: a number for an index, else the
             // platform's own identifier.
             let index = match id.parse::<u32>() {
