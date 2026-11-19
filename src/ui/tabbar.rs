@@ -341,8 +341,9 @@ fn ring(t: f32) -> f32 {
     radians(13.0) * (3.0 * std::f32::consts::TAU * t).sin() * (1.0 - t)
 }
 
-/// The spring a tab follows to its pressed scale: quick, no bounce.
-const PRESS_DOWN: crate::motion::Spring = crate::motion::Spring::settling_in(0.1);
+/// The spring a tab follows to its pressed scale: a little slower than a
+/// click, no bounce, so the shrink reads as a deliberate press.
+const PRESS_DOWN: crate::motion::Spring = crate::motion::Spring::settling_in(0.18);
 /// The spring a released tab follows back to 1: it passes it by about 3%.
 const PRESS_UP: crate::motion::Spring = crate::motion::Spring::new(0.12, 0.7);
 
@@ -564,6 +565,15 @@ mod tests {
             .map(|t| up(f64::from(t) * 0.5))
             .fold(0.0, f32::max);
         assert!((1.01..=1.05).contains(&peak), "{peak}");
+    }
+
+    /// The press-down takes about 180ms, a touch longer than a click, while
+    /// staying a short press well under the 250ms ceiling for UI motion.
+    #[test]
+    fn a_press_settles_slower_than_a_click() {
+        let settle = PRESS_DOWN.settle_time();
+        assert!((0.16..=0.20).contains(&settle), "press settles in {settle}s");
+        assert!(settle < 0.25, "still a short press: {settle}s");
     }
 
     /// A list column `width` by `height` points at the window's top left.
