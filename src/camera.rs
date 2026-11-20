@@ -775,7 +775,7 @@ mod backend {
         use objc2_foundation::NSString;
 
         let id = NSString::from_str(unique_id);
-        let Some(device) = unsafe { AVCaptureDevice::deviceWithUniqueID(&id) } else {
+        let Some(device) = (unsafe { AVCaptureDevice::deviceWithUniqueID(&id) }) else {
             log::debug!("[CALL] could not find the camera to unlock");
             return;
         };
