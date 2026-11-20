@@ -264,6 +264,11 @@ pub(super) fn upload_texture(
 pub(super) const STICKER_CHIP: f32 = 22.0;
 /// How much a sticker on its way is faded, until its message arrives.
 pub(super) const STICKER_WAITING_FADE: f32 = 0.25;
+/// How long after a sticker on its way was last drawn its message may take
+/// its place and still carry on its pop. A send can finish, and the message
+/// be drawn, several frames after the upload's last; the typing bubble's
+/// one-frame handoff is far too short for it.
+pub(super) const STICKER_HANDOFF: f64 = ARRIVAL_FRESH as f64;
 
 /// When a chat's sticker on its way first showed, and when it was last
 /// drawn, so its message, once it arrives, carries on the same pop rather
@@ -276,6 +281,14 @@ pub(super) struct StickerSeen {
 
 pub(super) fn sticker_seen_id(chat: &str) -> egui::Id {
     egui::Id::new(("sticker-upload-seen", chat))
+}
+
+/// The point in a chat's sticker pop that a message arriving now should
+/// carry on from, if a sticker on its way was drawn not long ago. `None`
+/// when no sticker was on its way, so the message pops in on its own.
+pub(super) fn sticker_handoff(ctx: &egui::Context, chat: &str, now: f64) -> Option<f64> {
+    let seen = ctx.data(|data| data.get_temp::<StickerSeen>(sticker_seen_id(chat)))?;
+    (now - seen.drawn <= STICKER_HANDOFF).then_some(seen.since)
 }
 
 /// The sticker's texture and natural size: an animation's first frame, or
@@ -322,7 +335,8 @@ pub(super) fn upload_sticker(
         );
     });
     let elapsed = now - since;
-    let (scale, opacity) = if crate::motion::reduced(ui.ctx()) || POP.settled(elapsed) {
+    let settled = crate::motion::reduced(ui.ctx()) || POP.settled(elapsed);
+    let (scale, opacity) = if settled {
         (1.0, 1.0)
     } else {
         crate::motion::request_frame(ui.ctx());
@@ -351,23 +365,28 @@ pub(super) fn upload_sticker(
             );
         }
     }
-    // Waiting for the phone's servers, so a ring turns without a number.
-    let chip = Rect::from_min_size(
-        rect.right_bottom() - Vec2::splat(STICKER_CHIP + 4.0),
-        Vec2::splat(STICKER_CHIP),
-    );
-    painter.circle_filled(
-        chip.center(),
-        STICKER_CHIP / 2.0,
-        Color32::from_black_alpha((120.0 * opacity) as u8),
-    );
-    progress_ring(
-        ui,
-        chip.center(),
-        STICKER_CHIP / 2.0 - 5.0,
-        None,
-        Color32::WHITE.gamma_multiply(opacity),
-    );
+    // The ring shows only once the sticker has settled into its place. While
+    // it is still popping in, a spinner turning on its corner reads as a
+    // second animation and hides the one that is already carrying it there.
+    if settled {
+        // Waiting for the phone's servers, so a ring turns without a number.
+        let chip = Rect::from_min_size(
+            rect.right_bottom() - Vec2::splat(STICKER_CHIP + 4.0),
+            Vec2::splat(STICKER_CHIP),
+        );
+        painter.circle_filled(
+            chip.center(),
+            STICKER_CHIP / 2.0,
+            Color32::from_black_alpha((120.0 * opacity) as u8),
+        );
+        progress_ring(
+            ui,
+            chip.center(),
+            STICKER_CHIP / 2.0 - 5.0,
+            None,
+            Color32::WHITE.gamma_multiply(opacity),
+        );
+    }
 }
 
 /// The bubble of an upload, at the right edge, `eased` of the way into place.

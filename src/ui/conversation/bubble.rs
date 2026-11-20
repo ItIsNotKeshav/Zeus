@@ -236,15 +236,11 @@ pub(super) fn bubble_arriving(
         .map(|seen| seen.rect);
     // A sticker we sent takes the place of the sticker shown on its way,
     // which has already popped in: it carries that pop on from where it
-    // got to, rather than popping a second time.
+    // got to, rather than popping a second time. Its handoff lasts as long
+    // as a send can, not just the frame a typing bubble lives for.
     let sticker = (message.from_me && matches!(message.content, Content::Sticker { .. }))
-        .then(|| {
-            ui.ctx()
-                .data(|data| data.get_temp::<StickerSeen>(sticker_seen_id(&view.chat.id)))
-        })
-        .flatten()
-        .filter(|seen| now - seen.drawn <= TYPING_HANDOFF)
-        .map(|seen| seen.since);
+        .then(|| sticker_handoff(ui.ctx(), &view.chat.id, now))
+        .flatten();
     // An attachment takes the place of its upload, drawn a moment ago, where
     // it already was: it does not pop in.
     let seen = ui

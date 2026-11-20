@@ -12543,6 +12543,35 @@ mod tests {
         assert!(pop_scale(POP_FADE_SECONDS) < 0.95);
     }
 
+    /// A sticker message takes on the pop its upload began even when the
+    /// send's acknowledgement and the message arrive well after the upload's
+    /// last frame, so the bubble does not pop a second time. A sticker from
+    /// long ago, or one whose upload was never drawn, pops on its own.
+    #[test]
+    fn a_sent_sticker_carries_on_its_pop_after_a_slow_send() {
+        let ctx = egui::Context::default();
+        let chat = "peer@s.whatsapp.net";
+        assert_eq!(super::sticker_handoff(&ctx, chat, 1.0), None);
+        ctx.data_mut(|data| {
+            data.insert_temp(
+                super::sticker_seen_id(chat),
+                super::StickerSeen {
+                    since: 1.0,
+                    drawn: 1.5,
+                },
+            );
+        });
+        // The next frame, and several frames later once the send lands:
+        // the same pop is carried on, not started over.
+        assert_eq!(super::sticker_handoff(&ctx, chat, 1.516), Some(1.0));
+        assert_eq!(super::sticker_handoff(&ctx, chat, 2.5), Some(1.0));
+        // Past the window it is a stale upload, not this message's.
+        assert_eq!(
+            super::sticker_handoff(&ctx, chat, 1.5 + super::STICKER_HANDOFF + 0.01),
+            None
+        );
+    }
+
     #[test]
     fn a_sent_bubble_rises_with_bounce_and_slides_across_without() {
         let across: Vec<f32> = (0..=200)
