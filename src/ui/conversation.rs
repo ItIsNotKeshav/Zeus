@@ -2087,6 +2087,9 @@ fn composer(app: &mut App, ui: &mut egui::Ui, chat: &Chat) {
                         PickerTab::Gifs => (Icon::Gif, "GIFs, emoji, and stickers"),
                         PickerTab::Stickers => (Icon::Sticker, "Stickers, emoji, and GIFs"),
                     };
+                    // As far from the field's rounded edge as from the text,
+                    // so the button sits evenly between the two.
+                    ui.add_space((COMPOSER_TEXT_GAP - pill_margin.left).max(0.0));
                     // The icon fades in when the mode changes.
                     let mode_fade = theme::appear(
                         ui.ctx(),
