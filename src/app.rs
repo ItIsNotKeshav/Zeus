@@ -8128,7 +8128,6 @@ impl App {
             Action::ClosePdf => {
                 if let Some(viewer) = self.pdf_viewer.take() {
                     viewer.stop();
-                    crate::ui::pdf::forget(ctx, &viewer);
                     self.pdf_retired = Some((ctx.input(|input| input.time), viewer));
                 }
                 self.refocus_composer(ctx);

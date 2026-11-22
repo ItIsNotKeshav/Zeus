@@ -456,8 +456,9 @@ when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's
 right-click menu keeps a copy wherever you choose.
 
-Click a downloaded PDF to read it in Zeus's own viewer, its pages one under
-another. Only the pages on screen and a couple either side are drawn, on a
+Click a downloaded PDF to read it in Zeus's own viewer: a large card flies
+out of the message over the dimmed window, its pages one under another, and
+flies back into it when closed (a click beside the card closes it too). Only the pages on screen and a couple either side are drawn, on a
 thread of their own, so a long document opens and scrolls at once. Zoom with
 the header's buttons, Ctrl+wheel, a pinch, or Ctrl with +, - and 0 (to fit
 the window again). Ctrl+F, or the header's search button, finds text in the

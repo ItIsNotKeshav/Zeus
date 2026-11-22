@@ -1,12 +1,12 @@
-//! The PDF viewer: a document from a chat across the whole window, its pages
-//! one under another on the viewer's field, under a frosted header with the
-//! page being read, zoom, search, Save as and Open in another app. Search
-//! floats in a frosted card under the header and lights every match on the
-//! pages, the current one most.
+//! The PDF viewer, a peek: a large card that flies out of the document's
+//! message over the frosted, dimmed window, and back into it when closed.
+//! Its pages run one under another under a frosted toolbar with the page
+//! being read, zoom, search, Save as and Open in another app. Search floats
+//! in a frosted card under the toolbar and lights every match on the pages,
+//! the current one most.
 //!
 //! Only the pages on screen are drawn and asked for (see [`crate::pdf`]);
 //! a page still rendering is a white sheet that its picture fades into.
-//! The viewer eases in and out as a panel, and leaves the way it came.
 
 use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, UiBuilder, Vec2, pos2, vec2};
 
@@ -15,8 +15,8 @@ use crate::model::Action;
 use crate::pdf::{Failure, Layout as Pages, Load, Viewer};
 use crate::theme::{self, Icon, Palette};
 
-/// Height of the header across the top.
-const HEADER: f32 = 56.0;
+/// Height of the toolbar across the card's top.
+const HEADER: f32 = 52.0;
 /// The search card's size and its distance from the header and the edge.
 const SEARCH_WIDTH: f32 = 380.0;
 const SEARCH_HEIGHT: f32 = 48.0;
@@ -28,6 +28,10 @@ const PAGE_RADIUS: u8 = 3;
 /// can be white or grey, so the marks keep their own colour.
 const HIT: Color32 = Color32::from_rgba_premultiplied(110, 92, 0, 110);
 const CURRENT_HIT: Color32 = Color32::from_rgb(255, 140, 0);
+/// The card's flight, as the media viewer's picture flies: a shade of
+/// bounce, so it settles instead of stopping.
+const FLIGHT_SECONDS: f64 = 0.4;
+const FLIGHT_BOUNCE: f64 = 0.12;
 /// Points one arrow key scrolls.
 const LINE: f32 = 64.0;
 
@@ -61,22 +65,86 @@ fn layer() -> egui::LayerId {
 
 pub fn show(app: &mut App, ctx: &egui::Context) {
     let now = ctx.input(|input| input.time);
-    // A closed viewer's pages stay on the GPU while it fades out.
-    if app
-        .pdf_retired
-        .as_ref()
-        .is_some_and(|(closed, _)| now - closed > f64::from(theme::MOTION_PANEL))
-    {
-        app.pdf_retired = None;
+    let palette = app.palette;
+    let locale = app.locale;
+    // A closed viewer flies back into its message, and is let go (its
+    // pages with it) once it has landed.
+    if let Some((closed, retired)) = app.pdf_retired.as_mut() {
+        let mut ignored = Vec::new();
+        let landed = peek(ctx, retired, &palette, locale, false, now, &mut ignored);
+        if landed || now - *closed > 1.0 {
+            forget(ctx, retired);
+            app.pdf_retired = None;
+        }
     }
     let Some(mut viewer) = app.pdf_viewer.take() else {
         return;
     };
-    let palette = app.palette;
-    let locale = app.locale;
     let mut actions = Vec::new();
-    let screen = ctx.content_rect();
-    let id = view_id(&viewer);
+    peek(ctx, &mut viewer, &palette, locale, true, now, &mut actions);
+    app.pdf_viewer = Some(viewer);
+    app.actions.extend(actions);
+}
+
+/// Where the card settles: most of the window, the margin around it growing
+/// with the window, and never wider than a comfortable reading desk.
+fn card_rect(window: Rect) -> Rect {
+    let x = (window.width() * 0.06)
+        .clamp(16.0, 96.0)
+        .max((window.width() - 1280.0) / 2.0);
+    let y = (window.height() * 0.05).clamp(12.0, 48.0);
+    window.shrink2(vec2(x, y))
+}
+
+/// Where the card flies from: the document's card in its message, when it
+/// is on screen.
+fn source_rect(ctx: &egui::Context, viewer: &Viewer) -> Option<Rect> {
+    let id = super::conversation::bubble_id(&viewer.chat, &viewer.message).with("card");
+    ctx.data(|data| data.get_temp::<Rect>(id))
+        .filter(|rect| rect.is_positive() && ctx.content_rect().intersects(*rect))
+}
+
+/// Draws `viewer` as a card over the dimmed, frosted window, flying out of
+/// its message as it opens (`open`) and back into it as it closes. Returns
+/// whether a closing card has landed.
+fn peek(
+    ctx: &egui::Context,
+    viewer: &mut Viewer,
+    palette: &Palette,
+    locale: crate::i18n::Locale,
+    open: bool,
+    now: f64,
+    actions: &mut Vec<Action>,
+) -> bool {
+    // From nothing the first time, then turning round mid-flight with the
+    // speed it has.
+    let t = crate::motion::spring_from(
+        ctx,
+        egui::Id::new("pdf-peek"),
+        if open { 1.0 } else { 0.0 },
+        0.0,
+        crate::motion::Spring::new(FLIGHT_SECONDS, FLIGHT_BOUNCE),
+    );
+    if !open && t <= 0.001 {
+        return true;
+    }
+    // The bounce may carry the flight past its ends; what fades does not.
+    let shown = t.clamp(0.0, 1.0);
+    let window = ctx.content_rect();
+    let card = card_rect(window);
+    // The card is laid out at its full size and drawn scaled into where the
+    // flight has it: from the message's card to the settled one.
+    let flying = match source_rect(ctx, viewer) {
+        Some(from) => Rect::from_min_max(from.min.lerp(card.min, t), from.max.lerp(card.max, t)),
+        None => Rect::from_center_size(
+            card.center(),
+            card.size() * (theme::CLOSE_SCALE + (1.0 - theme::CLOSE_SCALE) * t),
+        ),
+    };
+    let scale = (flying.width() / card.width()).max(0.01);
+    let clip = Rect::from_center_size(card.center(), vec2(card.width(), flying.height() / scale));
+    let radius = egui::lerp(10.0..=f32::from(theme::RADIUS_MENU), shown) / scale;
+    let id = view_id(viewer);
     let mut view = ctx.data(|data| data.get_temp::<View>(id)).unwrap_or(View {
         offset: Vec2::ZERO,
         zoom: viewer.zoom,
@@ -84,21 +152,45 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         glide: None,
         revealed: false,
     });
+    let mut backdrop_shapes = 0;
     let response = egui::Modal::new(layer().id)
         .area(
             egui::Area::new(layer().id)
                 .order(egui::Order::Foreground)
-                .fixed_pos(screen.min),
+                .fixed_pos(window.min),
         )
         .frame(egui::Frame::new())
-        .backdrop_color(palette.shadow)
+        .backdrop_color(Color32::TRANSPARENT)
         .show(ctx, |ui| {
-            ui.set_min_size(screen.size());
-            ui.painter().rect_filled(screen, 0.0, palette.overlay);
+            ui.set_min_size(window.size());
+            // The window behind frosts and dims as the card arrives.
+            ui.painter().add(super::glass::veil(window, 0.0, shown));
+            ui.painter()
+                .rect_filled(window, 0.0, palette.shadow.gamma_multiply(shown));
+            let (_, backdrop) = ui.allocate_exact_size(window.size(), egui::Sense::click());
+            backdrop_shapes = ui
+                .ctx()
+                .graphics(|graphics| graphics.get(layer()).map_or(0, |list| list.next_idx().0));
+            let mut card_ui = ui.new_child(UiBuilder::new().max_rect(card));
+            card_ui.set_clip_rect(clip);
+            if !open {
+                card_ui.disable();
+            }
+            // Clicks on the card stay on it.
+            card_ui.interact(card, id.with("card"), egui::Sense::click());
+            let corners = CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8);
+            card_ui
+                .painter()
+                .add(palette.float_shadow().as_shape(clip, corners));
+            card_ui
+                .painter()
+                .rect_filled(clip, corners, palette.overlay);
             // In the Light theme the field is a shade darker than the white
             // pages, so their edges show.
             if !palette.dark {
-                ui.painter().rect_filled(screen, 0.0, palette.tint(0.07));
+                card_ui
+                    .painter()
+                    .rect_filled(clip, corners, palette.tint(0.07));
             }
             let failure = match &viewer.load {
                 Load::Failed(failure) => Some(*failure),
@@ -108,37 +200,51 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
             if viewer.pages().is_empty() {
                 viewer.exchange(ui.ctx(), &[], 0..0, 0, now);
             }
+            let ui = &mut card_ui;
             let current = if !viewer.pages().is_empty() {
-                stage(ui, &mut viewer, &mut view, &palette, locale, screen, now)
+                stage(ui, viewer, &mut view, palette, locale, card, now)
             } else if let Some(failure) = failure {
-                failed(ui, &palette, locale, &viewer, failure, screen, &mut actions);
+                failed(ui, palette, locale, viewer, failure, card, actions);
                 0
             } else {
-                let middle = Rect::from_center_size(screen.center(), Vec2::splat(32.0));
+                let middle = Rect::from_center_size(card.center(), Vec2::splat(32.0));
                 theme::paint_spinner(ui, middle, 28.0, palette.secondary);
                 0
             };
-            header(
-                ui,
-                &mut viewer,
-                &palette,
-                locale,
-                screen,
-                current,
-                &mut actions,
+            header(ui, viewer, palette, locale, card, radius, current, actions);
+            search_card(ui, viewer, &mut view, palette, locale, card, current);
+            ui.painter().rect_stroke(
+                clip,
+                corners,
+                palette.glass_edge(),
+                egui::StrokeKind::Inside,
             );
-            search_card(
-                ui,
-                &mut viewer,
-                &mut view,
-                &palette,
-                locale,
-                screen,
-                current,
-            );
+            if open && backdrop.clicked() {
+                actions.push(Action::ClosePdf);
+            }
         });
-    super::closing::surface(ctx, layer(), screen.center(), theme::MOTION_PANEL);
-    if response.should_close() {
+    // Mid-flight, everything on the card is scaled into place; the
+    // backdrop under it stays where it is.
+    if (scale - 1.0).abs() > 0.001 || flying.center() != card.center() {
+        let transform = egui::emath::TSTransform::new(
+            flying.center().to_vec2() - card.center().to_vec2() * scale,
+            scale,
+        );
+        ctx.graphics_mut(|graphics| {
+            if let Some(list) = graphics.get_mut(layer()) {
+                for index in backdrop_shapes..list.next_idx().0 {
+                    list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                        clipped.transform(transform);
+                    });
+                }
+            }
+        });
+    }
+    // Until the flight rests.
+    if (t - if open { 1.0 } else { 0.0 }).abs() > 0.0005 {
+        ctx.request_repaint();
+    }
+    if open && response.should_close() {
         actions.push(if viewer.search.open {
             Action::ClosePdfSearch
         } else {
@@ -146,8 +252,7 @@ pub fn show(app: &mut App, ctx: &egui::Context) {
         });
     }
     ctx.data_mut(|data| data.insert_temp(id, view));
-    app.pdf_viewer = Some(viewer);
-    app.actions.extend(actions);
+    false
 }
 
 /// Forgets where the view of `viewer` was, for the next time it opens.
@@ -170,8 +275,9 @@ fn stage(
     let sizes = viewer.pages().to_vec();
     let width = window.width();
     let viewport_height = window.height();
+    let enabled = ui.is_enabled();
     // The wheel with Ctrl or Cmd, and a pinch, zoom about the pointer.
-    if let Some((factor, anchor)) = zoom_input(ui, window) {
+    if enabled && let Some((factor, anchor)) = zoom_input(ui, window) {
         viewer.set_zoom(viewer.zoom * factor, now);
         view.anchor = Some(anchor);
     }
@@ -195,7 +301,7 @@ fn stage(
         to.y = y;
         glide_to(view, to.clamp(Vec2::ZERO, max_offset), now);
     }
-    if let Some(to) = key_scroll(ui, view, viewport_height - HEADER, layout.size.y) {
+    if enabled && let Some(to) = key_scroll(ui, view, viewport_height - HEADER, layout.size.y) {
         glide_to(view, to.clamp(Vec2::ZERO, max_offset), now);
     }
     if let Some(glide) = view.glide {
@@ -515,12 +621,21 @@ fn header(
     palette: &Palette,
     locale: crate::i18n::Locale,
     window: Rect,
+    radius: f32,
     current: usize,
     actions: &mut Vec<Action>,
 ) {
     let rect = Rect::from_min_max(window.min, pos2(window.right(), window.top() + HEADER));
-    ui.painter().add(super::glass::rounded(rect, 0.0));
-    ui.painter().rect_filled(rect, 0.0, palette.menu_glass());
+    let top = radius.round().clamp(0.0, 255.0) as u8;
+    let corners = CornerRadius {
+        nw: top,
+        ne: top,
+        sw: 0,
+        se: 0,
+    };
+    ui.painter().add(super::glass::rounded(rect, radius));
+    ui.painter()
+        .rect_filled(rect, corners, palette.menu_glass());
     ui.painter()
         .hline(rect.x_range(), rect.bottom() - 0.5, palette.glass_edge());
     let mut bar = ui.new_child(
