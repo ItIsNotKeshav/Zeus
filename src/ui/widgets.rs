@@ -889,12 +889,18 @@ fn submenu_with<R>(
         ui.ctx(),
         egui::containers::menu::SubMenu::id_from_widget_id(response.id),
     );
+    let lit = theme::animate(
+        ui.ctx(),
+        response.id.with("menu-hover"),
+        response.hovered() || response.has_focus() || open,
+        theme::MOTION_QUICK,
+    );
     if ui.is_rect_visible(rect) {
-        if response.hovered() || open {
+        if lit > 0.0 {
             ui.painter().rect_filled(
                 rect,
                 CornerRadius::same(theme::RADIUS),
-                palette.surface_hover,
+                palette.surface_hover.gamma_multiply(lit),
             );
         }
         if let Some(icon) = icon {
@@ -931,10 +937,62 @@ fn submenu_with<R>(
         );
     }
     let width = submenu_width(ui, items);
-    egui::containers::menu::SubMenu::new().show(ui, &response, |ui| {
+    frosted_submenu(ui, palette, &response, |ui| {
         ui.set_width(width);
         add_contents(ui)
     })
+}
+
+/// egui's submenu under `response`, drawn as the menus that open it are:
+/// [`menu_frame`]'s glass, outline and corners over frosted glass, growing
+/// and fading in from the corner it opens at and shrinking back as it
+/// closes. egui builds the submenu's frame from the menu's style, so the
+/// style is set to match before it is shown.
+fn frosted_submenu<R>(
+    ui: &mut Ui,
+    palette: &Palette,
+    response: &egui::Response,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let ctx = ui.ctx().clone();
+    let id = egui::containers::menu::SubMenu::id_from_widget_id(response.id);
+    let layer = egui::LayerId::new(egui::Order::Foreground, id);
+    let measured = ctx.read_response(id).is_some();
+    let frost = Frost::reserve(&ctx, layer, theme::RADIUS_MENU);
+    let appear_id = id.with("appear");
+    let shown = ui
+        .scope(|ui| {
+            let style = ui.style_mut();
+            style.visuals.window_fill = palette.menu_glass();
+            style.visuals.window_stroke = Stroke::new(1.0, palette.outline);
+            style.visuals.menu_corner_radius = CornerRadius::same(theme::RADIUS_MENU);
+            style.visuals.popup_shadow = palette.float_shadow();
+            style.spacing.menu_margin = egui::Margin::same(6);
+            egui::containers::menu::SubMenu::new().show(ui, response, |ui| {
+                let appear = theme::appear(ui.ctx(), appear_id, theme::MOTION_QUICK);
+                ui.multiply_opacity(appear);
+                (add(ui), appear)
+            })
+        })
+        .inner;
+    let Some(shown) = shown else {
+        // Closed: the next opening starts from the beginning.
+        theme::forget_motion(&ctx, appear_id);
+        return None;
+    };
+    let (inner, appear) = shown.inner;
+    if measured {
+        let rect = shown.response.rect;
+        frost.place(rect);
+        let scale = POPUP_FROM_SCALE + (1.0 - POPUP_FROM_SCALE) * appear;
+        let pivot = rect.left_top();
+        ctx.transform_layer_shapes(
+            layer,
+            egui::emath::TSTransform::new(pivot.to_vec2() * (1.0 - scale), scale),
+        );
+        super::closing::keep(&ctx, layer, pivot, theme::MOTION_QUICK, appear);
+    }
+    Some(egui::InnerResponse::new(inner, shown.response))
 }
 
 pub fn menu_item(ui: &mut Ui, palette: &Palette, icon: Option<Icon>, label: &str) -> bool {
@@ -952,10 +1010,16 @@ pub fn menu_item_enabled(
     menu_row(ui, palette, icon, inset, label, enabled, false)
 }
 
-/// A destructive entry: no icon, text inset to line up with the icons above
-/// it, in the palette's danger colour. `enabled` greys it out.
-pub fn menu_item_danger(ui: &mut Ui, palette: &Palette, label: &str, enabled: bool) -> bool {
-    menu_row(ui, palette, None, true, label, enabled, true)
+/// A destructive entry, its text and `icon` in the palette's danger colour,
+/// lined up with the icons above it. `enabled` greys it out.
+pub fn menu_item_danger(
+    ui: &mut Ui,
+    palette: &Palette,
+    icon: Option<Icon>,
+    label: &str,
+    enabled: bool,
+) -> bool {
+    menu_row(ui, palette, icon, true, label, enabled, true)
 }
 
 /// [`menu_item_inset`] that can be greyed out.
@@ -993,12 +1057,19 @@ fn menu_row(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled && ui.is_enabled(), label)
     });
+    // The highlight eases in and out under the pointer, as the tab bar's do.
+    let lit = theme::animate(
+        ui.ctx(),
+        response.id.with("menu-hover"),
+        enabled && (response.hovered() || response.has_focus()),
+        theme::MOTION_QUICK,
+    );
     if ui.is_rect_visible(rect) {
-        if response.hovered() && enabled {
+        if lit > 0.0 {
             ui.painter().rect_filled(
                 rect,
                 CornerRadius::same(theme::RADIUS),
-                palette.surface_hover,
+                palette.surface_hover.gamma_multiply(lit),
             );
         }
         let color = if !enabled {
@@ -1013,10 +1084,12 @@ fn menu_row(
             let icon_rect =
                 Rect::from_center_size(pos2(x + 8.0, rect.center().y), Vec2::splat(16.0));
             icon.image(
-                if enabled {
-                    palette.secondary
-                } else {
+                if !enabled {
                     palette.dim
+                } else if danger {
+                    palette.danger
+                } else {
+                    palette.secondary
                 },
                 16.0,
             )

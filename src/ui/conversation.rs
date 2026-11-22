@@ -988,17 +988,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             }
                             widgets::menu_separator(ui, &palette);
                             if let Some(phone) = chat.phone()
-                                && widgets::menu_item_inset(
+                                && widgets::menu_item(
                                     ui,
                                     &palette,
+                                    Some(Icon::Copy),
                                     copy_number_label.as_ref(),
                                 )
                             {
                                 app.actions.push(Action::CopyText(format!("+{phone}")));
                             }
-                            if widgets::menu_item_enabled_inset(
+                            if widgets::menu_item_enabled(
                                 ui,
                                 &palette,
+                                Some(Icon::FileText),
                                 export_label.as_ref(),
                                 !chat.locked && app.chat_export.is_none(),
                             ) {
@@ -1007,13 +1009,19 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                     include_media: false,
                                 }));
                             }
-                            if widgets::menu_item_inset(ui, &palette, wallpaper_label.as_ref()) {
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::Image),
+                                wallpaper_label.as_ref(),
+                            ) {
                                 app.actions.push(Action::PickChatWallpaper(chat.id.clone()));
                             }
                             if own_wallpaper
-                                && widgets::menu_item_inset(
+                                && widgets::menu_item(
                                     ui,
                                     &palette,
+                                    Some(Icon::Eraser),
                                     remove_wallpaper_label.as_ref(),
                                 )
                             {
@@ -1021,22 +1029,42 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                     .push(Action::RemoveChatWallpaper(chat.id.clone()));
                             }
                             if app.settings.split_view
-                                && widgets::menu_item_inset(ui, &palette, pop_out_label.as_ref())
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::PictureInPicture),
+                                    pop_out_label.as_ref(),
+                                )
                             {
                                 app.actions.push(Action::PopOut(chat.id.clone()));
                             }
                             if app.settings.chat_bubbles
                                 && !chat.locked
-                                && widgets::menu_item_inset(ui, &palette, bubble_label.as_ref())
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::MessageCircle),
+                                    bubble_label.as_ref(),
+                                )
                             {
                                 app.actions.push(Action::Bubble(chat.id.clone()));
                             }
                             if pane != Pane::Solo
-                                && widgets::menu_item_inset(ui, &palette, swap_label.as_ref())
+                                && widgets::menu_item(
+                                    ui,
+                                    &palette,
+                                    Some(Icon::ArrowLeftRight),
+                                    swap_label.as_ref(),
+                                )
                             {
                                 app.actions.push(Action::SwapSplit);
                             }
-                            if widgets::menu_item_inset(ui, &palette, close_label.as_ref()) {
+                            if widgets::menu_item(
+                                ui,
+                                &palette,
+                                Some(Icon::CircleX),
+                                close_label.as_ref(),
+                            ) {
                                 app.actions.push(Action::CloseChat);
                             }
                             widgets::menu_separator(ui, &palette);
@@ -1044,6 +1072,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                 && widgets::menu_item_danger(
                                     ui,
                                     &palette,
+                                    Some(Icon::LogOut),
                                     leave_label.as_ref(),
                                     true,
                                 )
@@ -1058,6 +1087,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             if widgets::menu_item_danger(
                                 ui,
                                 &palette,
+                                Some(Icon::Eraser),
                                 clear_label.as_ref(),
                                 app.is_connected(),
                             ) {
@@ -3332,7 +3362,6 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         std::mem::take(&mut conversation.text_ends),
         &conversation.messages,
     );
-    let pass = ui.ctx().cumulative_pass_nr();
     let redo = ui.ctx().current_pass_index() > 0;
     let mut rows = std::mem::take(&mut conversation.rows);
     // Forget rows that left the conversation, such as deleted messages.

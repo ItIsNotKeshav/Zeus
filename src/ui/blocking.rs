@@ -31,7 +31,7 @@ pub(super) fn menu(app: &mut App, ui: &mut egui::Ui, chat: &str) {
     if widgets::menu_item_enabled(
         ui,
         &app.palette,
-        None,
+        Some(Icon::Ban),
         &label(app, chat),
         app.is_connected() && app.blocklist.editable(),
     ) {

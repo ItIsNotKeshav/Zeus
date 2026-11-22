@@ -664,6 +664,20 @@ fn category_icon(source: &str) -> Icon {
     }
 }
 
+/// How a category's icon moves under the pointer, as the tab bar's icons
+/// do: the sun and the gear turn, the bubble tilts, the phone rings, the
+/// bell swings, the rest grow a little.
+fn category_flourish(source: &str) -> super::tabbar::Flourish {
+    use super::tabbar::Flourish;
+    match source {
+        "Appearance" | "General" => Flourish::Turn,
+        "Chats" => Flourish::Wobble,
+        "Calls and voice" => Flourish::Ring,
+        "Notifications" => Flourish::Swing,
+        _ => Flourish::Grow,
+    }
+}
+
 /// The settings categories in the list column, where the chats are on the
 /// Chats tab, with the settings search above them and the tab bar floating
 /// at the column's foot.
@@ -766,16 +780,22 @@ pub fn sidebar(app: &mut App, ui: &mut egui::Ui) {
                         } else {
                             palette.secondary
                         };
-                        theme::paint_icon(
-                            ui,
-                            category_icon(&title.source),
-                            Rect::from_center_size(
-                                pos2(rect.left() + 22.0, rect.center().y),
-                                Vec2::splat(20.0),
-                            ),
-                            20.0,
-                            color,
+                        let (angle, origin, scale) = super::tabbar::flourish(
+                            ui.ctx(),
+                            &response,
+                            category_flourish(&title.source),
                         );
+                        let size = 20.0 * scale;
+                        category_icon(&title.source)
+                            .image(color, size)
+                            .rotate(angle, origin)
+                            .paint_at(
+                                ui,
+                                Rect::from_center_size(
+                                    pos2(rect.left() + 22.0, rect.center().y),
+                                    Vec2::splat(size),
+                                ),
+                            );
                         ui.painter().text(
                             pos2(rect.left() + 46.0, rect.center().y),
                             egui::Align2::LEFT_CENTER,

@@ -390,6 +390,73 @@ fn hover_play(ctx: &egui::Context, id: egui::Id, hovered: bool, seconds: f32) ->
     progress
 }
 
+/// The tab bar's hover motions, for other icons to share so they move as
+/// the dock's do.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Flourish {
+    /// Tilts about its lower left corner, as the chat bubble does.
+    Wobble,
+    /// Shakes about its centre, as the phone rings.
+    Ring,
+    /// Swings from its top, as a bell does.
+    Swing,
+    /// Turns part way round and back, as the gear does.
+    Turn,
+    /// Grows a little, as our avatar does.
+    Grow,
+}
+
+/// How an icon under `response` plays `flourish`: its angle in radians,
+/// the point (as a share of its size) it turns about, and its scale, which
+/// also shrinks and springs back while the pointer presses it. Only the
+/// pointer starts a flourish; focus leaves the icon still.
+pub(super) fn flourish(
+    ctx: &egui::Context,
+    response: &egui::Response,
+    flourish: Flourish,
+) -> (f32, egui::Vec2, f32) {
+    let hovered = response.hovered();
+    let id = response.id;
+    let centre = egui::vec2(0.5, 0.5);
+    let (angle, origin, grow) = match flourish {
+        Flourish::Wobble => (
+            wobble(hover_play(ctx, id, hovered, WOBBLE_SECONDS)),
+            TAIL,
+            0.0,
+        ),
+        Flourish::Ring => (
+            ring(hover_play(ctx, id, hovered, RING_SECONDS)),
+            centre,
+            0.0,
+        ),
+        Flourish::Swing => (
+            ring(hover_play(ctx, id, hovered, RING_SECONDS)),
+            egui::vec2(0.5, 0.12),
+            0.0,
+        ),
+        Flourish::Turn => {
+            let turn = ctx.animate_bool_with_time_and_easing(
+                id.with("tab-turn"),
+                hovered,
+                theme::motion_time(ctx, GEAR_SECONDS),
+                egui::emath::easing::cubic_out,
+            );
+            (GEAR_TURN * turn, centre, 0.0)
+        }
+        Flourish::Grow => {
+            let grow = ctx.animate_bool_with_time_and_easing(
+                id.with("tab-grow"),
+                hovered,
+                theme::motion_time(ctx, AVATAR_SECONDS),
+                egui::emath::easing::cubic_out,
+            );
+            (0.0, centre, AVATAR_GROW * grow)
+        }
+    };
+    let scale = (1.0 + grow) * press_scale(ctx, id, response.is_pointer_button_down_on());
+    (angle, origin, scale)
+}
+
 /// The scale of our avatar's tab: grown while the pointer is over it, shrunk
 /// and sprung back as it is pressed.
 pub(super) fn avatar_scale(ctx: &egui::Context, response: &egui::Response) -> f32 {
