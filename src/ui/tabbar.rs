@@ -572,7 +572,10 @@ mod tests {
     #[test]
     fn a_press_settles_slower_than_a_click() {
         let settle = PRESS_DOWN.settle_time();
-        assert!((0.16..=0.20).contains(&settle), "press settles in {settle}s");
+        assert!(
+            (0.16..=0.20).contains(&settle),
+            "press settles in {settle}s"
+        );
         assert!(settle < 0.25, "still a short press: {settle}s");
     }
 

@@ -266,7 +266,11 @@ fn mode_menu(ui: &mut egui::Ui, app: &mut App) {
         },
     );
     // A fixed id on the closed button, so the demo tour can open it.
-    ui.interact(response.rect, egui::Id::new("settings-mode"), Sense::hover());
+    ui.interact(
+        response.rect,
+        egui::Id::new("settings-mode"),
+        Sense::hover(),
+    );
 }
 
 /// The space between the colour wheel's dots.
@@ -844,27 +848,24 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
     let diameter = (step - 10.0).clamp(18.0, 30.0);
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
     let first = row.center().x - step * count as f32 / 2.0 + step / 2.0;
-    let ring = |ui: &egui::Ui,
-                response: &egui::Response,
-                center: Pos2,
-                chosen: bool,
-                ink: Color32| {
-        theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
-        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
-        if t > 0.0 {
-            ui.painter().circle_stroke(
-                center,
-                diameter / 2.0 + 4.0,
-                Stroke::new(2.0, ink.gamma_multiply(t)),
-            );
-        } else if response.hovered() {
-            ui.painter().circle_stroke(
-                center,
-                diameter / 2.0 + 4.0,
-                Stroke::new(1.0, palette.secondary),
-            );
-        }
-    };
+    let ring =
+        |ui: &egui::Ui, response: &egui::Response, center: Pos2, chosen: bool, ink: Color32| {
+            theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
+            let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
+            if t > 0.0 {
+                ui.painter().circle_stroke(
+                    center,
+                    diameter / 2.0 + 4.0,
+                    Stroke::new(2.0, ink.gamma_multiply(t)),
+                );
+            } else if response.hovered() {
+                ui.painter().circle_stroke(
+                    center,
+                    diameter / 2.0 + 4.0,
+                    Stroke::new(1.0, palette.secondary),
+                );
+            }
+        };
 
     // The cluster of dots that opens the wheel.
     let center = pos2(first, row.center().y);
@@ -925,12 +926,7 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
         }
         let label = crate::i18n::gettext(locale, accent.label());
         response.widget_info(|| {
-            egui::WidgetInfo::selected(
-                egui::WidgetType::RadioButton,
-                true,
-                chosen,
-                label.as_ref(),
-            )
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, label.as_ref())
         });
         if response
             .on_hover_text(label.as_ref())

@@ -236,8 +236,10 @@ fn side_card(app: &mut App, ui: &mut egui::Ui, region: Rect, open: f32) {
                 // Behind the card's own controls, so a click on the card does
                 // not fall through to the conversation.
                 let _ = ui.interact(card, layer.id.with("hit"), Sense::click());
-                ui.painter()
-                    .set(frost, super::glass::rounded(card, super::corner_span(radius)));
+                ui.painter().set(
+                    frost,
+                    super::glass::rounded(card, super::corner_span(radius)),
+                );
                 ui.painter().rect(
                     card,
                     radius,

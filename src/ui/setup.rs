@@ -1368,8 +1368,7 @@ fn notifications(app: &mut App, ui: &mut egui::Ui) {
                 .ctx()
                 .data(|data| data.get_temp::<bool>(defaulted).unwrap_or(false))
             {
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(defaulted, true));
+                ui.ctx().data_mut(|data| data.insert_temp(defaulted, true));
                 if !start {
                     start = true;
                     app.start_with_system = Some(true);

@@ -1017,7 +1017,8 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                     remove_wallpaper_label.as_ref(),
                                 )
                             {
-                                app.actions.push(Action::RemoveChatWallpaper(chat.id.clone()));
+                                app.actions
+                                    .push(Action::RemoveChatWallpaper(chat.id.clone()));
                             }
                             if app.settings.split_view
                                 && widgets::menu_item_inset(ui, &palette, pop_out_label.as_ref())
@@ -5666,7 +5667,9 @@ fn voice_chip_fill(palette: &Palette, hovered: bool) -> Color32 {
     if palette.text.intensity() > 0.5 {
         Color32::from_black_alpha(if hovered { 110 } else { 80 })
     } else {
-        palette.text.gamma_multiply(if hovered { 0.7 } else { 0.55 })
+        palette
+            .text
+            .gamma_multiply(if hovered { 0.7 } else { 0.55 })
     }
 }
 
@@ -11693,10 +11696,7 @@ fn voice_play_button(
         if playing {
             for side in [-1.0, 1.0] {
                 ui.painter().rect_filled(
-                    Rect::from_center_size(
-                        pos2(middle.x + side * 4.5, middle.y),
-                        vec2(5.0, 17.0),
-                    ),
+                    Rect::from_center_size(pos2(middle.x + side * 4.5, middle.y), vec2(5.0, 17.0)),
                     1.5,
                     colour,
                 );
@@ -11849,8 +11849,7 @@ fn voice_player(
                 } else {
                     Sense::click()
                 };
-                let (rect, response) =
-                    ui.allocate_exact_size(vec2(wave_width, bar_height), sense);
+                let (rect, response) = ui.allocate_exact_size(vec2(wave_width, bar_height), sense);
                 wave_middle = Some(rect.center().y);
                 let pitch = if voice_note { VOICE_BAR_PITCH } else { 3.0 };
                 let count = (rect.width() / pitch).floor() as usize;

@@ -221,11 +221,7 @@ impl Accent {
     /// The colour laid over a theme: the reader's own from the wheel unless
     /// it sits at the centre, else the named accent's; `None` keeps the
     /// theme's own accent.
-    pub fn chosen_rgb(
-        accent: Accent,
-        custom: Option<CustomAccent>,
-        dark: bool,
-    ) -> Option<[u8; 3]> {
+    pub fn chosen_rgb(accent: Accent, custom: Option<CustomAccent>, dark: bool) -> Option<[u8; 3]> {
         custom
             .filter(|custom| custom.strength > CustomAccent::CENTRE)
             .map(|custom| custom.rgb(dark))
