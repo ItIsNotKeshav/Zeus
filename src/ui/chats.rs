@@ -3577,12 +3577,7 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
         app.actions.push(Action::MarkRead(chat.id.clone()));
     }
     if !chat.looks_unread()
-        && widgets::menu_item(
-            ui,
-            palette,
-            Some(Icon::MessageCircle),
-            &crate::i18n::gettext(locale, "Mark as unread"),
-        )
+        && widgets::menu_item_inset(ui, palette, &crate::i18n::gettext(locale, "Mark as unread"))
     {
         app.actions.push(Action::MarkUnread(chat.id.clone()));
     }
@@ -3726,8 +3721,9 @@ fn context_menu(app: &mut App, ui: &mut egui::Ui, chat: &Chat, palette: &Palette
     }
 }
 
-/// The chat menu's "More" submenu: the entries used less often, each with
-/// its icon like the menu that opens it.
+/// The chat menu's "More" submenu: the entries used less often. As in every
+/// menu, an icon only where it is an established sign for the action (copy,
+/// block, the split's columns), the rest lined up with them without one.
 fn more_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
     let more = crate::i18n::gettext(app.locale, "More");
     // Wide enough for the longest of its rows, a submenu's chevron included.
@@ -3742,7 +3738,7 @@ fn more_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
         crate::i18n::gettext(app.locale, "Unblock contact"),
     ];
     let items: Vec<&str> = rows.iter().map(AsRef::as_ref).collect();
-    widgets::submenu(ui, palette, Icon::Ellipsis, more.as_ref(), &items, |ui| {
+    widgets::submenu_inset(ui, palette, more.as_ref(), &items, |ui| {
         let locale = app.locale;
         sound_menu(app, ui, palette, chat);
         voice_speed_menu(app, ui, palette, chat);
@@ -3780,12 +3776,7 @@ fn more_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) {
         let bubble_label = crate::i18n::gettext(locale, "Open as bubble");
         if app.settings.chat_bubbles
             && !chat.locked
-            && widgets::menu_item(
-                ui,
-                palette,
-                Some(Icon::MessageCircle),
-                bubble_label.as_ref(),
-            )
+            && widgets::menu_item_inset(ui, palette, bubble_label.as_ref())
         {
             app.actions.push(Action::Bubble(chat.id.clone()));
         }
@@ -3835,10 +3826,10 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
         .chain([choose.as_ref()])
         .collect();
     let menu_label = crate::i18n::gettext(locale, "Notification sound");
-    widgets::submenu(ui, palette, Icon::Music, &menu_label, &items, |ui| {
+    widgets::submenu_inset(ui, palette, &menu_label, &items, |ui| {
         for (sound, label) in &sounds {
             let checked = current == *sound;
-            if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label.as_ref()) {
+            if widgets::menu_check(ui, palette, checked, label.as_ref()) {
                 app.actions.push(Action::SetChatSound {
                     chat: chat.id.clone(),
                     sound: sound.clone(),
@@ -3847,9 +3838,9 @@ fn sound_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &Chat) 
             }
         }
         if let Some(name) = &custom {
-            widgets::menu_item(ui, palette, Some(Icon::Check), name);
+            widgets::menu_check(ui, palette, true, name);
         }
-        if widgets::menu_item(ui, palette, None, choose.as_ref()) {
+        if widgets::menu_item_inset(ui, palette, choose.as_ref()) {
             app.actions.push(Action::PickChatSound(chat.id.clone()));
             ui.close();
         }
@@ -3872,26 +3863,19 @@ fn voice_speed_menu(app: &mut App, ui: &mut egui::Ui, palette: &Palette, chat: &
     )
     .collect();
     let items: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
-    widgets::submenu(
-        ui,
-        palette,
-        Icon::Timer,
-        "Voice message speed",
-        &items,
-        |ui| {
-            for (speed, label) in &options {
-                let speed = *speed;
-                let checked = chat.voice_speed == speed;
-                if widgets::menu_item(ui, palette, checked.then_some(Icon::Check), label) {
-                    app.actions.push(Action::SetChatVoiceSpeed {
-                        chat: chat.id.clone(),
-                        speed,
-                    });
-                    ui.close();
-                }
+    widgets::submenu_inset(ui, palette, "Voice message speed", &items, |ui| {
+        for (speed, label) in &options {
+            let speed = *speed;
+            let checked = chat.voice_speed == speed;
+            if widgets::menu_check(ui, palette, checked, label) {
+                app.actions.push(Action::SetChatVoiceSpeed {
+                    chat: chat.id.clone(),
+                    speed,
+                });
+                ui.close();
             }
-        },
-    );
+        }
+    });
 }
 
 #[cfg(test)]

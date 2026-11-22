@@ -1768,8 +1768,7 @@ fn sticker_grid(
                                 // takes the sticker back out.
                                 let member =
                                     hash.as_deref().is_some_and(|hash| pack_holds(pack, hash));
-                                let icon = member.then_some(Icon::Check);
-                                if widgets::menu_item(ui, palette, icon, &pack.name) {
+                                if widgets::menu_check(ui, palette, member, &pack.name) {
                                     choices.pack = Some((pack.dir.clone(), path.clone(), !member));
                                 }
                             }

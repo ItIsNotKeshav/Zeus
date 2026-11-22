@@ -1022,6 +1022,32 @@ pub fn menu_item_danger(
     menu_row(ui, palette, icon, true, label, enabled, true)
 }
 
+/// A choice in a list of choices, with a check before the one in use. Every
+/// row keeps the check's place, so the labels line up whether or not they
+/// carry it.
+pub fn menu_check(ui: &mut Ui, palette: &Palette, checked: bool, label: &str) -> bool {
+    menu_check_enabled(ui, palette, checked, label, true)
+}
+
+/// [`menu_check`] that can be greyed out.
+pub fn menu_check_enabled(
+    ui: &mut Ui,
+    palette: &Palette,
+    checked: bool,
+    label: &str,
+    enabled: bool,
+) -> bool {
+    menu_row(
+        ui,
+        palette,
+        checked.then_some(Icon::Check),
+        true,
+        label,
+        enabled,
+        false,
+    )
+}
+
 /// [`menu_item_inset`] that can be greyed out.
 pub fn menu_item_enabled_inset(ui: &mut Ui, palette: &Palette, label: &str, enabled: bool) -> bool {
     menu_row(ui, palette, None, true, label, enabled, false)
