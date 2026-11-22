@@ -54,7 +54,14 @@ fn loaded_id() -> egui::Id {
 /// Forgets every texture and animation frame the sticker tab loaded. The
 /// driver keeps the high-water mark of GPU memory, so a shelf of 512 px
 /// stickers must not outlive the panel.
+///
+/// Not on Windows: there decoding every sticker again on each opening took a
+/// quarter more CPU than keeping them, and the image cache and the
+/// animations let unseen ones go anyway.
 fn release_stickers(ctx: &egui::Context) {
+    if cfg!(target_os = "windows") {
+        return;
+    }
     let Some(loaded) = ctx.data_mut(|data| data.remove_temp::<PickerLoaded>(loaded_id())) else {
         return;
     };

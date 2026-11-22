@@ -64,7 +64,17 @@ const PROGRESSIVE: Strength = Strength {
 };
 /// Sets of render targets kept, one for each size frosted in a frame (the
 /// header, the composer, a menu), so none is reallocated every frame.
-const TARGET_SETS: usize = 4;
+///
+/// Windows's Dark and Light themes show the desktop through the window, so
+/// there is no sheet and every frost copies its own: the list's header, the
+/// tab bar, the chat's header, its pinned line, the composer and the
+/// newest-message button are six sizes in one frame, the info card a
+/// seventh, and a menu and its submenu, or the PDF viewer's header and
+/// search card, two more. Four sets reallocated a texture every frame while
+/// a chat scrolled, a wait on the driver that dropped frames on battery.
+/// Sets are made only when that many sizes show at once, so twelve cost
+/// nothing in a plain chat.
+const TARGET_SETS: usize = if cfg!(target_os = "windows") { 12 } else { 4 };
 /// How much more saturated the blur is than what it covers, as glass that
 /// gathers the colours behind it.
 const SATURATION: f32 = 1.3;

@@ -20,15 +20,25 @@ use std::time::Duration;
 
 /// Image URIs kept resident. Anything the current frame drew is always kept,
 /// so this only bounds what has scrolled away.
-const RESIDENT: usize = 96;
+///
+/// Windows keeps the larger window it had before 0.43: there the smaller one
+/// read pictures again on every pass through a photo chat and on switching
+/// back to a chat, which cost frames on battery, and the Mac's reason for
+/// it (see `BUDGET`) is not Windows's.
+const RESIDENT: usize = if cfg!(target_os = "windows") { 256 } else { 96 };
 
 /// The most texture memory the resident images may take, in bytes. On a Mac
 /// the GPU shares the system's memory, so this is memory the app is seen to
 /// use: Activity Monitor counted it in the 700 MB some Macs showed after a
 /// photo-heavy chat, where Windows, whose graphics memory is apart, showed
 /// 100. A window full of pictures fits many times over. Anything the
-/// current frame drew is always kept.
-const BUDGET: usize = 48 * 1024 * 1024;
+/// current frame drew is always kept. Windows keeps more, as `RESIDENT`
+/// says.
+const BUDGET: usize = if cfg!(target_os = "windows") {
+    128 * 1024 * 1024
+} else {
+    48 * 1024 * 1024
+};
 
 /// How long the window may go without input before the images it is not
 /// showing are let go, whatever `RESIDENT` and `BUDGET` would keep: scrolling
