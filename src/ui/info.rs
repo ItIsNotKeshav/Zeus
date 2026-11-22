@@ -978,10 +978,10 @@ fn identity(app: &mut App, ui: &mut egui::Ui, shown: &Shown, overlay: bool) {
                 .frame(widgets::menu_frame(&palette))
                 .show_frosted(&response.ctx, |ui| {
                     for (seconds, label) in &choices {
-                        if widgets::menu_item_enabled(
+                        if widgets::menu_check_enabled(
                             ui,
                             &palette,
-                            (shown.timer_seconds == Some(*seconds)).then_some(Icon::Check),
+                            shown.timer_seconds == Some(*seconds),
                             label,
                             can_change,
                         ) {

@@ -945,7 +945,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             if widgets::menu_item(
                                 ui,
                                 &palette,
-                                Some(Icon::Check),
+                                Some(Icon::ListChecks),
                                 select_messages_label.as_ref(),
                             ) {
                                 app.actions.push(Action::StartSelection);
@@ -997,10 +997,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             {
                                 app.actions.push(Action::CopyText(format!("+{phone}")));
                             }
-                            if widgets::menu_item_enabled(
+                            if widgets::menu_item_enabled_inset(
                                 ui,
                                 &palette,
-                                Some(Icon::FileText),
                                 export_label.as_ref(),
                                 !chat.locked && app.chat_export.is_none(),
                             ) {
@@ -1018,10 +1017,9 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                                 app.actions.push(Action::PickChatWallpaper(chat.id.clone()));
                             }
                             if own_wallpaper
-                                && widgets::menu_item(
+                                && widgets::menu_item_inset(
                                     ui,
                                     &palette,
-                                    Some(Icon::Eraser),
                                     remove_wallpaper_label.as_ref(),
                                 )
                             {
@@ -1040,12 +1038,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             }
                             if app.settings.chat_bubbles
                                 && !chat.locked
-                                && widgets::menu_item(
-                                    ui,
-                                    &palette,
-                                    Some(Icon::MessageCircle),
-                                    bubble_label.as_ref(),
-                                )
+                                && widgets::menu_item_inset(ui, &palette, bubble_label.as_ref())
                             {
                                 app.actions.push(Action::Bubble(chat.id.clone()));
                             }
@@ -1059,12 +1052,7 @@ fn header(app: &mut App, ui: &mut egui::Ui, chat: &Chat, pane: Pane) -> Rect {
                             {
                                 app.actions.push(Action::SwapSplit);
                             }
-                            if widgets::menu_item(
-                                ui,
-                                &palette,
-                                Some(Icon::CircleX),
-                                close_label.as_ref(),
-                            ) {
+                            if widgets::menu_item_inset(ui, &palette, close_label.as_ref()) {
                                 app.actions.push(Action::CloseChat);
                             }
                             widgets::menu_separator(ui, &palette);
@@ -8225,7 +8213,7 @@ fn context_menu(
         && widgets::menu_item(
             ui,
             &palette,
-            Some(Icon::Check),
+            Some(Icon::ListChecks),
             &crate::i18n::gettext(view.locale, "Select"),
         )
     {
@@ -8282,7 +8270,7 @@ fn context_menu(
             &items,
             |ui| {
                 for (choice, label) in PinFor::ALL.into_iter().zip(&items) {
-                    if widgets::menu_item(ui, &palette, Some(Icon::Clock), label) {
+                    if widgets::menu_item(ui, &palette, None, label) {
                         actions.push(Action::SetMessagePinned {
                             chat: chat.clone(),
                             message: message.id.clone(),
@@ -8332,10 +8320,9 @@ fn context_menu(
                 }
                 if in_album
                     && files.len() > 1
-                    && widgets::menu_item(
+                    && widgets::menu_item_inset(
                         ui,
                         &palette,
-                        Some(Icon::Download),
                         &crate::i18n::gettext(
                             view.locale,
                             if album
@@ -8352,10 +8339,9 @@ fn context_menu(
                     actions.push(Action::SaveAttachments { files });
                 }
                 if let Some(folder) = path.parent()
-                    && widgets::menu_item(
+                    && widgets::menu_item_inset(
                         ui,
                         &palette,
-                        Some(Icon::FileText),
                         &crate::i18n::gettext(view.locale, "Show in folder"),
                     )
                 {
@@ -8395,7 +8381,7 @@ fn context_menu(
         && widgets::menu_item(
             ui,
             &palette,
-            Some(Icon::Star),
+            Some(Icon::Heart),
             &crate::i18n::gettext(view.locale, "Add to favorites"),
         )
     {
