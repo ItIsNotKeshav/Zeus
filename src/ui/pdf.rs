@@ -434,7 +434,7 @@ fn paint_hits(
             )
             .expand(1.5);
             let fill = if current {
-                CURRENT_HIT.gamma_multiply(0.55 + 0.25 * lit)
+                CURRENT_HIT.gamma_multiply(0.3 + 0.12 * lit)
             } else {
                 HIT
             };
