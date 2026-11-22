@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 
+use egui::epaint::RectShape;
 use egui::{Color32, ColorImage, CornerRadius, Rect, TextureHandle, TextureOptions, Vec2, pos2};
 
 pub use crate::settings::{DoodleColor, DoodleStyle};
@@ -88,28 +89,28 @@ pub(crate) fn doodle_accent(
     }
 }
 
-/// Paint the wallpaper over the conversation panel, its colour rounded by
-/// `radius` so a translucent one leaves a card's corners clear.
+/// Paint the wallpaper over the conversation panel, rounded by `radius`:
+/// colour, doodles and picture alike end at the card's curve, so nothing
+/// shows past a corner whatever is behind the card.
 pub fn paint(ui: &egui::Ui, look: &Look, radius: impl Into<CornerRadius>) {
-    paint_rounded(ui, ui.max_rect(), look, radius.into());
+    paint_in(ui, ui.max_rect(), look, radius);
 }
 
-/// Paint the wallpaper into a bounded rectangle: the image cover-fitted if
-/// there is one, otherwise the colour with the SVG's intrinsic 374 x 666
-/// logical-pixel doodle tile repeated in both axes.
-pub fn paint_rect(ui: &egui::Ui, rect: Rect, look: &Look) {
-    paint_rounded(ui, rect, look, CornerRadius::ZERO);
-}
-
-fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: CornerRadius) {
-    let painter = ui.painter().with_clip_rect(rect);
+/// Paint the wallpaper into `rect` rounded by `radius`: the image
+/// cover-fitted if there is one, otherwise the colour with the SVG's
+/// intrinsic 374 x 666 logical-pixel doodle tile repeated in both axes.
+pub fn paint_in(ui: &egui::Ui, rect: Rect, look: &Look, radius: impl Into<CornerRadius>) {
+    let radius = radius.into();
+    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     painter.rect_filled(rect, radius, look.color);
 
     match &look.image {
         Some(image) => {
             if let Some(texture) = image_texture(ui.ctx(), image) {
                 let uv = cover_uv(texture.size_vec2(), rect.size());
-                painter.image(texture.id(), rect, uv, Color32::WHITE);
+                painter.add(
+                    RectShape::filled(rect, radius, Color32::WHITE).with_texture(texture.id(), uv),
+                );
             }
             return;
         }
@@ -123,6 +124,7 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: CornerRadius) {
         paint_doodles(
             ui,
             rect,
+            radius,
             &Look {
                 density,
                 ..look.clone()
@@ -132,40 +134,50 @@ fn paint_rounded(ui: &egui::Ui, rect: Rect, look: &Look, radius: CornerRadius) {
     }
 }
 
-/// The doodles of `style` over `rect`, inked as `look` says for its
-/// background, which the caller has already painted.
-pub fn paint_doodles(ui: &egui::Ui, rect: Rect, look: &Look, style: DoodleStyle) {
-    let painter = ui.painter().with_clip_rect(rect);
+/// The doodles of `style` over `rect` rounded by `radius`, inked as `look`
+/// says for its background, which the caller has already painted.
+pub fn paint_doodles(
+    ui: &egui::Ui,
+    rect: Rect,
+    radius: impl Into<CornerRadius>,
+    look: &Look,
+    style: DoodleStyle,
+) {
+    if let Some(shape) = doodle_shape(ui.ctx(), rect, radius.into(), look, style) {
+        ui.painter()
+            .with_clip_rect(rect.intersect(ui.clip_rect()))
+            .add(shape);
+    }
+}
+
+/// The doodles as one rounded rectangle filled with the repeating tile:
+/// epaint fills the rounded outline itself, so the pattern stops at each
+/// corner's curve, anti-aliased as the colour under it is. Square tiles cut
+/// by a clip rectangle, the way they were drawn before, poked out past the
+/// curve wherever the card's surroundings showed through.
+fn doodle_shape(
+    ctx: &egui::Context,
+    rect: Rect,
+    radius: CornerRadius,
+    look: &Look,
+    style: DoodleStyle,
+) -> Option<RectShape> {
     let density = clamp_density(look.density);
-    let Some(texture) = texture_at(ui.ctx(), style, level(density)) else {
-        return;
-    };
+    let texture = texture_at(ctx, style, level(density))?;
 
     // Past the default, the same tile is drawn smaller: more doodles to a
     // screenful, each a little smaller than before.
     let tile = texture.size_vec2() * tile_scale(density);
-    if tile.x <= 0.0 || tile.y <= 0.0 {
-        return;
+    if tile.x <= 0.0 || tile.y <= 0.0 || !rect.is_positive() {
+        return None;
     }
-
-    let line = ink(look);
-    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-    let origin = pos2(0.0, 0.0);
-    let first_x = origin.x + (rect.left() - origin.x).div_euclid(tile.x) * tile.x;
-    let first_y = origin.y + (rect.top() - origin.y).div_euclid(tile.y) * tile.y;
-
-    let mut y = first_y;
-    while y < rect.bottom() {
-        let mut x = first_x;
-        while x < rect.right() {
-            let tile_rect = Rect::from_min_size(pos2(x, y), tile);
-            if tile_rect.intersects(rect) {
-                painter.image(texture.id(), tile_rect, uv, line);
-            }
-            x += tile.x;
-        }
-        y += tile.y;
-    }
+    // Tiles stay anchored to the window's origin, so panes side by side
+    // continue one pattern.
+    let uv = Rect::from_min_max(
+        pos2(rect.left() / tile.x, rect.top() / tile.y),
+        pos2(rect.right() / tile.x, rect.bottom() / tile.y),
+    );
+    Some(RectShape::filled(rect, radius, ink(look)).with_texture(texture.id(), uv))
 }
 
 /// How the density moves from one value to the next: where it started, where
@@ -443,7 +455,9 @@ pub fn texture_at(ctx: &egui::Context, style: DoodleStyle, level: u8) -> Option<
     let texture = ctx.load_texture(
         format!("chat-wallpaper-{style:?}-{level}"),
         image,
-        TextureOptions::LINEAR,
+        // The tile repeats across a whole card in one shape (see
+        // [`doodle_shape`]).
+        TextureOptions::LINEAR_REPEAT,
     );
     cached.retain(|(_, kept), _| *kept == FULL || *kept == level);
     cached.insert((style, level), texture.clone());
@@ -795,6 +809,52 @@ mod tests {
     use super::*;
     use crate::paths::AppDirs;
     use egui::vec2;
+
+    /// The doodles fill the card's rounded outline and nothing past it: no
+    /// vertex lies outside a corner's curve, however the tiles fall.
+    #[test]
+    fn doodles_end_at_the_rounded_corners() {
+        let ctx = egui::Context::default();
+        let look = Look {
+            color: Color32::from_rgb(0x0b, 0x14, 0x1a),
+            doodles: true,
+            style: DoodleStyle::Classic,
+            intensity: 1.0,
+            density: 1.0,
+            accent: None,
+            whatsapp: false,
+            image: None,
+        };
+        let card = Rect::from_min_size(pos2(301.5, 17.25), vec2(812.0, 640.0));
+        let radius = 22.0;
+        let shape = doodle_shape(&ctx, card, CornerRadius::same(22), &look, look.style)
+            .expect("the tile renders");
+        assert_eq!(shape.rect, card, "one shape covers the whole card");
+        let brush = shape.brush.as_ref().expect("filled with the tile");
+        let tile = texture(&ctx, DoodleStyle::Classic).expect("the tile renders");
+        assert_eq!(brush.fill_texture_id, tile.id());
+        let size = tile.size_vec2();
+        assert!((brush.uv.left() * size.x - card.left()).abs() < 0.01);
+        assert!((brush.uv.bottom() * size.y - card.bottom()).abs() < 0.01);
+
+        let mut mesh = egui::Mesh::with_texture(tile.id());
+        egui::epaint::Tessellator::new(1.0, Default::default(), [1, 1], vec![])
+            .tessellate_rect(&shape, &mut mesh);
+        assert!(!mesh.is_empty());
+        // The curve, plus epaint's own small tweak and half a pixel of
+        // anti-aliasing.
+        let slack = 1.0;
+        let inner = card.shrink(radius);
+        for vertex in &mesh.vertices {
+            let p = vertex.pos;
+            assert!(card.expand(slack).contains(p), "{p:?} is outside the card");
+            let corner = inner.clamp(p);
+            assert!(
+                p.distance(corner) <= radius + slack,
+                "{p:?} pokes past a rounded corner"
+            );
+        }
+    }
 
     #[test]
     fn every_doodle_tile_keeps_its_intrinsic_dimensions() {

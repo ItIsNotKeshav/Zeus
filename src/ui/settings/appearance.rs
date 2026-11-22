@@ -45,16 +45,19 @@ pub(super) fn preview(ui: &mut egui::Ui, app: &App, rect: Rect) {
         look.color,
     );
     if look.doodles && look.image.is_none() {
-        // Clear of the rounded corners: under them, and between them along
-        // the top. The tiles line up across both.
-        let round = f32::from(radius);
-        let body = Rect::from_min_max(pos2(rect.left(), rect.top() + round), rect.max);
-        let band = Rect::from_min_max(
-            pos2(rect.left() + round, rect.top()),
-            pos2(rect.right() - round, rect.top() + round),
+        // Rounded as the colour is, so none show past the card's corners.
+        wallpaper::paint_doodles(
+            ui,
+            rect,
+            CornerRadius {
+                nw: radius,
+                ne: radius,
+                sw: 0,
+                se: 0,
+            },
+            &look,
+            look.style,
         );
-        wallpaper::paint_doodles(ui, body, &look, look.style);
-        wallpaper::paint_doodles(ui, band, &look, look.style);
     }
 
     // A pause, then Ava, our reply to her, Leo and our last word. Ids no
@@ -266,7 +269,11 @@ fn mode_menu(ui: &mut egui::Ui, app: &mut App) {
         },
     );
     // A fixed id on the closed button, so the demo tour can open it.
-    ui.interact(response.rect, egui::Id::new("settings-mode"), Sense::hover());
+    ui.interact(
+        response.rect,
+        egui::Id::new("settings-mode"),
+        Sense::hover(),
+    );
 }
 
 /// The space between the colour wheel's dots.
@@ -844,27 +851,24 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
     let diameter = (step - 10.0).clamp(18.0, 30.0);
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
     let first = row.center().x - step * count as f32 / 2.0 + step / 2.0;
-    let ring = |ui: &egui::Ui,
-                response: &egui::Response,
-                center: Pos2,
-                chosen: bool,
-                ink: Color32| {
-        theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
-        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
-        if t > 0.0 {
-            ui.painter().circle_stroke(
-                center,
-                diameter / 2.0 + 4.0,
-                Stroke::new(2.0, ink.gamma_multiply(t)),
-            );
-        } else if response.hovered() {
-            ui.painter().circle_stroke(
-                center,
-                diameter / 2.0 + 4.0,
-                Stroke::new(1.0, palette.secondary),
-            );
-        }
-    };
+    let ring =
+        |ui: &egui::Ui, response: &egui::Response, center: Pos2, chosen: bool, ink: Color32| {
+            theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
+            let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
+            if t > 0.0 {
+                ui.painter().circle_stroke(
+                    center,
+                    diameter / 2.0 + 4.0,
+                    Stroke::new(2.0, ink.gamma_multiply(t)),
+                );
+            } else if response.hovered() {
+                ui.painter().circle_stroke(
+                    center,
+                    diameter / 2.0 + 4.0,
+                    Stroke::new(1.0, palette.secondary),
+                );
+            }
+        };
 
     // The cluster of dots that opens the wheel.
     let center = pos2(first, row.center().y);
@@ -925,12 +929,7 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
         }
         let label = crate::i18n::gettext(locale, accent.label());
         response.widget_info(|| {
-            egui::WidgetInfo::selected(
-                egui::WidgetType::RadioButton,
-                true,
-                chosen,
-                label.as_ref(),
-            )
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, label.as_ref())
         });
         if response
             .on_hover_text(label.as_ref())
@@ -1290,9 +1289,9 @@ fn doodles_body(ui: &mut egui::Ui, app: &mut App) {
                         tile == chosen,
                         &label,
                         tile_look.color,
-                        |ui, picture| match tile {
+                        |ui, picture, corners| match tile {
                             Doodle::Style(style) => {
-                                wallpaper::paint_doodles(ui, picture, &tile_look, style);
+                                wallpaper::paint_doodles(ui, picture, corners, &tile_look, style);
                             }
                             Doodle::None | Doodle::Photo => {
                                 let icon = if tile == Doodle::Photo {
@@ -1442,7 +1441,7 @@ fn doodle_strip(
                 apply(&mut look, value);
                 let painter = ui.painter();
                 painter.rect_filled(rect, 10.0, look.color);
-                wallpaper::paint_doodles(ui, rect.shrink2(vec2(8.0, 0.0)), &look, style);
+                wallpaper::paint_doodles(ui, rect, 10.0, &look, style);
                 painter.rect_stroke(
                     rect,
                     10.0,
@@ -1473,7 +1472,7 @@ fn tile_button(
     chosen: bool,
     label: &str,
     fill: Color32,
-    paint: impl FnOnce(&egui::Ui, Rect),
+    paint: impl FnOnce(&egui::Ui, Rect, CornerRadius),
 ) -> bool {
     let (rect, response) = ui.allocate_exact_size(TILE, Sense::click());
     theme::reveal_focus(&response);
@@ -1495,17 +1494,14 @@ fn tile_button(
             },
             palette.surface,
         );
-        painter.rect_filled(
-            picture,
-            CornerRadius {
-                nw: r,
-                ne: r,
-                sw: 0,
-                se: 0,
-            },
-            fill,
-        );
-        paint(&*ui, picture);
+        let corners = CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        };
+        painter.rect_filled(picture, corners, fill);
+        paint(&*ui, picture, corners);
         let color = if chosen { palette.accent } else { palette.text };
         let name = widgets::line(
             ui,

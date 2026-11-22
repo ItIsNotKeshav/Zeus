@@ -1184,7 +1184,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Keep running when the window closes"),
         translated(
             locale,
-            "Messages keep arriving after you quit. Use Quit completely to end the process."
+            "Messages keep arriving after you quit. Use Quit completely to end the process.",
         ),
         |settings| &mut settings.keep_running_in_background,
     );
@@ -2398,7 +2398,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                         vec2(preview_width, (body_height - HEADER_HEIGHT).max(0.0)),
                     );
                     // The same look the chat draws, image and theme colour included.
-                    wallpaper::paint_rect(ui, preview, &app.wallpaper());
+                    wallpaper::paint_in(ui, preview, &app.wallpaper(), 0.0);
                     wallpaper_sample_bubbles(ui, &palette, preview);
                 },
             );
