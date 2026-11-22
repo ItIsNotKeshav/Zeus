@@ -553,9 +553,10 @@ fn sync_mark(app: &App, ui: &mut egui::Ui, width: f32) {
     let shown = theme::animate(&ctx, sync_mark_id(), status.is_some(), theme::MOTION_PANEL);
     let (rect, response) = ui.allocate_exact_size(vec2(width, TITLE_HEIGHT), Sense::hover());
     if let Some((text, _)) = &status {
-        ctx.data_mut(|data| {
-            data.insert_temp(super::sync_mark_drawn_id(), ctx.cumulative_frame_nr())
-        });
+        // Read the frame first: asking the context inside its own data lock
+        // would wait on itself forever.
+        let frame = ctx.cumulative_frame_nr();
+        ctx.data_mut(|data| data.insert_temp(super::sync_mark_drawn_id(), frame));
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
         response.on_hover_text(text.as_str());
     }
