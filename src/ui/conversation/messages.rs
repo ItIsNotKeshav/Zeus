@@ -33,7 +33,7 @@ pub(super) fn leaving_rows(
             ui,
             id,
             crate::ui::leaving::progress(ghost, now),
-            message.from_me,
+            view.on_right(message),
             |ui| {
                 let mut dropped = Vec::new();
                 bubble(

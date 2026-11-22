@@ -273,7 +273,7 @@ pub(super) fn bubble_arriving(
         .ctx()
         .data(|data| data.get_temp::<Rect>(bubble_id(&view.chat.id, &message.id).with("rect")))
         .unwrap_or(row.response.rect);
-    let pivot = if message.from_me {
+    let pivot = if view.on_right(message) {
         bubble.right_bottom()
     } else {
         bubble.left_bottom()
@@ -403,12 +403,16 @@ pub(super) fn bubble_row(
         shows_time,
     } = place;
     let own = message.from_me;
+    // Which side the row hugs: ours on the right, unless Settings put them on
+    // the left in a group, where they keep the avatars' room clear so they
+    // line up with everyone else's.
+    let right = view.on_right(message);
     // Greys that read on the panel can vanish on the bubble; use its own.
     let view = &View {
         palette: view.palette.on_bubble(own),
         ..*view
     };
-    let with_avatar = !own && shows_sender_pictures(view.chat);
+    let with_avatar = !right && shows_sender_pictures(view.chat);
     let carousel = matches!(&message.content, Content::Interactive { card: Some(card), .. } if !card.carousel.is_empty());
     let mut max_width = if carousel {
         (ui.available_width() * 0.95).min(920.0)
@@ -445,7 +449,7 @@ pub(super) fn bubble_row(
     }
     let mut response = None;
     ui.with_layout(
-        Layout::top_down(if own { Align::Max } else { Align::Min }),
+        Layout::top_down(if right { Align::Max } else { Align::Min }),
         |ui| {
             if with_avatar {
                 ui.horizontal_top(|ui| {
@@ -466,7 +470,8 @@ pub(super) fn bubble_row(
                             actions,
                         ));
                     });
-                    if !show_avatar {
+                    // Our own on the left keep the avatar's room, without one.
+                    if !show_avatar || own {
                         return;
                     }
                     // Messages and Nothing put the avatar beside the run's last
@@ -543,7 +548,7 @@ pub(super) fn bubble_row(
                 } else {
                     0.0
                 };
-                let layout = if own {
+                let layout = if right {
                     Layout::left_to_right(Align::Center)
                 } else {
                     Layout::right_to_left(Align::Center)
@@ -554,7 +559,7 @@ pub(super) fn bubble_row(
                         .iter()
                         .filter(|member| !member.reactions.is_empty())
                         .collect::<Vec<_>>();
-                    if !own {
+                    if !right {
                         shown.reverse();
                     }
                     for member in shown {
@@ -879,7 +884,7 @@ pub(super) fn reference_timestamp(
     // (a two-letter reply) lets it reach past the bubble's inner edge instead
     // of cutting it short.
     let x = bubble.map_or(available.x_range(), |bubble| bubble.x_range());
-    let x = if own {
+    let x = if view.on_right(message) {
         widen_to(x, needed, available.x_range())
     } else {
         let right = (x.min + needed).max(x.max).min(available.right());
@@ -907,7 +912,7 @@ pub(super) fn reference_timestamp(
         egui::UiBuilder::new()
             .id_salt(id)
             .max_rect(row_rect)
-            .layout(if own {
+            .layout(if view.on_right(message) {
                 Layout::right_to_left(Align::Center)
             } else {
                 Layout::left_to_right(Align::Center)
@@ -1847,7 +1852,7 @@ pub(super) fn editing_label(
         .zip(ctx.data(|data| data.get_temp::<Rect>(editor.with("rect"))))
         .map_or(at, |(bubble, before)| bubble.translate(at.min - before.min));
     ctx.data_mut(|data| data.insert_temp(editor.with("rect"), at));
-    let (anchor, pivot) = if message.from_me {
+    let (anchor, pivot) = if view.on_right(message) {
         (bubble.right_top(), egui::Align2::RIGHT_BOTTOM)
     } else {
         (bubble.left_top(), egui::Align2::LEFT_BOTTOM)
