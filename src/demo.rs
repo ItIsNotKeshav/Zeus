@@ -17583,6 +17583,17 @@ mod tests {
                 (gap - crate::ui::conversation::COMPOSER_TEXT_GAP).abs() < 0.5,
                 "{draft:?}: the text starts {gap} after the emoji button"
             );
+            // The button sits as far from the field's edge as from the text.
+            let pill = ctx
+                .data(|data| {
+                    data.get_temp::<egui::Rect>(crate::ui::conversation::composer_pill_id())
+                })
+                .expect("the field is drawn");
+            let lead = emoji.left() - pill.left();
+            assert!(
+                (lead - gap).abs() < 0.5,
+                "{draft:?}: the emoji button is {lead} from the field's edge and {gap} from the text"
+            );
         }
     }
 

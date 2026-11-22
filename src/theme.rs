@@ -1171,6 +1171,8 @@ pub const RADIUS_CONTROL: u8 = 12;
 pub const RADIUS: u8 = 14;
 /// Menus and popovers: [`RADIUS`] around a menu item, plus the menu's margin.
 pub const RADIUS_MENU: u8 = 20;
+/// Corner radius of every hover tooltip.
+pub const TOOLTIP_RADIUS: u8 = 8;
 /// Cards: settings groups, call tiles, previews.
 pub const RADIUS_CARD: u8 = 20;
 /// Dialogs and the larger surfaces that float over the window.
@@ -1320,9 +1322,14 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     visuals.selection.stroke = Stroke::new(FOCUS_STROKE_WIDTH, palette.accent);
     visuals.window_stroke = Stroke::new(1.0, palette.outline);
     visuals.window_corner_radius = CornerRadius::same(RADIUS_DIALOG);
-    visuals.menu_corner_radius = CornerRadius::same(RADIUS_MENU);
     visuals.window_shadow = palette.modal_shadow();
-    visuals.popup_shadow = palette.float_shadow();
+    // egui frames every tooltip from the global popup style. Each of our
+    // menus brings its own frame ([`crate::ui::widgets::menu_frame`]), so
+    // these values are the tooltips' alone, and give them all one look: a
+    // small label with control-sized corners, a hairline, and a near, faint
+    // shadow rather than a menu's pill corners and depth.
+    visuals.menu_corner_radius = CornerRadius::same(TOOLTIP_RADIUS);
+    visuals.popup_shadow = palette.tip_shadow();
     let corner = CornerRadius::same(RADIUS_CONTROL);
     for widget in [
         &mut visuals.widgets.inactive,
@@ -1365,7 +1372,10 @@ pub fn apply(ctx: &egui::Context, palette: &Palette) {
     style.spacing.item_spacing = Vec2::new(8.0, 6.0);
     style.spacing.button_padding = Vec2::new(12.0, 6.0);
     style.spacing.interact_size = Vec2::new(40.0, 28.0);
-    style.spacing.menu_margin = egui::Margin::same(6);
+    // The tooltips' padding (see `menu_corner_radius` above), and the width
+    // past which a long one wraps.
+    style.spacing.menu_margin = egui::Margin::symmetric(10, 6);
+    style.spacing.tooltip_width = 280.0;
     style.spacing.window_margin = egui::Margin::same(16);
     style.spacing.scroll = egui::style::ScrollStyle {
         bar_width: 8.0,

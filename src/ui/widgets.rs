@@ -2125,17 +2125,53 @@ pub fn chip_scroll_row<R>(
     id_salt: &str,
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::scroll_area::ScrollAreaOutput<R> {
-    ui.scope(|ui| {
-        ui.style_mut().always_scroll_the_only_direction = true;
-        egui::ScrollArea::horizontal()
-            .id_salt(id_salt)
-            .animated(false)
-            .auto_shrink([false, true])
-            // The fade at the cut edge says the row scrolls on; a bar is noise.
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            .show(ui, add_contents)
-    })
-    .inner
+    let output = ui
+        .scope(|ui| {
+            ui.style_mut().always_scroll_the_only_direction = true;
+            egui::ScrollArea::horizontal()
+                .id_salt(id_salt)
+                .animated(false)
+                .auto_shrink([false, true])
+                // The fade at the cut edge says the row scrolls on; a bar is noise.
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, add_contents)
+        })
+        .inner;
+    wheel_sideways(ui.ctx(), &output);
+    output
+}
+
+/// Scrolls a chip row by the wheel or touchpad under the pointer, sideways
+/// or up and down, as egui would. egui gives a scroll area the wheel only
+/// when the pointer is over its layer as an `Area`, and the chat list's
+/// frosted header puts its chips on a layer of its own that is none: the
+/// wheel went to the list under it, and the chips never moved. Whatever
+/// egui already used is gone from the delta, so nothing scrolls twice.
+fn wheel_sideways<R>(ctx: &egui::Context, output: &egui::scroll_area::ScrollAreaOutput<R>) {
+    let Some(pointer) = ctx.pointer_hover_pos() else {
+        return;
+    };
+    if !output.inner_rect.contains(pointer)
+        || egui::Popup::is_any_open(ctx)
+        || ctx.dragged_id().is_some()
+    {
+        return;
+    }
+    let delta = ctx.input(|input| input.smooth_scroll_delta.x + input.smooth_scroll_delta.y);
+    if delta == 0.0 {
+        return;
+    }
+    let room = (output.content_size.x - output.inner_rect.width()).max(0.0);
+    let mut state = output.state;
+    let offset = (state.offset.x - delta).clamp(0.0, room);
+    if (offset - state.offset.x).abs() < f32::EPSILON {
+        // At its end: the list below takes the rest, as egui's rows do.
+        return;
+    }
+    state.offset.x = offset;
+    state.store(ctx, output.id);
+    ctx.input_mut(|input| input.smooth_scroll_delta = Vec2::ZERO);
+    ctx.request_repaint();
 }
 
 /// A hairline in the palette's outline colour along the bottom `edge` of a

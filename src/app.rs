@@ -1820,6 +1820,18 @@ impl App {
             .fold(0, u32::saturating_add)
     }
 
+    /// The unread chat count the app's icons wear (taskbar, Dock and tray):
+    /// unread chats in the accounts whose desktop notifications are on. An
+    /// account with them off adds nothing, so with every account quiet the
+    /// icons carry no badge at all.
+    pub fn icon_badge_count(&self) -> u32 {
+        self.accounts
+            .iter()
+            .filter(|account| account.settings.notifications)
+            .map(Account::unread_chat_count)
+            .fold(0, u32::saturating_add)
+    }
+
     /// Unread chats in the accounts that are not on screen, for the mark on
     /// the account switcher.
     pub fn unread_chat_count_elsewhere(&self) -> u32 {
@@ -2264,7 +2276,7 @@ impl App {
             }
         }
         // The same count as the taskbar's; a new icon only when it shows.
-        let count = self.unread_chat_count_everywhere();
+        let count = self.icon_badge_count();
         let level = crate::util::tray_badge_level(count);
         if level != self.tray_badge
             && let Some(tray) = &mut self.tray
@@ -7097,7 +7109,7 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::Icon(Some(std::sync::Arc::new(
             crate::app_icons::window_icon(icon),
         ))));
-        let count = self.unread_chat_count_everywhere();
+        let count = self.icon_badge_count();
         if let Some(tray) = &mut self.tray {
             let (icon, template) = crate::util::tray_icons(count);
             tray.set_icon(icon, Some(template));
@@ -11023,9 +11035,9 @@ impl App {
     }
 
     /// Mirrors the unread chat count onto the taskbar icon, where the desktop
-    /// reads it. The badge ignores repeats, so calling this each frame is cheap.
+    /// reads it, leaving out accounts with desktop notifications off. The badge ignores repeats, so calling this each frame is cheap.
     fn sync_badge(&mut self) {
-        let count = self.unread_chat_count_everywhere();
+        let count = self.icon_badge_count();
         if let Some(badge) = &mut self.badge {
             badge.set(count);
         }
@@ -14541,6 +14553,21 @@ mod tests {
         assert_eq!(app.unread_chat_count(), 1);
         assert_eq!(app.unread_chat_count_everywhere(), 3);
         assert_eq!(app.unread_chat_count_elsewhere(), 2);
+        assert_eq!(app.icon_badge_count(), 3);
+        // An account with desktop notifications off leaves the icon's badge.
+        app.accounts[1].settings.notifications = false;
+        assert_eq!(app.icon_badge_count(), 1);
+        app.accounts[0].settings.notifications = false;
+        assert_eq!(
+            app.icon_badge_count(),
+            0,
+            "no badge with every account quiet"
+        );
+        assert_eq!(
+            app.unread_chat_count_everywhere(),
+            3,
+            "the lists still count"
+        );
     }
 
     #[test]
