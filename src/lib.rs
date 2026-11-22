@@ -54,6 +54,7 @@ pub mod notify;
 pub mod opener;
 pub mod pacing;
 pub mod paths;
+pub mod pdf;
 pub mod privacy;
 pub mod proxy;
 pub mod qr;

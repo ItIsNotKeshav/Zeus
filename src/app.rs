@@ -709,6 +709,8 @@ pub struct App {
     /// wherever the pointer rests.
     #[cfg(any(test, feature = "demo"))]
     pub demo_carry: Option<String>,
+    /// What the demo's PDF viewer searches for as it opens.
+    pub demo_pdf_search: Option<String>,
     /// Demo/test: keep the open chat's header menu open.
     #[cfg(any(test, feature = "demo"))]
     pub open_header_menu: Option<ChatId>,
@@ -756,6 +758,11 @@ pub struct App {
     pauses_media: bool,
     /// Image currently shown in the native preview.
     pub image_preview: Option<PreviewState>,
+    /// A PDF from a chat, read in the app's own viewer.
+    pub pdf_viewer: Option<crate::pdf::Viewer>,
+    /// The viewer just closed and when, kept until it has faded out so the
+    /// fade still has its pages to draw.
+    pub pdf_retired: Option<(f64, crate::pdf::Viewer)>,
     /// The motion photo whose clip plays over it: its chat and message.
     pub motion_playing: Option<(ChatId, String)>,
     /// Sticker currently shown large.
@@ -1653,6 +1660,7 @@ impl App {
             open_chat_menu: None,
             #[cfg(any(test, feature = "demo"))]
             demo_carry: None,
+            demo_pdf_search: None,
             #[cfg(any(test, feature = "demo"))]
             open_header_menu: None,
             #[cfg(any(test, feature = "demo"))]
@@ -1675,6 +1683,8 @@ impl App {
             media_hold: None,
             pauses_media: false,
             image_preview: None,
+            pdf_viewer: None,
+            pdf_retired: None,
             motion_playing: None,
             sticker_view: None,
             viewer_media: Vec::new(),
@@ -2028,6 +2038,7 @@ impl App {
         self.voice_wanted = None;
         self.recording = None;
         self.image_preview = None;
+        self.pdf_viewer = None;
         self.viewer_media.clear();
         self.viewer_media_chat = None;
         self.viewer_media_state.clear();
@@ -2739,6 +2750,13 @@ impl App {
         }
         if self.image_preview.as_ref().map(PreviewState::chat) == Some(id) {
             self.image_preview = None;
+        }
+        if self
+            .pdf_viewer
+            .as_ref()
+            .is_some_and(|viewer| viewer.chat == id)
+        {
+            self.pdf_viewer = None;
         }
         if matches!(
             &self.dialog,
@@ -3884,6 +3902,14 @@ impl App {
                 {
                     self.image_preview = None;
                 }
+                if !self.events_hidden
+                    && self.pdf_viewer.as_ref().is_some_and(|viewer| {
+                        self.chat(&viewer.chat)
+                            .is_none_or(|chat| chat.locked && !self.locked_folder_open())
+                    })
+                {
+                    self.pdf_viewer = None;
+                }
                 if let Some(open) = self.open_chat.clone() {
                     if self.chat(&open).is_none_or(|chat| chat.locked) {
                         if live {
@@ -5028,6 +5054,7 @@ impl App {
                     // to the account that left: close it and release the clip.
                     self.video.stop();
                     self.image_preview = None;
+                    self.pdf_viewer = None;
                     self.viewer_media.clear();
                     self.viewer_media_chat = None;
                     self.viewer_media_state.clear();
@@ -8092,6 +8119,44 @@ impl App {
                     }
                 }
             }
+            Action::ViewDocument {
+                path,
+                title,
+                chat,
+                message,
+            } => self.view_document(path, title, chat, message, ctx),
+            Action::ClosePdf => {
+                if let Some(viewer) = self.pdf_viewer.take() {
+                    viewer.stop();
+                    crate::ui::pdf::forget(ctx, &viewer);
+                    self.pdf_retired = Some((ctx.input(|input| input.time), viewer));
+                }
+                self.refocus_composer(ctx);
+            }
+            Action::FindInPdf => {
+                if let Some(viewer) = &mut self.pdf_viewer
+                    && !matches!(viewer.load, crate::pdf::Load::Failed(_))
+                {
+                    viewer.search.open = true;
+                    viewer.search.focus = true;
+                    viewer.start_text();
+                }
+            }
+            Action::ClosePdfSearch => {
+                if let Some(viewer) = &mut self.pdf_viewer {
+                    viewer.search.open = false;
+                }
+            }
+            Action::ZoomPdf(factor) => {
+                if let Some(viewer) = &mut self.pdf_viewer {
+                    let zoom = if factor > 0.0 {
+                        viewer.zoom * factor
+                    } else {
+                        1.0
+                    };
+                    viewer.set_zoom(zoom, ctx.input(|input| input.time));
+                }
+            }
             Action::OpenLog(path) => self.backend.send(Command::OpenLog(path)),
             Action::ExportChat {
                 chat,
@@ -10738,6 +10803,7 @@ impl App {
             || self.video.is_active()
             || self.motion_playing.is_some()
             || self.image_preview.is_some()
+            || self.pdf_viewer.is_some()
             || self.sticker_view.is_some()
             || self.picture_edit.is_some()
             || self.sticker_draft.is_some()
@@ -11246,6 +11312,53 @@ impl App {
         }
     }
 
+    /// Opens a downloaded document: a PDF in the app's own viewer, which
+    /// reads it in the background and says so if it cannot, and anything
+    /// else (or a file that will not read) in its default app.
+    fn view_document(
+        &mut self,
+        path: PathBuf,
+        title: String,
+        chat: ChatId,
+        message: String,
+        ctx: &egui::Context,
+    ) {
+        if !(path.is_file() && crate::pdf::sniff(&path)) {
+            self.actions.push(Action::OpenFile(path));
+            return;
+        }
+        let title = if title.trim().is_empty() {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        } else {
+            title
+        };
+        match crate::pdf::Viewer::open(path.clone(), title, chat, message, ctx) {
+            Ok(mut viewer) => {
+                if let Some(query) = self.demo_pdf_search.take() {
+                    viewer.search.query = query;
+                    viewer.search.open = true;
+                }
+                self.pdf_viewer = Some(viewer);
+                self.pdf_retired = None;
+                self.dialog = None;
+                self.picker = None;
+                // As with the media viewer: a focused composer would take
+                // Enter until the modal has been shown once.
+                ctx.memory_mut(|memory| {
+                    if let Some(focused) = memory.focused() {
+                        memory.surrender_focus(focused);
+                    }
+                });
+            }
+            Err(error) => {
+                log::warn!("could not read a document: {error}");
+                self.actions.push(Action::OpenFile(path));
+            }
+        }
+    }
+
     /// Opens the full-window viewer on `preview`, and asks for the album
     /// around it, so stepping through the chat's photos and clips works from
     /// the first frame.
@@ -11571,6 +11684,7 @@ impl App {
             // must not follow the fingers.
             let covered = self.dialog.is_some()
                 || self.image_preview.is_some()
+                || self.pdf_viewer.is_some()
                 || egui::Popup::is_any_open(ctx);
             crate::ui::swipe::update(ctx, covered);
             Self::paste_shift_insert(ctx);
@@ -11933,6 +12047,7 @@ impl App {
             && self.chat_view()
             && self.dialog.is_none()
             && self.image_preview.is_none()
+            && self.pdf_viewer.is_none()
             && self.picker.is_none()
             && self.reaction_target.is_none()
             && self.recording.is_none()

@@ -405,6 +405,7 @@ impl App {
                 | Action::OpenUrl(_)
                 | Action::CopyText(_)
                 | Action::OpenFile(_)
+                | Action::ViewDocument { .. }
                 | Action::OpenFolder(_)
                 // Messages carried out of it, or into it from another window.
                 | Action::ForwardDropped { .. }

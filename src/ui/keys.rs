@@ -21,6 +21,10 @@ pub fn handle(app: &mut App, ctx: &egui::Context) {
         preview_keys(app, ctx);
         return;
     }
+    if app.pdf_viewer.is_some() {
+        pdf_keys(app, ctx);
+        return;
+    }
     if app.sticker_view.is_some() {
         sticker_view_keys(app, ctx);
         return;
@@ -520,6 +524,57 @@ fn preview_keys(app: &mut App, ctx: &egui::Context) {
         input
             .events
             .retain(|event| !crate::image_preview::consumes_key(event));
+    });
+    app.actions.extend(actions);
+}
+
+/// Handles keys while a PDF is open. No chat shortcut runs. Escape closes
+/// the search, then the viewer; Ctrl+F searches; Ctrl with +, - and 0
+/// zooms, as in the media viewer. Typing reaches the search field when it
+/// has the keyboard and nothing else; the arrows, Page Up and Down, Space,
+/// Home and End are left for the pages to scroll by.
+fn pdf_keys(app: &mut App, ctx: &egui::Context) {
+    let searching = app
+        .pdf_viewer
+        .as_ref()
+        .is_some_and(|viewer| viewer.search.open);
+    let typing = ctx.text_edit_focused();
+    let mut actions = Vec::new();
+    ctx.input_mut(|input| {
+        if input.consume_key(Modifiers::NONE, Key::Escape) {
+            actions.push(if searching {
+                Action::ClosePdfSearch
+            } else {
+                Action::ClosePdf
+            });
+        }
+        if input.consume_key(Modifiers::COMMAND, Key::F) {
+            actions.push(Action::FindInPdf);
+        }
+        let mut zooms = Vec::new();
+        for event in &input.events {
+            if let egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } = event
+                && (modifiers.command || modifiers.ctrl)
+            {
+                match key {
+                    Key::Plus | Key::Equals => zooms.push(Action::ZoomPdf(crate::pdf::ZOOM_STEP)),
+                    Key::Minus => zooms.push(Action::ZoomPdf(1.0 / crate::pdf::ZOOM_STEP)),
+                    Key::Num0 => zooms.push(Action::ZoomPdf(0.0)),
+                    _ => {}
+                }
+            }
+        }
+        actions.extend(zooms);
+        if !typing {
+            input
+                .events
+                .retain(|event| !crate::image_preview::consumes_key(event));
+        }
     });
     app.actions.extend(actions);
 }
