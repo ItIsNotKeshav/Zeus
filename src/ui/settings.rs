@@ -1410,6 +1410,14 @@ fn sections(app: &App) -> Vec<Section> {
         ),
         |settings| &mut settings.chat_bubbles,
     );
+    experimental.toggle(
+        translated(locale, "Your messages on the left in groups"),
+        translated(
+            locale,
+            "In group chats, your messages line up on the left with everyone else's.",
+        ),
+        |settings| &mut settings.own_messages_left_in_groups,
+    );
 
     let mut about_section = Section::new(translated(locale, "About"));
     about_section.block(

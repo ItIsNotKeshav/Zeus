@@ -2907,6 +2907,9 @@ struct View<'a> {
     /// Whether the time and ticks sit inside every bubble. The Nothing
     /// style leaves them below the bubble unless Always show time is on.
     time_inside: bool,
+    /// Our own messages sit on the left with everyone else's: Settings'
+    /// experimental choice, in a group chat.
+    own_left: bool,
     video: &'a crate::video::Player,
     copy_rows: Option<&'a std::sync::Mutex<Vec<crate::transcript::Row>>>,
     /// What touchpad swipes do in the open chat; only a reply is the
@@ -2916,6 +2919,15 @@ struct View<'a> {
     /// out, so the list can rise for a new message in a wave, each row a
     /// little after the one below it.
     rows: Option<&'a std::cell::RefCell<Vec<f32>>>,
+}
+
+impl View<'_> {
+    /// Whether `message` sits on the transcript's right: ours, unless
+    /// Settings put our own on the left in a group chat ([`View::own_left`]).
+    /// Colours and what a message can do still follow who sent it.
+    fn on_right(&self, message: &Message) -> bool {
+        message.from_me && !self.own_left
+    }
 }
 
 pub(super) fn album_id(message: &Message) -> Option<&str> {
@@ -3259,6 +3271,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
         // Times sit in each bubble only when asked for; otherwise under the
         // newest message, in a line where a pause ends, and on hover.
         time_inside: app.settings.always_show_time,
+        own_left: app.settings.own_messages_left_in_groups && chat.is_group(),
         video: &app.video,
         // Whole-message exports are already formatted. Do not let the
         // text-selection annotator reinterpret them as drawn body text.
@@ -4001,7 +4014,7 @@ fn messages(app: &mut App, ui: &mut egui::Ui, chat: &Chat, under: f32, over: f32
                         // moves is laid out at once where it goes and drawn
                         // sliding there from where it was, so no text is laid
                         // out again at a width that changes every frame.
-                        let column_shift = select_motion.row_shift(message.from_me);
+                        let column_shift = select_motion.row_shift(view.on_right(message));
                         if column_shift != 0.0 {
                             let layer = ui.layer_id();
                             ui.ctx().graphics_mut(|graphics| {
@@ -5021,7 +5034,7 @@ fn reaction_affordance(
     if matches!(message.content, Content::Call { .. }) {
         return;
     }
-    let rect = reaction_affordance_rect(shown, bounds, message.from_me);
+    let rect = reaction_affordance_rect(shown, bounds, view.on_right(message));
     let pointer = ui.input(|input| input.pointer.interact_pos());
     // Stay hidden under any floating layer, as the context menu does. The
     // affordance sits beside the bubble, so test the bubble itself rather than
@@ -5877,6 +5890,8 @@ fn bubble_frame(
 ) -> egui::Response {
     let palette = view.palette;
     let own = message.from_me;
+    // The side the bubble's tail and tighter corners face.
+    let right = view.on_right(message);
     let fill = if bubbleless(&palette, message) {
         Color32::TRANSPARENT
     } else if own {
@@ -5894,7 +5909,7 @@ fn bubble_frame(
     let early = previous.map(|rect| ui.interact(rect, bubble_id, Sense::CLICK));
     // Painted once the contents are measured, beneath them.
     let backdrop = ui.painter().add(egui::Shape::Noop);
-    let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if own {
+    let tail = (tailed && fill != Color32::TRANSPARENT).then_some(if right {
         widgets::Side::Right
     } else {
         widgets::Side::Left
@@ -5913,7 +5928,7 @@ fn bubble_frame(
             message,
             fill,
             tail,
-            own,
+            right,
             first_in_run,
             last_in_run,
         );
@@ -6056,7 +6071,13 @@ fn bubble_frame(
     };
     if fill != Color32::TRANSPARENT && ui.is_rect_visible(inner.response.rect) {
         let mut shape = if palette.bubbles == theme::BubbleStyle::Nothing {
-            widgets::grouped_bubble_shape(inner.response.rect, fill, own, first_in_run, last_in_run)
+            widgets::grouped_bubble_shape(
+                inner.response.rect,
+                fill,
+                right,
+                first_in_run,
+                last_in_run,
+            )
         } else {
             widgets::bubble_shape(
                 &palette,
@@ -6073,7 +6094,7 @@ fn bubble_frame(
             shade_shape(&mut shape, shade);
         }
         let corners = (palette.bubbles == theme::BubbleStyle::Nothing)
-            .then(|| widgets::grouped_bubble_corners(own, first_in_run, last_in_run));
+            .then(|| widgets::grouped_bubble_corners(right, first_in_run, last_in_run));
         let shape = widgets::bubble_relief(&palette, inner.response.rect, tail, corners, shape);
         ui.painter().set(backdrop, shape);
     } else if shade > 0.0
@@ -6104,7 +6125,7 @@ fn bubble_frame(
         message,
         fill,
         tail,
-        own,
+        right,
         first_in_run,
         last_in_run,
     );
@@ -7514,7 +7535,7 @@ fn reactions(ui: &mut egui::Ui, view: &View<'_>, message: &Message, actions: &mu
     if let Some((spring, arrived, _)) = progress {
         let from = if arrived { 0.8 } else { 0.92 };
         let scale = from + (1.0 - from) * spring;
-        let pivot = if message.from_me {
+        let pivot = if view.on_right(message) {
             rect.right_bottom()
         } else {
             rect.left_bottom()
@@ -7673,6 +7694,7 @@ pub(crate) fn list_menu(
         player: &app.player,
         voice_speed: app.voice_speed_in(Some(&chat.id)),
         time_inside: app.settings.always_show_time,
+        own_left: app.settings.own_messages_left_in_groups && chat.is_group(),
         video: &app.video,
         account_receipts_off: app.account_receipts_off,
         copy_rows: Some(app.copy_rows.as_ref()),
@@ -7746,6 +7768,7 @@ pub(crate) fn still_transcript(
         player: &app.player,
         voice_speed: app.settings.voice_speed,
         time_inside: app.settings.always_show_time,
+        own_left: app.settings.own_messages_left_in_groups && chat.is_group(),
         video: &app.video,
         copy_rows: None,
         // Two fingers across it slide nothing.
@@ -8930,7 +8953,7 @@ fn content(
                 theme::icon(ui, Icon::Contact, 18.0, palette.accent);
             };
             let details = shared_contact_details(vcard, display_name);
-            mirrored_row(ui, own, icon, |ui| {
+            mirrored_row(ui, view.on_right(message), icon, |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 5.0;
                     let name = details
@@ -9006,7 +9029,7 @@ fn content(
             let icon = |ui: &mut egui::Ui| {
                 theme::icon(ui, Icon::Sticker, 20.0, palette.accent);
             };
-            mirrored_row(ui, own, icon, |ui| {
+            mirrored_row(ui, view.on_right(message), icon, |ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     widgets::rich_text(ui, name, theme::medium(theme::TEXT_BODY), palette.text);
@@ -9113,7 +9136,7 @@ fn content(
         } => {
             mirrored_row(
                 ui,
-                own,
+                view.on_right(message),
                 |ui| {
                     theme::icon(ui, Icon::MapPin, 18.0, palette.accent);
                 },
@@ -9170,7 +9193,7 @@ fn content(
             };
             mirrored_row(
                 ui,
-                own,
+                view.on_right(message),
                 |ui| {
                     theme::icon(ui, Icon::Smartphone, 14.0, palette.dim);
                 },
@@ -9188,7 +9211,7 @@ fn content(
         Content::Unsupported { what } => {
             mirrored_row(
                 ui,
-                own,
+                view.on_right(message),
                 |ui| {
                     theme::icon(ui, Icon::CircleAlert, 14.0, palette.dim);
                 },
@@ -13842,6 +13865,7 @@ mod tests {
             player: &app.player,
             voice_speed: app.settings.voice_speed,
             time_inside: app.settings.always_show_time,
+            own_left: false,
             video: &app.video,
             account_receipts_off: false,
             copy_rows: Some(app.copy_rows.as_ref()),

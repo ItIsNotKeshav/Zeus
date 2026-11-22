@@ -994,6 +994,9 @@ fn glass_wave(ui: &mut egui::Ui, app: &mut App) {
     let reduced = crate::backdrop::system_reduces_transparency();
     let mut tint = if reduced { 1.0 } else { app.settings.glass };
     let label = crate::i18n::gettext(app.locale, "Glass").into_owned();
+    // Named above it, as the App icon block is, so the wave reads as a setting.
+    widgets::rich_text(ui, &label, theme::medium(theme::TEXT_BODY), palette.text);
+    ui.add_space(theme::SPACE_XS);
     let response = ui
         .add_enabled_ui(!reduced, |ui| {
             track_slider(
