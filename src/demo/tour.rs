@@ -2002,13 +2002,9 @@ mod tests {
         // categories have to share one frame for the order to mean anything.
         // Last seen stays inside that fold until it opens.
         let on_screen = |tour: &Tour| {
-            [
-                "Privacy",
-                "Show when you are typing",
-                "Who can see my info",
-            ]
-            .iter()
-            .all(|label| tour.labels.contains_key(*label))
+            ["Privacy", "Show when you are typing", "Who can see my info"]
+                .iter()
+                .all(|label| tour.labels.contains_key(*label))
         };
         let mut frames = 0;
         while !on_screen(&tour) && frames < 40 {

@@ -515,11 +515,75 @@ fn header_row(app: &mut App, ui: &mut egui::Ui, macos: bool) {
     } else {
         // The menu's hover plate reaches a little before its text.
         ui.add_space((lead - TITLE_INSET).max(0.0));
-        title_menu(app, ui, buttons_width, macos);
+        let mark = sync_mark_width(app, ui.ctx());
+        title_menu(app, ui, buttons_width + mark, macos);
+        sync_mark(app, ui, mark);
     }
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
         header_button_row(app, ui, &buttons, macos);
     });
+}
+
+/// The sync mark's icon, and the room it takes after the title.
+const SYNC_MARK_ICON: f32 = 16.0;
+const SYNC_MARK_ROOM: f32 = 24.0;
+
+fn sync_mark_id() -> egui::Id {
+    egui::Id::new("chat-list-sync-mark")
+}
+
+/// How much of the row the sync mark takes this frame: all of its room
+/// while it shows or fades, none once it has gone.
+fn sync_mark_width(app: &App, ctx: &egui::Context) -> f32 {
+    let busy = super::sync_status(app).is_some();
+    let shown = theme::animate(ctx, sync_mark_id(), busy, theme::MOTION_PANEL);
+    if shown > 0.0 { SYNC_MARK_ROOM } else { 0.0 }
+}
+
+/// A refresh icon after the Chats title that turns while the link connects
+/// or loads the phone's history, fading in and out as that starts and ends,
+/// in place of a toast. Its tooltip says what it waits for. `width` is the
+/// room [`sync_mark_width`] gave it.
+fn sync_mark(app: &App, ui: &mut egui::Ui, width: f32) {
+    if width <= 0.0 {
+        return;
+    }
+    let ctx = ui.ctx().clone();
+    let status = super::sync_status(app);
+    let shown = theme::animate(&ctx, sync_mark_id(), status.is_some(), theme::MOTION_PANEL);
+    let (rect, response) = ui.allocate_exact_size(vec2(width, TITLE_HEIGHT), Sense::hover());
+    if let Some((text, _)) = &status {
+        ctx.data_mut(|data| {
+            data.insert_temp(super::sync_mark_drawn_id(), ctx.cumulative_frame_nr())
+        });
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+        response.on_hover_text(text.as_str());
+    }
+    if !ui.is_rect_visible(rect) || shown <= 0.0 {
+        return;
+    }
+    let palette = app.palette;
+    let color = match status {
+        Some((_, false)) => palette.secondary,
+        _ => palette.accent,
+    };
+    let icon = Rect::from_center_size(
+        pos2(rect.left() + SYNC_MARK_ICON / 2.0 + 4.0, rect.center().y),
+        Vec2::splat(SYNC_MARK_ICON),
+    );
+    // A turn every second and a half, at the spinner's frame rate; still,
+    // and so asking for no frames, under reduced motion.
+    let angle = if crate::motion::reduced(&ctx) {
+        0.0
+    } else {
+        crate::motion::request_frame_after(&ctx, std::time::Duration::from_millis(33));
+        let time = ctx.input(|input| input.time);
+        (time * std::f64::consts::TAU / 1.5).rem_euclid(std::f64::consts::TAU) as f32
+    };
+    Icon::Refresh
+        .image(color.gamma_multiply(shown), SYNC_MARK_ICON)
+        .rotate(angle, Vec2::splat(0.5))
+        .paint_at(ui, icon);
 }
 
 /// How far into the header's first row its title starts: on the line of the

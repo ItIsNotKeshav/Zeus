@@ -1184,7 +1184,7 @@ fn sections(app: &App) -> Vec<Section> {
         translated(locale, "Keep running when the window closes"),
         translated(
             locale,
-            "Messages keep arriving after you quit. Use Quit completely to end the process."
+            "Messages keep arriving after you quit. Use Quit completely to end the process.",
         ),
         |settings| &mut settings.keep_running_in_background,
     );

@@ -336,7 +336,10 @@ mod tests {
     fn menu_uses_the_apps_close_quit_and_edit_paths() {
         assert!(matches!(action("close"), Some(Action::CloseWindow)));
         assert!(matches!(action("quit"), Some(Action::Quit)));
-        assert!(matches!(action("quit-completely"), Some(Action::QuitCompletely)));
+        assert!(matches!(
+            action("quit-completely"),
+            Some(Action::QuitCompletely)
+        ));
         assert!(matches!(action("show-window"), Some(Action::ShowWindow)));
         assert!(matches!(edit_event("copy"), Some(egui::Event::Copy)));
         assert!(

@@ -691,15 +691,13 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
         });
 }
 
-/// Connection and history-sync status, a small toast at the bottom left
-/// above `floor`, clear of the list's tab bar and the rail's buttons.
-/// Returns where it was drawn, if it was.
-fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> {
-    let palette = app.palette;
-    // An available release is the rail's ellipse, not this toast.
-    let (icon, text, color, retry) = match &app.link {
-        LinkStatus::Connected if app.syncing => (
-            Icon::Refresh,
+/// What the link is busy with while it connects or loads the phone's
+/// history, and whether it is the history (`true`) or the connection: the
+/// sync mark beside the chat list's title says it, and the banner when the
+/// list is not on screen. `None` once the link is idle or in trouble.
+pub(crate) fn sync_status(app: &App) -> Option<(String, bool)> {
+    match &app.link {
+        LinkStatus::Connected if app.syncing => Some((
             match app.sync_percent {
                 Some(percent) => {
                     crate::i18n::gettext(app.locale, "Loading chat history… {percent}%")
@@ -707,16 +705,45 @@ fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> 
                 }
                 None => crate::i18n::gettext(app.locale, "Loading chat history…").into_owned(),
             },
-            palette.accent,
-            false,
-        ),
-        LinkStatus::Connected => return None,
-        LinkStatus::Starting | LinkStatus::Connecting => (
-            Icon::Refresh,
+            true,
+        )),
+        LinkStatus::Starting | LinkStatus::Connecting => Some((
             crate::i18n::gettext(app.locale, "Connecting to WhatsApp…").into_owned(),
-            palette.secondary,
             false,
-        ),
+        )),
+        _ => None,
+    }
+}
+
+/// Where the chat list's sync mark records the frame it was last drawn in,
+/// so the banner leaves connecting and loading to it.
+pub(crate) fn sync_mark_drawn_id() -> egui::Id {
+    egui::Id::new("sync-mark-drawn")
+}
+
+/// Connection and history-sync status, a small toast at the bottom left
+/// above `floor`, clear of the list's tab bar and the rail's buttons.
+/// Connecting and loading history show there only while the chat list's
+/// sync mark is not on screen. Returns where it was drawn, if it was.
+fn banner(app: &mut App, ctx: &egui::Context, floor: f32) -> Option<egui::Rect> {
+    let palette = app.palette;
+    let marked = ctx
+        .data(|data| data.get_temp::<u64>(sync_mark_drawn_id()))
+        .is_some_and(|frame| frame + 1 >= ctx.cumulative_frame_nr());
+    // An available release is the rail's ellipse, not this toast.
+    let (icon, text, color, retry) = match &app.link {
+        LinkStatus::Connected | LinkStatus::Starting | LinkStatus::Connecting => {
+            let (text, history) = sync_status(app)?;
+            if marked {
+                return None;
+            }
+            let color = if history {
+                palette.accent
+            } else {
+                palette.secondary
+            };
+            (Icon::Refresh, text, color, false)
+        }
         LinkStatus::Disconnected { reason } => (
             Icon::WifiOff,
             crate::i18n::gettext(app.locale, "Offline ({reason}). Reconnecting…")
@@ -851,6 +878,19 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
     if app.toasts.is_empty() {
         return;
     }
+    toast_pill(app, ctx, floor);
+    // A plain note ("Copied") is the pill's; the stack keeps the toasts
+    // with something to read to the end or a button.
+    let stacked: Vec<usize> = app
+        .toasts
+        .iter()
+        .enumerate()
+        .filter(|(_, toast)| !plain_toast(toast))
+        .map(|(index, _)| index)
+        .collect();
+    if stacked.is_empty() {
+        return;
+    }
     let palette = app.palette;
     // Errors and undoable changes carry buttons, so the area must take
     // clicks while one is shown.
@@ -874,8 +914,9 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
         .interactable(has_buttons)
         .show(ctx, |ui| {
             ui.spacing_mut().item_spacing.y = 8.0;
-            let skip = app.toasts.len().saturating_sub(SHOWN_TOASTS);
-            for (index, toast) in app.toasts.iter().enumerate().skip(skip) {
+            let skip = stacked.len().saturating_sub(SHOWN_TOASTS);
+            for &index in &stacked[skip..] {
+                let toast = &app.toasts[index];
                 let error = toast.kind == ToastKind::Error;
                 // Errors stay until dismissed, so only info toasts leave.
                 // Slides in from below as it fades in, on the window's clock,
@@ -1043,6 +1084,90 @@ fn toasts(app: &mut App, ctx: &egui::Context, floor: f32, status: Option<egui::R
             }
         });
     app.actions.extend(actions);
+}
+
+/// Whether `toast` is a plain note that fades on its own, with no button
+/// and nothing that must be read to the end: the pill's, not the stack's.
+fn plain_toast(toast: &crate::model::Toast) -> bool {
+    toast.kind == ToastKind::Info && toast.undo.is_empty() && toast.offer.is_none()
+}
+
+/// The widest the pill grows before its text wraps.
+const PILL_MAX_WIDTH: f32 = 320.0;
+
+/// The newest plain note ("Copied") as a small pill sized to its text,
+/// centred just above the open chat's composer, where the eye already is,
+/// or at the bottom centre of the window when no chat is open. It slides
+/// and fades in and out as the stacked toasts do.
+fn toast_pill(app: &App, ctx: &egui::Context, floor: f32) {
+    let Some(toast) = app.toasts.iter().rev().find(|toast| plain_toast(toast)) else {
+        return;
+    };
+    let palette = app.palette;
+    let content = ctx.content_rect();
+    let composer = ctx.data(|data| data.get_temp::<egui::Rect>(composer_rect_id()));
+    let (centre, bottom) = match composer {
+        Some(rect) => (rect.center().x, rect.top() - 10.0),
+        None => (content.center().x, floor - 16.0),
+    };
+    let arriving = theme::animate(
+        ctx,
+        egui::Id::new(("toast-in", toast.created)),
+        true,
+        theme::MOTION_PANEL,
+    );
+    let leaving = if crate::motion::reduced(ctx) {
+        1.0
+    } else {
+        let left = toast_leaving(
+            toast.created.elapsed().as_secs_f32(),
+            toast.lifetime().as_secs_f32(),
+        );
+        if left < 1.0 {
+            ctx.request_repaint();
+        }
+        left
+    };
+    let shown = arriving.min(leaving);
+    egui::Area::new(egui::Id::new("toast-pill"))
+        .pivot(Align2::CENTER_BOTTOM)
+        .fixed_pos(egui::pos2(centre, bottom))
+        .order(egui::Order::Tooltip)
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.set_opacity(shown);
+            let rise = (1.0 - shown) * TOAST_RISE / 2.0;
+            ui.with_visual_transform(
+                egui::emath::TSTransform::from_translation(vec2(0.0, rise)),
+                |ui| {
+                    let room = PILL_MAX_WIDTH.min(content.width() - 32.0).max(80.0);
+                    let text = widgets::line(
+                        ui,
+                        &toast.message,
+                        theme::medium(theme::TEXT_CAPTION),
+                        palette.text,
+                        room - 24.0 - 20.0,
+                        2,
+                    );
+                    let height = text.size().y.max(16.0) + 12.0;
+                    Frame::new()
+                        .fill(palette.overlay)
+                        .stroke(Stroke::new(1.0, palette.outline))
+                        .corner_radius(CornerRadius::same((height / 2.0).min(255.0) as u8))
+                        .inner_margin(Margin::symmetric(12, 6))
+                        .shadow(palette.float_shadow())
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 6.0;
+                                theme::icon(ui, Icon::CircleCheck, 14.0, palette.accent);
+                                let (rect, _) =
+                                    ui.allocate_exact_size(text.size(), egui::Sense::hover());
+                                text.paint(ui, rect.min, palette.text);
+                            });
+                        });
+                },
+            );
+        });
 }
 
 /// Draggable space across the top of the linking and lock screens, which

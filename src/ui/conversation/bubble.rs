@@ -800,7 +800,8 @@ pub(super) fn reference_timestamp(
             frame,
         )
         .is_some();
-        ui.ctx().data_mut(|data| data.insert_temp(row_id, (frame, ())));
+        ui.ctx()
+            .data_mut(|data| data.insert_temp(row_id, (frame, ())));
         seen
     };
     // The line used to start four points under the bubble, then sit in the
@@ -1520,7 +1521,9 @@ pub(super) fn paint_status_label(
     colour: Color32,
     presence: f32,
 ) {
-    paint_status_label_with(ui, view, message, shown, text, anchor, font, colour, presence, None);
+    paint_status_label_with(
+        ui, view, message, shown, text, anchor, font, colour, presence, None,
+    );
 }
 
 /// [`paint_status_label`]. With `arrives` the caller fades and reveals the new
@@ -1541,7 +1544,9 @@ pub(super) fn paint_status_label_with(
     arrives: Option<&egui::Painter>,
 ) {
     if presence >= 1.0 - 1.0e-3 {
-        paint_status_word(ui, view, message, shown, text, anchor, font, colour, arrives);
+        paint_status_word(
+            ui, view, message, shown, text, anchor, font, colour, arrives,
+        );
         return;
     }
     paint_leaving_status(ui, text, anchor, font, colour, presence);

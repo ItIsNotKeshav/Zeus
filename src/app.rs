@@ -9122,6 +9122,7 @@ impl App {
                 chat,
                 message,
                 pinned,
+                duration,
             } => {
                 // WhatsApp keeps three active pins per chat, and the phone
                 // replaces an existing one when a fourth arrives. Refuse the
@@ -9142,6 +9143,7 @@ impl App {
                         chat,
                         message,
                         pinned,
+                        duration,
                     });
                 }
             }
@@ -18984,6 +18986,7 @@ mod tests {
                 chat: chat.clone(),
                 message: "d".into(),
                 pinned: true,
+                duration: crate::model::PinFor::Week,
             },
             &ctx,
         );
@@ -19002,6 +19005,7 @@ mod tests {
                 chat,
                 message: "a".into(),
                 pinned: false,
+                duration: crate::model::PinFor::Week,
             },
             &ctx,
         );
@@ -19108,6 +19112,7 @@ mod tests {
                 chat,
                 message: "d".into(),
                 pinned: true,
+                duration: crate::model::PinFor::Week,
             },
             &egui::Context::default(),
         );

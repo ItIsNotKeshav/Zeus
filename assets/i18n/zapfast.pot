@@ -236,6 +236,10 @@ msgstr ""
 msgid "7 days"
 msgstr ""
 
+#: src/model.rs
+msgid "30 days"
+msgstr ""
+
 #: src/util.rs:308
 msgid "90 days"
 msgstr ""
