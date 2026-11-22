@@ -105,6 +105,28 @@ impl ChatTheme {
         Self::LOOKS.contains(&self)
     }
 
+    /// The hue a theme washes its surfaces in (window, lists, chat, menus,
+    /// fields and others' bubbles), and how far, so each reads as its own
+    /// colour all over as Dracula's purple does: Catppuccin lavender, Nord's
+    /// frost blue, Gruvbox's warm orange, Solarized's cyan. `None` leaves the
+    /// theme's own surfaces, as Dracula's dark ones already are purple, and
+    /// as the looks and Vercel stay neutral. Light modes take a little more,
+    /// since their surfaces were lifted toward white.
+    fn surface_tint(self, dark: bool) -> Option<(u32, f32)> {
+        match (self, dark) {
+            (Self::Catppuccin, true) => Some((0xb4befe, 0.05)),
+            (Self::Catppuccin, false) => Some((0x7287fd, 0.07)),
+            (Self::Nord, true) => Some((0x88c0d0, 0.05)),
+            (Self::Nord, false) => Some((0x5e81ac, 0.07)),
+            (Self::Gruvbox, true) => Some((0xfe8019, 0.04)),
+            (Self::Gruvbox, false) => Some((0xd65d0e, 0.06)),
+            (Self::Solarized, true) => Some((0x2aa198, 0.04)),
+            (Self::Solarized, false) => Some((0x2aa198, 0.06)),
+            (Self::Dracula, false) => Some((0xbd93f9, 0.07)),
+            _ => None,
+        }
+    }
+
     /// The theme's palette in the dark or light mode, with `accent` over its
     /// own: every theme takes one, drawn in the theme's own style.
     pub fn palette(self, dark: bool, accent: Accent) -> Palette {
@@ -131,7 +153,11 @@ impl ChatTheme {
                 } else {
                     &definition.light
                 };
-                source.palette(dark)
+                let mut palette = source.palette(dark);
+                if let Some((tint, amount)) = ported.surface_tint(dark) {
+                    tint_surfaces(&mut palette, rgb(tint), amount);
+                }
+                palette
             }
         };
         let Some(rgb) = Accent::chosen_rgb(accent, custom, dark) else {
@@ -409,6 +435,25 @@ impl Source {
         }
         let [r, g, b, _] = rgb(self.accent).to_array();
         p.with_accent([r, g, b])
+    }
+}
+
+/// Washes `p`'s surfaces toward `tint` by `amount`: the window, lists and
+/// chat fully, menus and fields a little less, others' bubbles by half, so
+/// they still stand off the conversation. Text keeps its colour.
+fn tint_surfaces(p: &mut Palette, tint: Color32, amount: f32) {
+    for (colour, share) in [
+        (&mut p.window, 1.0),
+        (&mut p.panel, 1.0),
+        (&mut p.chat, 1.0),
+        (&mut p.overlay, 0.8),
+        (&mut p.surface, 0.8),
+        (&mut p.surface_hover, 0.8),
+        (&mut p.surface_active, 0.8),
+        (&mut p.outline, 0.8),
+        (&mut p.bubble_in, 0.5),
+    ] {
+        *colour = blend(*colour, tint, amount * share);
     }
 }
 
