@@ -266,7 +266,11 @@ fn mode_menu(ui: &mut egui::Ui, app: &mut App) {
         },
     );
     // A fixed id on the closed button, so the demo tour can open it.
-    ui.interact(response.rect, egui::Id::new("settings-mode"), Sense::hover());
+    ui.interact(
+        response.rect,
+        egui::Id::new("settings-mode"),
+        Sense::hover(),
+    );
 }
 
 /// The space between the colour wheel's dots.
@@ -590,15 +594,6 @@ fn dot_colours(
     colours
 }
 
-/// One tile in the theme row.
-#[derive(Clone)]
-enum Tile {
-    Theme(ChatTheme),
-    File(String),
-    /// Opens the folder theme files are read from.
-    Add,
-}
-
 /// How wide a theme tile is.
 const TILE_WIDTH: f32 = 76.0;
 /// How tall a theme tile's picture is.
@@ -610,47 +605,26 @@ const TILE_GAP: f32 = 12.0;
 
 /// The themes as a row of small chat pictures to scroll: two bubbles on the
 /// theme's background, in its colours and the accent in use, its name below.
-/// Then the theme files of the reader's, then one to add more. The accent is
-/// the reader's own choice below, so a tile is chosen whatever it is.
+/// Only Zeus's own themes are offered: each comes in Dark and Light and takes
+/// any accent, which is the reader's own choice below, so a tile is chosen
+/// whatever it is. Palette files and the shared presets, which have one mode
+/// and colours of their own, are not listed.
 fn theme_tiles(ui: &mut egui::Ui, app: &mut App) {
     let palette = app.palette;
-    let custom = app.settings.custom_theme.clone();
+    let custom = app.settings.custom_theme.is_some();
     let accent = app.settings.accent;
     let wheel = app.settings.custom_accent;
-    let over = |base: Palette| match Accent::chosen_rgb(accent, wheel, base.dark) {
-        Some(rgb) => base.with_accent(rgb),
-        None => base,
-    };
-    let mut items: Vec<(Tile, Option<Palette>, bool, String)> = ChatTheme::ALL
+    let items: Vec<(ChatTheme, Option<Palette>, bool, String)> = ChatTheme::ALL
         .into_iter()
         .map(|choice| {
             (
-                Tile::Theme(choice),
+                choice,
                 Some(choice.palette_with(palette.dark, accent, wheel)),
-                custom.is_none() && app.settings.chat_theme == choice,
+                !custom && app.settings.chat_theme == choice,
                 choice.label().to_owned(),
             )
         })
         .collect();
-    for file in app.custom_themes.picker_themes() {
-        let name = file
-            .filename
-            .strip_suffix(".json")
-            .unwrap_or(&file.filename)
-            .to_owned();
-        items.push((
-            Tile::File(file.filename.clone()),
-            Some(over(file.palette)),
-            custom.as_deref() == Some(file.filename.as_str()),
-            name,
-        ));
-    }
-    items.push((
-        Tile::Add,
-        None,
-        false,
-        crate::i18n::gettext(app.locale, "Open themes folder").into_owned(),
-    ));
 
     // The row opens with the chosen tile in view, and again whenever the
     // choice changes from elsewhere; a click on a tile leaves it where it is.
@@ -677,37 +651,23 @@ fn theme_tiles(ui: &mut egui::Ui, app: &mut App) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = TILE_GAP;
             ui.add_space(CARD_PAD - TILE_GAP);
-            for (index, (tile, colours, selected, name)) in items.iter().enumerate() {
+            for (choice, colours, selected, name) in &items {
                 // Built-in themes by name, so the demo tour can point at them.
-                let id = match tile {
-                    Tile::Theme(choice) => {
-                        egui::Id::new(format!("settings-theme-{}", choice.label()))
-                    }
-                    _ => ui.id().with(("theme-tile", index)),
-                };
+                let id = egui::Id::new(format!("settings-theme-{}", choice.label()));
                 let (rect, response) = theme_tile(ui, &palette, id, *selected, name, colours);
                 if response.clicked() {
                     let picture =
                         Rect::from_min_size(rect.min, vec2(rect.width(), TILE_PICTURE_HEIGHT));
-                    clicked = Some((index, picture.center()));
+                    clicked = Some((*choice, picture.center()));
                 }
             }
             ui.add_space(CARD_PAD - TILE_GAP);
         });
     });
-    if let Some((index, center)) = clicked {
-        match items.swap_remove(index).0 {
-            // A theme leaves the accent as it is.
-            Tile::Theme(choice) => {
-                app.actions.push(Action::RevealThemeFrom(center));
-                app.actions.push(Action::SetChatTheme(choice));
-            }
-            Tile::File(filename) => {
-                app.actions.push(Action::RevealThemeFrom(center));
-                app.actions.push(Action::SetCustomTheme(filename));
-            }
-            Tile::Add => app.actions.push(Action::OpenThemesFolder),
-        }
+    // A theme leaves the accent as it is.
+    if let Some((choice, center)) = clicked {
+        app.actions.push(Action::RevealThemeFrom(center));
+        app.actions.push(Action::SetChatTheme(choice));
     }
 }
 
@@ -844,27 +804,24 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
     let diameter = (step - 10.0).clamp(18.0, 30.0);
     let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::hover());
     let first = row.center().x - step * count as f32 / 2.0 + step / 2.0;
-    let ring = |ui: &egui::Ui,
-                response: &egui::Response,
-                center: Pos2,
-                chosen: bool,
-                ink: Color32| {
-        theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
-        let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
-        if t > 0.0 {
-            ui.painter().circle_stroke(
-                center,
-                diameter / 2.0 + 4.0,
-                Stroke::new(2.0, ink.gamma_multiply(t)),
-            );
-        } else if response.hovered() {
-            ui.painter().circle_stroke(
-                center,
-                diameter / 2.0 + 4.0,
-                Stroke::new(1.0, palette.secondary),
-            );
-        }
-    };
+    let ring =
+        |ui: &egui::Ui, response: &egui::Response, center: Pos2, chosen: bool, ink: Color32| {
+            theme::focus_outline(ui, response.id, response.rect, response.rect.height() / 2.0);
+            let t = theme::animate(ui.ctx(), response.id, chosen, theme::MOTION_QUICK);
+            if t > 0.0 {
+                ui.painter().circle_stroke(
+                    center,
+                    diameter / 2.0 + 4.0,
+                    Stroke::new(2.0, ink.gamma_multiply(t)),
+                );
+            } else if response.hovered() {
+                ui.painter().circle_stroke(
+                    center,
+                    diameter / 2.0 + 4.0,
+                    Stroke::new(1.0, palette.secondary),
+                );
+            }
+        };
 
     // The cluster of dots that opens the wheel.
     let center = pos2(first, row.center().y);
@@ -925,12 +882,7 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
         }
         let label = crate::i18n::gettext(locale, accent.label());
         response.widget_info(|| {
-            egui::WidgetInfo::selected(
-                egui::WidgetType::RadioButton,
-                true,
-                chosen,
-                label.as_ref(),
-            )
+            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, chosen, label.as_ref())
         });
         if response
             .on_hover_text(label.as_ref())

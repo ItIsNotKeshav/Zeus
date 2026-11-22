@@ -719,7 +719,17 @@ pub fn phone(digits: &str) -> String {
     }
     let (country, national) = digits.split_at(country_code_len(&digits).min(digits.len()));
     let mut out = format!("+{country}");
-    // Approximate national grouping: threes, with the last four together
+    // The country's own grouping where we know it, as its people write it.
+    if let Some(groups) = national_groups(country, national.len()) {
+        let mut start = 0;
+        for size in groups {
+            out.push(' ');
+            out.push_str(&national[start..start + size]);
+            start += size;
+        }
+        return out;
+    }
+    // Elsewhere an approximate grouping: threes, with the last four together
     // rather than leaving a lone digit.
     let mut start = 0;
     while start < national.len() {
@@ -732,6 +742,41 @@ pub fn phone(digits: &str) -> String {
         start = end;
     }
     out
+}
+
+/// How the country with calling code `country` groups a national number
+/// `len` digits long (mobile numbers first), where that differs from the
+/// threes-and-a-four fallback: India's `+91 98765 43210`, the UK's
+/// `+44 7911 123456`, France's `+33 6 12 34 56 78`. `None` for the rest.
+fn national_groups(country: &str, len: usize) -> Option<&'static [usize]> {
+    let groups: &'static [usize] = match (country, len) {
+        // India, and Nepal's and Pakistan's mobile numbers.
+        ("91", 10) => &[5, 5],
+        ("977", 10) | ("92", 10) => &[3, 7],
+        // Bangladesh.
+        ("880", 10) => &[4, 6],
+        // Sri Lanka, the UAE, Saudi Arabia, South Africa.
+        ("94" | "971" | "966" | "27", 9) => &[2, 3, 4],
+        // The United Kingdom.
+        ("44", 10) => &[4, 6],
+        // France, in pairs after the first digit.
+        ("33", 9) => &[1, 2, 2, 2, 2],
+        // The Netherlands.
+        ("31", 9) => &[1, 8],
+        // Spain and Australia.
+        ("34" | "61", 9) => &[3, 3, 3],
+        // Germany's mobile numbers.
+        ("49", 11) => &[4, 7],
+        ("49", 10) => &[3, 7],
+        // Singapore and Hong Kong.
+        ("65" | "852", 8) => &[4, 4],
+        // China.
+        ("86", 11) => &[3, 4, 4],
+        // Japan, South Korea and Mexico.
+        ("81" | "82" | "52", 10) => &[2, 4, 4],
+        _ => return None,
+    };
+    Some(groups)
 }
 
 /// Length of the ITU-T E.164 country calling code `digits` starts with.
@@ -1262,7 +1307,13 @@ mod tests {
         assert_eq!(phone("79161234567"), "+7 916 123 4567");
         assert_eq!(phone("584241234567"), "+58 424 123 4567");
         assert_eq!(phone("2348031234567"), "+234 803 123 4567");
-        assert_eq!(phone("97150123456"), "+971 501 234 56");
+        assert_eq!(phone("971501234567"), "+971 50 123 4567");
+        assert_eq!(phone("919876543210"), "+91 98765 43210");
+        assert_eq!(phone("447911123456"), "+44 7911 123456");
+        assert_eq!(phone("33612345678"), "+33 6 12 34 56 78");
+        assert_eq!(phone("8801712345678"), "+880 1712 345678");
+        // A length the country's pattern does not expect keeps the fallback.
+        assert_eq!(phone("9198765432"), "+91 987 654 32");
         assert_eq!(phone("5511999999999"), "+55 (11) 99999-9999");
         assert_eq!(phone("551140028922"), "+55 (11) 4002-8922");
         assert_eq!(phone("551149508333"), "+55 (11) 4950-8333");

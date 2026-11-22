@@ -2888,6 +2888,39 @@ pub fn forward_limit(frequently_forwarded: bool) -> usize {
     }
 }
 
+/// How long a pinned message stays pinned: the three choices WhatsApp's
+/// phone app offers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PinFor {
+    Day,
+    #[default]
+    Week,
+    Month,
+}
+
+impl PinFor {
+    /// Every choice, in the order the menu lists them.
+    pub const ALL: [PinFor; 3] = [PinFor::Day, PinFor::Week, PinFor::Month];
+
+    /// The pin's length in seconds.
+    pub fn secs(self) -> i64 {
+        match self {
+            PinFor::Day => 24 * 60 * 60,
+            PinFor::Week => 7 * 24 * 60 * 60,
+            PinFor::Month => 30 * 24 * 60 * 60,
+        }
+    }
+
+    /// The menu's label, untranslated.
+    pub fn label(self) -> &'static str {
+        match self {
+            PinFor::Day => "24 hours",
+            PinFor::Week => "7 days",
+            PinFor::Month => "30 days",
+        }
+    }
+}
+
 /// Actions queued by views and applied after drawing.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Action {
@@ -3422,11 +3455,13 @@ pub enum Action {
     /// Clears a chat's messages here and on the phone, keeping the chat.
     ClearChat(ChatId),
     SetPinned(ChatId, bool),
-    /// Pins or unpins one message for everyone in the chat.
+    /// Pins or unpins one message for everyone in the chat. `duration` is
+    /// how long a pin lasts, and means nothing to an unpin.
     SetMessagePinned {
         chat: ChatId,
         message: String,
         pinned: bool,
+        duration: PinFor,
     },
     /// Marks a chat as a favorite, or removes the mark, here and on the phone.
     SetFavorite(ChatId, bool),

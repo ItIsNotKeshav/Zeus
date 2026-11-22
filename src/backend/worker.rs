@@ -8670,7 +8670,8 @@ impl Worker {
                 chat,
                 message,
                 pinned,
-            } => self.set_pin(chat, message, pinned),
+                duration,
+            } => self.set_pin(chat, message, pinned, duration),
             Command::MessagePinned {
                 chat,
                 message,
@@ -11988,9 +11989,6 @@ impl Worker {
         });
     }
 
-    /// Pins or unpins one message for everyone in the chat, for seven days.
-    /// The archive is written only once WhatsApp answers, so a request that
-    /// never reaches the phone leaves nothing behind.
     fn next_pin_generation(&mut self, chat: &str, id: &str) -> u64 {
         let slot = self
             .pin_generation
@@ -12000,7 +11998,16 @@ impl Worker {
         *slot
     }
 
-    fn set_pin(&mut self, chat: ChatId, id: String, pinned: bool) {
+    /// Pins one message for everyone in the chat for `duration`, or unpins
+    /// it. The archive is written only once WhatsApp answers, so a request
+    /// that never reaches the phone leaves nothing behind.
+    fn set_pin(&mut self, chat: ChatId, id: String, pinned: bool, duration: crate::model::PinFor) {
+        let pin_secs = duration.secs();
+        let pin_duration = match duration {
+            crate::model::PinFor::Day => PinDuration::Hours24,
+            crate::model::PinFor::Week => PinDuration::Days7,
+            crate::model::PinFor::Month => PinDuration::Days30,
+        };
         let generation = self.next_pin_generation(&chat, &id);
         let session = self.star_session;
         let commands = self.commands.clone();
@@ -12019,7 +12026,7 @@ impl Worker {
                 at: now,
                 generation,
                 session,
-                expires_at: now + PIN_SECS,
+                expires_at: now + pin_secs,
                 result: Err("Not connected to WhatsApp".to_owned()),
             });
             return;
@@ -12032,7 +12039,7 @@ impl Worker {
                 at: now,
                 generation,
                 session,
-                expires_at: now + PIN_SECS,
+                expires_at: now + pin_secs,
                 result: Err("This message is not stored on this computer".to_owned()),
             });
             return;
@@ -12041,14 +12048,14 @@ impl Worker {
         let participant = (jid.is_group() && !from_me)
             .then(|| target.sender.clone())
             .and_then(|sender| Self::jid_of(&sender));
-        let expires_at = now + PIN_SECS;
+        let expires_at = now + pin_secs;
         tokio::spawn(async move {
             let target = whatsapp_rust::MessageId::new(&id).and_then(|message_id| {
                 whatsapp_rust::MessageRef::new(&jid, message_id, participant.as_ref(), from_me)
             });
             let result = match target {
                 Ok(target) if pinned => client
-                    .pin_message(&target, PinDuration::Days7)
+                    .pin_message(&target, pin_duration)
                     .await
                     .map(|_| ())
                     .map_err(|error| error.to_string()),

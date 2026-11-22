@@ -936,11 +936,13 @@ pub enum Command {
         through: i64,
     },
     SetPinned(ChatId, bool),
-    /// Pins or unpins one message for everyone in the chat.
+    /// Pins or unpins one message for everyone in the chat, a pin for
+    /// `duration`.
     SetMessagePinned {
         chat: ChatId,
         message: String,
         pinned: bool,
+        duration: crate::model::PinFor,
     },
     /// Result of a pin or unpin request.
     MessagePinned {

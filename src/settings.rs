@@ -1198,11 +1198,7 @@ pub const BUILT_IN_GIPHY_KEY: Option<&str> = match option_env!("ZAPFAST_GIPHY_KE
 /// a pale wash of the accent (a plain blend with the full accent turned a
 /// beige page into a dull blue-grey), dark chats toward the accent itself,
 /// then the result is shifted so its perceived brightness is the base's.
-fn tint_keeping_lightness(
-    base: egui::Color32,
-    accent: egui::Color32,
-    dark: bool,
-) -> egui::Color32 {
+fn tint_keeping_lightness(base: egui::Color32, accent: egui::Color32, dark: bool) -> egui::Color32 {
     let luma = |c: egui::Color32| {
         0.299 * f32::from(c.r()) + 0.587 * f32::from(c.g()) + 0.114 * f32::from(c.b())
     };
@@ -1762,7 +1758,10 @@ mod tests {
             let plain = settings.wallpaper_background(&palette);
             settings.tint_wallpaper = true;
             let tinted = settings.wallpaper_background(&palette);
-            assert!(luma(tinted) >= luma(plain) * 0.98, "{plain:?} -> {tinted:?}");
+            assert!(
+                luma(tinted) >= luma(plain) * 0.98,
+                "{plain:?} -> {tinted:?}"
+            );
         }
         let beige = egui::Color32::from_rgb(0xF5, 0xF0, 0xE8);
         let blue = egui::Color32::from_rgb(0x00, 0x7A, 0xFF);
