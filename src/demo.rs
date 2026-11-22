@@ -221,6 +221,47 @@ const SAMPLES: &[Sample] = &[
     },
 ];
 
+/// A made-up report sent in the open chat as a PDF, opened in the viewer.
+fn pdf_sample(app: &mut App, search: bool) {
+    let chat = app.open_chat.clone().expect("demo chat");
+    let bytes = crate::pdf::demo_document();
+    let path = app
+        .dirs
+        .media_cache_dir()
+        .join("Quarterly mission report.pdf");
+    let _ = std::fs::create_dir_all(app.dirs.media_cache_dir());
+    if let Err(error) = std::fs::write(&path, &bytes) {
+        log::warn!("demo: could not write the sample PDF: {error}");
+        return;
+    }
+    let mut attachment = media("application/pdf", bytes.len() as u64, None, None);
+    attachment.path = Some(path.clone());
+    let row = message(
+        &chat,
+        "demo-pdf",
+        false,
+        crate::util::now(),
+        Content::Document {
+            media: attachment,
+            file_name: "Quarterly mission report.pdf".into(),
+            caption: None,
+            pages: Some(3),
+        },
+    );
+    if let Some(conversation) = app.conversations.get_mut(&chat) {
+        conversation.messages.push(row);
+    }
+    if search {
+        app.demo_pdf_search = Some("pump".into());
+    }
+    app.actions.push(crate::model::Action::ViewDocument {
+        path,
+        title: "Quarterly mission report.pdf".into(),
+        chat,
+        message: "demo-pdf".into(),
+    });
+}
+
 /// Builds synthetic attachment metadata for media-state and album regression tests.
 fn media(mime: &str, size: u64, width: Option<u32>, height: Option<u32>) -> Media {
     Media {
@@ -3775,6 +3816,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                 }
             }
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
+            // A PDF sent in the demo chat, open in the viewer; with
+            // `pdf-search`, searching it.
+            "pdf" | "pdf-search" => pdf_sample(app, part == "pdf-search"),
             // Shows the native image preview over the demo chat.
             "preview" => {
                 // Three photos with a text between the second and the third,
@@ -6754,6 +6798,8 @@ mod tests {
             "voice,voice-menu",
             "recording",
             "preview",
+            "pdf",
+            "pdf-search",
             "gifs",
             "gifs-badkey",
             "react-menu",

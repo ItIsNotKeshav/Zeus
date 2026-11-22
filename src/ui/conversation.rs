@@ -11509,6 +11509,11 @@ fn attachment(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
+    let document = matches!(message.content, Content::Document { .. });
+    // Named or typed as a PDF: the card shows it reads here.
+    let pdf = document
+        && (media.mime.eq_ignore_ascii_case("application/pdf")
+            || title.to_ascii_lowercase().ends_with(".pdf"));
     let (_, inset) = attachment_insets(&palette);
     let text_left = ATTACHMENT_DISC + ATTACHMENT_GAP;
     let text_width =
@@ -11578,8 +11583,10 @@ fn attachment(
             Vec2::splat(ATTACHMENT_ACTION),
         );
         match (&media.path, &media.state) {
+            // A PDF reads in the app, anything else opens elsewhere.
             (Some(_), _) => {
-                theme::paint_icon(ui, Icon::ExternalLink, action, 18.0, palette.secondary);
+                let icon = if pdf { Icon::Eye } else { Icon::ExternalLink };
+                theme::paint_icon(ui, icon, action, 18.0, palette.secondary);
             }
             (None, MediaState::Downloading) => {
                 theme::paint_spinner(ui, action, 18.0, palette.accent);
@@ -11615,6 +11622,14 @@ fn attachment(
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.clicked() && !auto {
         match &media.path {
+            // A document opens in the app when it is a PDF, which is
+            // checked from the file itself when clicked.
+            Some(path) if document => actions.push(Action::ViewDocument {
+                path: path.clone(),
+                title: title.to_owned(),
+                chat: view.chat.id.clone(),
+                message: message.id.clone(),
+            }),
             Some(path) => actions.push(Action::OpenFile(path.clone())),
             None if !matches!(media.state, MediaState::Downloading) => {
                 actions.push(Action::Download {

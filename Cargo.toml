@@ -176,6 +176,11 @@ webp-animation = "0.10"
 # Encodes stickers made from pictures as still lossy WebP. Already included
 # through webp-animation, whose animation encoder always writes an animation.
 libwebp-sys2 = { version = "0.2", features = ["1_2"] }
+# Shows PDFs sent in a chat inside the app. Pure Rust and memory safe, which
+# matters for files strangers send: no C++ engine to bundle per platform. The
+# default features embed stand-ins for the 14 standard fonts and the CJK
+# CMaps a PDF may name without embedding.
+hayro = "0.9"
 # Shared foundation of Carmine's egui apps (github.com/crmne/fastframe). Every
 # crate comes from the same revision.
 # Bundled gettext catalogs: lookups and system language detection.

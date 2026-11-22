@@ -456,6 +456,19 @@ when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's
 right-click menu keeps a copy wherever you choose.
 
+Click a downloaded PDF to read it in Zeus's own viewer, its pages one under
+another. Only the pages on screen and a couple either side are drawn, on a
+thread of their own, so a long document opens and scrolls at once. Zoom with
+the header's buttons, Ctrl+wheel, a pinch, or Ctrl with +, - and 0 (to fit
+the window again). Ctrl+F, or the header's search button, finds text in the
+document, ignoring case and accents: every match is lit, Enter and Shift+Enter
+(or the arrows beside the field) move between them, and the count says where
+you are. The text of a scan that carries a hidden OCR layer is found too. The
+arrow keys, Page Up and Down, Space, Home and End scroll; Escape closes the
+search, then the viewer. The header also saves a copy and opens the file in
+another app. A PDF protected with a password, or one Zeus cannot read, says
+so and offers another app instead. Other documents open in their default app.
+
 A motion photo has a play button in its corner. Click it to download the short
 clip to the local cache and play it over the photo, muted and in a loop; click
 again to return to the photo. In the viewer, the play button in the header

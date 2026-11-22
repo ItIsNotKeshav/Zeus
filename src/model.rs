@@ -3138,6 +3138,21 @@ pub enum Action {
     PreviewSticker(PathBuf),
     CloseStickerPreview,
     OpenFile(PathBuf),
+    /// Shows a downloaded document from a chat: a PDF in the app's own
+    /// viewer, anything else in its default app.
+    ViewDocument {
+        path: PathBuf,
+        /// The name the document was sent with.
+        title: String,
+        chat: ChatId,
+        message: String,
+    },
+    ClosePdf,
+    /// Opens the PDF viewer's search, or gives it the keyboard if open.
+    FindInPdf,
+    ClosePdfSearch,
+    /// Zooms the PDF viewer by a factor; 0 fits the pages to the window.
+    ZoomPdf(f32),
     /// Opens ZapFast's log, or shows it in its folder when no application
     /// takes it, and says so when neither works.
     OpenLog(PathBuf),

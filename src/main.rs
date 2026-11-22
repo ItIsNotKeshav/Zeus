@@ -552,12 +552,15 @@ fn run() -> eframe::Result<()> {
 /// `catch_unwind` and turns a panic into an "unsupported file" result, so a
 /// malformed image or video cannot close the app. `video-sound` reads a
 /// video's sound track header off the UI thread (the mp4 hang fix);
-/// `fit-pictures` decodes chat photos at their display size.
+/// `fit-pictures` decodes chat photos at their display size; `pdf-render`
+/// and `pdf-text` read a PDF from a chat (`zeus::pdf`).
 const CONTAINED_THREADS: &[&str] = &[
     "animation-decode",
     "video-decode",
     "video-sound",
     "fit-pictures",
+    "pdf-render",
+    "pdf-text",
 ];
 
 /// egui's own picture loader names its one-picture-per-thread decoders after
