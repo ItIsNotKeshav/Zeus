@@ -170,8 +170,6 @@ fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
                         radius,
                     ),
                 );
-                // Over messages scrolled up under the header's corners.
-                card_corners(ui, &app.palette, card, radius);
                 bar
             })
             .inner;
@@ -235,7 +233,6 @@ fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
                         area.x_range(),
                         (top - 12.0).max(area.top())..=area.bottom(),
                     );
-                    card_corners(ui, &app.palette, card, radius);
                     foot
                 },
             )

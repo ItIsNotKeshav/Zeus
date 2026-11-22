@@ -2587,6 +2587,8 @@ impl App {
         // Colour emoji in labels, menus, tooltips and text fields; message
         // bodies paint their own over placeholders, which it leaves alone.
         ctx.add_plugin(crate::emoji::plugin());
+        // Last, so it cuts the cards' contents once everything has painted.
+        ctx.add_plugin(crate::ui::rounded_clip::RoundedClip);
         crate::theme::set_font(ctx, self.settings.font);
         crate::motion::set_preference(self.settings.motion_preference);
         crate::theme::install(ctx);

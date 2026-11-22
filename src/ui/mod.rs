@@ -34,6 +34,7 @@ pub mod polls;
 pub mod rail;
 pub mod reaction_list;
 mod room;
+pub(crate) mod rounded_clip;
 pub(crate) mod scroll_springs;
 pub mod settings;
 pub mod setup;
@@ -344,8 +345,9 @@ pub(crate) fn card_back(app: &App, ui: &egui::Ui, rect: egui::Rect, gutter: egui
     );
 }
 
-/// The corners and outline over what a card holds: square fills inside an
-/// opaque card are rounded off over the top.
+/// The outline over what a card holds, and its corners: whatever the card
+/// holds is cut at their curves ([`rounded_clip`]), with the desktop or the
+/// gutter behind them.
 pub(crate) fn card_front(
     app: &App,
     ui: &egui::Ui,
@@ -353,13 +355,13 @@ pub(crate) fn card_front(
     gutter: egui::Color32,
     outline: Stroke,
 ) {
-    let _ = app;
+    let _ = (app, gutter);
     let radius = chat_card_corners(card_at_window_right(ui.ctx(), rect));
-    if gutter.is_opaque() {
-        ui.painter()
-            .add(widgets::card_corners(rect, radius, gutter));
-    }
+    rounded_clip::card(ui.ctx(), rect, radius);
+    // Clipped to the card, so its corners are cut on the same curve as what
+    // is drawn over them (the header's veil hides the outline along the top).
     ui.painter()
+        .with_clip_rect(rect.intersect(ui.clip_rect()))
         .rect_stroke(rect, radius, outline, egui::StrokeKind::Inside);
 }
 
