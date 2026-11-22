@@ -105,24 +105,38 @@ impl ChatTheme {
         Self::LOOKS.contains(&self)
     }
 
-    /// The hue a theme washes its surfaces in (window, lists, chat, menus,
-    /// fields and others' bubbles), and how far, so each reads as its own
-    /// colour all over as Dracula's purple does: Catppuccin lavender, Nord's
-    /// frost blue, Gruvbox's warm orange, Solarized's cyan. `None` leaves the
-    /// theme's own surfaces, as Dracula's dark ones already are purple, and
-    /// as the looks and Vercel stay neutral. Light modes take a little more,
-    /// since their surfaces were lifted toward white.
-    fn surface_tint(self, dark: bool) -> Option<(u32, f32)> {
+    /// How far a ready-made theme washes its surfaces (window, lists, chat,
+    /// menus, fields and others' bubbles) toward the accent, so the colour
+    /// the reader picks runs through the whole window as Dracula's purple
+    /// runs through its own. Each theme takes it at its own strength, over
+    /// its own base tones, so two themes in one accent still differ. Light
+    /// modes take a little more, since their surfaces were lifted toward
+    /// white. `None` for the three looks, which keep their surfaces.
+    fn tint_strength(self, dark: bool) -> Option<f32> {
+        if self.is_look() {
+            return None;
+        }
+        let strength = match self {
+            Self::Vercel => 0.04,
+            Self::Gruvbox | Self::Solarized => 0.045,
+            _ => 0.055,
+        };
+        Some(if dark { strength } else { strength * 1.3 })
+    }
+
+    /// The hue a theme's surfaces lean to with no accent picked (the
+    /// rainbow, "Theme"): its own, as Dracula's dark surfaces already are
+    /// purple. `None` keeps the base as it is.
+    fn own_tint(self, dark: bool) -> Option<u32> {
         match (self, dark) {
-            (Self::Catppuccin, true) => Some((0xb4befe, 0.05)),
-            (Self::Catppuccin, false) => Some((0x7287fd, 0.07)),
-            (Self::Nord, true) => Some((0x88c0d0, 0.05)),
-            (Self::Nord, false) => Some((0x5e81ac, 0.07)),
-            (Self::Gruvbox, true) => Some((0xfe8019, 0.04)),
-            (Self::Gruvbox, false) => Some((0xd65d0e, 0.06)),
-            (Self::Solarized, true) => Some((0x2aa198, 0.04)),
-            (Self::Solarized, false) => Some((0x2aa198, 0.06)),
-            (Self::Dracula, false) => Some((0xbd93f9, 0.07)),
+            (Self::Catppuccin, true) => Some(0xb4befe),
+            (Self::Catppuccin, false) => Some(0x7287fd),
+            (Self::Nord, true) => Some(0x88c0d0),
+            (Self::Nord, false) => Some(0x5e81ac),
+            (Self::Gruvbox, true) => Some(0xfe8019),
+            (Self::Gruvbox, false) => Some(0xd65d0e),
+            (Self::Solarized, _) => Some(0x2aa198),
+            (Self::Dracula, false) => Some(0xbd93f9),
             _ => None,
         }
     }
@@ -153,14 +167,21 @@ impl ChatTheme {
                 } else {
                     &definition.light
                 };
-                let mut palette = source.palette(dark);
-                if let Some((tint, amount)) = ported.surface_tint(dark) {
-                    tint_surfaces(&mut palette, rgb(tint), amount);
-                }
-                palette
+                source.palette(dark)
             }
         };
-        let Some(rgb) = Accent::chosen_rgb(accent, custom, dark) else {
+        let chosen = Accent::chosen_rgb(accent, custom, dark);
+        // The picked accent washes the surfaces; with none, the theme's own hue.
+        let mut base = base;
+        if let Some(strength) = self.tint_strength(dark) {
+            let tint = chosen
+                .map(|[r, g, b]| Color32::from_rgb(r, g, b))
+                .or_else(|| self.own_tint(dark).map(rgb));
+            if let Some(tint) = tint {
+                tint_surfaces(&mut base, tint, strength);
+            }
+        }
+        let Some(rgb) = chosen else {
             return base;
         };
         let mut palette = base.with_accent(rgb);
@@ -682,11 +703,20 @@ mod tests {
             let own = theme.palette(true, Accent::Theme);
             let p = theme.palette(true, Accent::Pink);
             assert_eq!(p.accent, pink, "{}", theme.label());
-            // Only the accent's colours change: the canvas and bubbles
-            // keep the theme's shape.
-            assert_eq!(p.panel, own.panel, "{}", theme.label());
+            // The bubbles keep the theme's shape. A ready-made theme's
+            // surfaces lean toward the accent; the looks keep theirs.
             assert_eq!(p.bubbles, own.bubbles, "{}", theme.label());
-            assert_eq!(p.bubble_in, own.bubble_in, "{}", theme.label());
+            if theme.is_look() {
+                assert_eq!(p.panel, own.panel, "{}", theme.label());
+                assert_eq!(p.bubble_in, own.bubble_in, "{}", theme.label());
+            } else {
+                assert_ne!(p.panel, own.panel, "{}", theme.label());
+                assert!(
+                    p.panel.r() >= own.panel.r(),
+                    "{}: the canvas leans to pink",
+                    theme.label()
+                );
+            }
         }
         assert_eq!(
             ChatTheme::Messages.palette(true, Accent::Theme),
