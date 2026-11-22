@@ -1,5 +1,5 @@
 //! The PDF viewer, a peek: a large card that flies out of the document's
-//! message over the frosted, dimmed window, and back into it when closed.
+//! message over the dimmed window, and back into it when closed.
 //! Its pages run one under another under a frosted toolbar with the page
 //! being read, zoom, search, Save as and Open in another app. Search floats
 //! in a frosted card under the toolbar and lights every match on the pages,
@@ -104,7 +104,7 @@ fn source_rect(ctx: &egui::Context, viewer: &Viewer) -> Option<Rect> {
         .filter(|rect| rect.is_positive() && ctx.content_rect().intersects(*rect))
 }
 
-/// Draws `viewer` as a card over the dimmed, frosted window, flying out of
+/// Draws `viewer` as a card over the dimmed window, flying out of
 /// its message as it opens (`open`) and back into it as it closes. Returns
 /// whether a closing card has landed.
 fn peek(
@@ -163,8 +163,9 @@ fn peek(
         .backdrop_color(Color32::TRANSPARENT)
         .show(ctx, |ui| {
             ui.set_min_size(window.size());
-            // The window behind frosts and dims as the card arrives.
-            ui.painter().add(super::glass::veil(window, 0.0, shown));
+            // The window behind dims as the card arrives. It is not frosted:
+            // a frost the size of the window held about 75 MB of render
+            // targets for as long as the card was open.
             ui.painter()
                 .rect_filled(window, 0.0, palette.shadow.gamma_multiply(shown));
             let (_, backdrop) = ui.allocate_exact_size(window.size(), egui::Sense::click());

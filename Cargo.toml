@@ -24,6 +24,9 @@ path = "src/main.rs"
 # segments to the OS. Secure mode and debug stay off. The crate compiles its
 # C sources with cc, which openh264 and opus already require.
 mimalloc = { version = "0.1.52", default-features = false }
+# mimalloc's own crate, already in the tree, with its extended API: the PDF
+# viewer's render thread calls mi_collect when it goes idle (src/pdf.rs).
+libmimalloc-sys = { version = "0.1.49", default-features = false, features = ["extended"] }
 anyhow = "1"
 # Hashes saved stickers by content. Already included through wacore.
 sha2 = "0.11"
