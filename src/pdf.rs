@@ -36,7 +36,10 @@ pub const ZOOM_MAX: f32 = 5.0;
 /// Each zoom step, by button, key or wheel notch.
 pub const ZOOM_STEP: f32 = 1.2;
 /// Texture bytes one viewer keeps. Pages on screen stay whatever this says.
-const BUDGET: usize = 128 << 20;
+const BUDGET: usize = 96 << 20;
+/// How long the render thread waits with nothing to do before it hands back
+/// what it freed: by then the window has uploaded and dropped its pages.
+const IDLE: std::time::Duration = std::time::Duration::from_millis(300);
 /// The most pixels one page is rendered with: past that a deep zoom
 /// stretches the page instead of holding a texture of hundreds of megabytes.
 const MAX_PIXELS: u64 = 24 << 20;
@@ -252,8 +255,11 @@ impl Shared {
     }
 
     /// Waits for the next job and marks it current; `None` once closed.
+    /// Once the thread has waited [`IDLE`] with nothing to do, it hands the
+    /// memory it freed back to the system (see [`release_freed`]).
     fn next(&self) -> Option<Job> {
         let mut queue = self.lock();
+        let mut released = false;
         loop {
             if self.closed.load(Ordering::Acquire) {
                 return None;
@@ -263,10 +269,15 @@ impl Shared {
                 queue.current = Some(job);
                 return Some(job);
             }
-            queue = self
+            let (guard, wait) = self
                 .wake
-                .wait(queue)
+                .wait_timeout(queue, IDLE)
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
+            queue = guard;
+            if wait.timed_out() && !released {
+                released = true;
+                release_freed();
+            }
         }
     }
 }
@@ -369,6 +380,17 @@ fn open(bytes: &Arc<Vec<u8>>) -> Result<hayro::hayro_syntax::Pdf, Failure> {
         Err(LoadPdfError::Decryption(_)) => Err(Failure::Locked),
         Err(_) => Err(Failure::Unreadable),
     }
+}
+
+/// Hands the memory this thread freed, and what the window freed of the
+/// pages it sent, back to the system. mimalloc keeps a thread's freed pages
+/// for its next allocation, and an idle worker makes none, so a document's
+/// renders (each page's pixels, hayro's scratch) would otherwise stay
+/// counted against the app for as long as the viewer is open. Does nothing
+/// where mimalloc is not the allocator, as in tests.
+fn release_freed() {
+    // SAFETY: mi_collect only walks this thread's own heap.
+    unsafe { libmimalloc_sys::mi_collect(true) };
 }
 
 fn contained<T>(work: impl FnOnce() -> T) -> Option<T> {
@@ -518,6 +540,7 @@ fn text_thread(
         "pdf: read the text of {pages} pages in {} ms",
         started.elapsed().as_millis()
     );
+    release_freed();
     ctx.request_repaint();
 }
 
@@ -703,11 +726,12 @@ impl Layout {
 }
 
 /// The width in pixels to render a page drawn `points` wide: a step on a
-/// scale of quarter octaves, so a zoom renders again only when it moves a
+/// scale of eighth octaves (at most 9% wider than drawn, 19% more pixels),
+/// so a zoom renders again only when it moves a
 /// step, and within the texture and pixel limits.
 pub fn render_width(points: f32, pixels_per_point: f32, aspect: f32, max_side: usize) -> u32 {
     let wanted = (points * pixels_per_point).max(32.0);
-    let step = (wanted.log2() * 4.0).ceil() / 4.0;
+    let step = (wanted.log2() * 8.0).ceil() / 8.0;
     let mut width = 2f32.powf(step).round();
     let max_side = max_side.min(usize::from(u16::MAX)) as f32;
     width = width.min(max_side).min(max_side / aspect.max(f32::EPSILON));
