@@ -18841,6 +18841,14 @@ mod wallpaper_tests {
             .iter()
             .filter_map(|shape| match shape {
                 Shape::Mesh(mesh) if mesh.texture_id == texture => Some(mesh.calc_bounds()),
+                Shape::Rect(rect)
+                    if rect
+                        .brush
+                        .as_ref()
+                        .is_some_and(|brush| brush.fill_texture_id == texture) =>
+                {
+                    Some(rect.rect)
+                }
                 _ => None,
             })
             .collect()

@@ -2428,7 +2428,7 @@ pub fn wallpaper_show(app: &mut App, ui: &mut egui::Ui) {
                         vec2(preview_width, (body_height - HEADER_HEIGHT).max(0.0)),
                     );
                     // The same look the chat draws, image and theme colour included.
-                    wallpaper::paint_rect(ui, preview, &app.wallpaper());
+                    wallpaper::paint_in(ui, preview, &app.wallpaper(), 0.0);
                     wallpaper_sample_bubbles(ui, &palette, preview);
                 },
             );

@@ -45,16 +45,19 @@ pub(super) fn preview(ui: &mut egui::Ui, app: &App, rect: Rect) {
         look.color,
     );
     if look.doodles && look.image.is_none() {
-        // Clear of the rounded corners: under them, and between them along
-        // the top. The tiles line up across both.
-        let round = f32::from(radius);
-        let body = Rect::from_min_max(pos2(rect.left(), rect.top() + round), rect.max);
-        let band = Rect::from_min_max(
-            pos2(rect.left() + round, rect.top()),
-            pos2(rect.right() - round, rect.top() + round),
+        // Rounded as the colour is, so none show past the card's corners.
+        wallpaper::paint_doodles(
+            ui,
+            rect,
+            CornerRadius {
+                nw: radius,
+                ne: radius,
+                sw: 0,
+                se: 0,
+            },
+            &look,
+            look.style,
         );
-        wallpaper::paint_doodles(ui, body, &look, look.style);
-        wallpaper::paint_doodles(ui, band, &look, look.style);
     }
 
     // A pause, then Ava, our reply to her, Leo and our last word. Ids no
@@ -1245,9 +1248,9 @@ fn doodles_body(ui: &mut egui::Ui, app: &mut App) {
                         tile == chosen,
                         &label,
                         tile_look.color,
-                        |ui, picture| match tile {
+                        |ui, picture, corners| match tile {
                             Doodle::Style(style) => {
-                                wallpaper::paint_doodles(ui, picture, &tile_look, style);
+                                wallpaper::paint_doodles(ui, picture, corners, &tile_look, style);
                             }
                             Doodle::None | Doodle::Photo => {
                                 let icon = if tile == Doodle::Photo {
@@ -1397,7 +1400,7 @@ fn doodle_strip(
                 apply(&mut look, value);
                 let painter = ui.painter();
                 painter.rect_filled(rect, 10.0, look.color);
-                wallpaper::paint_doodles(ui, rect.shrink2(vec2(8.0, 0.0)), &look, style);
+                wallpaper::paint_doodles(ui, rect, 10.0, &look, style);
                 painter.rect_stroke(
                     rect,
                     10.0,
@@ -1428,7 +1431,7 @@ fn tile_button(
     chosen: bool,
     label: &str,
     fill: Color32,
-    paint: impl FnOnce(&egui::Ui, Rect),
+    paint: impl FnOnce(&egui::Ui, Rect, CornerRadius),
 ) -> bool {
     let (rect, response) = ui.allocate_exact_size(TILE, Sense::click());
     theme::reveal_focus(&response);
@@ -1450,17 +1453,14 @@ fn tile_button(
             },
             palette.surface,
         );
-        painter.rect_filled(
-            picture,
-            CornerRadius {
-                nw: r,
-                ne: r,
-                sw: 0,
-                se: 0,
-            },
-            fill,
-        );
-        paint(&*ui, picture);
+        let corners = CornerRadius {
+            nw: r,
+            ne: r,
+            sw: 0,
+            se: 0,
+        };
+        painter.rect_filled(picture, corners, fill);
+        paint(&*ui, picture, corners);
         let color = if chosen { palette.accent } else { palette.text };
         let name = widgets::line(
             ui,

@@ -1117,7 +1117,18 @@ fn doodle_tiles(ui: &mut egui::Ui, app: &mut App) {
                 look.color,
             );
             match style {
-                Some(style) => wallpaper::paint_doodles(ui, preview, &look, style),
+                Some(style) => wallpaper::paint_doodles(
+                    ui,
+                    preview,
+                    CornerRadius {
+                        nw: r,
+                        ne: r,
+                        sw: 0,
+                        se: 0,
+                    },
+                    &look,
+                    style,
+                ),
                 None => theme::paint_icon(
                     ui,
                     Icon::Ban,
@@ -2200,8 +2211,7 @@ fn preview(app: &App, ui: &mut egui::Ui, window: Rect, step: Step) {
         density: (app.settings.doodle_density * 1.6).min(*crate::settings::DOODLE_DENSITY.end()),
         ..app.wallpaper()
     };
-    wallpaper::paint_rect(ui, chat, &look);
-    painter.add(widgets::card_corners(chat, chat_radius, side));
+    wallpaper::paint_in(ui, chat, &look, chat_radius);
     let header = Rect::from_min_size(chat.min, vec2(chat.width(), 52.0));
     let header_fill = if palette.vibrant() {
         palette.vibrant_header(palette.chat)
