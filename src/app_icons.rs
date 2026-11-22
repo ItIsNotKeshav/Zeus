@@ -1,5 +1,7 @@
 //! The app icon picker's artwork: a set of tiles drawn from Zeus's own mark
-//! (`assets/app-icons/*.svg`, the default being `packaging/icons/zeus.svg`).
+//! (`assets/app-icons/*.svg`, the default being `packaging/icons/zeus.svg`),
+//! each with a simpler version for small sizes (`assets/app-icons/small/`).
+//! `scripts/app-icons.py` draws all of them; edit it, not the SVGs.
 //!
 //! The choice changes the running app's icon only: the macOS Dock tile, the
 //! window icon (Windows and Linux), the tray item and the Windows taskbar
@@ -92,10 +94,44 @@ impl AppIcon {
         }
     }
 
+    /// The artwork below 40 pixels (the tray, the taskbar): the same tile
+    /// with a heavier mark and none of the shading or scenery, which only
+    /// blur at that size.
+    pub fn small_svg(self) -> &'static [u8] {
+        match self {
+            Self::Default => include_bytes!("../packaging/icons/zeus-small.svg"),
+            Self::Lagoon => include_bytes!("../assets/app-icons/small/lagoon.svg"),
+            Self::Meadow => include_bytes!("../assets/app-icons/small/meadow.svg"),
+            Self::Orchid => include_bytes!("../assets/app-icons/small/orchid.svg"),
+            Self::Sunset => include_bytes!("../assets/app-icons/small/sunset.svg"),
+            Self::Ocean => include_bytes!("../assets/app-icons/small/ocean.svg"),
+            Self::Mint => include_bytes!("../assets/app-icons/small/mint.svg"),
+            Self::Graphite => include_bytes!("../assets/app-icons/small/graphite.svg"),
+            Self::Midnight => include_bytes!("../assets/app-icons/small/midnight.svg"),
+            Self::Paper => include_bytes!("../assets/app-icons/small/paper.svg"),
+            Self::Glow => include_bytes!("../assets/app-icons/small/glow.svg"),
+            Self::LongShadow => include_bytes!("../assets/app-icons/small/longshadow.svg"),
+            Self::Starfield => include_bytes!("../assets/app-icons/small/starfield.svg"),
+            Self::Green => include_bytes!("../assets/app-icons/small/green.svg"),
+        }
+    }
+
+    /// The artwork to draw at `size` pixels square.
+    pub fn svg_for(self, size: usize) -> &'static [u8] {
+        if size < SMALL_BELOW {
+            self.small_svg()
+        } else {
+            self.svg()
+        }
+    }
+
     fn index(self) -> u8 {
         Self::ALL.iter().position(|icon| *icon == self).unwrap_or(0) as u8
     }
 }
+
+/// Below this many pixels an icon draws its small artwork.
+pub const SMALL_BELOW: usize = 40;
 
 /// The icon the running app wears. The tray and taskbar draw through plain
 /// functions (`util::app_icon_rgba`), so the choice lives here, not in them.
@@ -116,7 +152,7 @@ pub fn set_current(icon: AppIcon) {
 
 /// `icon` rasterized to straight-alpha RGBA at `size` pixels square.
 pub fn rgba(icon: AppIcon, size: usize) -> Option<Vec<u8>> {
-    crate::util::render_mark(icon.svg(), size)
+    crate::util::render_mark(icon.svg_for(size), size)
 }
 
 /// The window icon, for platforms that take one from the application.
@@ -184,14 +220,20 @@ mod tests {
     #[test]
     fn every_icon_renders_something_at_64_pixels() {
         for icon in AppIcon::ALL {
-            let rgba = rgba(icon, 64).unwrap_or_else(|| panic!("{icon:?} does not render"));
-            assert_eq!(rgba.len(), 64 * 64 * 4, "{icon:?}");
-            let opaque = rgba.chunks(4).filter(|pixel| pixel[3] > 200).count();
-            assert!(opaque > 64 * 64 / 2, "{icon:?} is mostly empty");
-            assert!(
-                rgba.chunks(4).any(|pixel| pixel[3] == 0),
-                "{icon:?} has no rounded corners"
-            );
+            for side in [64, 24] {
+                let rgba = rgba(icon, side)
+                    .unwrap_or_else(|| panic!("{icon:?} does not render at {side}"));
+                assert_eq!(rgba.len(), side * side * 4, "{icon:?}");
+                let opaque = rgba.chunks(4).filter(|pixel| pixel[3] > 200).count();
+                assert!(
+                    opaque > side * side / 2,
+                    "{icon:?} is mostly empty at {side}"
+                );
+                assert!(
+                    rgba.chunks(4).any(|pixel| pixel[3] == 0),
+                    "{icon:?} has no rounded corners at {side}"
+                );
+            }
         }
     }
 
@@ -200,6 +242,7 @@ mod tests {
         for (index, icon) in AppIcon::ALL.iter().enumerate() {
             for other in &AppIcon::ALL[index + 1..] {
                 assert_ne!(icon.svg(), other.svg());
+                assert_ne!(icon.small_svg(), other.small_svg());
                 assert_ne!(icon.label(), other.label());
             }
         }

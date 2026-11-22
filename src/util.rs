@@ -834,11 +834,12 @@ pub fn hue(seed: &str) -> f32 {
     (hash % 360) as f32
 }
 
-/// Embedded SVG app logo used across platform surfaces.
+/// The shipped SVG app logo, which the tests check draws without filters.
+#[cfg(test)]
 const MARK: &[u8] = include_bytes!("../packaging/icons/zeus.svg");
 /// The same mark without its rim and shading, which blur below this size.
 const SMALL_MARK: &[u8] = include_bytes!("../packaging/icons/zeus-small.svg");
-const SMALL_BELOW: usize = 40;
+use crate::app_icons::SMALL_BELOW;
 
 /// Rasterizes the logo to straight-alpha RGBA.
 pub fn app_icon_rgba(size: usize) -> Vec<u8> {
@@ -849,14 +850,10 @@ pub fn app_icon_rgba(size: usize) -> Vec<u8> {
     }
 }
 
-/// The artwork of the icon the app wears, the flat small mark only for the
-/// default one.
+/// The artwork of the icon the app wears, its small version below
+/// [`SMALL_BELOW`] pixels.
 fn current_mark(size: usize) -> &'static [u8] {
-    match crate::app_icons::current() {
-        crate::app_icons::AppIcon::Default if size < SMALL_BELOW => SMALL_MARK,
-        crate::app_icons::AppIcon::Default => MARK,
-        icon => icon.svg(),
-    }
+    crate::app_icons::current().svg_for(size)
 }
 
 pub(crate) fn render_mark(mark: &[u8], size: usize) -> Option<Vec<u8>> {

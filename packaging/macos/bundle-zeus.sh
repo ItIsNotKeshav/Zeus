@@ -25,9 +25,9 @@ cp "$here/autostart-zeus.plist" "$app/Contents/Library/LaunchAgents/app.zeus.Zeu
 iconset="$(mktemp -d)/zeus.iconset"
 mkdir -p "$iconset"
 for size in 16 32 128 256 512; do
-    sips -z $size $size "$here/../icons/zeus-1024.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+    sips -z $size $size "$here/zeus-1024.png" --out "$iconset/icon_${size}x${size}.png" >/dev/null
     double=$((size * 2))
-    sips -z $double $double "$here/../icons/zeus-1024.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+    sips -z $double $double "$here/zeus-1024.png" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/zeus.icns"
 
