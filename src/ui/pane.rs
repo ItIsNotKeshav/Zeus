@@ -1,11 +1,13 @@
-//! The search pane beside the open chat: a query, an optional day, and the
-//! chat's matching messages, newest first. It docks at the right when the
-//! window has room for it and a readable conversation, and lies over the
-//! conversation otherwise.
+//! The search beside the open chat: a query, an optional day, and the
+//! chat's matching messages, newest first. Beside the chat list it is a card
+//! over the right of the conversation, as the chat's info is
+//! ([`side_card`]); a narrow window shows it as a page over the chat.
 
 use std::ops::Range;
 
-use egui::{Align, Align2, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2};
+use egui::{
+    Align, Align2, Color32, Frame, Key, Layout, Margin, Modifiers, Rect, Sense, Stroke, Vec2,
+};
 use egui::{pos2, vec2};
 use jiff::civil::Date;
 
@@ -20,9 +22,9 @@ use super::widgets;
 
 const CELL: f32 = 30.0;
 const MIN_WIDTH: f32 = 300.0;
-const MAX_WIDTH: f32 = 520.0;
-/// The narrowest conversation a docked pane leaves beside it. Below this the
-/// pane lies over the conversation instead of squeezing it.
+/// The narrowest conversation a card leaves readable beside it. Over a
+/// narrower one a picked result folds the search away, so the message it
+/// jumps to can be seen.
 const CONVERSATION_MIN: f32 = 360.0;
 const ROW_HEIGHT: f32 = 60.0;
 /// Characters of context kept before a match deep in a long line.
@@ -32,100 +34,174 @@ fn field_id() -> egui::Id {
     egui::Id::new("chat-message-search")
 }
 
-/// Docks the pane when there is room, before the conversation is laid out.
-/// Otherwise returns the conversation's rect for [`show_overlay`], drawn
-/// after the conversation so it lies on top.
+/// Where the search goes, captured before the conversation is laid out:
+/// the conversation's rect, for [`show_overlay`] to draw over once the
+/// conversation is there. `None` while the search is closed.
 pub fn show(app: &mut App, ui: &mut egui::Ui) -> Option<Rect> {
-    if !app.chat_search_visible() {
-        return None;
-    }
-    let wanted = app.settings.search_pane_width;
-    match dock(app, ui, "chat-search-pane", wanted, |app, ui| {
-        search(app, ui, false)
-    }) {
-        Docking::Docked { width, wanted } => {
-            // Only a drag moves the edge off the width asked for.
-            if (width - wanted).abs() > 1.0 {
-                app.settings.search_pane_width = width;
-                app.actions.push(Action::SettingsChanged);
-            }
-            None
-        }
-        Docking::Overlay(region) => Some(region),
-    }
+    let visible = app.chat_search_visible();
+    // Asked every frame, closed too, so it rests at 0 and the next opening
+    // springs in from the right.
+    let narrow = super::narrow(ui.ctx());
+    let seconds = if visible && !narrow {
+        theme::MOTION_PANEL
+    } else {
+        theme::MOTION_PANEL * theme::CLOSE
+    };
+    let open = theme::animate(ui.ctx(), search_slide_id(), visible && !narrow, seconds);
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(search_slide_id().with("value"), open));
+    visible.then(|| ui.available_rect_before_wrap())
 }
 
-/// The pane over the right of a conversation too narrow to share.
+fn search_slide_id() -> egui::Id {
+    egui::Id::new("chat-search-slide")
+}
+
+/// The search over the conversation in `region`: a card over its right, as
+/// the chat's info is, sliding in from that edge; or, in a narrow window, a
+/// page over the whole chat, where a picked result folds it away so the
+/// message it jumps to can be seen.
 pub fn show_overlay(app: &mut App, ctx: &egui::Context, region: Rect) {
-    let width = app.settings.search_pane_width.clamp(MIN_WIDTH, MAX_WIDTH);
-    overlay(app, ctx, "chat-search-overlay", width, region, |app, ui| {
-        search(app, ui, true)
+    if super::narrow(ctx) {
+        // A page replaces the card, so the card does not linger under it.
+        super::closing::forget(ctx, search_card_layer());
+        overlay(
+            app,
+            ctx,
+            "chat-search-overlay",
+            region.width(),
+            region,
+            |app, ui| search(app, ui, true, false),
+        );
+        return;
+    }
+    super::closing::forget(
+        ctx,
+        egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("chat-search-overlay"),
+        ),
+    );
+    let open = ctx
+        .data(|data| data.get_temp::<f32>(search_slide_id().with("value")))
+        .unwrap_or(1.0);
+    let covers = region.width() < CARD_WIDTH + CONVERSATION_MIN;
+    side_card(app, ctx, search_card_layer(), region, open, |app, ui| {
+        search(app, ui, covers, true)
     });
 }
 
-/// Where [`dock`] put a pane: docked at the right, at the width it took
-/// and the width it was asked for, or left for an overlay over `region`.
-pub(super) enum Docking {
-    Docked { width: f32, wanted: f32 },
-    Overlay(Rect),
+/// The layer the search card draws on, above the conversation it covers.
+fn search_card_layer() -> egui::LayerId {
+    egui::LayerId::new(egui::Order::Foreground, egui::Id::new("chat-search-card"))
 }
 
-/// Docks a right-hand pane beside the conversation when the window has room
-/// for both, drawing `contents` in it.
-pub(super) fn dock(
-    app: &mut App,
-    ui: &mut egui::Ui,
-    id: &str,
-    wanted: f32,
-    contents: impl FnOnce(&mut App, &mut egui::Ui),
-) -> Docking {
-    let region = ui.available_rect_before_wrap();
-    if region.width() < MIN_WIDTH + CONVERSATION_MIN {
-        return Docking::Overlay(region);
-    }
-    docked(app, ui, id, wanted, MIN_WIDTH, CONVERSATION_MIN, contents)
-}
+/// How wide a card over the chat is: the info card's and the search's.
+pub(super) const CARD_WIDTH: f32 = 400.0;
 
-/// Docks a right-hand pane whatever the room, narrowing the conversation
-/// down to `conversation_min` and the pane down to `min`.
-pub(super) fn docked(
+/// A card over the right of the conversation in `region`, `open` of the way
+/// in from that edge (0 off to the right, 1 at rest): the chat card's
+/// corners, outline and gutter, see-through over a frost of the chat under
+/// it. [`super::closing::surface`] plays the slide again on the way out.
+/// Clicks on the card stay on it. The chat's info and its search both open
+/// in one, so the two come and go alike.
+pub(super) fn side_card(
     app: &mut App,
-    ui: &mut egui::Ui,
-    id: &str,
-    wanted: f32,
-    min: f32,
-    conversation_min: f32,
+    ctx: &egui::Context,
+    layer: egui::LayerId,
+    region: Rect,
+    open: f32,
     contents: impl FnOnce(&mut App, &mut egui::Ui),
-) -> Docking {
-    let region = ui.available_rect_before_wrap();
+) {
     let palette = app.palette;
-    let max = (region.width() - conversation_min).clamp(min, MAX_WIDTH);
-    let wanted = wanted.clamp(min, max);
-    let id = egui::Id::new(id);
-    // egui would remember a width a narrow window squeezed; the saved width
-    // is the reader's, so it comes back when the window widens again.
-    ui.ctx()
-        .data_mut(|data| data.remove::<egui::PanelState>(id));
-    let response = egui::Panel::right(id)
-        .resizable(true)
-        .default_size(wanted)
-        .size_range(min..=max)
-        .show_separator_line(false)
-        .frame(Frame::new().fill(palette.panel).inner_margin(Margin::ZERO))
-        .show(ui, |ui| contents(app, ui));
-    let rect = response.response.rect;
-    ui.painter().vline(
-        rect.left(),
-        rect.y_range(),
-        Stroke::new(1.0, palette.outline),
+    let gap = super::chats::CARD_GAP;
+    let right = (region.right() - gap).max(region.left());
+    let left = (right - CARD_WIDTH).max(region.left());
+    let home = Rect::from_min_max(
+        pos2(left, region.top() + gap),
+        pos2(right, region.bottom() - gap),
     );
-    Docking::Docked {
-        width: rect.width(),
-        wanted,
+    let card = home.translate(vec2((1.0 - open) * home.width(), 0.0));
+    let radius = super::chat_card_corners(super::card_at_window_right(ctx, home));
+    // An area of its own, so it is ordered and hit like any other surface,
+    // above the conversation it covers.
+    egui::Area::new(layer.id)
+        .order(layer.order)
+        .fixed_pos(card.min)
+        .constrain(false)
+        .show(ctx, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
+                // The slide travels off the conversation's right edge. Clip
+                // to that travel so the card never paints over the list.
+                let travel = Rect::from_min_max(
+                    region.min,
+                    pos2(region.right().max(card.right()), region.bottom()),
+                );
+                ui.set_clip_rect(card.intersect(travel).intersect(ui.clip_rect()));
+                // Frost the conversation under the card, the way a dialog
+                // frosts the window under it. The card's see-through fill then
+                // reads as glass. Without it the chat shows sharp through the
+                // card on Windows and Linux, where `blur` is available; on
+                // macOS the fill is solid and this frost is a no-op.
+                let frost = ui.painter().add(egui::Shape::Noop);
+                // Behind the card's own controls, so a click on the card does
+                // not fall through to the conversation.
+                let _ = ui.interact(card, layer.id.with("hit"), Sense::click());
+                ui.painter().set(
+                    frost,
+                    super::glass::rounded(card, super::corner_span(radius)),
+                );
+                ui.painter().rect(
+                    card,
+                    radius,
+                    card_fill(&palette),
+                    Stroke::new(1.25, palette.outline),
+                    egui::StrokeKind::Inside,
+                );
+                // The lists end above the rounded corners.
+                Frame::new()
+                    .inner_margin(Margin {
+                        bottom: 12,
+                        ..Margin::ZERO
+                    })
+                    .show(ui, |ui| {
+                        ui.set_min_size(card.size() - vec2(0.0, 12.0));
+                        ui.set_max_size(card.size() - vec2(0.0, 12.0));
+                        contents(app, ui);
+                    });
+            });
+        });
+    super::closing::surface(
+        ctx,
+        layer,
+        pos2(home.right(), home.center().y),
+        theme::MOTION_PANEL,
+    );
+}
+
+/// A card's own colour: the Settings page's, see-through over the frost
+/// [`side_card`] lays under it on a vibrant window.
+pub(super) fn card_fill(palette: &Palette) -> Color32 {
+    if palette.vibrant() {
+        palette.vibrant_chat(palette.panel)
+    } else {
+        palette.panel
     }
 }
 
-/// A pane over the right of a conversation too narrow to share.
+/// The margin around a card's header row, as the chat header's: dropped to
+/// the chat list's title line beside it, less the gap the card stands in.
+pub(super) fn card_header_margin(left: i8) -> Margin {
+    let drop = (super::chats::HEADER_DROP - super::chats::CARD_GAP) as i8;
+    Margin {
+        left,
+        right: 14,
+        top: 8 + drop,
+        bottom: 8,
+    }
+}
+
+/// A page over the conversation in `region`, in a narrow window.
 pub(super) fn overlay(
     app: &mut App,
     ctx: &egui::Context,
@@ -189,78 +265,109 @@ pub(super) fn header_margin(ctx: &egui::Context) -> Margin {
 /// The pane's contents. Over a narrow conversation (`overlay`) a picked
 /// result folds the pane away, so the message it jumps to can be seen;
 /// the search comes back as it was with the header's Search.
-fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool) {
+fn search(app: &mut App, ui: &mut egui::Ui, overlay: bool, card: bool) {
     let palette = app.palette;
     let (scroll_to, mut picked) = keyboard(app, ui);
     let mut calendar_button = Rect::NOTHING;
-    Frame::new()
-        .inner_margin(header_margin(ui.ctx()))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.set_min_height(HEADER_ROW);
-                let close = crate::i18n::gettext(app.locale, "Close search");
-                if theme::icon_button(ui, Icon::X, 18.0, palette.secondary, palette.text, &close)
-                    .tab_stop(Stop::ChatSearchClose)
-                    .clicked()
-                {
-                    app.actions.push(Action::CloseChatSearch);
-                }
+    let margin = if card {
+        card_header_margin(14)
+    } else {
+        header_margin(ui.ctx())
+    };
+    Frame::new().inner_margin(margin).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.set_min_height(HEADER_ROW);
+            let close = crate::i18n::gettext(app.locale, "Close search");
+            let title = crate::i18n::gettext(app.locale, "Search messages");
+            if card {
+                // As the info card's header: the title, then the close
+                // button at the far end.
                 ui.add_space(8.0);
                 theme::text(
                     ui,
-                    crate::i18n::gettext(app.locale, "Search messages"),
+                    title,
                     theme::semibold(theme::TEXT_SECTION),
                     palette.text,
                 );
-            });
-            ui.add_space(8.0);
-            ui.horizontal(|ui| {
-                ui.set_min_height(36.0);
-                let calendar = theme::icon_button(
-                    ui,
-                    Icon::Calendar,
-                    18.0,
-                    if app.chat_search_day.is_some() || app.chat_search_calendar {
-                        palette.accent
-                    } else {
-                        palette.secondary
-                    },
-                    palette.text,
-                    &crate::i18n::gettext(app.locale, "Filter by date"),
-                )
-                .tab_stop(Stop::ChatSearchDate);
-                calendar_button = calendar.rect;
-                if calendar.clicked() {
-                    app.chat_search_calendar = !app.chat_search_calendar;
-                    if app.chat_search_calendar {
-                        app.chat_search_month = app.chat_search_day.unwrap_or_else(util::today);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if theme::icon_button(
+                        ui,
+                        Icon::X,
+                        18.0,
+                        palette.secondary,
+                        palette.text,
+                        &close,
+                    )
+                    .tab_stop(Stop::ChatSearchClose)
+                    .clicked()
+                    {
+                        app.actions.push(Action::CloseChatSearch);
                     }
+                });
+                return;
+            }
+            if theme::icon_button(ui, Icon::X, 18.0, palette.secondary, palette.text, &close)
+                .tab_stop(Stop::ChatSearchClose)
+                .clicked()
+            {
+                app.actions.push(Action::CloseChatSearch);
+            }
+            ui.add_space(8.0);
+            theme::text(
+                ui,
+                title,
+                theme::semibold(theme::TEXT_SECTION),
+                palette.text,
+            );
+        });
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.set_min_height(36.0);
+            let calendar = theme::icon_button(
+                ui,
+                Icon::Calendar,
+                18.0,
+                if app.chat_search_day.is_some() || app.chat_search_calendar {
+                    palette.accent
+                } else {
+                    palette.secondary
+                },
+                palette.text,
+                &crate::i18n::gettext(app.locale, "Filter by date"),
+            )
+            .tab_stop(Stop::ChatSearchDate);
+            calendar_button = calendar.rect;
+            if calendar.clicked() {
+                app.chat_search_calendar = !app.chat_search_calendar;
+                if app.chat_search_calendar {
+                    app.chat_search_month = app.chat_search_day.unwrap_or_else(util::today);
                 }
-                ui.add_space(8.0);
-                let width = ui.available_width();
-                let mut text = app.chat_search.clone();
-                let response = widgets::search_field(
-                    ui,
-                    &palette,
-                    field_id(),
-                    &mut text,
-                    &crate::i18n::gettext(app.locale, "Search"),
-                    width,
-                )
-                .tab_stop(Stop::ChatSearchField);
-                if text != app.chat_search {
-                    app.actions.push(Action::ChatSearch(text));
-                }
-                if app.focus_chat_search {
-                    app.focus_chat_search = false;
-                    response.request_focus();
-                }
-            });
-            if let Some(day) = app.chat_search_day {
-                ui.add_space(crate::theme::SPACE_S);
-                day_chip(app, ui, &palette, day);
+            }
+            ui.add_space(8.0);
+            let width = ui.available_width();
+            let mut text = app.chat_search.clone();
+            let response = widgets::search_field(
+                ui,
+                &palette,
+                field_id(),
+                &mut text,
+                &crate::i18n::gettext(app.locale, "Search"),
+                width,
+            )
+            .tab_stop(Stop::ChatSearchField);
+            if text != app.chat_search {
+                app.actions.push(Action::ChatSearch(text));
+            }
+            if app.focus_chat_search {
+                app.focus_chat_search = false;
+                response.request_focus();
             }
         });
+        if let Some(day) = app.chat_search_day {
+            ui.add_space(crate::theme::SPACE_S);
+            day_chip(app, ui, &palette, day);
+        }
+    });
     if app.chat_search_calendar {
         calendar_popup(app, ui, &palette, calendar_button);
     }

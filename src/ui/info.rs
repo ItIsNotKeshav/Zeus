@@ -34,7 +34,6 @@ const MEMBER_HEIGHT: f32 = 56.0;
 /// An action tile under the name.
 const TILE_HEIGHT: f32 = 62.0;
 /// The card's width.
-const CARD_WIDTH: f32 = 400.0;
 /// The members shown without a search field above them.
 const SEARCH_FROM: usize = 8;
 /// The members listed before "Show all".
@@ -196,86 +195,13 @@ fn member_filter_id() -> egui::Id {
 }
 
 /// The card over the right of `region`, `open` of the way in from that edge
-/// (0 off to the right, 1 at rest). The chat card's corners, outline and
-/// gutter. [`super::closing::surface`] fades it in from the right edge and
-/// plays that motion again on the way out. Clicks on the card stay on it.
+/// (0 off to the right, 1 at rest): [`pane::side_card`], which the search
+/// opens in too.
 fn side_card(app: &mut App, ui: &mut egui::Ui, region: Rect, open: f32) {
     let ctx = ui.ctx().clone();
-    let palette = app.palette;
-    let gap = super::chats::CARD_GAP;
-    let right = (region.right() - gap).max(region.left());
-    let left = (right - CARD_WIDTH).max(region.left());
-    let home = Rect::from_min_max(
-        pos2(left, region.top() + gap),
-        pos2(right, region.bottom() - gap),
-    );
-    let card = home.translate(vec2((1.0 - open) * home.width(), 0.0));
-    let radius = super::chat_card_corners(super::card_at_window_right(&ctx, home));
-    let layer = card_layer();
-    // An area of its own, so it is ordered and hit like any other surface,
-    // above the conversation it covers.
-    egui::Area::new(layer.id)
-        .order(layer.order)
-        .fixed_pos(card.min)
-        .constrain(false)
-        .show(&ctx, |ui| {
-            ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
-                // The slide travels off the conversation's right edge. Clip
-                // to that travel so the card never paints over the list.
-                let travel = Rect::from_min_max(
-                    region.min,
-                    pos2(region.right().max(card.right()), region.bottom()),
-                );
-                ui.set_clip_rect(card.intersect(travel).intersect(ui.clip_rect()));
-                // Frost the conversation under the card, the way a dialog
-                // frosts the window under it. The card's see-through fill then
-                // reads as glass. Without it the chat shows sharp through the
-                // card on Windows and Linux, where `blur` is available; on
-                // macOS the fill is solid and this frost is a no-op.
-                let frost = ui.painter().add(egui::Shape::Noop);
-                // Behind the card's own controls, so a click on the card does
-                // not fall through to the conversation.
-                let _ = ui.interact(card, layer.id.with("hit"), Sense::click());
-                ui.painter().set(
-                    frost,
-                    super::glass::rounded(card, super::corner_span(radius)),
-                );
-                ui.painter().rect(
-                    card,
-                    radius,
-                    card_fill(&palette),
-                    Stroke::new(1.25, palette.outline),
-                    egui::StrokeKind::Inside,
-                );
-                // The lists end above the rounded corners.
-                Frame::new()
-                    .inner_margin(Margin {
-                        bottom: 12,
-                        ..Margin::ZERO
-                    })
-                    .show(ui, |ui| {
-                        ui.set_min_size(card.size() - vec2(0.0, 12.0));
-                        ui.set_max_size(card.size() - vec2(0.0, 12.0));
-                        contents(app, ui, false, true);
-                    });
-            });
-        });
-    super::closing::surface(
-        &ctx,
-        layer,
-        pos2(home.right(), home.center().y),
-        theme::MOTION_PANEL,
-    );
-}
-
-/// The card's own colour: the Settings page's, see-through over the frost
-/// [`side_card`] lays under it on a vibrant window.
-fn card_fill(palette: &Palette) -> Color32 {
-    if palette.vibrant() {
-        palette.vibrant_chat(palette.panel)
-    } else {
-        palette.panel
-    }
+    pane::side_card(app, &ctx, card_layer(), region, open, |app, ui| {
+        contents(app, ui, false, true)
+    });
 }
 
 /// What a tile, a field or a tab sits on: the faint tint of the text the
@@ -483,14 +409,8 @@ fn header(
     let palette = app.palette;
     // As the chat header: dropped to the chat list's title line beside it,
     // with the same room around its buttons.
-    let drop = (super::chats::HEADER_DROP - super::chats::CARD_GAP) as i8;
     let margin = if card {
-        Margin {
-            left: if back.is_some() { 14 } else { MARGIN as i8 },
-            right: 14,
-            top: 8 + drop,
-            bottom: 8,
-        }
+        pane::card_header_margin(if back.is_some() { 14 } else { MARGIN as i8 })
     } else {
         pane::header_margin(ui.ctx())
     };

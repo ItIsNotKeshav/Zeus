@@ -1291,14 +1291,13 @@ mod tests {
             .cloned()
             .collect();
         narrow(&mut app, &mut tour, Vec::new());
-        // The chat list leaves too little room to share, so the pane lies
-        // over the conversation rather than squeezing it.
+        // The search is a card over the conversation, as the chat's info is.
         let overlay = ctx.memory(|memory| {
             memory
                 .layer_ids()
-                .any(|layer| layer.id == egui::Id::new("chat-search-overlay"))
+                .any(|layer| layer.id == egui::Id::new("chat-search-card"))
         });
-        assert!(overlay, "the pane is laid over the chat");
+        assert!(overlay, "the search is laid over the chat");
         let enter = Event::Key {
             key: egui::Key::Enter,
             physical_key: None,
