@@ -222,7 +222,7 @@ const SAMPLES: &[Sample] = &[
 ];
 
 /// A made-up report sent in the open chat as a PDF, opened in the viewer.
-fn pdf_sample(app: &mut App, search: bool) {
+fn pdf_sample(app: &mut App, search: bool, open: bool) {
     let chat = app.open_chat.clone().expect("demo chat");
     let bytes = crate::pdf::demo_document();
     let path = app
@@ -253,6 +253,10 @@ fn pdf_sample(app: &mut App, search: bool) {
     }
     if search {
         app.demo_pdf_search = Some("pump".into());
+    }
+    app.scroll_to_bottom = true;
+    if !open {
+        return;
     }
     app.actions.push(crate::model::Action::ViewDocument {
         path,
@@ -3818,7 +3822,9 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
             "recording" => app.recording = Some(crate::audio::Recorder::rehearsal()),
             // A PDF sent in the demo chat, open in the viewer; with
             // `pdf-search`, searching it.
-            "pdf" | "pdf-search" => pdf_sample(app, part == "pdf-search"),
+            "pdf" | "pdf-search" => pdf_sample(app, part == "pdf-search", true),
+            // The same PDF in the chat, its card showing its first page.
+            "pdf-card" => pdf_sample(app, false, false),
             // Shows the native image preview over the demo chat.
             "preview" => {
                 // Three photos with a text between the second and the third,
@@ -6800,6 +6806,7 @@ mod tests {
             "preview",
             "pdf",
             "pdf-search",
+            "pdf-card",
             "gifs",
             "gifs-badkey",
             "react-menu",
