@@ -763,6 +763,9 @@ pub struct App {
     /// The viewer just closed and when, kept until it has faded out so the
     /// fade still has its pages to draw.
     pub pdf_retired: Option<(f64, crate::pdf::Viewer)>,
+    /// Where each PDF read in this run was left, scroll and zoom, so it
+    /// opens there again until Zeus quits.
+    pdf_places: HashMap<PathBuf, (egui::Vec2, f32)>,
     /// The motion photo whose clip plays over it: its chat and message.
     pub motion_playing: Option<(ChatId, String)>,
     /// Sticker currently shown large.
@@ -1685,6 +1688,7 @@ impl App {
             image_preview: None,
             pdf_viewer: None,
             pdf_retired: None,
+            pdf_places: HashMap::new(),
             motion_playing: None,
             sticker_view: None,
             viewer_media: Vec::new(),
@@ -8128,6 +8132,10 @@ impl App {
             Action::ClosePdf => {
                 if let Some(viewer) = self.pdf_viewer.take() {
                     viewer.stop();
+                    if !viewer.pages().is_empty() {
+                        self.pdf_places
+                            .insert(viewer.path.clone(), (viewer.offset, viewer.zoom));
+                    }
                     self.pdf_retired = Some((ctx.input(|input| input.time), viewer));
                 }
                 self.refocus_composer(ctx);
@@ -11335,6 +11343,10 @@ impl App {
         };
         match crate::pdf::Viewer::open(path.clone(), title, chat, message, ctx) {
             Ok(mut viewer) => {
+                if let Some(&(offset, zoom)) = self.pdf_places.get(&path) {
+                    viewer.zoom = zoom;
+                    viewer.restore = Some(offset);
+                }
                 if let Some(query) = self.demo_pdf_search.take() {
                     viewer.search.query = query;
                     viewer.search.open = true;

@@ -90,7 +90,8 @@ tab bar over two numbers, and `account-menu` over one. `--demo-page starred` and
 `archived` show the list with its title menu naming that view.
 Use `--demo-page rtl-self` for a self-chat of mixed Hebrew, Arabic, and
 English lines. `--demo-page pdf` sends a made-up three-page report in the chat
-and opens it in the PDF viewer; `pdf-search` searches it for "pump".
+and opens it in the PDF viewer; `pdf-search` searches it for "pump", and
+`pdf-card` leaves it closed, its card showing the first page.
 Use `--demo-page composer-tools` to preview the WhatsApp-style composer pill
 and its attachment and poll menu, or `--demo-page location` for the location
 dialog with a spot pasted in. `typing`, `mention`, and

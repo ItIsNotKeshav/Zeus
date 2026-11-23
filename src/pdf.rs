@@ -797,6 +797,13 @@ pub struct Viewer {
     /// A place the view should scroll to next frame: a page, and how far
     /// down it, as a fraction.
     pub scroll_to: Option<(usize, f32)>,
+    /// Where the pages are scrolled, as the view last drew them.
+    pub offset: Vec2,
+    /// A place to scroll to once the pages are known: where this document
+    /// was left the last time it was open.
+    pub restore: Option<Vec2>,
+    /// Until the view first draws it, so its flight starts from the message.
+    pub fresh: bool,
 }
 
 impl Viewer {
@@ -838,6 +845,9 @@ impl Viewer {
             text: Vec::new(),
             search: Search::default(),
             scroll_to: None,
+            offset: Vec2::ZERO,
+            restore: None,
+            fresh: true,
         }
     }
 
@@ -1066,6 +1076,149 @@ impl Viewer {
             self.scroll_to = Some((hit.page, top));
         }
     }
+}
+
+/// A document card's picture of its first page.
+#[derive(Clone)]
+pub enum Preview {
+    /// Still rendering, or waiting for a free thread.
+    Pending,
+    Ready(egui::TextureHandle),
+    /// Not a PDF hayro reads, or too large to read for a picture.
+    Failed,
+}
+
+/// Previews rendered at once, each on a short-lived thread of its own.
+const PREVIEW_THREADS: usize = 2;
+/// Previews kept; past this the one seen longest ago goes.
+const PREVIEW_KEEP: usize = 48;
+/// Passes a preview may go unseen before its texture is let go.
+const PREVIEW_UNSEEN: u64 = 600;
+/// Files larger than this are not read whole for a picture.
+const PREVIEW_MAX_BYTES: u64 = 64 << 20;
+
+enum PreviewState {
+    Queued,
+    Running,
+    Done(Option<egui::ColorImage>),
+    Ready(egui::TextureHandle),
+    Failed,
+}
+
+#[derive(Default)]
+struct Previews {
+    entries: HashMap<PathBuf, (PreviewState, u64)>,
+    running: usize,
+    swept: u64,
+}
+
+type SharedPreviews = Arc<Mutex<Previews>>;
+
+/// The first page of the PDF at `path`, `width` pixels wide, for its card
+/// in the chat: rendered once off the interface thread, kept while cards
+/// show it, and let go once none has for a while.
+pub fn preview(ctx: &egui::Context, path: &Path, width: u32) -> Preview {
+    let pass = ctx.cumulative_pass_nr();
+    let shared = ctx.data_mut(|data| {
+        data.get_temp_mut_or_default::<SharedPreviews>(egui::Id::new("pdf-previews"))
+            .clone()
+    });
+    let mut previews = shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if previews.swept != pass {
+        previews.swept = pass;
+        previews.entries.retain(|_, (state, seen)| {
+            matches!(state, PreviewState::Running) || *seen + PREVIEW_UNSEEN >= pass
+        });
+        while previews.entries.len() > PREVIEW_KEEP {
+            let Some(oldest) = previews
+                .entries
+                .iter()
+                .filter(|(_, (state, _))| !matches!(state, PreviewState::Running))
+                .min_by_key(|(_, (_, seen))| *seen)
+                .map(|(path, _)| path.clone())
+            else {
+                break;
+            };
+            previews.entries.remove(&oldest);
+        }
+    }
+    let running = previews.running;
+    let (state, seen) = previews
+        .entries
+        .entry(path.to_owned())
+        .or_insert((PreviewState::Queued, pass));
+    *seen = pass;
+    let (preview, start) = match state {
+        PreviewState::Queued if running < PREVIEW_THREADS => {
+            *state = PreviewState::Running;
+            (Preview::Pending, true)
+        }
+        PreviewState::Queued | PreviewState::Running => (Preview::Pending, false),
+        PreviewState::Done(image) => match image.take() {
+            Some(image) => {
+                let texture = ctx.load_texture(
+                    format!("pdf-preview-{}", path.display()),
+                    image,
+                    egui::TextureOptions::LINEAR,
+                );
+                *state = PreviewState::Ready(texture.clone());
+                (Preview::Ready(texture), false)
+            }
+            None => {
+                *state = PreviewState::Failed;
+                (Preview::Failed, false)
+            }
+        },
+        PreviewState::Ready(texture) => (Preview::Ready(texture.clone()), false),
+        PreviewState::Failed => (Preview::Failed, false),
+    };
+    if start {
+        previews.running += 1;
+        let owned = path.to_owned();
+        let shared = shared.clone();
+        let ctx = ctx.clone();
+        let spawned = std::thread::Builder::new()
+            .name("pdf-render".into())
+            .stack_size(STACK)
+            .spawn(move || {
+                let image = contained(|| first_page(&owned, width)).flatten();
+                release_freed();
+                let mut previews = shared
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                previews.running -= 1;
+                if let Some((state, _)) = previews.entries.get_mut(&owned) {
+                    *state = PreviewState::Done(image);
+                }
+                drop(previews);
+                ctx.request_repaint();
+            });
+        if spawned.is_err() {
+            previews.running -= 1;
+            if let Some((state, _)) = previews.entries.get_mut(path) {
+                *state = PreviewState::Failed;
+            }
+        }
+    }
+    preview
+}
+
+fn first_page(path: &Path, width: u32) -> Option<egui::ColorImage> {
+    if std::fs::metadata(path).ok()?.len() > PREVIEW_MAX_BYTES {
+        return None;
+    }
+    let bytes = Arc::new(std::fs::read(path).ok()?);
+    let pdf = open(&bytes).ok()?;
+    let cache = hayro::RenderCache::new();
+    rasterize(
+        &pdf.pages()[0],
+        &cache,
+        &hayro::hayro_interpret::InterpreterSettings::default(),
+        &hayro::RenderSettings::default(),
+        width,
+    )
 }
 
 /// The pages to ask for: those on screen nearest the middle first, then

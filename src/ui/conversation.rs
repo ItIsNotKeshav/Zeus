@@ -2974,7 +2974,17 @@ fn estimated_height(
         Content::Image { caption, .. } | Content::Video { caption, .. } => {
             200.0 + caption_rows(caption)
         }
-        Content::Document { caption, .. } => 70.0 + caption_rows(caption),
+        Content::Document {
+            caption,
+            media,
+            file_name,
+            ..
+        } => {
+            let pdf = media.mime.eq_ignore_ascii_case("application/pdf")
+                || file_name.to_ascii_lowercase().ends_with(".pdf");
+            let preview = pdf && (media.path.is_some() || message.thumbnail.is_some());
+            70.0 + caption_rows(caption) + if preview { PREVIEW_HEIGHT } else { 0.0 }
+        }
         Content::Sticker { .. } => 140.0,
         Content::Audio { .. } => 60.0,
         Content::DisappearingTimer { .. } => 0.0,
@@ -11606,18 +11616,32 @@ fn attachment(
         1,
     );
     let lines = name.size().y + ATTACHMENT_LINE_GAP + detail.size().y;
+    // A PDF shows the top of its first page above the card: rendered here
+    // once downloaded, the picture WhatsApp sent with it until then.
+    let radius = attachment_radius(&palette);
+    let preview = pdf
+        .then(|| document_preview(ui, message, media, width, radius))
+        .flatten();
     // The card is as tall as its icon or its two lines, whichever is more,
     // with the same room above and below.
     let (rect, _) = ui.allocate_exact_size(
         vec2(width, lines.max(ATTACHMENT_ROW) + inset.y * 2.0),
         Sense::hover(),
     );
+    let corners = if preview.is_some() {
+        let r = radius.round().clamp(0.0, 255.0) as u8;
+        egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: r,
+            se: r,
+        }
+    } else {
+        egui::CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8)
+    };
     if ui.is_rect_visible(rect) {
-        ui.painter().rect_filled(
-            rect,
-            attachment_radius(&palette),
-            palette.window.gamma_multiply(0.35),
-        );
+        ui.painter()
+            .rect_filled(rect, corners, palette.window.gamma_multiply(0.35));
         let content = rect.shrink2(inset);
         let disc = pos2(content.left() + ATTACHMENT_DISC / 2.0, content.center().y);
         ui.painter().circle_filled(
@@ -11677,6 +11701,8 @@ fn attachment(
             message: message.id.clone(),
         });
     }
+    // The preview and the card are one thing to click, and to fly from.
+    let rect = preview.map_or(rect, |preview| preview.union(rect));
     ui.ctx().data_mut(|data| {
         data.insert_temp(bubble_id(&view.chat.id, &message.id).with("card"), rect);
     });
@@ -11709,6 +11735,80 @@ fn attachment(
             None => {}
         }
     }
+}
+
+/// Height of a PDF's first-page preview above its card, for a card `width`
+/// wide: the top of the page, never taller than [`PREVIEW_HEIGHT`].
+fn preview_height(width: f32) -> f32 {
+    (width * 0.56).min(PREVIEW_HEIGHT)
+}
+const PREVIEW_HEIGHT: f32 = 168.0;
+
+/// Draws the top of a PDF's first page, `width` wide, with the card's top
+/// corners, and returns where. The page itself once the file is here (a
+/// white sheet while it renders); before that the picture WhatsApp sent with
+/// the message, when it sent one. Nothing when there is neither.
+fn document_preview(
+    ui: &mut egui::Ui,
+    message: &Message,
+    media: &Media,
+    width: f32,
+    radius: f32,
+) -> Option<Rect> {
+    let ppp = ui.ctx().pixels_per_point();
+    // A width in steps of 64 pixels, so a resized window does not render
+    // the page again for every point.
+    let pixels = ((width * ppp / 64.0).ceil() * 64.0) as u32;
+    let rendered = media
+        .path
+        .as_deref()
+        .map(|path| crate::pdf::preview(ui.ctx(), path, pixels));
+    let thumbnail = message
+        .thumbnail
+        .as_deref()
+        .map(|bytes| thumbnail_uri(ui.ctx(), &message.chat, &message.id, bytes));
+    if matches!(rendered, Some(crate::pdf::Preview::Failed) | None) && thumbnail.is_none() {
+        return None;
+    }
+    let (rect, _) = ui.allocate_exact_size(vec2(width, preview_height(width)), Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return Some(rect);
+    }
+    let r = radius.round().clamp(0.0, 255.0) as u8;
+    let corners = egui::CornerRadius {
+        nw: r,
+        ne: r,
+        sw: 0,
+        se: 0,
+    };
+    ui.painter().rect_filled(rect, corners, Color32::WHITE);
+    // The top of the page: as much of its height as the preview's shape
+    // shows at the page's width.
+    let top = |size: Vec2| {
+        let shown = (rect.height() / rect.width() * size.x / size.y.max(1.0)).min(1.0);
+        Rect::from_min_max(egui::Pos2::ZERO, pos2(1.0, shown))
+    };
+    match (rendered, thumbnail) {
+        (Some(crate::pdf::Preview::Ready(texture)), _) => {
+            egui::Image::from_texture((texture.id(), rect.size()))
+                .uv(top(texture.size_vec2()))
+                .corner_radius(corners)
+                .paint_at(ui, rect);
+        }
+        (_, Some(uri)) => {
+            let image = egui::Image::new(uri);
+            if let Ok(egui::load::TexturePoll::Ready { texture }) =
+                image.load_for_size(ui.ctx(), rect.size())
+            {
+                image
+                    .uv(top(texture.size))
+                    .corner_radius(corners)
+                    .paint_at(ui, rect);
+            }
+        }
+        _ => {}
+    }
+    Some(rect)
 }
 
 /// The space above a conversation's messages that keeps a short one at the

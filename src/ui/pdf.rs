@@ -116,8 +116,13 @@ fn peek(
     now: f64,
     actions: &mut Vec<Action>,
 ) -> bool {
-    // From nothing the first time, then turning round mid-flight with the
-    // speed it has.
+    // A new viewer's flight starts from the message. The spring otherwise
+    // remembers where it last rested, and when: from there, a reopening
+    // minutes later would have caught up at once and skipped the flight.
+    if open && std::mem::take(&mut viewer.fresh) {
+        crate::motion::forget(ctx, egui::Id::new("pdf-peek"));
+    }
+    // Turning round mid-flight with the speed it has.
     let t = crate::motion::spring_from(
         ctx,
         egui::Id::new("pdf-peek"),
@@ -126,6 +131,7 @@ fn peek(
         crate::motion::Spring::new(FLIGHT_SECONDS, FLIGHT_BOUNCE),
     );
     if !open && t <= 0.001 {
+        crate::motion::forget(ctx, egui::Id::new("pdf-peek"));
         return true;
     }
     // The bounce may carry the flight past its ends; what fades does not.
@@ -146,7 +152,7 @@ fn peek(
     let radius = egui::lerp(10.0..=f32::from(theme::RADIUS_MENU), shown) / scale;
     let id = view_id(viewer);
     let mut view = ctx.data(|data| data.get_temp::<View>(id)).unwrap_or(View {
-        offset: Vec2::ZERO,
+        offset: viewer.restore.unwrap_or(Vec2::ZERO),
         zoom: viewer.zoom,
         anchor: None,
         glide: None,
@@ -283,7 +289,8 @@ fn stage(
         view.anchor = Some(anchor);
     }
     let layout = Pages::new(&sizes, width, viewer.zoom, HEADER);
-    let mut offset = None;
+    // Back where the document was left, once its pages are laid out.
+    let mut offset = viewer.restore.take();
     if (view.zoom - viewer.zoom).abs() > f32::EPSILON {
         let before = Pages::new(&sizes, width, view.zoom, HEADER);
         let anchor = view.anchor.take().unwrap_or(window.center()) - window.min;
@@ -351,6 +358,7 @@ fn stage(
         (visible, middle, wanted)
     });
     view.offset = output.state.offset;
+    viewer.offset = view.offset;
     let (visible, middle, wanted) = output.inner;
     viewer.exchange(ui.ctx(), &wanted, visible, middle, now);
     middle
