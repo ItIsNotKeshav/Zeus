@@ -15,28 +15,30 @@ use egui::Key;
 use crate::audio::Recorder;
 use crate::backend::Waker;
 
-/// The microphones the platform reports, listed on a thread of their own:
-/// opening the device list can wait on the sound server, which the window
-/// must not.
+/// The microphones or cameras the platform reports, listed on a thread of
+/// their own: opening the device list can wait on the sound server or the
+/// camera stack, which the window must not.
 #[derive(Default)]
-pub struct MicrophoneScan {
+pub struct DeviceScan {
     /// `(id, label)` in label order, once a scan has finished.
     pub found: Option<Vec<(String, String)>>,
     pending: Option<mpsc::Receiver<Vec<(String, String)>>>,
 }
 
-impl MicrophoneScan {
-    /// Lists the microphones again, unless a scan is already running.
-    pub fn refresh(&mut self, waker: &Waker) {
+impl DeviceScan {
+    /// Lists the devices again with `list` (such as
+    /// [`crate::call_audio::microphones`] or [`crate::camera::cameras`]),
+    /// unless a scan is already running.
+    pub fn refresh(&mut self, waker: &Waker, list: fn() -> Vec<(String, String)>) {
         if self.pending.is_some() {
             return;
         }
         let (tx, rx) = mpsc::channel();
         let waker = waker.clone();
         let spawned = std::thread::Builder::new()
-            .name("microphones".to_owned())
+            .name("device-scan".to_owned())
             .spawn(move || {
-                let _ = tx.send(crate::call_audio::microphones());
+                let _ = tx.send(list());
                 waker.wake();
             });
         if spawned.is_ok() {
@@ -72,7 +74,7 @@ impl MicrophoneScan {
         self.pending.is_some()
     }
 
-    /// The label of the microphone with `id`, if the last scan found it.
+    /// The label of the device with `id`, if the last scan found it.
     pub fn label(&self, id: &str) -> Option<&str> {
         self.found
             .as_ref()?

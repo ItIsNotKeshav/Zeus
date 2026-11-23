@@ -1412,7 +1412,7 @@ fn fit_inside(area: Rect, size: Vec2) -> Rect {
 /// Draws `image` through the kept texture, uploaded only when a new frame
 /// arrived and then in place: the surface also repaints for its timer, and a
 /// texture per repaint would churn GPU memory.
-fn call_texture(
+pub(crate) fn call_texture(
     ui: &egui::Ui,
     kept: &mut Option<crate::app::CallTexture>,
     name: &str,

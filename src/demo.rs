@@ -2109,7 +2109,7 @@ fn uploads_sample(app: &mut App) {
 fn voice_settings_sample(app: &mut App) {
     app.page = Page::Settings;
     app.settings_search = "Calls and voice".to_owned();
-    app.microphones = crate::voice_input::MicrophoneScan::fixed(crate::app::demo_microphones());
+    app.microphones = crate::voice_input::DeviceScan::fixed(crate::app::demo_microphones());
     app.settings.microphone = Some(crate::settings::SavedDevice {
         id: "demo-usb".into(),
         name: "USB Microphone".into(),
@@ -2638,6 +2638,16 @@ pub fn apply_flags(app: &mut App, page: Option<&str>) {
                     id: "demo-bluetooth".into(),
                     name: "Wireless Headset".into(),
                 });
+            }
+            // Settings' camera picker, with the preview open on a made-up picture.
+            "camera-settings" => {
+                voice_settings_sample(app);
+                app.cameras = crate::voice_input::DeviceScan::fixed(crate::app::demo_cameras());
+                app.settings.camera = Some(crate::settings::SavedDevice {
+                    id: "1".into(),
+                    name: "USB Webcam".into(),
+                });
+                app.camera_check = Some(crate::camera_check::CameraCheck::simulated());
             }
             // Push to talk on, for a call page drawn after it.
             "push-to-talk" => app.settings.push_to_talk = true,
@@ -6624,6 +6634,7 @@ mod tests {
             "settings-search=Storage",
             "voice-settings",
             "voice-settings-missing",
+            "camera-settings",
             "clear-media",
             "wallpaper",
             "wallpaper,light",

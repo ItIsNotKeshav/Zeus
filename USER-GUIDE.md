@@ -317,6 +317,9 @@ going on, a hang-up button takes their place.
 - **Microphone.** Pick the microphone in **Settings > Calls and voice**. The
   system default is used unless you choose another. **Check your microphone**
   shows how loud it hears you without recording anything.
+- **Camera.** Pick the camera video calls use in **Settings > Calls and
+  voice**, and press **Preview** under **Check your camera** to see it,
+  mirrored, before a call. Nothing is recorded or sent.
 - **Call history.** Calls are filed in the chat, and the **Calls** tab
   (`Ctrl+Shift+2`) lists them with **All** and **Missed** filters.
 
@@ -362,8 +365,8 @@ setting by name. The sections are:
   the locked-chats code.
 - **Touchpad swipes.** What a two-finger swipe does on a message or in the chat
   list.
-- **Calls and voice.** Microphone, **Check your microphone**, **Push to talk**
-  and its key.
+- **Calls and voice.** Microphone, **Check your microphone**, Camera,
+  **Check your camera**, **Push to talk** and its key.
 - **Notifications.** Desktop notifications, **Show message content in
   notifications** (on by default; turn it off to show only "New message"),
   message and mention sounds, group sounds, and **Limit repeat notifications**.

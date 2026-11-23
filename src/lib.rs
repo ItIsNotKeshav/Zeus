@@ -23,6 +23,7 @@ pub mod call_diag;
 pub mod call_tones;
 pub mod calls;
 pub mod camera;
+pub mod camera_check;
 pub mod chat_themes;
 #[cfg(any(test, feature = "demo"))]
 pub mod demo;

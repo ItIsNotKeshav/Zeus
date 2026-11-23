@@ -566,10 +566,12 @@ pub enum Command {
     /// Lists the microphones, speakers and cameras the call screen offers.
     RefreshCallDevices,
     /// The microphone Settings picked for calls (`None` is the system
-    /// default) and whether push to talk keeps it silent between presses.
+    /// default), the camera for video calls (`None` is the first one), and
+    /// whether push to talk keeps the microphone silent between presses.
     /// Process-wide, so every account's backend gets it.
     SetCallInput {
         microphone: Option<crate::settings::SavedDevice>,
+        camera: Option<crate::settings::SavedDevice>,
         push_to_talk: bool,
     },
     /// Whether the push to talk key is held, for the current call.

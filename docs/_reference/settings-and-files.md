@@ -248,6 +248,18 @@ swipes does.
 - **Check your microphone**: listens to the picked microphone for up to 30
   seconds and shows how loud it hears you. Nothing is recorded or sent, and
   the check is not available during a call.
+- **Camera**: the camera video calls open. **First camera** opens the first
+  one your system lists. A picked camera is found again by its name, so it
+  stays picked when other cameras are plugged in or out; while it is not
+  connected it is named here and calls use the first camera. The refresh
+  button looks for cameras again. Applies to every account.
+- **Check your camera**: **Preview** opens a live, mirrored picture from the
+  picked camera. Only you see it, and nothing is recorded or sent. It stops
+  when you press **Stop**, leave Settings, hide or minimize the window, lock
+  Zeus, or a call starts, and by itself after two minutes. It is not
+  available during a call. If the camera cannot be opened, the preview says
+  why: no camera found, the system's privacy settings, or another app using
+  it.
 - **Push to talk**: off by default. During calls the microphone stays silent
   until you hold the push to talk key, or the talk button above the call
   controls. The other side is not told, as it is with mute, and mute still
