@@ -260,12 +260,10 @@ impl Worker {
             self.emit_call(placing.not_placed());
             return;
         };
-        // A call opens on the microphone Settings picked and the system's default speaker; the
-        // call screen's pickers move it to others while it runs.
+        // A call opens on the microphone and camera Settings picked and the system's default
+        // speaker; the call screen's pickers move it to others while it runs.
         let devices = self.emit_call_devices().await;
-        let camera = video
-            .then(|| calls::default_camera(&devices, None))
-            .flatten();
+        let camera = video.then(|| self.call_input.camera_in(&devices)).flatten();
         let input = self.preferred_microphone(&devices);
         let placed = Call::place(
             &client,
@@ -334,9 +332,7 @@ impl Worker {
             return;
         };
         let devices = self.emit_call_devices().await;
-        let camera = video
-            .then(|| calls::default_camera(&devices, None))
-            .flatten();
+        let camera = video.then(|| self.call_input.camera_in(&devices)).flatten();
         let (done, answers) = async_channel::bounded(1);
         let placed = Call::place_group(
             &client,
@@ -415,9 +411,7 @@ impl Worker {
             return;
         };
         let devices = self.emit_call_devices().await;
-        let camera = video
-            .then(|| calls::default_camera(&devices, None))
-            .flatten();
+        let camera = video.then(|| self.call_input.camera_in(&devices)).flatten();
         let input = self.preferred_microphone(&devices);
         let (done, answers) = async_channel::bounded(1);
         let joined = Call::join_link(
@@ -566,8 +560,8 @@ impl Worker {
             Some(runtime) => {
                 if on && !runtime.call.is_video() {
                     // A voice call: ask the peer for video, or answer the peer who asked, and start
-                    // draining the frames it brings, from the first camera the machine reports.
-                    let camera = calls::default_camera(&self.call_devices, None);
+                    // draining the frames it brings, from the camera Settings picked.
+                    let camera = self.call_input.camera_in(&self.call_devices);
                     match runtime.call.upgrade_to_video(camera).await {
                         Ok(frames) => {
                             if frames.is_some() {
@@ -608,14 +602,16 @@ impl Worker {
         }
     }
 
-    /// What Settings say about the microphone, for the next call; push to talk applies to the
-    /// running one at once.
+    /// What Settings say about the microphone and camera, for the next call; push to talk applies
+    /// to the running one at once.
     pub(super) fn set_call_input(
         &mut self,
         microphone: Option<crate::settings::SavedDevice>,
+        camera: Option<crate::settings::SavedDevice>,
         push_to_talk: bool,
     ) {
         self.call_input.microphone = microphone;
+        self.call_input.camera = camera;
         if push_to_talk != self.call_input.push_to_talk {
             self.call_input.push_to_talk = push_to_talk;
             self.call_input.talking = false;

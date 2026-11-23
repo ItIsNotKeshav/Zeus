@@ -1014,6 +1014,10 @@ pub struct Settings {
     /// The microphone calls and voice messages use; `None` follows the
     /// system default.
     pub microphone: Option<SavedDevice>,
+    /// The camera video calls open; `None` opens the first one the machine
+    /// lists. Found again by its name, since the platforms' ids are indexes
+    /// that move when a camera is plugged in or out.
+    pub camera: Option<SavedDevice>,
     /// Keeps a call's microphone silent until [`Self::push_to_talk_key`] is
     /// held.
     pub push_to_talk: bool,
@@ -1143,6 +1147,7 @@ impl Default for Settings {
             save_contacts_to_phone: true,
             voice_speed: 1.0,
             microphone: None,
+            camera: None,
             push_to_talk: false,
             push_to_talk_key: DEFAULT_PUSH_TO_TALK_KEY.to_owned(),
             pause_other_media: true,
@@ -1179,8 +1184,8 @@ pub const SETTINGS_VERSION: u32 = 7;
 /// The key push to talk starts on.
 pub const DEFAULT_PUSH_TO_TALK_KEY: &str = "Space";
 
-/// An audio device picked in Settings: the system's id for it, which opens
-/// it, and the name it had, to say which one is missing when it is gone.
+/// A microphone or camera picked in Settings: the system's id for it, which
+/// opens it, and the name it had, to say which one is missing when it is gone.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedDevice {
     pub id: String,

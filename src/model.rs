@@ -3659,6 +3659,12 @@ pub enum Action {
     RefreshMicrophones,
     /// Starts or stops listening to the microphone in Settings.
     CheckMicrophone(bool),
+    /// Picks the camera video calls open; `None` opens the first one.
+    SetCamera(Option<crate::settings::SavedDevice>),
+    /// Lists the cameras again for Settings.
+    RefreshCameras,
+    /// Opens or closes the camera preview in Settings.
+    CheckCamera(bool),
     /// Turns push to talk on or off.
     SetPushToTalk(bool),
     /// Binds push to talk to a key, by egui's name for it.

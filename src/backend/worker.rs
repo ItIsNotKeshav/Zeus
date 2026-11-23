@@ -7243,8 +7243,9 @@ impl Worker {
             }
             Command::SetCallInput {
                 microphone,
+                camera,
                 push_to_talk,
-            } => self.set_call_input(microphone, push_to_talk),
+            } => self.set_call_input(microphone, camera, push_to_talk),
             Command::SetCallTalking(talking) => self.set_call_talking(talking),
             Command::LoadCallLog => self.emit_call_log(),
             Command::RefreshPoll { chat, message } => self.refresh_poll(chat, message),

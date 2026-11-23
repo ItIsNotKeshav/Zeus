@@ -58,6 +58,19 @@ pub struct CallTexture {
     pub frame: std::sync::Arc<egui::ColorImage>,
 }
 
+/// Settings' camera preview panel, kept by the view: what it last showed,
+/// so it can shrink away with it after the check has stopped, and whether it
+/// takes any room on the page.
+#[derive(Default)]
+pub struct CameraPreview {
+    /// The texture the picture is drawn through, updated in place.
+    pub texture: Option<CallTexture>,
+    /// Why the check showed no picture, if it did not.
+    pub failure: Option<crate::camera_check::Failure>,
+    /// Whether the panel is open or still closing.
+    pub shown: bool,
+}
+
 /// A pane that scrolls on its own, which a scroll gesture stays with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ScrollPane {
@@ -919,9 +932,15 @@ pub struct App {
     /// Whether the call screen shows its device pickers.
     pub call_devices_open: bool,
     /// The microphones Settings offers.
-    pub microphones: crate::voice_input::MicrophoneScan,
+    pub microphones: crate::voice_input::DeviceScan,
     /// The microphone Settings is listening to, while its check runs.
     pub mic_check: Option<crate::voice_input::MicCheck>,
+    /// The cameras Settings offers.
+    pub cameras: crate::voice_input::DeviceScan,
+    /// The camera Settings is looking through, while its preview is open.
+    pub camera_check: Option<crate::camera_check::CameraCheck>,
+    /// Settings' camera preview panel, the view's own.
+    pub camera_preview: CameraPreview,
     /// Push to talk's key and button, and what the call was last told.
     pub push_to_talk: crate::voice_input::PushToTalk,
     /// Whether the full call screen is put aside so a chat can be read while
@@ -1738,8 +1757,11 @@ impl App {
             call_surface_until: None,
             call_devices: crate::calls::DeviceList::default(),
             call_devices_open: false,
-            microphones: crate::voice_input::MicrophoneScan::default(),
+            microphones: crate::voice_input::DeviceScan::default(),
             mic_check: None,
+            cameras: crate::voice_input::DeviceScan::default(),
+            camera_check: None,
+            camera_preview: CameraPreview::default(),
             push_to_talk: crate::voice_input::PushToTalk::default(),
             call_surface_hidden: false,
             call_fullscreen: false,
@@ -7444,11 +7466,13 @@ impl App {
                 // whenever Settings opens.
                 if page == Page::Settings && self.page != Page::Settings {
                     self.refresh_microphones();
+                    self.refresh_cameras();
                 }
                 // Nothing listens to the microphone, or waits for a key,
                 // on a page nobody sees.
                 if page != Page::Settings {
                     self.mic_check = None;
+                    self.camera_check = None;
                     self.push_to_talk.capturing = false;
                 }
                 if page == Page::Settings && self.page != Page::Settings {
@@ -9610,6 +9634,8 @@ impl App {
             Action::OpenSettingsSection(index) => {
                 self.settings_section = index;
                 self.settings_search.clear();
+                // The preview is on the page being left.
+                self.camera_check = None;
             }
             Action::RevealThemeFrom(origin) => self.theme_reveal.arm(origin),
             Action::SetMode(mode) => {
@@ -9996,7 +10022,24 @@ impl App {
                     self.start_mic_check();
                 }
             }
-            Action::RefreshMicrophones => self.microphones.refresh(&self.waker),
+            Action::RefreshMicrophones => self.refresh_microphones(),
+            Action::SetCamera(device) => {
+                self.settings.camera = device;
+                self.mark_settings_dirty();
+                self.send_call_input();
+                // A look in progress moves to the new camera.
+                if self.camera_check.is_some() {
+                    self.start_camera_check();
+                }
+            }
+            Action::RefreshCameras => self.refresh_cameras(),
+            Action::CheckCamera(on) => {
+                if on {
+                    self.start_camera_check();
+                } else {
+                    self.camera_check = None;
+                }
+            }
             Action::CheckMicrophone(on) => {
                 if on {
                     self.start_mic_check();
@@ -10674,6 +10717,7 @@ impl App {
         self.call.is_some()
             || self.recording.is_some()
             || self.mic_check.is_some()
+            || self.camera_check.is_some()
             || self.player.is_playing()
             || self.video.is_active()
             || self.motion_playing.is_some()
@@ -12376,7 +12420,7 @@ mod conversations;
 pub(crate) use conversations::PhoneHistory;
 mod voice_input;
 #[cfg(any(test, feature = "demo"))]
-pub(crate) use voice_input::demo_microphones;
+pub(crate) use voice_input::{demo_cameras, demo_microphones};
 
 /// The character ranges of `text` to wrap in `format`'s markers for a
 /// selection. Markup does not close a marker after a space and reads one line
@@ -14578,7 +14622,7 @@ mod tests {
         assert!(
             std::iter::from_fn(|| commands.try_recv().ok()).any(|command| matches!(
                 command,
-                Command::SetCallInput { microphone: Some(ref picked), push_to_talk: true }
+                Command::SetCallInput { microphone: Some(ref picked), push_to_talk: true, .. }
                     if *picked == device
             )),
             "the hidden account's calls open the microphone and wait for the key too"

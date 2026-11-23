@@ -20,6 +20,7 @@ use super::widgets;
 
 mod account_card;
 mod appearance;
+mod camera;
 
 /// The settings search field, which Ctrl+F focuses on this page.
 pub const SEARCH_ID: &str = "settings-search";
@@ -1517,7 +1518,7 @@ fn swipe_picker(ui: &mut egui::Ui, app: &mut App, slot: crate::settings::SwipeSl
 }
 
 /// The microphone calls and voice messages use, a check of how it hears the
-/// room, and push to talk.
+/// room, the camera video calls open with a preview, and push to talk.
 fn voice_section(app: &App) -> Section {
     let locale = app.locale;
     let mut voice = Section::new(translated(locale, "Calls and voice"));
@@ -1552,6 +1553,7 @@ fn voice_section(app: &App) -> Section {
         translated(locale, "Nothing is recorded or sent."),
         microphone_check,
     );
+    camera::rows(app, &mut voice);
     voice.row(
         translated(locale, "Push to talk"),
         translated(

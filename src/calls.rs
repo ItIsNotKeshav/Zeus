@@ -285,19 +285,41 @@ pub struct DeviceList {
     pub cameras: Vec<CameraDevice>,
 }
 
-/// What Settings say about a call's microphone: the device it opens, and
-/// whether push to talk keeps it silent until the key is held.
+/// What Settings say about a call's microphone and camera: the devices it
+/// opens, and whether push to talk keeps the microphone silent until the key
+/// is held.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct InputPreferences {
     /// The microphone a call opens, and the name it was picked under; `None`
     /// is the system default.
     pub microphone: Option<crate::settings::SavedDevice>,
+    /// The camera a video call opens; `None` is the first one listed.
+    pub camera: Option<crate::settings::SavedDevice>,
     pub push_to_talk: bool,
     /// Whether the push to talk key is held now.
     pub talking: bool,
 }
 
 impl InputPreferences {
+    /// The camera a video call opens on this machine: the picked one, found
+    /// by its name, else the first camera listed. With nothing listed the
+    /// picked id is tried as it was saved, since discovery may have failed.
+    pub fn camera_in(&self, list: &DeviceList) -> Option<String> {
+        let found: Vec<(String, String)> = list
+            .cameras
+            .iter()
+            .map(|camera| (camera.id.clone(), camera.label.clone()))
+            .collect();
+        let picked = self.camera.as_ref().and_then(|saved| {
+            if found.is_empty() {
+                Some(saved.id.clone())
+            } else {
+                find_camera(&found, saved).map(str::to_owned)
+            }
+        });
+        default_camera(list, picked)
+    }
+
     /// Whether the engine hears the microphone.
     pub fn mic_open(&self) -> bool {
         !self.push_to_talk || self.talking
@@ -451,6 +473,20 @@ pub fn default_camera(list: &DeviceList, camera: Option<String>) -> Option<Strin
         // A camera the machine no longer has, or no choice at all: the first one it does have.
         _ => list.cameras.first().map(|camera| camera.id.clone()),
     }
+}
+
+/// The id of the camera Settings picked among `cameras` (`(id, name)`), found
+/// by its name: on Windows and macOS the id is an index, which moves to
+/// another camera when one is plugged in or out. Names are unique in the list
+/// ([`crate::camera::cameras`] keeps one of each).
+pub fn find_camera<'a>(
+    cameras: &'a [(String, String)],
+    saved: &crate::settings::SavedDevice,
+) -> Option<&'a str> {
+    cameras
+        .iter()
+        .find(|(_, name)| *name == saved.name)
+        .map(|(id, _)| id.as_str())
 }
 
 /// The corner preview's size for a capture of `capture`, in the capture's own orientation.
@@ -4182,6 +4218,58 @@ mod tests {
         assert_eq!(
             default_camera(&DeviceList::default(), Some("3".to_owned())).as_deref(),
             Some("3")
+        );
+    }
+
+    /// The camera Settings picked is found by its name, wherever the platform's index for it has
+    /// moved, and a call falls back to the first camera while it is unplugged.
+    #[test]
+    fn a_video_call_opens_the_camera_settings_picked() {
+        let camera = |id: &str, label: &str| CameraDevice {
+            id: id.to_owned(),
+            label: label.to_owned(),
+        };
+        let picked = |id: &str, name: &str| InputPreferences {
+            camera: Some(crate::settings::SavedDevice {
+                id: id.to_owned(),
+                name: name.to_owned(),
+            }),
+            ..InputPreferences::default()
+        };
+        let machine = DeviceList {
+            cameras: vec![camera("0", "Integrated Camera"), camera("1", "Desk Cam")],
+            ..DeviceList::default()
+        };
+        assert_eq!(
+            InputPreferences::default().camera_in(&machine).as_deref(),
+            Some("0"),
+            "no pick opens the first camera"
+        );
+        assert_eq!(
+            picked("1", "Desk Cam").camera_in(&machine).as_deref(),
+            Some("1")
+        );
+        // Unplugging the integrated camera moved the desk camera to index 0.
+        let moved = DeviceList {
+            cameras: vec![camera("0", "Desk Cam")],
+            ..DeviceList::default()
+        };
+        assert_eq!(
+            picked("1", "Desk Cam").camera_in(&moved).as_deref(),
+            Some("0")
+        );
+        // A picked camera that is gone does not open whatever took its index.
+        assert_eq!(
+            picked("1", "Old Webcam").camera_in(&machine).as_deref(),
+            Some("0"),
+            "a missing camera falls back to the first"
+        );
+        // Discovery that found nothing keeps the pick as it was saved.
+        assert_eq!(
+            picked("1", "Desk Cam")
+                .camera_in(&DeviceList::default())
+                .as_deref(),
+            Some("1")
         );
     }
 
