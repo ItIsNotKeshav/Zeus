@@ -34,9 +34,9 @@ does, and keeps your chats in an encrypted archive on your own computer.
 
 ## Your look
 
-20 ready-made themes, each in light and dark, or your own mix of look, mode
-and accent. Frosted panels with blur you can switch off, and doodle wallpapers
-in several styles.
+Nine themes, each in light and dark, with an accent of your own that works on
+every one of them. Frosted panels with blur you can switch off, doodle
+wallpapers in several styles, and an app icon to match.
 
 <p align="center">
   <img src="docs/readme/chat-light.png" alt="Zeus's Light theme" width="49%">
@@ -44,7 +44,7 @@ in several styles.
 </p>
 <p align="center">
   <img src="docs/readme/chat-catppuccin.png" alt="Zeus with the Catppuccin theme" width="49%">
-  <img src="docs/readme/chat-tokyo-night.png" alt="Zeus with the Tokyo Night theme" width="49%">
+  <img src="docs/readme/chat-nord.png" alt="Zeus with the Nord theme" width="49%">
 </p>
 <p align="center">
   <img src="docs/readme/chat-messages.png" alt="Zeus with the Messages look, with its own bubble shapes" width="49%">
@@ -61,18 +61,32 @@ from the message, and a message menu with Reply, Edit, Forward, Pin and more.
   <img src="docs/readme/reactions.png" alt="Zeus's reaction picker and messages with reactions" width="49%">
 </p>
 
-## Settings
-
-A sidebar of categories with search. Appearance, Chats, Notifications, Calls
-and voice (pick your microphone, push to talk), Privacy, and more.
+PDFs open in Zeus's own reader, a card that flies out of the message and
+keeps your place. Searching a chat opens in a frosted card beside it, and
+YouTube and Instagram links show their picture.
 
 <p align="center">
-  <img src="docs/readme/settings-appearance.png" alt="Zeus Settings, Appearance: look, mode, accent and blur" width="49%">
+  <img src="docs/readme/pdf.png" alt="A PDF open in Zeus's built-in reader, in the Catppuccin theme" width="49%">
+  <img src="docs/readme/chat-search.png" alt="Searching a chat in Zeus, the results in a frosted card beside the conversation" width="49%">
+</p>
+
+## Settings
+
+Your account up front, then Appearance, Chats, Notifications, Calls and
+voice, Storage and General, each group of options on its own card. Pick your
+microphone and camera (with a live preview), turn on push to talk, and choose
+the app icon.
+
+<p align="center">
+  <img src="docs/readme/settings-appearance.png" alt="Zeus Settings, Appearance: a theme previewed on a chat, theme tiles, accents, mode and Glass" width="49%">
   <img src="docs/readme/settings-chats.png" alt="Zeus Settings, Chats, in the Light theme" width="49%">
 </p>
 <p align="center">
   <img src="docs/readme/settings-notifications.png" alt="Zeus Settings, Notifications, in the Dracula theme" width="49%">
-  <img src="docs/readme/settings-calls.png" alt="Zeus Settings, Calls and voice: microphone and push to talk" width="49%">
+  <img src="docs/readme/settings-camera.png" alt="Zeus Settings, Calls and voice: microphone, camera with a live preview, and push to talk" width="49%">
+</p>
+<p align="center">
+  <img src="docs/readme/settings-app-icon.png" alt="Zeus Settings: the app icon picker with fourteen bolt-Z icons, in the Light theme" width="49%">
 </p>
 
 ## What Zeus is
@@ -82,8 +96,8 @@ and video calls, and adds its own touches on top:
 
 - **Better calls.** Pick your microphone once in Settings, and hold a key to
   talk when the room is noisy.
-- **Your colours.** 20 ready-made themes, each in light and dark, or your own
-  mix of look, mode and accent. Frosted bars, with blur you can switch off.
+- **Your colours.** Nine themes, each in light and dark, with your own accent
+  on top. Frosted bars, with blur you can switch off.
 - **Clearer chats.** Photos and files show a preview and progress while they
   send, times can stay on every message, and sent messages fly in from the
   composer.
@@ -99,8 +113,8 @@ locked chats, an app lock, and tray notifications, in ten languages.
 | Platform | How |
 |---|---|
 | **Windows** | Download `zeus-v<version>-x86_64-pc-windows-msvc-setup.exe` from [Releases](https://github.com/ItIsNotKeshav/zapfast/releases/latest). It installs for your user without administrator rights and updates itself from then on. It is not code-signed, so Windows SmartScreen warns once: choose **More info**, then **Run anyway**. |
-| **macOS** | Download the `.tar.gz` for your Mac (Apple Silicon is `aarch64`, Intel is `x86_64`) and run the `zeus` binary. There is no `.app` bundle yet, and the binary is unsigned. |
-| **Linux** | Download the `.tar.gz`, unpack it, and run `zeus`. It includes a desktop entry and icon you can copy into place. |
+| **macOS** | Download `zeus-v<version>-macos-universal.dmg` (Apple Silicon and Intel), open it and drag Zeus to Applications. The app is not signed by Apple, so the first time, right-click Zeus in Applications and choose **Open**. |
+| **Linux** | Download the `.deb`, `.rpm`, AppImage or `.tar.gz` for x86_64 or aarch64. The AppImage and `.tar.gz` update themselves; `.deb` and `.rpm` update through a new download. |
 | **From source** | Install Rust, then run `cargo build --release --locked`. Linux needs ALSA, PipeWire, and clang headers, and every platform needs cmake. |
 
 Only the Windows build is tested by the maintainer. The macOS and Linux builds
