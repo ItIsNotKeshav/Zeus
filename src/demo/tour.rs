@@ -205,7 +205,7 @@ fn show_photos(app: &mut App, photo: super::stock::Photo, caption: &str) {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Target {
     Label(&'static str),
     Widget(&'static str),
@@ -415,12 +415,14 @@ fn script() -> Vec<Cue> {
     );
     add(33.0, Move(Widget("settings-theme-Zeus")));
     add(33.35, Click(left));
+    // Each click waits out the pointer's glide (0.28 s), and an option for
+    // the list to ease open.
     add(33.5, Move(Widget("settings-mode")));
-    add(33.65, Click(left));
-    add(33.85, Move(Widget("settings-mode-light")));
-    add(34.15, Click(left));
+    add(33.85, Click(left));
+    add(34.35, Move(Widget("settings-mode-light")));
+    add(34.7, Click(left));
     add(
-        34.5,
+        35.0,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
     );
     add(
@@ -436,11 +438,11 @@ fn script() -> Vec<Cue> {
         Key(egui::Key::Comma, command(), "Ctrl + , · Settings"),
     );
     add(37.9, Move(Widget("settings-mode")));
-    add(38.0, Click(left));
-    add(38.2, Move(Widget("settings-mode-dark")));
-    add(38.5, Click(left));
+    add(38.25, Click(left));
+    add(38.75, Move(Widget("settings-mode-dark")));
+    add(39.1, Click(left));
     add(
-        39.2,
+        39.45,
         Key(egui::Key::Escape, Modifiers::NONE, "Esc · Back to chats"),
     );
     for (start, text) in [
@@ -496,8 +498,9 @@ pub struct Tour {
     pointer: Pos2,
     motion: Option<(f32, Pos2, Pos2)>,
     labels: HashMap<String, Pos2>,
-    /// Every painted text and where, including repeats that `labels` folds.
-    spots: Vec<(String, Pos2)>,
+    /// Every painted text, where, and on what layer, including repeats that
+    /// `labels` folds.
+    spots: Vec<(String, Pos2, egui::Order)>,
     trace: Vec<Trace>,
     trace_path: Option<PathBuf>,
     saved: bool,
@@ -682,17 +685,20 @@ impl Tour {
                 ctx.read_response(id).map(|r| r.rect.center())
             }
             Target::OldestHit => {
-                // The hit's line is painted in the pane, and may be in its
-                // bubble too; the pane is the one outside the transcript.
+                // The hit's line is painted in the search, and may be in its
+                // bubble too: the search is the card over the transcript, or
+                // a pane beside it in a narrow window.
                 let query = app.chat_search.trim().to_lowercase();
                 let view = (*app.selection_view.lock().unwrap_or_else(|p| p.into_inner()))?;
                 self.spots
                     .iter()
-                    .filter(|(text, pos)| {
+                    .filter(|(text, pos, order)| {
                         let text = text.to_lowercase();
-                        text != query && text.contains(&query) && !view.contains(*pos)
+                        text != query
+                            && text.contains(&query)
+                            && (*order != egui::Order::Background || !view.contains(*pos))
                     })
-                    .map(|(_, pos)| *pos)
+                    .map(|(_, pos, _)| *pos)
                     .max_by(|a, b| a.y.total_cmp(&b.y))
             }
             Target::Point(x, y) => Some(pos2(x, y)),
@@ -746,7 +752,9 @@ impl Tour {
                 Gesture::Move(target) => {
                     let Some(end) = self.target(target, app, ctx) else {
                         self.failed = true;
-                        log::error!("tour stopped: missing UI target at step {}", self.next);
+                        log::error!("tour stopped: missing UI target {target:?} at step {}", self.next);
+                        #[cfg(test)]
+                        eprintln!("tour stopped: missing UI target {target:?} at step {}", self.next);
                         self.marks.failed(at, self.next);
                         return;
                     };
@@ -1010,7 +1018,7 @@ impl Tour {
                             if rect.intersects(clipped.clip_rect) {
                                 let spot = transform * rect.center();
                                 self.labels.insert(text.galley.text().to_owned(), spot);
-                                self.spots.push((text.galley.text().to_owned(), spot));
+                                self.spots.push((text.galley.text().to_owned(), spot, layer.order));
                             }
                         }
                     }

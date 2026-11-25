@@ -286,10 +286,12 @@ pub(super) fn script() -> Vec<Cue> {
     add(80.4, esc("Esc · Clear the search"));
     add(81.0, Move(Widget("settings-theme-Zeus")));
     add(81.4, Click(left));
+    // Each click waits out the pointer's glide (0.28 s), and the light
+    // option for the list to ease open.
     add(81.8, Move(Widget("settings-mode")));
-    add(82.0, Click(left));
-    add(82.3, Move(Widget("settings-mode-light")));
-    add(82.6, Click(left));
+    add(82.15, Click(left));
+    add(82.65, Move(Widget("settings-mode-light")));
+    add(83.0, Click(left));
     add(83.4, esc("Esc · Back to chats"));
 
     for (start, text) in [
