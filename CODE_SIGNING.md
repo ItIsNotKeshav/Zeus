@@ -12,7 +12,10 @@ published them. Free code signing provided by
   Foundation certificate.
 - **Linux:** each `.rpm`, the apt and dnf package repository, and
   `packaging-checksums.txt` (as `packaging-checksums.txt.asc`), with Zeus's
-  own GPG key, published as `zeus.asc` beside the repository.
+  own GPG key, "Zeus packages", fingerprint
+  `47EB 56D4 B770 3ED9 E308 FDB4 E76A C97C 80EC B431`. It is
+  [`packaging/linux/zeus.asc`](packaging/linux/zeus.asc) here and `zeus.asc`
+  beside the [repository](https://itisnotkeshav.github.io/zeus-packages/).
 - **Updates:** `checksums.txt`, which installed copies check every update
   against, with Zeus's Ed25519 update key
   (`assets/zeus-update-public-key.hex`). A copy refuses an update this key did
