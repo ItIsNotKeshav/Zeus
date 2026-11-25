@@ -10440,7 +10440,7 @@ mod tests {
                 780.0,
                 vec![egui::Event::PointerMoved(picture.center())],
             );
-            other = picture_rect(&shown);
+            other = picture_rect(&ctx, &shown);
             buttons = controls(&shown);
             if buttons.len() == 2 && buttons.iter().all(|button| other.contains_rect(*button)) {
                 break;
@@ -10527,14 +10527,25 @@ mod tests {
 
     /// Runs one frame and returns where the preview drew its picture.
     fn preview_frame(app: &mut App, ctx: &egui::Context, events: Vec<egui::Event>) -> egui::Rect {
-        picture_rect(&frame_sized(app, ctx, 780.0, events))
+        let shapes = frame_sized(app, ctx, 780.0, events);
+        picture_rect(ctx, &shapes)
     }
 
     /// The largest textured shape: the chat behind shows the same file smaller.
-    fn picture_rect(shapes: &[egui::epaint::ClippedShape]) -> egui::Rect {
+    /// The chat's wallpaper, a texture over the whole chat card, is no picture.
+    fn picture_rect(ctx: &egui::Context, shapes: &[egui::epaint::ClippedShape]) -> egui::Rect {
+        let wallpaper = |id: egui::TextureId| {
+            ctx.tex_manager()
+                .read()
+                .meta(id)
+                .is_some_and(|meta| meta.name.starts_with("chat-wallpaper"))
+        };
         shapes
             .iter()
-            .filter(|clipped| clipped.shape.texture_id() != egui::TextureId::default())
+            .filter(|clipped| {
+                let texture = clipped.shape.texture_id();
+                texture != egui::TextureId::default() && !wallpaper(texture)
+            })
             .map(|clipped| clipped.shape.visual_bounding_rect())
             .max_by(|a, b| a.area().total_cmp(&b.area()))
             .expect("the preview draws its picture")
@@ -18036,6 +18047,15 @@ mod tests {
                     assert_eq!(shape.stroke_kind, egui::StrokeKind::Inside);
                     1
                 }
+                // Near the chat card's rounded corners the border arrives cut
+                // into a mesh, its feathered edge half a point outside.
+                egui::Shape::Mesh(mesh)
+                    if mesh.vertices.iter().any(|vertex| vertex.color == accent)
+                        && (mesh.calc_bounds().min - rect.min).length() <= 1.5
+                        && (mesh.calc_bounds().max - rect.max).length() <= 1.5 =>
+                {
+                    1
+                }
                 _ => 0,
             }
         }
@@ -18052,7 +18072,12 @@ mod tests {
             }
             count += found;
         }
-        assert_eq!(count, 1, "exactly one focus border");
+        assert_eq!(
+            count,
+            1,
+            "exactly one focus border, stop {:?}",
+            focused_stop(ctx)
+        );
     }
 
     #[test]
@@ -18916,12 +18941,24 @@ mod wallpaper_tests {
             .collect()
     }
 
-    /// Where rectangles of this colour were filled.
+    /// Where rectangles of this colour were filled, as rectangles or as the
+    /// meshes a card's rounded corners cut them into.
     fn filled(shapes: &[Shape], color: egui::Color32) -> Vec<egui::Rect> {
         shapes
             .iter()
             .filter_map(|shape| match shape {
                 Shape::Rect(rect) if rect.fill == color => Some(rect.rect),
+                // Where the mesh is this colour itself, its feathered edges
+                // fading out around it.
+                Shape::Mesh(mesh) => {
+                    let solid: Vec<egui::Pos2> = mesh
+                        .vertices
+                        .iter()
+                        .filter(|vertex| vertex.color == color)
+                        .map(|vertex| vertex.pos)
+                        .collect();
+                    (!solid.is_empty()).then(|| egui::Rect::from_points(&solid))
+                }
                 _ => None,
             })
             .collect()
