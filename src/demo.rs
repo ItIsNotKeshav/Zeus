@@ -16172,6 +16172,8 @@ mod tests {
             original.content = Content::text("Hidden source fixture sentinel");
             original.sender_name = Some("Hidden sender fixture sentinel".into());
             app.attach(&ctx);
+            // The reply strip eases in over the composer: let it arrive.
+            render(&mut app, &ctx);
             let mut output = ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(egui::Rect::from_min_size(
@@ -17744,6 +17746,9 @@ mod tests {
     fn typing_never_shows_the_composer_a_frame_late() {
         for scale in [1.0_f32, 1.25, 1.5] {
             let mut app = app();
+            // The field eases to a new height, so take the motion away: what
+            // is left must land in the keystroke's own frame.
+            app.settings.motion_preference = crate::motion::MotionPreference::Reduced;
             app.focus_composer = true;
             let ctx = egui::Context::default();
             ctx.set_pixels_per_point(scale);
@@ -18383,7 +18388,11 @@ mod tests {
         render(&mut app, &ctx);
         let texture = ctx
             .data_mut(|data| {
-                data.get_temp::<egui::TextureHandle>(egui::Id::new(("zapfast-mark", 44_usize)))
+                data.get_temp::<egui::TextureHandle>(egui::Id::new((
+                    "zapfast-mark",
+                    44_usize,
+                    crate::app_icons::current(),
+                )))
             })
             .expect("the mark was drawn at 44 pixels");
         assert_eq!(texture.size(), [44, 44]);

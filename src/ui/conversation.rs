@@ -14016,7 +14016,7 @@ mod tests {
         ] {
             app.palette.bubbles = style;
             for _ in 0..2 {
-                let output = ctx.run_ui(
+                let mut output = ctx.run_ui(
                     egui::RawInput {
                         screen_rect: Some(Rect::from_min_size(
                             egui::Pos2::ZERO,
@@ -14049,6 +14049,8 @@ mod tests {
                     }),
                     "{style:?} draws the sample"
                 );
+                // Textures the sample made are not painted here.
+                output.textures_delta.clear();
             }
         }
     }

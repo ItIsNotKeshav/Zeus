@@ -302,7 +302,13 @@ mod tests {
             shape: Shape::rect_filled(card.rect, 0.0, Color32::RED),
         };
         assert!(corners.reaches(&fill));
-        let mut tessellator = Tessellator::new(1.0, Default::default(), [1, 1], vec![]);
+        // Without feathering, whose soft pixel outside every edge would add
+        // the perimeter's half to the area.
+        let options = egui::epaint::TessellationOptions {
+            feathering: false,
+            ..Default::default()
+        };
+        let mut tessellator = Tessellator::new(1.0, options, [1, 1], vec![]);
         let Shape::Vec(shapes) = corners.cut(&mut tessellator, fill.clip_rect, fill.shape) else {
             panic!("a list of meshes");
         };

@@ -2046,6 +2046,10 @@ mod tests {
         click_widget(&mut app, &mut tour, &ctx, "settings-theme-Zeus");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingDark);
         click_widget(&mut app, &mut tour, &ctx, "settings-mode");
+        // The list eases open: click its option where it comes to rest.
+        for _ in 0..30 {
+            frame(&mut app, &mut tour, &ctx, Vec::new());
+        }
         click_widget(&mut app, &mut tour, &ctx, "settings-mode-light");
         assert_eq!(app.settings.legacy_theme(), ThemeChoice::NothingLight);
         assert_eq!(app.palette, crate::theme::Palette::nothing_light());

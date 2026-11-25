@@ -1744,6 +1744,9 @@ mod tests {
     #[test]
     fn tint_wallpaper_moves_toward_the_accent() {
         let mut settings = Settings::default();
+        // A coloured accent: the default theme's own is near white, which
+        // tints toward no hue at all.
+        settings.accent = Accent::Red;
         let palette = settings.palette(true);
         let plain = settings.wallpaper_background(&palette);
         settings.tint_wallpaper = true;
