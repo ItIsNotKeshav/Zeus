@@ -1,4 +1,4 @@
-Zeus 0.44.0 reads your PDFs, picks your camera, and runs smoother on Windows. Linux users can now get Zeus straight from their package manager, and calls, history and media got a round of fixes.
+Zeus 0.44.1 reads your PDFs, picks your camera, and runs smoother on Windows. Linux users can now get Zeus straight from their package manager, and calls, history and media got a round of fixes.
 
 ## New
 
@@ -32,10 +32,11 @@ Zeus 0.44.0 reads your PDFs, picks your camera, and runs smoother on Windows. Li
 - **M4A audio plays**, even when its file is laid out unusually.
 - **Read receipts follow WhatsApp.** The extra Zeus switch is gone: WhatsApp's own Read receipts setting decides.
 - **Macs.** Notifications stay after you quit, the Dock icon hides when there is no window, Macs with two graphics chips use the one driving the screen, and the camera is let go after a video call.
+- **Keyboard users reach every theme.** Tabbing to a theme in Settings scrolls the page down to it.
 - **Small things, tidied.** A sent sticker pops once, tooltips share one style, and the chat card's rounded corners cut its wallpaper and contents cleanly.
 
 ## Thanks
 
 Pratyaksh Mehrotra ([@pratyakshm](https://github.com/pratyakshm)) made the livelier chats, per-chat wallpapers, the macOS and onboarding fixes and much of this release. Many fixes come from upstream [ZapFast](https://github.com/crmne/zapfast) by Carmine Paolino ([@crmne](https://github.com/crmne)), with contributions there from Sarmad Durrani, sonthomsen, Goodly58 and unheardpika. Keshav made the PDF viewer, the camera picker, link previews, themes and the Windows and Linux work.
 
-**Full changelog:** [v0.43.0...v0.44.0](https://github.com/ItIsNotKeshav/Zeus/compare/v0.43.0...v0.44.0)
+**Full changelog:** [v0.43.0...v0.44.1](https://github.com/ItIsNotKeshav/Zeus/compare/v0.43.0...v0.44.1)
