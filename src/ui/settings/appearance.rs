@@ -650,6 +650,7 @@ fn theme_tiles(ui: &mut egui::Ui, app: &mut App) {
     }
 
     let mut clicked = None;
+    let mut focused = None;
     area.show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = TILE_GAP;
@@ -658,6 +659,9 @@ fn theme_tiles(ui: &mut egui::Ui, app: &mut App) {
                 // Built-in themes by name, so the demo tour can point at them.
                 let id = egui::Id::new(format!("settings-theme-{}", choice.label()));
                 let (rect, response) = theme_tile(ui, &palette, id, *selected, name, colours);
+                if response.gained_focus() {
+                    focused = Some(response.clone());
+                }
                 if response.clicked() {
                     let picture =
                         Rect::from_min_size(rect.min, vec2(rect.width(), TILE_PICTURE_HEIGHT));
@@ -667,6 +671,11 @@ fn theme_tiles(ui: &mut egui::Ui, app: &mut App) {
             ui.add_space(CARD_PAD - TILE_GAP);
         });
     });
+    // egui's row takes the page's scroll request with its own, so a tile Tab
+    // reaches below the window would stay there: ask the page again.
+    if let Some(response) = focused {
+        theme::reveal_focus(&response);
+    }
     // A theme leaves the accent as it is.
     if let Some((choice, center)) = clicked {
         app.actions.push(Action::RevealThemeFrom(center));
