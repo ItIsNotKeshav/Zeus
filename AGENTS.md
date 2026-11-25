@@ -930,11 +930,11 @@ maintainer's Windows machine:
   `%LOCALAPPDATA%\paolino\zeus\data\zeus.log` says `link: connected`. Never
   read chats out of its archive. Running a debug build over a running one
   needs the running `.exe` renamed first; Windows locks it.
-- Share `dist/zeus-v<version>-x86_64-pc-windows-msvc-setup.exe`. It installs
-  per user without administrator rights, under its own AppId, folder and
-  uninstall entry, so it never replaces ZapFast. Never reuse ZapFast's AppId
-  or edit `packaging/windows/zapfast.iss` for Zeus. The installer is unsigned, so
-  SmartScreen warns once.
+- Share the installer from the GitHub release, never one built here: only
+  the release's is signed. It installs per user without administrator
+  rights, under its own AppId, folder and uninstall entry, so it never
+  replaces ZapFast. Never reuse ZapFast's AppId or edit
+  `packaging/windows/zapfast.iss` for Zeus.
 - More machine notes, including timings and microphone tests, are in
   `notes/NOTES.md`; where the work stands is in `notes/HANDOFF.md`.
 
@@ -965,33 +965,41 @@ a release bundles whatever is there. When asked:
    `git log v<previous>..HEAD`. Leave out internal changes. No em dashes.
    Publishing refuses to run without it.
 3. Commit both as "Release Zeus <version>" and push `main`.
-4. Run `packaging\windows\build-zeus.cmd publish` from PowerShell or cmd,
-   never Git Bash. Claude's tool sandbox breaks the C build there
-   (`C1356: unable to find mspdbcore.dll`), so run it with the sandbox off.
-   It builds the installer, checks the tree is clean, the commit is on
-   `origin/main` and the signing key is the one Zeus trusts, signs
-   `checksums.txt` with `~/.zeus/update-signing-key.pem`, and creates release
-   `v<version>` with the installer, `checksums.txt` and `checksums.txt.sig`.
-5. Publishing starts `.github/workflows/zeus-release.yml` (about 30 to 45
-   minutes), which builds Linux (x86_64 and aarch64: `.tar.gz`, `.deb`,
-   `.rpm` for Fedora and openSUSE, `.AppImage`) and macOS (universal `.dmg`,
-   ad-hoc signed, so Gatekeeper wants right-click, Open once) on GitHub's
-   machines and attaches them to the same release, with
-   `packaging-checksums.txt`. Its packages come from
-   `zeus.native-packages.yaml`, apart from ZapFast's `native-packages.yaml`.
-   If the repository secret `ZEUS_UPDATE_SIGNING_KEY` is set (the contents of
-   `~/.zeus/update-signing-key.pem`), it also re-signs `checksums.txt` to
-   cover the tarballs and DMG; without it only Windows copies self-update.
-   A release made before this workflow existed cannot be rebuilt by it.
+4. Run `packaging\windows\build-zeus.cmd publish` (or
+   `bash packaging/windows/publish-zeus.sh` from Git Bash; nothing is built on
+   this PC). It checks the notes, a clean tree, the commit on `origin/main`
+   and the version above the latest release, pushes tag `v<version>` and
+   starts `.github/workflows/zeus-release.yml` on it.
+5. The workflow (about 45 minutes, more while signing waits) builds every
+   platform on GitHub's machines: the Windows installer, Linux (x86_64 and
+   aarch64: `.tar.gz`, `.deb`, `.rpm` for Fedora and openSUSE, `.AppImage`)
+   and macOS (universal `.dmg`, ad-hoc signed, so Gatekeeper wants
+   right-click, Open once). Its packages come from `zeus.native-packages.yaml`,
+   apart from ZapFast's `native-packages.yaml`. Then:
+   - With `SIGNPATH_API_TOKEN` set, SignPath signs `zeus.exe` and then the
+     installer (`CODE_SIGNING.md`). Each request waits for the maintainer to
+     approve it on SignPath's site; say so when starting a release.
+   - With `ZEUS_LINUX_SIGNING_KEY` set, `packaging/linux/make-repository.sh`
+     signs the RPMs and makes the apt and dnf repository, which the
+     `repository` job force-pushes to `ZEUS_PACKAGES_REPO` (served by its
+     Pages) with `ZEUS_PACKAGES_DEPLOY_KEY`.
+   - Only after every signature, `checksums.txt` (installer, tarballs, DMG)
+     is signed with `ZEUS_UPDATE_SIGNING_KEY`, the secret holding
+     `~/.zeus/update-signing-key.pem`; the run fails without it. A signature
+     changes its file, so checksums made earlier would fail every update.
+   - The release is made as a draft, filled, then published as the latest,
+     so installed copies never see it half done.
+   `dry_run` (from the Actions tab, on any branch) builds and signs without a
+   release or a push; try it after changing the workflow.
 6. Check it: `gh release view v<version> --repo ItIsNotKeshav/Zeus` must list
-   the Windows files, and once the workflow is green the Linux and macOS
-   ones, and not be a prerelease. Give the maintainer the release's URL, and
-   say what was not tried (an update is only seen working once the next
-   release reaches an installed copy; the Linux and macOS builds have never
-   been run by us).
+   every platform's files, `checksums.txt.sig`, and not be a draft or a
+   prerelease. Give the maintainer the release's URL, and say what was not
+   tried (an update is only seen working once the next release reaches an
+   installed copy; the Linux and macOS builds have never been run by us).
 
-Keep a backup of the signing key: without it no installed copy accepts
-another update. Renaming the repository also stops updates, since download
+Keep a backup of the update signing key: without it no installed copy
+accepts another update. The Linux GPG key matters as much to anyone who added
+the repository. Renaming the repository also stops updates, since download
 links must match `updates::CONFIG` exactly. ZapFast's `release.yml` skips the
 fork, so the `v*` tag builds nothing; `zeus-build.yml`'s `zeus-v*` tags are
 separate prerelease builds that the updater never reads.

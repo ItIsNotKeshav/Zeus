@@ -10,7 +10,8 @@
   <a href="https://github.com/ItIsNotKeshav/zapfast/releases/latest"><strong>Download</strong></a> ·
   <a href="#install">Install</a> ·
   <a href="#link-your-phone">Link your phone</a> ·
-  <a href="#credits">Credits</a>
+  <a href="#credits">Credits</a> ·
+  <a href="CODE_SIGNING.md">Code signing policy</a>
 </p>
 
 <p align="center">

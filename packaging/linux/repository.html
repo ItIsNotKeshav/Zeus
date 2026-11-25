@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zeus packages</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1c1c1e; --muted: #6b6b70; --code: #f2f2f4; --accent: #2f6fed; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #121214; --fg: #ececee; --muted: #9a9aa0; --code: #1f1f23; --accent: #7aa2ff; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 2.5rem 1rem 4rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
+  p { margin: .5rem 0; }
+  .muted { color: var(--muted); }
+  pre { background: var(--code); padding: .8rem 1rem; border-radius: 8px;
+        overflow-x: auto; font-size: .9rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+<h1>Zeus packages</h1>
+<p class="muted">Version @VERSION@, for x86_64 and arm64. Add the repository once, and
+your package manager brings each new release with your other updates.</p>
+
+<h2>Ubuntu 24.04, Debian 13 and newer</h2>
+<pre>sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL @URL@/zeus.asc | sudo tee /etc/apt/keyrings/zeus.asc &gt; /dev/null
+curl -fsSL @URL@/zeus.sources | sudo tee /etc/apt/sources.list.d/zeus.sources &gt; /dev/null
+sudo apt update
+sudo apt install zeus</pre>
+
+<h2>Fedora 41 and newer</h2>
+<pre>sudo curl -fsSLo /etc/yum.repos.d/zeus.repo @URL@/zeus.repo
+sudo dnf install zeus</pre>
+
+<h2>openSUSE</h2>
+<pre>sudo zypper addrepo @URL@/zeus.repo
+sudo zypper install zeus</pre>
+
+<p>The first install asks you to trust the key that signs every package, the
+one at <a href="@URL@/zeus.asc">zeus.asc</a>.</p>
+
+<p class="muted">Releases, the Windows installer, the macOS app and the AppImage are on
+<a href="https://github.com/ItIsNotKeshav/Zeus/releases/latest">GitHub</a>.
+See the <a href="https://github.com/ItIsNotKeshav/Zeus/blob/main/CODE_SIGNING.md">code signing policy</a>.</p>
+</main>
+</body>
+</html>

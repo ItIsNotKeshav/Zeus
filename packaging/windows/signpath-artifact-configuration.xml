@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The artifact configuration to paste into Zeus's SignPath project, as its
+  default. zeus-release.yml sends two GitHub artifacts, each a zip holding one
+  program: zeus.exe, then the installer built around the signed zeus.exe. Both
+  are Windows programs named Zeus, signed with Authenticode.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="*.exe" product-name="Zeus">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

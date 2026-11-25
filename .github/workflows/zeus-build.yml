@@ -8,8 +8,8 @@ name: Zeus build
 #   zeus-linux-aarch64  .tar.gz, .deb, .rpm, .AppImage
 # Run it from the Actions tab (any branch), or push a tag like `zeus-v0.19.0`
 # to attach the files to a GitHub prerelease. Releases themselves come from
-# `build-zeus.cmd publish` on the maintainer's PC and zeus-release.yml, which sign
-# checksums.txt for the updater; nothing here touches a `v*` release.
+# zeus-release.yml, which signs the files and checksums.txt for the updater;
+# nothing here is signed, and nothing touches a `v*` release.
 # Separate from release.yml, which is ZapFast's own.
 on:
   workflow_dispatch:

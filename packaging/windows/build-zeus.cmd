@@ -6,10 +6,11 @@ rem
 rem   packaging\windows\build-zeus.cmd [publish, test or bench]
 rem
 rem Leaves target-nmake\release\zeus.exe and
-rem dist\zeus-v<version>-x86_64-pc-windows-msvc-setup.exe. With publish, it then
-rem releases the installer on GitHub for installed copies to update from
-rem (publish-zeus.sh): bump the version, write its release notes and push main
-rem first, as AGENTS.md's "Releasing Zeus" says.
+rem dist\zeus-v<version>-x86_64-pc-windows-msvc-setup.exe, which is not for
+rem sharing: releases are built and signed on GitHub's machines. With publish,
+rem it builds nothing and starts that release instead (publish-zeus.sh): bump
+rem the version, write its release notes and push main first, as AGENTS.md's
+rem "Releasing Zeus" says.
 setlocal
 cd /d "%~dp0..\.."
 
@@ -17,10 +18,10 @@ rem The package's own version: the first line that starts with it.
 for /f "tokens=3" %%v in ('findstr /b /c:"version = " Cargo.toml') do (
   if not defined VERSION set "VERSION=%%~v"
 )
-rem Publishing needs these notes; say so before a build of several minutes.
-if /i "%~1"=="publish" if not exist "packaging\release-notes\zeus-v%VERSION%.md" (
-  echo Write packaging\release-notes\zeus-v%VERSION%.md first.
-  exit /b 1
+rem The release is built and signed on GitHub's machines (zeus-release.yml).
+if /i "%~1"=="publish" (
+  "%ProgramFiles%\Git\bin\bash.exe" packaging/windows/publish-zeus.sh
+  exit /b
 )
 
 call "C:\Program Files (x86)\Microsoft Visual Studio\2019\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul || exit /b 1
@@ -57,4 +58,3 @@ cargo build --release --locked --features demo || exit /b 1
   "/DBinary=%CARGO_TARGET_DIR%\release\zeus.exe" "/DOutputDir=%CD%\dist" ^
   packaging\windows\zeus.iss || exit /b 1
 echo Built dist\zeus-v%VERSION%-x86_64-pc-windows-msvc-setup.exe
-if /i "%~1"=="publish" "%ProgramFiles%\Git\bin\bash.exe" packaging/windows/publish-zeus.sh || exit /b 1

@@ -1,36 +1,57 @@
 name: Zeus release
 
-# Adds Linux and macOS builds to a Zeus release. The release itself, with the
-# Windows installer, is made on the maintainer's PC by
-# `packaging\windows\build-zeus.cmd publish`; publishing it starts this
-# workflow, which builds on GitHub's machines and attaches, as ZapFast's
-# release does:
+# Makes a whole Zeus release on GitHub's machines, then publishes it at once:
+#   Windows x86_64: the installer, signed through SignPath when set up
 #   Linux x86_64 and aarch64: .tar.gz, .deb, .rpm (Fedora, openSUSE), .AppImage
 #   macOS (Apple silicon and Intel): .dmg
-# Run it by hand from the Actions tab (with the release's tag) to redo one.
-# The tag must carry this workflow and zeus.native-packages.yaml: releases
-# before the one that added them cannot be rebuilt this way.
+# plus checksums.txt signed with the key installed copies trust, and the apt
+# and dnf repository at ZEUS_PACKAGES_REPO, signed with the Linux key.
+#
+# `packaging\windows\build-zeus.cmd publish` (publish-zeus.sh) pushes the
+# tag and starts it; AGENTS.md's "Releasing Zeus" has the steps. Everything
+# goes into a draft first, so installed copies never see a release that is
+# missing files or signatures. Run it by hand from the Actions tab with a
+# tag to redo one, or with dry_run on any branch to build and sign without
+# releasing.
+#
+# Secrets and variables (Settings > Secrets and variables > Actions):
+#   ZEUS_UPDATE_SIGNING_KEY  secret, the Ed25519 key in assets/zeus-update-public-key.hex
+#   SIGNPATH_API_TOKEN       secret; with it the installer and zeus.exe are signed
+#                            (not in a dry run)
+#   SIGNPATH_ORGANIZATION_ID variable, from SignPath
+#   SIGNPATH_PROJECT_SLUG    variable, default zeus
+#   SIGNPATH_POLICY_SLUG     variable, default release-signing
+#   ZEUS_LINUX_SIGNING_KEY   secret, armored GPG private key without passphrase
+#   ZEUS_PACKAGES_DEPLOY_KEY secret, SSH deploy key with write access to ZEUS_PACKAGES_REPO
+#   ZEUS_PACKAGES_REPO       variable, default ItIsNotKeshav/zeus-packages
+#   ZEUS_PACKAGES_URL        variable, default https://itisnotkeshav.github.io/zeus-packages
+# Without the SignPath or Linux secrets those files ship unsigned, as before.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing Zeus release tag, such as v0.20.1
+        description: Release tag (v0.44.0), or any branch or tag for a dry run
         type: string
         required: true
+      dry_run:
+        description: Build and sign only; make no release and push no repository
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: zeus-release-${{ inputs.tag || github.event.release.tag_name }}
+  group: zeus-release-${{ inputs.tag }}
   cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  TAG: ${{ inputs.tag || github.event.release.tag_name }}
+  REF: ${{ inputs.tag }}
+  DRY_RUN: ${{ inputs.dry_run }}
   CONFIG: zeus.native-packages.yaml
+  PACKAGES_REPO: ${{ vars.ZEUS_PACKAGES_REPO || 'ItIsNotKeshav/zeus-packages' }}
+  PACKAGES_URL: ${{ vars.ZEUS_PACKAGES_URL || 'https://itisnotkeshav.github.io/zeus-packages' }}
   # Baked into the binary by settings.rs, as release.yml does, so the GIF
   # picker works without each user pasting a key of their own. Without the
   # secret the build ships keyless and the picker asks for one.
@@ -40,19 +61,142 @@ jobs:
   check:
     name: tag matches the version
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
-      - run: |
+          ref: ${{ env.REF }}
+          fetch-depth: 0
+      - id: v
+        run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
-          test "$TAG" = "v$version" || { echo "::error::$TAG is not v$version"; exit 1; }
-          test -f "$CONFIG" || { echo "::error::$TAG has no $CONFIG; release a newer version"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          test -f "$CONFIG" || { echo "::error::$REF has no $CONFIG"; exit 1; }
+          if [ "$DRY_RUN" = true ]; then exit 0; fi
+          test "$REF" = "v$version" || { echo "::error::$REF is not v$version"; exit 1; }
+          test -f "packaging/release-notes/zeus-v$version.md" \
+            || { echo "::error::write packaging/release-notes/zeus-v$version.md"; exit 1; }
+          # A release tags a commit already on main (AGENTS.md, "Branches").
+          git merge-base --is-ancestor "$REF" origin/main \
+            || { echo "::error::$REF is not on origin/main"; exit 1; }
+
+  windows:
+    name: Windows installer
+    needs: check
+    runs-on: windows-latest
+    # Each SignPath request waits for an approver in SignPath's web page.
+    timeout-minutes: 300
+    # SignPath reads this run's job and artifacts with GITHUB_TOKEN.
+    permissions:
+      contents: read
+      actions: read
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      # A dry run is not signed: each request waits for a person to approve
+      # it, and SignPath's release policy is for releases.
+      SIGN: ${{ secrets.SIGNPATH_API_TOKEN != '' && !inputs.dry_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.REF }}
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - run: rustup target add x86_64-pc-windows-msvc
+      # The demo feature carries the benchmark Settings > General > About runs.
+      - run: cargo build --locked --release --features demo --target x86_64-pc-windows-msvc
+      - name: Stage zeus.exe
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force exe | Out-Null
+          Copy-Item target\x86_64-pc-windows-msvc\release\zeus.exe exe\
+
+      # SignPath signs only files a workflow of this repository uploaded in
+      # this run, so it can tell what source they were built from.
+      - id: exe-upload
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-exe-unsigned
+          path: exe/zeus.exe
+          retention-days: 1
+          if-no-files-found: error
+      - name: Sign zeus.exe
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'zeus' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.exe-upload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: exe-signed
+      - name: Use the signed zeus.exe
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: Copy-Item -Force exe-signed\zeus.exe exe\zeus.exe
+
+      # Inno Setup ships with the runner image. PowerShell, because bash on
+      # Windows rewrites /D... arguments as paths.
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DVersion=$env:VERSION" "/DArch=x86_64" `
+            "/DBinary=$PWD\exe\zeus.exe" "/DOutputDir=$PWD\setup" packaging\windows\zeus.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - id: setup-upload
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-setup-unsigned
+          path: setup/*-setup.exe
+          retention-days: 1
+          if-no-files-found: error
+      - name: Sign the installer
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG || 'zeus' }}
+          signing-policy-slug: ${{ vars.SIGNPATH_POLICY_SLUG || 'release-signing' }}
+          github-artifact-id: ${{ steps.setup-upload.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 7200
+          output-artifact-directory: setup-signed
+      - name: Use the signed installer
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: Copy-Item -Force setup-signed\*-setup.exe setup\
+      # Fails the run should the signature not hold, rather than releasing it.
+      - name: Check the signatures
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          foreach ($file in @("exe\zeus.exe") + (Get-ChildItem setup\*-setup.exe).FullName) {
+            $signature = Get-AuthenticodeSignature $file
+            "$file : $($signature.Status) $($signature.SignerCertificate.Subject)"
+            if ($signature.Status -ne 'Valid') { exit 1 }
+          }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-windows
+          path: setup/*-setup.exe
+          if-no-files-found: error
 
   linux:
     name: build (${{ matrix.target }})
     needs: check
     runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,7 +211,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: ${{ matrix.target }}
@@ -79,7 +223,7 @@ jobs:
       - run: cargo build --locked --release --features demo --target ${{ matrix.target }}
       - name: Package
         run: |
-          name="zeus-${TAG}-${{ matrix.target }}"
+          name="zeus-v${VERSION}-${{ matrix.target }}"
           mkdir -p "dist/$name"
           cp "target/${{ matrix.target }}/release/zeus" README.md LICENSE THIRD-PARTY-NOTICES.md "dist/$name/"
           # A Linux copy updates itself only with this marker beside it.
@@ -89,23 +233,27 @@ jobs:
           rm -rf "dist/$name"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: linux-${{ matrix.target }}
+          name: release-linux-${{ matrix.target }}
           path: dist/*.tar.gz
           if-no-files-found: error
 
   # .deb, .rpm and .AppImage from the two tarballs above, as ZapFast's
-  # packaging does (zeus.native-packages.yaml).
+  # packaging does (zeus.native-packages.yaml), then the RPMs signed and the
+  # apt and dnf repository made from them.
   linux-packages:
     name: Linux packages
-    needs: linux
+    needs: [check, linux]
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      ZEUS_LINUX_SIGNING_KEY: ${{ secrets.ZEUS_LINUX_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          pattern: linux-*
+          pattern: release-linux-*
           path: dist
           merge-multiple: true
       - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
@@ -118,32 +266,60 @@ jobs:
       - name: Packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libarchive-tools binutils xz-utils squashfs-tools zsync
-          gem install native-packages --version 0.10.0 --no-document
+          sudo apt-get install -y libarchive-tools binutils xz-utils squashfs-tools zsync rpm createrepo-c apt-utils
+          gem install native-packages --version 0.11.0 --no-document
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
       - name: Build the packages
         run: |
           native-packages --config "$CONFIG" validate
-          native-packages --config "$CONFIG" build --version "${TAG#v}" \
+          native-packages --config "$CONFIG" build --version "$VERSION" \
             --target linux-amd64 --target linux-arm64 --output dist/native-packages
       - name: Gather
         run: |
           mkdir out
           cp dist/native-packages/packages/*/{deb/*.deb,rpm/*.rpm,appimage/*.AppImage} out/
+
+      # dnf and zypper check each RPM's own signature; apt checks the
+      # repository's signed Release instead, which covers every .deb in it.
+      # A dry run without the key signs with a throwaway one, so the
+      # repository is tried before the real key exists.
+      - name: Sign the RPMs and make the repository
+        if: env.ZEUS_LINUX_SIGNING_KEY != '' || env.DRY_RUN == 'true'
+        run: |
+          set +x
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          if [ -n "$ZEUS_LINUX_SIGNING_KEY" ]; then
+            printf '%s\n' "$ZEUS_LINUX_SIGNING_KEY" | gpg --batch --quiet --import
+          else
+            gpg --batch --passphrase '' --quick-gen-key "Zeus dry run" rsa4096 sign 1d
+          fi
+          key=$(gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr:/ { print $10; exit }')
+          test -n "$key" || { echo "::error::ZEUS_LINUX_SIGNING_KEY holds no secret key"; exit 1; }
+          bash packaging/linux/make-repository.sh "$key" out site "$PACKAGES_URL"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: linux-packages
+          name: release-linux-packages
           path: out/*
+          if-no-files-found: error
+      - if: env.ZEUS_LINUX_SIGNING_KEY != '' || env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: packages-site
+          path: site
+          include-hidden-files: true
           if-no-files-found: error
 
   macos:
     name: macOS universal app
     needs: check
     runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
@@ -165,62 +341,119 @@ jobs:
       - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
         with:
           ruby-version: '4.0'
-      - run: gem install native-packages --version 0.10.0 --no-document
+      - run: gem install native-packages --version 0.11.0 --no-document
       - name: App bundle and DMG
         run: |
           mkdir -p dist/macos-input
-          bash packaging/macos/bundle-zeus.sh universal/zeus dist/macos-input/Zeus.app "${TAG#v}"
-          native-packages --config "$CONFIG" build --version "${TAG#v}" \
+          bash packaging/macos/bundle-zeus.sh universal/zeus dist/macos-input/Zeus.app "$VERSION"
+          native-packages --config "$CONFIG" build --version "$VERSION" \
             --target macos-universal --defer-recipes --output "$RUNNER_TEMP/macos-packages"
           cp "$RUNNER_TEMP/macos-packages/packages/macos-universal/dmg/"*.dmg dist/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: macos-universal
+          name: release-macos
           path: dist/*.dmg
           if-no-files-found: error
 
   publish:
-    name: Attach to the release
-    needs: [linux, linux-packages, macos]
+    name: Publish the release
+    needs: [check, windows, linux, linux-packages, macos]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      # Optional. With it, checksums.txt is re-signed to cover the Linux
-      # tarballs and the DMG, so those copies can update themselves. Without
-      # it the files are attached with unsigned packaging-checksums.txt only.
+      VERSION: ${{ needs.check.outputs.version }}
       ZEUS_UPDATE_SIGNING_KEY: ${{ secrets.ZEUS_UPDATE_SIGNING_KEY }}
+      ZEUS_LINUX_SIGNING_KEY: ${{ secrets.ZEUS_LINUX_SIGNING_KEY }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
+          ref: ${{ env.REF }}
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
+          pattern: release-*
           path: dist
           merge-multiple: true
+
+      # Only after every file is signed: a signature changes the file, and
+      # installed copies refuse an update whose hash does not match.
       - name: Checksums
         run: |
-          cd dist
-          sha256sum *.tar.gz *.dmg *.deb *.rpm *.AppImage > packaging-checksums.txt
-          cat packaging-checksums.txt
-      - name: Re-sign checksums.txt
-        if: env.ZEUS_UPDATE_SIGNING_KEY != ''
-        run: |
           set +x
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern checksums.txt --dir signed
+          test -n "$ZEUS_UPDATE_SIGNING_KEY" \
+            || { echo "::error::ZEUS_UPDATE_SIGNING_KEY is not set"; exit 1; }
           key="$RUNNER_TEMP/update-signing-key.pem"
           (umask 077; printf '%s\n' "$ZEUS_UPDATE_SIGNING_KEY" > "$key")
           # Any other key would publish an update every installed copy refuses.
           public=$(openssl pkey -in "$key" -pubout -outform DER | tail -c 32 | od -An -tx1 | tr -d ' \n')
           test "$public" = "$(tr -d '[:space:]' < assets/zeus-update-public-key.hex)" \
             || { echo "::error::ZEUS_UPDATE_SIGNING_KEY is not the key Zeus trusts"; exit 1; }
-          cd signed
-          # The Windows line stays as the maintainer's PC signed it; ours are
-          # replaced, so a re-run does not repeat them.
-          grep -v -E '\.(tar\.gz|dmg)$' checksums.txt > keep.txt || true
-          (cd ../dist && sha256sum *.tar.gz *.dmg) | cat keep.txt - > ../dist/checksums.txt
-          openssl pkeyutl -sign -inkey "$key" -rawin -in ../dist/checksums.txt -out ../dist/checksums.txt.sig
+          cd dist
+          # What installed copies update from.
+          sha256sum *-setup.exe *.tar.gz *.dmg > checksums.txt
+          openssl pkeyutl -sign -inkey "$key" -rawin -in checksums.txt -out checksums.txt.sig
           rm -f "$key"
-      - name: Upload
-        run: gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber dist/*
+          sha256sum *.deb *.rpm *.AppImage > packaging-checksums.txt
+          if [ -n "$ZEUS_LINUX_SIGNING_KEY" ]; then
+            export GNUPGHOME="$RUNNER_TEMP/gnupg"
+            mkdir -m 700 "$GNUPGHOME"
+            printf '%s\n' "$ZEUS_LINUX_SIGNING_KEY" | gpg --batch --quiet --import
+            gpg --batch --armor --detach-sign --output packaging-checksums.txt.asc packaging-checksums.txt
+          fi
+          cat checksums.txt packaging-checksums.txt
+
+      # A draft until every file is there: installed copies only read
+      # published releases.
+      - name: Release
+        run: |
+          notes="packaging/release-notes/zeus-v$VERSION.md"
+          if ! gh release view "$REF" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release create "$REF" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+              --title "Zeus $VERSION" --notes-file "$notes"
+          fi
+          gh release upload "$REF" --repo "$GITHUB_REPOSITORY" --clobber dist/*
+          gh release edit "$REF" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+
+  # The apt and dnf repository, once the release it carries is out.
+  repository:
+    name: Publish the package repository
+    needs: [check, publish]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      ZEUS_PACKAGES_DEPLOY_KEY: ${{ secrets.ZEUS_PACKAGES_DEPLOY_KEY }}
+      ZEUS_LINUX_SIGNING_KEY: ${{ secrets.ZEUS_LINUX_SIGNING_KEY }}
+    steps:
+      - name: Is the repository set up
+        id: ready
+        run: |
+          if [ -z "$ZEUS_PACKAGES_DEPLOY_KEY" ] || [ -z "$ZEUS_LINUX_SIGNING_KEY" ]; then
+            echo "::notice::No ZEUS_PACKAGES_DEPLOY_KEY or ZEUS_LINUX_SIGNING_KEY: the package repository was not updated"
+            echo "go=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "go=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.ready.outputs.go == 'true'
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: packages-site
+          path: site
+      # One commit holding only this release, force-pushed, so the repository
+      # never grows past one version of the packages.
+      - name: Push
+        if: steps.ready.outputs.go == 'true'
+        run: |
+          set +x
+          key="$RUNNER_TEMP/deploy-key"
+          (umask 077; printf '%s\n' "$ZEUS_PACKAGES_DEPLOY_KEY" > "$key")
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          cd site
+          git init -q -b main
+          git add -A
+          git -c user.name="Zeus release" -c user.email="actions@users.noreply.github.com" \
+            commit -q -m "Zeus $VERSION"
+          git push -q --force "git@github.com:$PACKAGES_REPO.git" main
+          rm -f "$key"
