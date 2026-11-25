@@ -229,11 +229,10 @@ fn show_pane(app: &mut App, ui: &mut egui::Ui, chat: Chat, pane: Pane) {
                         .data(|data| data.get_temp::<Rect>(composer_pill_id()))
                         .unwrap_or(area);
                     let top = pill.top().min(ui.min_rect().top());
-                    let foot = Rect::from_x_y_ranges(
+                    Rect::from_x_y_ranges(
                         area.x_range(),
                         (top - 12.0).max(area.top())..=area.bottom(),
-                    );
-                    foot
+                    )
                 },
             )
             .inner;

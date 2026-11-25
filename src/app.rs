@@ -14838,25 +14838,25 @@ mod tests {
         use fastframe_shell::{Closed, Resident};
         let ctx = egui::Context::default();
 
-        let mut app = app();
-        app.test_tray_shown = Some(true);
-        app.apply(Action::Quit, &ctx);
-        assert!(app.hide_intent);
-        assert!(!app.quit_requested);
-        assert_eq!(app.closed(), Closed::Hide);
+        let mut hiding = app();
+        hiding.test_tray_shown = Some(true);
+        hiding.apply(Action::Quit, &ctx);
+        assert!(hiding.hide_intent);
+        assert!(!hiding.quit_requested);
+        assert_eq!(hiding.closed(), Closed::Hide);
 
-        let mut app = app();
-        app.test_tray_shown = Some(false);
-        app.apply(Action::Quit, &ctx);
-        assert!(app.quit_requested);
-        assert_eq!(app.closed(), Closed::Quit);
+        let mut quitting = app();
+        quitting.test_tray_shown = Some(false);
+        quitting.apply(Action::Quit, &ctx);
+        assert!(quitting.quit_requested);
+        assert_eq!(quitting.closed(), Closed::Quit);
 
-        let mut app = app();
-        app.test_tray_shown = Some(true);
-        app.apply(Action::QuitCompletely, &ctx);
-        assert!(app.quit_requested);
-        assert!(!app.hide_intent);
-        assert_eq!(app.closed(), Closed::Quit);
+        let mut complete = app();
+        complete.test_tray_shown = Some(true);
+        complete.apply(Action::QuitCompletely, &ctx);
+        assert!(complete.quit_requested);
+        assert!(!complete.hide_intent);
+        assert_eq!(complete.closed(), Closed::Quit);
     }
 
     /// `zeus quit` always ends the process, and does even behind the

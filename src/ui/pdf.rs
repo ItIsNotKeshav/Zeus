@@ -624,6 +624,7 @@ fn failed(
 
 /// The frosted bar across the top: the document's name and the page being
 /// read, then search, zoom, Save as, Open in another app and Close.
+#[allow(clippy::too_many_arguments)]
 fn header(
     ui: &mut egui::Ui,
     viewer: &mut Viewer,

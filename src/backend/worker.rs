@@ -17349,7 +17349,7 @@ mod tests {
         ));
         let open = |worker: &Worker| worker.call.as_ref().unwrap().call.mic_is_open();
         assert!(open(&worker), "without push to talk the call is heard");
-        worker.set_call_input(None, true);
+        worker.set_call_input(None, None, true);
         assert!(
             !open(&worker),
             "turning push to talk on closes the running call"
@@ -17365,7 +17365,7 @@ mod tests {
         assert!(!next.mic_is_open(), "a new call waits for the key");
         assert!(!worker.call_input.talking);
 
-        worker.set_call_input(None, false);
+        worker.set_call_input(None, None, false);
         assert!(open(&worker), "turning push to talk off opens it again");
     }
 

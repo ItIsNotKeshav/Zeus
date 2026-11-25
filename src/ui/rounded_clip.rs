@@ -200,7 +200,7 @@ impl Corners {
         let mut out = Mesh::with_texture(mesh.texture_id);
         let mut polygon = Vec::with_capacity(8);
         let mut scratch = Vec::with_capacity(8);
-        for triangle in mesh.indices.chunks_exact(3) {
+        for triangle in mesh.indices.as_chunks::<3>().0 {
             polygon.clear();
             polygon.extend(triangle.iter().map(|&index| mesh.vertices[index as usize]));
             let bounds = Rect::from_points(&[polygon[0].pos, polygon[1].pos, polygon[2].pos]);
@@ -318,7 +318,7 @@ mod tests {
                     vertex.pos
                 );
             }
-            for triangle in mesh.indices.chunks_exact(3) {
+            for triangle in mesh.indices.as_chunks::<3>().0 {
                 let [a, b, c] = [0, 1, 2].map(|i| mesh.vertices[triangle[i] as usize].pos);
                 area += ((b - a).x * (c - a).y - (b - a).y * (c - a).x).abs() / 2.0;
             }

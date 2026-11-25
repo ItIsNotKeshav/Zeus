@@ -494,10 +494,10 @@ async fn fetch_inner(url: String) -> Option<ComposedPreview> {
     let client = client(&parsed)?;
     // A YouTube page describes its video only deep in its body; its own
     // oEmbed answer names it, and the video's still is at a known address.
-    if let Some(video) = youtube_id(&parsed) {
-        if let Some(preview) = youtube(&client, &requested, &video).await {
-            return Some(preview);
-        }
+    if let Some(video) = youtube_id(&parsed)
+        && let Some(preview) = youtube(&client, &requested, &video).await
+    {
+        return Some(preview);
     }
 
     let response = client.get(parsed).send().await.ok()?;

@@ -1209,6 +1209,7 @@ fn separator(ui: &mut egui::Ui, palette: &Palette) {
 /// One row of a group: its icon, its name and what it does, and a switch.
 /// Returns whether the switch was flipped. `boxed` keeps the reserved square
 /// the icon used to sit in; without it the icon sits inline, and larger.
+#[allow(clippy::too_many_arguments)]
 fn switch_row(
     ui: &mut egui::Ui,
     palette: &Palette,

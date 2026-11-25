@@ -1342,7 +1342,7 @@ startxref
 /// The demo's document: a few pages of a made-up report, a heading, an
 /// accent rule and paragraphs, so the viewer and its search have something
 /// to show that is nobody's.
-#[cfg(feature = "demo")]
+#[cfg(any(test, feature = "demo"))]
 pub fn demo_document() -> Vec<u8> {
     let paragraph = [
         "The orbital workshop met every milestone this quarter. Crews logged",

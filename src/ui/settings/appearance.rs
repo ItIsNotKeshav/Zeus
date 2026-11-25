@@ -795,7 +795,7 @@ fn accent_swatches(ui: &mut egui::Ui, app: &mut App) {
         .settings
         .custom_theme
         .as_ref()
-        .and_then(|_| app.settings.custom_theme_cache.as_ref())
+        .and(app.settings.custom_theme_cache.as_ref())
         .map_or_else(
             || app.settings.chat_theme.palette(palette.dark, Accent::Theme),
             |theme| theme.palette,
