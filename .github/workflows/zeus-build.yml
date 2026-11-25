@@ -126,7 +126,7 @@ jobs:
       - uses: ruby/setup-ruby@a0102e0972be65f351c307e2d64b9314a57c8073 # v1
         with:
           ruby-version: '4.0'
-      - run: gem install native-packages --version 0.10.0 --no-document
+      - run: gem install native-packages --version 0.11.0 --no-document
       - name: App bundle and DMG
         run: |
           version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
@@ -183,7 +183,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libarchive-tools binutils xz-utils squashfs-tools zsync
-          gem install native-packages --version 0.10.0 --no-document
+          gem install native-packages --version 0.11.0 --no-document
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
       - name: Build the packages
         run: |
