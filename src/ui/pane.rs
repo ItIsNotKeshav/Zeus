@@ -1,7 +1,7 @@
 //! The search beside the open chat: a query, an optional day, and the
 //! chat's matching messages, newest first. Beside the chat list it is a card
 //! over the right of the conversation, as the chat's info is
-//! ([`side_card`]); a narrow window shows it as a page over the chat.
+//! (`side_card`); a narrow window shows it as a page over the chat.
 
 use std::ops::Range;
 

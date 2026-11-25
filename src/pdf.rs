@@ -11,7 +11,7 @@
 //! The window says which pages it wants each frame, nearest first, and the
 //! worker takes the head of that list, so pages scrolled past are never
 //! rendered. Finished pages come back as pixels, which the window uploads a
-//! couple per frame and keeps under [`BUDGET`], dropping the pages farthest
+//! couple per frame and keeps under `BUDGET`, dropping the pages farthest
 //! from the one being read. Everything is let go when the viewer closes.
 
 use std::collections::{HashMap, VecDeque};
@@ -1222,7 +1222,7 @@ fn first_page(path: &Path, width: u32) -> Option<egui::ColorImage> {
 }
 
 /// The pages to ask for: those on screen nearest the middle first, then
-/// [`PREFETCH`] each way, each at the width it is drawn at.
+/// `PREFETCH` each way, each at the width it is drawn at.
 pub fn wanted_pages(
     visible: std::ops::Range<usize>,
     count: usize,
