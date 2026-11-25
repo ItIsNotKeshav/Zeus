@@ -2173,11 +2173,20 @@ pub fn chip_scroll_row<R>(
 /// frosted header puts its chips on a layer of its own that is none: the
 /// wheel went to the list under it, and the chips never moved. Whatever
 /// egui already used is gone from the delta, so nothing scrolls twice.
+/// The band a chip row's chips take up. Its scroll area's inner rect can
+/// run on down the panel: a fade over all of it would darken the right edge
+/// of every chat row under the chips, and the wheel over any of them would
+/// move the chips instead of the list.
+pub fn chip_band<R>(output: &egui::scroll_area::ScrollAreaOutput<R>) -> Rect {
+    let rect = output.inner_rect;
+    rect.with_max_y(rect.bottom().min(rect.top() + output.content_size.y))
+}
+
 fn wheel_sideways<R>(ctx: &egui::Context, output: &egui::scroll_area::ScrollAreaOutput<R>) {
     let Some(pointer) = ctx.pointer_hover_pos() else {
         return;
     };
-    if !output.inner_rect.contains(pointer)
+    if !chip_band(output).contains(pointer)
         || egui::Popup::is_any_open(ctx)
         || ctx.dragged_id().is_some()
     {

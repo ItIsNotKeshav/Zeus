@@ -111,7 +111,7 @@ pub fn chip_row(app: &mut App, ui: &mut egui::Ui, palette: &Palette) {
     if hidden > 0.5 && !palette.vibrant() {
         widgets::fade_right(
             ui,
-            super::chats::chip_band(&row),
+            super::widgets::chip_band(&row),
             super::chats::CHIP_FADE,
             palette.sidebar(),
         );
