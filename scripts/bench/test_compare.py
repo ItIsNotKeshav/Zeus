@@ -77,6 +77,42 @@ class CompareTest(unittest.TestCase):
             code = compare.main([str(arg) for arg in args])
         return code, out.getvalue()
 
+    def pdf_result(self, label, run, zoom_peak):
+        data = result(label, run, 100.0, 105.0)
+        data["script"] = "pdf"
+        data["phases"] = [
+            {
+                "name": name,
+                "end": {"t": 1, "mb": 120.0, "other_mb": 120.0},
+                "max_mb": zoom_peak if name == "zoom" else 130.0,
+                "cpu_pct": 10.0,
+                "gpu_pct": None,
+                "samples": [],
+            }
+            for name in compare.PDF_PHASES
+        ]
+        data["frames"] = {"read": data["frames"]["scroll"]}
+        return data
+
+    def test_pdf_runs_get_their_own_phases_and_peaks(self):
+        for run in (1, 2):
+            self.write(self.pdf_result("main", run, 400.0))
+            self.write(self.pdf_result("smaller", run, 200.0))
+        code, out = self.run_main(self.root / "main", self.root / "smaller")
+        self.assertEqual(code, 0)
+        self.assertIn("Read from the first page to the last", out)
+        self.assertIn("Reading: frames a second", out)
+        self.assertNotIn("Switch through 20 chats", out)
+        zoom = next(line for line in out.splitlines() if line.startswith("| Highest during: Zoomed"))
+        self.assertIn("**-200.0, -50%**", zoom)
+
+    def test_builds_that_played_different_scenarios_are_flagged(self):
+        self.write(result("main", 1, 100.0, 105.0))
+        self.write(self.pdf_result("pdf", 1, 300.0))
+        code, out = self.run_main(self.root)
+        self.assertEqual(code, 0)
+        self.assertIn("played different scenarios", out)
+
     def test_spread_is_the_median_and_the_range(self):
         self.assertEqual(compare.spread([3.0, 1.0, 2.0, 10.0, 4.0]), (3.0, 1.0, 10.0))
         self.assertEqual(compare.spread([1.0, 2.0]), (1.5, 1.0, 2.0))

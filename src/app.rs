@@ -8151,7 +8151,7 @@ impl App {
             }
             Action::ClosePdfSearch => {
                 if let Some(viewer) = &mut self.pdf_viewer {
-                    viewer.search.open = false;
+                    viewer.close_search();
                 }
             }
             Action::ZoomPdf(factor) => {

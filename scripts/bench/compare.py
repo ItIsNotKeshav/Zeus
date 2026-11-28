@@ -9,8 +9,9 @@ Each folder holds one build's run-*.json files (or folders that do). For each
 build it prints smoothness (frame rate, missed frames, jitter), CPU and GPU
 use, and memory: the median of the runs and their spread (lowest to highest),
 and the change of the median against the baseline build, the first one named
-unless --baseline says otherwise. Paste the output into a pull request;
-results do not go in the repository. Standard library only.
+unless --baseline says otherwise. Runs of the PDF viewer's scenario
+(run.sh --script pdf) get that scenario's phases. Paste the output into a
+pull request; results do not go in the repository. Standard library only.
 """
 
 import argparse
@@ -33,6 +34,23 @@ PHASE_NAMES = {
 # smoothness table.
 TIMED = {"scroll": "Scrolling", "churn": "Switching chats", "picker": "Sticker picker",
          "search": "Search"}
+# The PDF viewer's scenario: its phases, their names, the timed ones, and
+# the one whose frame rate and jitter are shown.
+PDF_PHASES = ["settle", "open", "read", "zoom", "search", "idle", "closed"]
+PDF_PHASE_NAMES = {
+    "settle": "Chat with the document's card (6 s)",
+    "open": "Opened, first pages drawn",
+    "read": "Read from the first page to the last",
+    "zoom": "Zoomed to 2x and 5x, scrolled, back to fit",
+    "search": "Searched",
+    "idle": "Left open (10 s)",
+    "closed": "Closed (12 s)",
+}
+PDF_TIMED = {"read": "Reading", "zoom": "Zooming", "search": "Searching"}
+SCRIPTS = {
+    "bench": (PHASES, PHASE_NAMES, TIMED, "scroll"),
+    "pdf": (PDF_PHASES, PDF_PHASE_NAMES, PDF_TIMED, "read"),
+}
 METRIC_NAMES = {
     "physical_footprint": "physical footprint",
     "pss": "PSS",
@@ -138,9 +156,22 @@ def measured(builds, order, baseline, measures):
     return table
 
 
-def rows(builds, order, baseline):
+def script_of(builds, label):
+    """The scenario a build's runs played: bench unless they say pdf."""
+    runs = complete(builds[label]) or builds[label]
+    return runs[0].get("script") or "bench"
+
+
+def rows(builds, order, baseline, script="bench"):
     """The memory table's rows: a label and a cell per build."""
-    measures = [(PHASE_NAMES[phase], lambda run, p=phase: phase_end(run, p), 1) for phase in PHASES]
+    phases, names, _, _ = SCRIPTS[script]
+    measures = [(names[phase], lambda run, p=phase: phase_end(run, p), 1) for phase in phases]
+    if script == "pdf":
+        # The viewer's peaks come and go between phase ends.
+        measures += [
+            (f"Highest during: {names[phase]}", lambda run, p=phase: phase_value(run, p, "max_mb"), 1)
+            for phase in ("open", "read", "zoom", "search")
+        ]
     measures += [
         ("Peak (highest reading)", lambda run: run.get("peak_mb"), 1),
         ("Peak (system's own count)", lambda run: run.get("os_peak_mb"), 1),
@@ -148,11 +179,12 @@ def rows(builds, order, baseline):
     return measured(builds, order, baseline, measures)
 
 
-def frame_rows(builds, order, baseline):
+def frame_rows(builds, order, baseline, script="bench"):
+    _, _, timed, smooth = SCRIPTS[script]
     measures = []
-    for phase, name in TIMED.items():
+    for phase, name in timed.items():
         pick = lambda group, stat=None, p=phase: lambda run: frame_stat(run, p, group, stat)  # noqa: E731
-        if phase == "scroll":
+        if phase == smooth:
             measures += [
                 (f"{name}: frames a second (higher is better)", pick("fps"), 1),
                 (f"{name}: frame time, median (ms)", pick("interval_ms", "p50"), 1),
@@ -167,21 +199,23 @@ def frame_rows(builds, order, baseline):
     return measured(builds, order, baseline, measures)
 
 
-def use_rows(builds, order, baseline):
+def use_rows(builds, order, baseline, script="bench"):
     """CPU and GPU use per phase."""
+    phases, names, _, _ = SCRIPTS[script]
     measures = []
     for kind in ("cpu", "gpu"):
-        for phase in PHASES:
+        for phase in phases:
             pick = lambda run, p=phase, k=kind: phase_value(run, p, k + "_pct")  # noqa: E731
-            measures.append((f"{kind.upper()}: {PHASE_NAMES[phase]}", pick, 1))
+            measures.append((f"{kind.upper()}: {names[phase]}", pick, 1))
     return measured(builds, order, baseline, measures)
 
 
-def gpu_note(builds, order):
+def gpu_note(builds, order, script="bench"):
     metrics = {run.get("gpu_metric") for label in order for run in complete(builds[label])}
     if "whole_gpu" in metrics:
         return "GPU on macOS is the whole GPU's utilisation, other apps included; close them first."
-    if any(phase_value(run, "scroll", "gpu_pct") is not None for label in order for run in complete(builds[label])):
+    smooth = SCRIPTS[script][3]
+    if any(phase_value(run, smooth, "gpu_pct") is not None for label in order for run in complete(builds[label])):
         return "GPU is this process's 3D engine time."
     return "No GPU readings here (software rendering, or a driver that does not report them)."
 
@@ -208,6 +242,10 @@ def describe(runs):
 
 def warnings(builds, order):
     notes = []
+    scripts = {label: script_of(builds, label) for label in order}
+    if len(set(scripts.values())) > 1:
+        played = ", ".join(f"{label} {script}" for label, script in scripts.items())
+        notes.append(f"The builds played different scenarios ({played}), so their numbers are not comparable.")
     machines = {label: machine_key(builds[label]) for label in order}
     if len(set(machines.values())) > 1:
         notes.append(
@@ -251,22 +289,25 @@ def machine_key(runs):
 def report(builds, order, baseline):
     first = complete(builds[baseline]) or builds[baseline]
     metric = METRIC_NAMES.get(first[0].get("metric"), first[0].get("metric", "memory"))
+    script = script_of(builds, baseline)
+    if script not in SCRIPTS:
+        script = "bench"
     out = []
     header = []
     for label in order:
         count = len(complete(builds[label]))
         header.append(f"{label} ({count} run{'s' if count != 1 else ''})")
-    smooth = frame_rows(builds, order, baseline)
+    smooth = frame_rows(builds, order, baseline, script)
     if smooth:
         out.append(markdown(["Smoothness"] + header, smooth))
         out.append("")
-    use = use_rows(builds, order, baseline)
+    use = use_rows(builds, order, baseline, script)
     if use:
         out.append(markdown(["CPU and GPU, % (100 = one core busy)"] + header, use))
         out.append("")
-        out.append(gpu_note(builds, order))
+        out.append(gpu_note(builds, order, script))
         out.append("")
-    out.append(markdown(["Memory at phase end, " + metric + " (MB)"] + header, rows(builds, order, baseline)))
+    out.append(markdown(["Memory at phase end, " + metric + " (MB)"] + header, rows(builds, order, baseline, script)))
     out.append("")
     out.append(
         f"Each cell: median of the runs (lowest to highest). **Bold**: the median's "

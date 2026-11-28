@@ -4,6 +4,7 @@ mod bench;
 mod capture;
 mod marks;
 pub(super) mod media;
+mod pdf;
 mod session;
 mod setup;
 mod whats_new;
@@ -43,11 +44,14 @@ pub enum Script {
     Bench,
     /// The first-run setup, step by step, about 24 seconds.
     Setup,
+    /// The PDF viewer's memory benchmark: a document opened, read, zoomed,
+    /// searched and closed, about 80 seconds, started at once.
+    Pdf,
 }
 
 impl Script {
     /// Names accepted by `--demo-tour-script`.
-    pub const NAMES: [&str; 4] = ["launch", "whats-new", "bench", "setup"];
+    pub const NAMES: [&str; 5] = ["launch", "whats-new", "bench", "setup", "pdf"];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
@@ -55,6 +59,7 @@ impl Script {
             "whats-new" => Some(Self::WhatsNew),
             "bench" => Some(Self::Bench),
             "setup" => Some(Self::Setup),
+            "pdf" => Some(Self::Pdf),
             _ => None,
         }
     }
@@ -66,6 +71,7 @@ impl Script {
             Self::WhatsNew => whats_new::DURATION,
             Self::Bench => bench::DURATION,
             Self::Setup => setup::DURATION,
+            Self::Pdf => pdf::DURATION,
         }
     }
 
@@ -76,6 +82,7 @@ impl Script {
             Self::WhatsNew => whats_new::prepare(app),
             Self::Bench => bench::prepare(app),
             Self::Setup => setup::prepare(app),
+            Self::Pdf => pdf::prepare(app),
         }
     }
 
@@ -85,6 +92,7 @@ impl Script {
             Self::WhatsNew => whats_new::script(),
             Self::Bench => bench::script(),
             Self::Setup => setup::script(),
+            Self::Pdf => pdf::script(),
         }
     }
 
@@ -94,14 +102,32 @@ impl Script {
             Self::Launch => &[(3.6, 4.6, 340.0)],
             Self::WhatsNew => &[],
             Self::Bench => &bench::SCROLLS,
-            Self::Setup => &[],
+            Self::Setup | Self::Pdf => &[],
         }
     }
 
     /// Whether the tour sends input and asks for frames only around its cues,
     /// so the stretches between them are as idle as an untouched window.
     fn sparse(self) -> bool {
-        self == Self::Bench
+        matches!(self, Self::Bench | Self::Pdf)
+    }
+
+    /// The phases whose frame times the marks record.
+    fn timed(self) -> &'static [&'static str] {
+        match self {
+            Self::Pdf => &pdf::TIMED,
+            _ => &bench::TIMED,
+        }
+    }
+
+    /// Whether a timed `phase` needs the painted labels found each frame.
+    /// Finding them is work of the tour's own, kept out of the frame times
+    /// where no cue looks for one.
+    fn finds_labels(self, phase: Option<&str>) -> bool {
+        match self {
+            Self::Pdf => false,
+            _ => phase != Some(bench::SCROLL),
+        }
     }
 }
 
@@ -232,6 +258,19 @@ enum Target {
     Point(f32, f32),
     /// Present while the chat list's search lists message results.
     Hits,
+    /// Present while the PDF viewer is as described.
+    Pdf(PdfState),
+}
+
+/// What a [`Target::Pdf`] looks for in the PDF viewer.
+#[derive(Clone, Copy, Debug)]
+enum PdfState {
+    /// The page has been rendered and is held.
+    Rendered(usize),
+    /// The search found something.
+    Hits,
+    /// No viewer is open or closing.
+    Closed,
 }
 
 enum Gesture {
@@ -584,8 +623,43 @@ impl Tour {
     /// Writes phase boundaries, checks and the timed phase's frame times to
     /// `path`, one JSON object a line, as they happen.
     pub fn with_marks(mut self, path: Option<PathBuf>) -> Self {
-        self.marks = marks::Marks::new(path, &bench::TIMED);
+        self.marks = marks::Marks::new(path, self.script.timed());
         self
+    }
+
+    /// The benchmark phase under way, as its marks name it.
+    pub fn phase(&self) -> Option<&'static str> {
+        self.marks.phase_name()
+    }
+
+    /// Whether the tour has played to its end or stopped on a missing target.
+    pub fn finished(&self) -> bool {
+        self.failed
+            || self
+                .start
+                .is_some_and(|start| start.elapsed() > self.script.duration())
+    }
+
+    /// Whether the tour stopped because something it looked for was not on
+    /// screen.
+    pub fn failed(&self) -> bool {
+        self.failed
+    }
+
+    /// The checks the marks recorded: what each looked for, and whether it
+    /// was there.
+    pub fn checks(&self) -> Vec<(String, bool)> {
+        self.marks
+            .lines
+            .iter()
+            .filter(|line| line["event"] == "check")
+            .map(|line| {
+                (
+                    line["name"].as_str().unwrap_or_default().to_owned(),
+                    line["ok"] == true,
+                )
+            })
+            .collect()
     }
 
     /// Whether the marks still lack the graphics chip's name.
@@ -703,6 +777,15 @@ impl Tour {
             }
             Target::Point(x, y) => Some(pos2(x, y)),
             Target::Hits => (!app.search_hits.is_empty()).then_some(Pos2::ZERO),
+            Target::Pdf(state) => {
+                let viewer = app.pdf_viewer.as_ref();
+                let shown = match state {
+                    PdfState::Rendered(page) => viewer.is_some_and(|v| v.texture(page).is_some()),
+                    PdfState::Hits => viewer.is_some_and(|v| !v.search.hits.is_empty()),
+                    PdfState::Closed => viewer.is_none() && app.pdf_retired.is_none(),
+                };
+                shown.then_some(Pos2::ZERO)
+            }
             Target::Shelf(index) => {
                 let shelf = match index {
                     0 => StickerShelf::Recent,
@@ -752,9 +835,15 @@ impl Tour {
                 Gesture::Move(target) => {
                     let Some(end) = self.target(target, app, ctx) else {
                         self.failed = true;
-                        log::error!("tour stopped: missing UI target {target:?} at step {}", self.next);
+                        log::error!(
+                            "tour stopped: missing UI target {target:?} at step {}",
+                            self.next
+                        );
                         #[cfg(test)]
-                        eprintln!("tour stopped: missing UI target {target:?} at step {}", self.next);
+                        eprintln!(
+                            "tour stopped: missing UI target {target:?} at step {}",
+                            self.next
+                        );
                         self.marks.failed(at, self.next);
                         return;
                     };
@@ -1001,7 +1090,7 @@ impl Tour {
         // be the app's own.
         if self.marks.timing() {
             self.marks.frame_done(Instant::now());
-            if self.marks.phase_name() == Some(bench::SCROLL) {
+            if !self.script.finds_labels(self.marks.phase_name()) {
                 return;
             }
         }
@@ -1018,7 +1107,8 @@ impl Tour {
                             if rect.intersects(clipped.clip_rect) {
                                 let spot = transform * rect.center();
                                 self.labels.insert(text.galley.text().to_owned(), spot);
-                                self.spots.push((text.galley.text().to_owned(), spot, layer.order));
+                                self.spots
+                                    .push((text.galley.text().to_owned(), spot, layer.order));
                             }
                         }
                     }
@@ -2496,5 +2586,81 @@ mod tests {
         );
         assert_eq!(pickers, bench::PICKER_ROUNDS);
         assert!(app.picker.is_none());
+    }
+
+    /// The PDF benchmark opens its document from the card through a real
+    /// click, scrolls it, zooms to the limit and back to fit with the keys,
+    /// searches it, and closes it, the marks naming each phase in order.
+    /// Played on a stepped clock; the pages render on their own threads in
+    /// real time, so the checks on what was drawn are left to a real run.
+    #[test]
+    fn the_pdf_benchmark_opens_reads_zooms_searches_and_closes() {
+        let mut app = super::super::tests::app();
+        Script::Pdf.prepare(&mut app);
+        let ctx = egui::Context::default();
+        app.attach(&ctx);
+        let mut tour = Tour::scripted(Script::Pdf, None, None, None).with_marks(None);
+        let duration = Script::Pdf.duration().as_secs_f32();
+        let (mut opened, mut deepest, mut searched, mut furthest) = (false, 0.0f32, false, 0.0f32);
+        let mut at = 0.0f32;
+        while at <= duration + 0.5 {
+            let mut input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0))),
+                time: Some(f64::from(at)),
+                ..Default::default()
+            };
+            tour.input_at(&app, &ctx, &mut input, at);
+            let mut output = ctx.run_ui(input, |ui| {
+                app.background_frame(&ctx);
+                app.frame_ui(ui);
+                tour.observe(&mut app, &ctx);
+            });
+            output.textures_delta.clear();
+            assert!(
+                !tour.failed,
+                "missing target at {at:.2}s, cue {}",
+                tour.next
+            );
+            if let Some(viewer) = &app.pdf_viewer {
+                opened = true;
+                deepest = deepest.max(viewer.zoom);
+                searched |= viewer.search.open && viewer.search.query == pdf::QUERY;
+                furthest = furthest.max(viewer.offset.y);
+            }
+            let wake = tour.next_wake(at).as_secs_f32();
+            at += if wake <= 0.016 {
+                0.1
+            } else {
+                wake.clamp(0.01, 1.0)
+            };
+        }
+        assert!(opened, "the card's click opened the viewer");
+        assert!(furthest > 10_000.0, "the read scrolled down: {furthest}");
+        assert_eq!(deepest, crate::pdf::ZOOM_MAX, "the zoom reached its limit");
+        assert!(searched, "the query was typed into the search");
+        assert!(app.pdf_viewer.is_none(), "the viewer closed");
+        let lines = &tour.marks.lines;
+        let phases: Vec<_> = lines
+            .iter()
+            .filter(|line| line["event"] == "phase")
+            .map(|line| line["phase"].as_str().unwrap())
+            .collect();
+        assert_eq!(phases, pdf::PHASES);
+        assert_eq!(lines.first().unwrap()["script"], "pdf");
+        assert_eq!(lines.last().unwrap()["event"], "end");
+        let check = |name: &str| {
+            lines
+                .iter()
+                .find(|line| line["event"] == "check" && line["name"] == name)
+                .map(|line| line["ok"] == true)
+        };
+        assert_eq!(check("settle: the document's card is shown"), Some(true));
+        assert_eq!(check("closed: the viewer has gone"), Some(true));
+        let timed: Vec<_> = lines
+            .iter()
+            .filter(|line| line["event"] == "frames")
+            .map(|line| line["phase"].as_str().unwrap())
+            .collect();
+        assert_eq!(timed, pdf::TIMED);
     }
 }

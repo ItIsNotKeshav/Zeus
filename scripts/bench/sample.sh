@@ -5,7 +5,10 @@
 # file with those and the app's own frame times.
 #
 #   scripts/bench/sample.sh --binary PATH --out FILE.json [--label NAME]
-#                           [--run N] [--headless] [--scale N]
+#                           [--run N] [--headless] [--scale N] [--script NAME]
+#
+# --script pdf runs the PDF viewer's scenario instead (about 80 seconds):
+# a 40-page document opened from its card, read, zoomed, searched and closed.
 #
 # Usually started by run.sh, which runs it several times. The app runs the
 # synthetic demo only: offline sample chats in a fresh temporary folder,
@@ -15,7 +18,7 @@ set -u
 here="$(cd "$(dirname "$0")" && pwd)"
 . "$here/lib.sh"
 
-binary="" out="" label="" run=1 headless=0 scale=""
+binary="" out="" label="" run=1 headless=0 scale="" script="bench"
 while [ $# -gt 0 ]; do
   case "$1" in
     --binary) binary="$2"; shift 2 ;;
@@ -24,6 +27,7 @@ while [ $# -gt 0 ]; do
     --run) run="$2"; shift 2 ;;
     --headless) headless=1; shift ;;
     --scale) scale="$2"; shift 2 ;;
+    --script) script="$2"; shift 2 ;;
     *) echo "sample.sh: unknown option $1" >&2; exit 2 ;;
   esac
 done
@@ -35,6 +39,11 @@ if [ ! -f "$binary" ]; then
   echo "sample.sh: no build at $binary" >&2
   exit 2
 fi
+case "$script" in
+  bench) ;;
+  pdf) BENCH_PHASES="$BENCH_PDF_PHASES" ;;
+  *) echo "sample.sh: --script is bench or pdf" >&2; exit 2 ;;
+esac
 
 os="$(uname -s)"
 case "$os" in
@@ -120,7 +129,7 @@ fi
 
 started=$(date +%s)
 started_ms=$(bench_now_ms)
-"$binary" --demo-tour --demo-tour-script bench --demo-size 1280x800 \
+"$binary" --demo-tour --demo-tour-script "$script" --demo-size 1280x800 \
   --demo-tour-marks "$marks" >"$log" 2>&1 &
 pid=$!
 # Keep the Mac's display and the machine awake for the run.
@@ -180,7 +189,7 @@ record() {
 }
 
 phase="" seen=0 last_tick=0 status="running" reason="" checks="" frames="" app_start=""
-echo "Run $run of $label: about 2 minutes. Leave the window alone until it closes."
+echo "Run $run of $label ($script): about 2 minutes. Leave the window alone until it closes."
 while :; do
   if ! kill -0 "$pid" 2>/dev/null; then
     [ "$status" = running ] && { status="failed"; reason="the app quit before the scenario ended"; }
@@ -280,6 +289,7 @@ mkdir -p "$(dirname "$out")"
   printf '{\n'
   printf '  "schema": 2,\n'
   printf '  "label": "%s",\n' "$(bench_json_string "$label")"
+  printf '  "script": "%s",\n' "$script"
   printf '  "run": %s,\n' "$run"
   printf '  "status": "%s",\n' "$status"
   printf '  "reason": "%s",\n' "$(bench_json_string "$reason")"
@@ -298,7 +308,7 @@ mkdir -p "$(dirname "$out")"
   printf '  "peak_mb": %s,\n' "$(bench_peak_mb <"$samples")"
   printf '  "os_peak_mb": %s,\n' "$(bench_mb "$os_peak")"
   printf '  "os_peak_metric": "%s",\n' "$peak_metric"
-  printf '  "settled_mb": %s,\n' "$(bench_end_mb settle-again <"$samples")"
+  printf '  "settled_mb": %s,\n' "$(bench_end_mb "${BENCH_PHASES##* }" <"$samples")"
   printf '  "frames": {%s},\n' "$frames"
   printf '  "checks": [%s]\n' "$checks"
   printf '}\n'

@@ -52,8 +52,9 @@ struct Cli {
 
     /// Which tour to play: `launch` (41 seconds), `whats-new` (what 0.16
     /// added, 86 seconds), `bench` (the benchmark's timed phases, about 2
-    /// minutes, started at once; see scripts/bench), or `setup` (the
-    /// first-run setup, 24 seconds).
+    /// minutes, started at once; see scripts/bench), `setup` (the
+    /// first-run setup, 24 seconds), or `pdf` (the PDF viewer's memory
+    /// benchmark, about 80 seconds, started at once).
     #[cfg(feature = "demo")]
     #[arg(
         long,

@@ -205,7 +205,7 @@ fn peek(
             };
             // Until the pages are known, only the worker's answer is awaited.
             if viewer.pages().is_empty() {
-                viewer.exchange(ui.ctx(), &[], 0..0, 0, now);
+                viewer.exchange(ui.ctx(), &[], 0..0, now);
             }
             let ui = &mut card_ui;
             let current = if !viewer.pages().is_empty() {
@@ -351,16 +351,38 @@ fn stage(
         if viewer.search.open {
             paint_hits(ui, viewer, &layout, &sizes, visible.clone(), origin);
         }
-        let wanted = crate::pdf::wanted_pages(visible.clone(), sizes.len(), middle, |page| {
+        let plan = |page: usize| {
             let points = sizes[page].x * layout.scale;
-            crate::pdf::render_width(points, ppp, sizes[page].y / sizes[page].x, max_side)
+            crate::pdf::Plan::new(points, ppp, sizes[page].y / sizes[page].x, max_side)
+        };
+        let mut wanted = crate::pdf::wanted_pages(visible.clone(), sizes.len(), middle, plan);
+        // Zoomed past what a whole page is rendered at, the part of each page
+        // on screen comes sharp, after the pages on screen and before those
+        // ahead.
+        let details = visible.clone().filter_map(|page| {
+            let plan = plan(page);
+            plan.detailed().then(|| {
+                let detail = crate::pdf::detail_region(
+                    layout.page_rect(&sizes, page),
+                    viewport,
+                    plan.full,
+                    sizes[page].y / sizes[page].x,
+                )?;
+                Some(crate::pdf::Want {
+                    page,
+                    width: plan.full,
+                    detail: Some(detail),
+                })
+            })?
         });
+        let at = visible.len().min(wanted.len());
+        wanted.splice(at..at, details.collect::<Vec<_>>());
         (visible, middle, wanted)
     });
     view.offset = output.state.offset;
     viewer.offset = view.offset;
     let (visible, middle, wanted) = output.inner;
-    viewer.exchange(ui.ctx(), &wanted, visible, middle, now);
+    viewer.exchange(ui.ctx(), &wanted, visible, now);
     middle
 }
 
@@ -491,6 +513,35 @@ fn paint_page(
                 .corner_radius(radius)
                 .tint(Color32::WHITE.gamma_multiply(shown))
                 .paint_at(ui, rect);
+            // The part on screen, sharp, over the page it sharpens.
+            if let Some(detail) = viewer.detail(page) {
+                let place = Rect::from_min_max(
+                    rect.min + detail.place.min.to_vec2() * rect.size(),
+                    rect.min + detail.place.max.to_vec2() * rect.size(),
+                );
+                let round = |left: bool, top: bool| {
+                    let x = if left {
+                        detail.place.min.x
+                    } else {
+                        1.0 - detail.place.max.x
+                    };
+                    let y = if top {
+                        detail.place.min.y
+                    } else {
+                        1.0 - detail.place.max.y
+                    };
+                    if x <= 0.0 && y <= 0.0 { PAGE_RADIUS } else { 0 }
+                };
+                egui::Image::from_texture((detail.texture.id(), place.size()))
+                    .corner_radius(CornerRadius {
+                        nw: round(true, true),
+                        ne: round(false, true),
+                        sw: round(true, false),
+                        se: round(false, false),
+                    })
+                    .tint(Color32::WHITE.gamma_multiply(shown))
+                    .paint_at(ui, place);
+            }
         }
         None if viewer.page_failed(page) => {
             theme::paint_icon(
@@ -811,8 +862,9 @@ fn search_card(
         return;
     }
     // New text or a new query: count again, and bring the first match at
-    // or after the page being read into view.
-    let changed = viewer.recount();
+    // or after the page being read into view. A closing search has let its
+    // text go and counts nothing.
+    let changed = viewer.search.open && viewer.recount();
     if changed {
         view.revealed = false;
     }
@@ -860,7 +912,7 @@ fn search_card(
     )
     .clicked()
     {
-        viewer.search.open = false;
+        viewer.close_search();
     }
     let count = viewer.search.hits.len();
     if theme::icon_button(
@@ -888,7 +940,7 @@ fn search_card(
         viewer.step_hit(true);
     }
     let (read, pages) = viewer.text_progress();
-    let status = if crate::pdf::fold_query(&viewer.search.query).is_empty() {
+    let status = if !viewer.search.open || crate::pdf::fold_query(&viewer.search.query).is_empty() {
         String::new()
     } else if count > 0 {
         gettext("{current} of {count}")

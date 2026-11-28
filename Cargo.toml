@@ -184,6 +184,12 @@ libwebp-sys2 = { version = "0.2", features = ["1_2"] }
 # default features embed stand-ins for the 14 standard fonts and the CJK
 # CMaps a PDF may name without embedding.
 hayro = "0.9"
+# Maps a PDF instead of reading it into memory (Unix). Already in the tree
+# through the font crates, at this version.
+memmap2 = "0.9"
+# Hands a rendered page's pixels to egui without a copy. Already in the tree
+# through egui.
+bytemuck = "1"
 # Shared foundation of Carmine's egui apps (github.com/crmne/fastframe). Every
 # crate comes from the same revision.
 # Bundled gettext catalogs: lookups and system language detection.
@@ -366,6 +372,11 @@ png = "0.18"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 # Finds and triggers application menu items in the menu test.
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSMenu", "NSMenuItem"] }
+
+# The PDF viewer's memory and frame times, headless (see its header).
+[[example]]
+name = "pdf_memory"
+required-features = ["demo"]
 
 # AppKit menus run on the main thread, which libtest does not test on.
 [[test]]
