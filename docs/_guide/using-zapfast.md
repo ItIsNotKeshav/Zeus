@@ -458,13 +458,17 @@ right-click menu keeps a copy wherever you choose.
 
 Click a downloaded PDF to read it in Zeus's own viewer: a large card flies
 out of the message over the dimmed window, its pages one under another, and
-flies back into it when closed (a click beside the card closes it too). Only the pages on screen and a couple either side are drawn, on a
-thread of their own, so a long document opens and scrolls at once. Zoom with
+flies back into it when closed (a click beside the card closes it too). Only the pages on screen and a couple either side (at half their
+sharpness until they scroll into view) are drawn, on a thread of their own,
+so a long document opens and scrolls at once, and its memory follows the
+window's size rather than the document's length. Zoomed in far, the part on
+screen is drawn again at full sharpness. Zoom with
 the header's buttons, Ctrl+wheel, a pinch, or Ctrl with +, - and 0 (to fit
 the window again). Ctrl+F, or the header's search button, finds text in the
 document, ignoring case and accents: every match is lit, Enter and Shift+Enter
 (or the arrows beside the field) move between them, and the count says where
-you are. The text of a scan that carries a hidden OCR layer is found too. The
+you are. The text of a scan that carries a hidden OCR layer is found too;
+it is read when the search opens and let go when it closes. The
 arrow keys, Page Up and Down, Space, Home and End scroll; Escape closes the
 search, then the viewer. The header also saves a copy and opens the file in
 another app. A PDF protected with a password, or one Zeus cannot read, says

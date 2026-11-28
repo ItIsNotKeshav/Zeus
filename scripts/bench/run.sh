@@ -3,12 +3,13 @@
 # one JSON file per run under bench-results/<label>/.
 #
 #   scripts/bench/run.sh [BINARY] [--label NAME] [--runs N] [--out DIR]
-#                        [--headless] [--scale N]
+#                        [--headless] [--scale N] [--script pdf]
 #
 # BINARY defaults to the `zeus` beside this folder, as in a bench download.
 # The label defaults to the one in BUILD_INFO.txt beside the binary.
 # Each run takes about 2 minutes; the default two, with the pause between
-# them, about 5.
+# them, about 5. --script pdf runs the PDF viewer's scenario instead
+# (about 80 seconds a run); compare its results only with other pdf runs.
 set -u
 
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +21,8 @@ while [ $# -gt 0 ]; do
     --out) out="$2"; shift 2 ;;
     --headless) pass+=(--headless); shift ;;
     --scale) pass+=(--scale "$2"); shift 2 ;;
-    -h | --help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --script) pass+=(--script "$2"); shift 2 ;;
+    -h | --help) sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "run.sh: unknown option $1" >&2; exit 2 ;;
     *) binary="$1"; shift ;;
   esac

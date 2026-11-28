@@ -174,6 +174,52 @@ when the scenario's checks (scrolled all the way, window minimized) did not
 pass. Results are review evidence: they go in pull requests, never in the
 repository (`bench-results/` and `bench-shots/` are ignored by git).
 
+### The PDF viewer
+
+`--script pdf` plays a second, shorter scenario (about 80 seconds a run) for
+changes to the PDF viewer: a synthetic 40-page report with a picture on
+every page is sent in a chat, opened from its card, and then:
+
+| Phase | What happens |
+|---|---|
+| settle | 6 seconds on the chat, the card's preview drawn |
+| open | the card is clicked; 6 seconds for the first pages |
+| read | scrolls from the first page to the last in 14 seconds |
+| zoom | zooms in to about 2x, scrolls up, zooms to the 5x limit, scrolls up, back to fit |
+| search | finds "pump" and steps through four matches, then closes the search |
+| idle | 10 seconds with the document open |
+| closed | closes it; 12 seconds for its pages to go |
+
+Read, zoom and search are timed for smoothness, as scrolling is in the main
+scenario. Memory is read at each phase's end and, for the phases that come
+and go, at their highest reading.
+
+```sh
+cargo build --profile fast --locked --features demo
+scripts/bench/run.sh target/fast/zeus --label main --script pdf
+# ...the change, built the same way...
+scripts/bench/run.sh target/fast/zeus --label mine --script pdf
+python3 scripts/bench/compare.py bench-results/main bench-results/mine
+```
+
+The results say which scenario they played; compare pdf runs only with pdf
+runs. Windows has no `--script` yet. The window must stay visible and the
+screen unlocked: on a locked Mac the window's frames are never shown, and
+its memory grows without bound.
+
+For a pull request, the headless version is quicker and needs no screen:
+it plays the same scenario through the real interface without a window,
+and prints Markdown tables of the textures held (what a window keeps on the
+GPU), the process's own memory, and the frames' work, with the change
+against a saved run:
+
+```sh
+git checkout main
+cargo run --profile fast --locked --features demo --example pdf_memory -- --json before.json
+git checkout my-branch
+cargo run --profile fast --locked --features demo --example pdf_memory -- --baseline before.json
+```
+
 ### Visual check
 
 A memory saving that changes how the app looks does not count. Capture the

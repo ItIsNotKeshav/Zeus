@@ -11761,7 +11761,7 @@ fn document_preview(
     let rendered = media
         .path
         .as_deref()
-        .map(|path| crate::pdf::preview(ui.ctx(), path, pixels));
+        .map(|path| crate::pdf::preview(ui.ctx(), path, pixels, preview_height(width) / width));
     let thumbnail = message
         .thumbnail
         .as_deref()

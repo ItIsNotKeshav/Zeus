@@ -4,6 +4,8 @@
 
 # The scenario's phases, in order, as the app's marks name them.
 BENCH_PHASES="settle scroll churn picker search minimized settle-again"
+# The PDF viewer's scenario (`--script pdf`), about 80 seconds.
+BENCH_PDF_PHASES="settle open read zoom search idle closed"
 # Seconds between readings, in every phase.
 BENCH_INTERVAL=2
 # The scenario runs about 2 minutes; give up on a run well after that.
